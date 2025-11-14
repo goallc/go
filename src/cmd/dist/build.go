@@ -610,6 +610,9 @@ func setup() {
 	}
 }
 
+// goallc need link llvm, so force enable cgo to make bootstrap work.
+var buildGoallc = true
+
 /*
  * Tool building
  */
@@ -618,6 +621,9 @@ func setup() {
 // duplicated here to avoid version skew in the MustLinkExternal function
 // during bootstrapping.
 func mustLinkExternal(goos, goarch string, cgoEnabled bool) bool {
+	if buildGoallc {
+		return true
+	}
 	if cgoEnabled {
 		switch goarch {
 		case "mips", "mipsle", "mips64", "mips64le":

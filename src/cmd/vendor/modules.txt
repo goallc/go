@@ -1,3 +1,6 @@
+# github.com/goallc/go-llvm v0.0.0-20251114160002-04cfe14e3585
+## explicit; go 1.24
+github.com/goallc/go-llvm
 # github.com/google/pprof v0.0.0-20250208200701-d0013a598941
 ## explicit; go 1.22
 github.com/google/pprof/driver

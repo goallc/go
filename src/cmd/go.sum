@@ -1,3 +1,5 @@
+github.com/goallc/go-llvm v0.0.0-20251114160002-04cfe14e3585 h1:8N6s9psBCtzBajxvZ5f4Zp4/7UagV+kI5C1mqskb0Bg=
+github.com/goallc/go-llvm v0.0.0-20251114160002-04cfe14e3585/go.mod h1:s70tU8u5zDo1LwIPqBxh6Qgol/tNt1kmn9caPfsTz8A=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/google/pprof v0.0.0-20250208200701-d0013a598941 h1:43XjGa6toxLpeksjcxs1jIoIyr+vUfOqY2c6HB4bpoc=
