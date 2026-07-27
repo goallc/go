@@ -27,6 +27,7 @@ _testmain.go
 /last-change
 /llvm/
 /src/cmd/vendor/github.com/goallc/go-llvm/llvm
+/src/cmd/vendor/github.com/goallc/go-llvm/libLLVMGoALLC.a.stamp
 /misc/cgo/life/run.out
 /misc/cgo/stdio/run.out
 /misc/cgo/testso/main

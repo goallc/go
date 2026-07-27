@@ -77,7 +77,7 @@ Remote：
 - 由 `tinygo.org/x/go-llvm` 派生，module path 为
   `github.com/goallc/go-llvm`；
 - LLVM 23 基础兼容已进入 `master`；当前清理方案在 GoALLC PR #3 的
-  `codex/explicit-llvm-config` 分支审核，HEAD 为 `bbabd2cf14b6`；
+  `codex/explicit-llvm-config` 分支审核，HEAD 为 `223f6a971614`；
 - 本项目只支持 GoALLC 定制 LLVM，不再支持系统预安装 LLVM、
   `byollvm`，也不保留 LLVM 14--22 的兼容配置；
 - LLVM API 版本和链接模式是两个正交、必选的 build-tag 维度：
@@ -87,14 +87,14 @@ Remote：
   `${SRCDIR}/llvm/include` 和 `${SRCDIR}/llvm/lib`；
 - `llvm` 不入库，由调用方提供软链接。Go 工具链的 `cmd/dist` 根据
   `-llvm-dir` 创建或更新该链接；
-- 动态模式链接 payload 中的 `libLLVM`；静态模式只链接定制 LLVM
-  生成的聚合归档 `libLLVMGoALLC.a`；
+- 动态模式链接 payload 中的 `libLLVM`；静态模式只链接 binding
+  `${SRCDIR}` 下由 `cmd/dist` 聚合的 `libLLVMGoALLC.a`；
 - 没有生成 Go 文件，没有 `LLVMROOT`，也不把路径塞进普通 cgo 的
   `CGO_CPPFLAGS`、`CGO_LDFLAGS` 或全局动态库环境；
 - `goallc_ext.go` 已从 Go vendor 私有补丁收回 binding 仓库。
 
 Go 仓库依赖当前 PR HEAD 的 pseudo-version：
-`v0.0.0-20260727021832-bbabd2cf14b6`。
+`v0.0.0-20260727045305-223f6a971614`。
 
 ### 2.3 `llvm-project`
 
@@ -113,8 +113,9 @@ Remote：
 - 基于本地 `official/release/23.x` 的 `ce6af707aac8`
 - LLVM 版本文件为 `23.1.0`
 - GoObj 主题分支在 release base 上有 24 笔提交
-- 聚合静态库方案在 GoALLC PR #2 的
-  `codex/goallc-static-library` 分支审核，HEAD 为 `7f782f174871`
+- 原聚合静态库方案的 GoALLC PR #2 已关闭；其 feature 分支已用
+  `e31213b5750d` 撤回全部源码改动，相对 `llvm23.1.master` 的净 diff
+  为零。静态聚合职责已移到 Go `cmd/dist`
 
 本轮已恢复 Clang、LLDB 和 MLGO 测试夹具中的既有 symlink/file-type
 变化，源码工作区目前干净。旧的 25 GB 构建目录已删除，并从空目录重新完成
@@ -331,7 +332,8 @@ Go SSA 分支形成于 LLVM Go ABI 工作之前，目前：
 - LLVM API 默认版本为 23，也可用 `-llvm-version` 或
   `GOALLC_LLVM_VERSION` 显式指定；
 - 默认通过 payload 中的 `libLLVM` 动态链接；`-llvm-link=static` 或
-  `GOALLC_LLVM_LINK=static` 选择 `libLLVMGoALLC.a`。
+  `GOALLC_LLVM_LINK=static` 让 `cmd/dist` 使用 payload 的
+  `llvm-config` 与 `llvm-ar` 生成 binding 本地的 `libLLVMGoALLC.a`。
 
 当前 LLVM 由 macOS 26 SDK 构建，而 Go 1.27 工具链默认链接目标为 macOS
 16，因此链接时会产生 deployment-target 警告。构建和 smoke test
@@ -356,8 +358,8 @@ binding 的代码配置中，不与普通 cgo 构建的外部环境变量混用�
 - 新构建产物为 LLVM `23.1.0git`、Debug、assertions enabled，包含 X86
   和 AArch64，并生成约 302 MB 的 `libLLVM.23.1git.dylib`；
 - 8 个 X86/AArch64 GoObj MC/CodeGen 定向测试全部通过；
-- LLVM 的 `LLVMGoALLC` 目标生成包含 1,787 个 LLVM object member 的
-  聚合库；加入静态 zstd 后归档共 1,825 个 member；
+- 旧方案曾由 LLVM 的 `LLVMGoALLC` target 生成聚合库；当前方案已把
+  聚合职责移到 `cmd/dist`，LLVM 源码不再需要该项目专用 target；
 - standalone `go-llvm` 在不设置外部 `CGO_*` 参数的情况下，以
   `llvm23,dynamicllvm` 和 `llvm23,staticllvm` 完成全测试；
 - 更新后的 binding 已同步到 Go vendor，`goallc_ext.go` 不再是 vendor
@@ -455,7 +457,6 @@ cmake -S llvm -B llvm/cmake-build-debug -G Ninja \
   -DLLVM_BUILD_TOOLS=ON \
   -DBUILD_SHARED_LIBS=OFF \
   -DLLVM_BUILD_LLVM_DYLIB=ON \
-  -DLLVM_BUILD_GOALLC_STATIC=ON \
   -DLLVM_ENABLE_RTTI=OFF \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ninja -C llvm/cmake-build-debug -j6
@@ -465,9 +466,10 @@ ninja -C llvm/cmake-build-debug -j6
 
 ```sh
 $GOROOT/llvm/bin/llvm-config
+$GOROOT/llvm/bin/llvm-ar
 $GOROOT/llvm/include/llvm-c/Core.h
 $GOROOT/llvm/lib/libLLVM.dylib       # dynamic
-$GOROOT/llvm/lib/libLLVMGoALLC.a     # static
+$GOROOT/llvm/lib/libLLVM*.a          # static component archives
 ```
 
 不要把 LLVM build 目录全局写入 `DYLD_LIBRARY_PATH`；这会让 Homebrew 的
@@ -480,6 +482,7 @@ payload rpath。
 cd /Volumes/Disk1/00.Work/00.Code/goallc/go-llvm
 ln -s /Volumes/Disk1/00.Work/00.Code/goallc/go/llvm llvm
 go test -tags='llvm23 dynamicllvm' ./...
+# staticllvm 需要先由 Go 的 cmd/dist 在 binding ${SRCDIR} 聚合静态库
 go test -tags='llvm23 staticllvm' ./...
 ```
 
@@ -497,6 +500,13 @@ cd /Volumes/Disk1/00.Work/00.Code/goallc/go/src
 再原子更新
 `$GOROOT/src/cmd/vendor/github.com/goallc/go-llvm/llvm` 软链接。真实目录对
 binding 不可见，binding 始终只使用 `${SRCDIR}/llvm`。
+
+静态模式下，`cmd/dist` 通过 payload 的 `llvm-config --link-static
+--libfiles` 获取标准 LLVM component archives，再通过 `llvm-ar -M`
+聚合为
+`$GOROOT/src/cmd/vendor/github.com/goallc/go-llvm/libLLVMGoALLC.a`。
+它用 LLVM 版本、组件列表以及输入归档的路径、大小和修改时间缓存结果；
+LLVM 源码和构建系统本身不包含 GoALLC 专用静态库 target。
 
 最小 IR smoke test：
 

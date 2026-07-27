@@ -3,8 +3,8 @@
 package llvm
 
 /*
-#cgo darwin LDFLAGS: -L${SRCDIR}/llvm/lib -lLLVMGoALLC -lm -lz -lxml2
-#cgo linux LDFLAGS: -L${SRCDIR}/llvm/lib -lLLVMGoALLC -lm -lz -lxml2 -ldl -lpthread
+#cgo darwin LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lxml2
+#cgo linux LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lxml2 -ldl -lpthread -lrt
 */
 import "C"
 
