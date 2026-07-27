@@ -20,6 +20,11 @@ type LLVMFuncContext struct {
 	ArgIdx     int
 }
 
+// LLVM's GoABIInternal calling convention has numeric ID 22. Keep the
+// prototype lowering on the Go register ABI so llc emits GoObj symbols that
+// the standard Go linker can call directly.
+const goABIInternalCallConv llvm.CallConv = 22
+
 func (lfc *LLVMFuncContext) FinishPhi() {
 	for _, BB := range lfc.F.Blocks {
 		for _, v := range BB.Values {
@@ -163,6 +168,7 @@ func LLVMCompile(f *Func) {
 	}
 
 	FCtxt.LF = llvm.AddFunction(CurrentModule, base.Ctxt.Pkgpath+"."+f.Name, getLLVMType(f.Type))
+	FCtxt.LF.SetFunctionCallConv(goABIInternalCallConv)
 	for _, BB := range f.Blocks {
 		FCtxt.BBs[BB.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, BB.String())
 	}

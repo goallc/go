@@ -129,6 +129,7 @@ type CmdFlags struct {
 	PgoProfile         string       "help:\"read profile or pre-process profile from `file`\""
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
 	EnableLLVM         bool         "help:\"enable llvm backend\""
+	LLVMIROnly         bool         "help:\"emit LLVM IR and stop before native code generation (requires -enablellvm)\""
 	// Configuration derived from flags; not a flag itself.
 	Cfg struct {
 		Embed struct { // set by -embedcfg
@@ -177,6 +178,7 @@ func ParseFlags() {
 	Flag.Shared = &Ctxt.Flag_shared
 	Flag.WB = true
 	Flag.EnableLLVM = false
+	Flag.LLVMIROnly = false
 
 	Debug.ConcurrentOk = true
 	Debug.CompressInstructions = 1

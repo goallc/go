@@ -49,6 +49,12 @@ func dumpobj() {
 			fmt.Printf("error while Output file %s: %v\n", base.Flag.LinkObj+".bc", err)
 			base.ErrorExit()
 		}
+		if base.Flag.LLVMIROnly {
+			// Keep import data available for downstream Go compilation. The
+			// toolexec wrapper appends the GoObj linker member produced by llc.
+			dumpobj1(base.Flag.LowerO, modeCompilerObj)
+			return
+		}
 	}
 	if base.Flag.LinkObj == "" {
 		dumpobj1(base.Flag.LowerO, modeCompilerObj|modeLinkerObj)

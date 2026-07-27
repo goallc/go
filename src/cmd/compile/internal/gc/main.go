@@ -84,6 +84,9 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 
 	base.DebugSSA = ssa.PhaseOption
 	base.ParseFlags()
+	if base.Flag.LLVMIROnly && !base.Flag.EnableLLVM {
+		base.Fatalf("-llvmironly requires -enablellvm")
+	}
 
 	if flagGCStart := base.Debug.GCStart; flagGCStart > 0 || // explicit flags overrides environment variable disable of GC boost
 		os.Getenv("GOGC") == "" && os.Getenv("GOMEMLIMIT") == "" && base.Flag.LowerC != 1 { // explicit GC knobs or no concurrency implies default heap
@@ -376,17 +379,24 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 		staticinit.AddKeepRelocations()
 	}
 
-	// Write object data to disk.
+	// Write object data to disk. In LLVM-IR-only mode the toolexec wrapper
+	// supplies the linker object with llc, so retain only compiler export data.
 	base.Timer.Start("be", "dumpobj")
-	dumpdata()
-	base.Ctxt.NumberSyms()
-	dumpobj()
+	if base.Flag.LLVMIROnly {
+		dumpobj()
+	} else {
+		dumpdata()
+		base.Ctxt.NumberSyms()
+		dumpobj()
+	}
 	if base.Flag.AsmHdr != "" {
 		dumpasmhdr()
 	}
 
-	ssagen.CheckLargeStacks()
-	typecheck.CheckFuncStack()
+	if !base.Flag.LLVMIROnly {
+		ssagen.CheckLargeStacks()
+		typecheck.CheckFuncStack()
+	}
 
 	if len(compilequeue) != 0 {
 		base.Fatalf("%d uncompiled functions", len(compilequeue))
