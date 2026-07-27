@@ -120,18 +120,9 @@ func xinit() {
 	}
 	goroot = filepath.Clean(b)
 	gorootBin = pathf("%s/bin", goroot)
-	goallcLLVMDir = os.Getenv("GOALLC_LLVM_DIR")
-	if goallcLLVMDir == "" {
-		goallcLLVMDir = pathf("%s/llvm", goroot)
-	}
-	goallcLLVMLink = os.Getenv("GOALLC_LLVM_LINK")
-	if goallcLLVMLink == "" {
-		goallcLLVMLink = "dynamic"
-	}
-	goallcLLVMVersion = os.Getenv("GOALLC_LLVM_VERSION")
-	if goallcLLVMVersion == "" {
-		goallcLLVMVersion = "23"
-	}
+	goallcLLVMDir = pathf("%s/llvm", goroot)
+	goallcLLVMLink = "dynamic"
+	goallcLLVMVersion = "23"
 
 	// Don't run just 'go' because the build infrastructure
 	// runs cmd/dist inside go/bin often, and on Windows

@@ -76,8 +76,8 @@ Remote：
 
 - 由 `tinygo.org/x/go-llvm` 派生，module path 为
   `github.com/goallc/go-llvm`；
-- LLVM 23 基础兼容已进入 `master`；当前清理方案在 GoALLC PR #3 的
-  `codex/explicit-llvm-config` 分支审核，HEAD 为 `f21ebd5`；
+- LLVM 23 基础兼容及当前清理方案已进入 `master`，HEAD 为
+  `33267b8eb4a0`；
 - 本项目只支持 GoALLC 定制 LLVM，不再支持系统预安装 LLVM、
   `byollvm`，也不保留 LLVM 14--22 的兼容配置；
 - LLVM API 版本和链接模式是两个正交、必选的 build-tag 维度：
@@ -96,8 +96,8 @@ Remote：
   项目发布预构建 LLVM payload 后，CI 将直接下载 artifact 并恢复动态、
   静态两种 binding 测试。
 
-Go 仓库依赖 PR 中最后一个 binding 代码提交的 pseudo-version：
-`v0.0.0-20260727045305-223f6a971614`。
+Go 仓库依赖 go-llvm `master` 的 pseudo-version：
+`v0.0.0-20260727072003-33267b8eb4a0`。
 
 ### 2.3 `llvm-project`
 
@@ -330,12 +330,10 @@ Go SSA 分支形成于 LLVM Go ABI 工作之前，目前：
 - bootstrap Go：Go 1.26.5；
 - vendored/standalone binding：显式选择 `llvm23`；
 - LLVM source/build：23.1.0git；
-- LLVM payload 默认位于 `$GOROOT/llvm`，也可用 `-llvm-dir` 或专用环境
-  变量 `GOALLC_LLVM_DIR` 指定；
-- LLVM API 默认版本为 23，也可用 `-llvm-version` 或
-  `GOALLC_LLVM_VERSION` 显式指定；
-- 默认通过 payload 中的 `libLLVM` 动态链接；`-llvm-link=static` 或
-  `GOALLC_LLVM_LINK=static` 让 `cmd/dist` 使用 payload 的
+- LLVM payload 默认位于 `$GOROOT/llvm`，也可用 `-llvm-dir` 指定；
+- LLVM API 默认版本为 23，也可用 `-llvm-version` 显式指定；
+- 默认通过 payload 中的 `libLLVM` 动态链接；`-llvm-link=static` 让
+  `cmd/dist` 使用 payload 的
   `llvm-config` 与 `llvm-ar` 生成 binding 本地的 `libLLVMGoALLC.a`。
 
 当前 LLVM 由 macOS 26 SDK 构建，而 Go 1.27 工具链默认链接目标为 macOS
@@ -498,9 +496,9 @@ cd /Volumes/Disk1/00.Work/00.Code/goallc/go/src
 ./make.bash -llvm-dir=/path/to/llvm -llvm-version=23 -llvm-link=static
 ```
 
-`cmd/dist` 的 LLVM 目录解析顺序是显式 `-llvm-dir`、
-`GOALLC_LLVM_DIR`、最后 `$GOROOT/llvm`。它验证 payload 版本和所选链接库，
-再原子更新
+`cmd/dist` 使用显式 `-llvm-dir`，未指定时使用 `$GOROOT/llvm`。LLVM
+版本和链接方式同样只接受 `-llvm-version` 与 `-llvm-link` 参数，不读取
+项目专用环境变量。它验证 payload 版本和所选链接库，再原子更新
 `$GOROOT/src/cmd/vendor/github.com/goallc/go-llvm/llvm` 软链接。真实目录对
 binding 不可见，binding 始终只使用 `${SRCDIR}/llvm`。
 
