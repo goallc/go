@@ -2,6 +2,12 @@
 
 更新日期：2026-07-27
 
+> 2026-07-27 更新：`compile -enablellvm -llvmironly`、`cmd/llvmtoolexec`
+> 和 LLVM 的 GoObj metadata consumer 已经打通一条仅面向简单 package 的
+> 自动链路。具体的输入/输出契约、运行方法和当前限制见
+> [doc/goallc-llvm-goobj.md](doc/goallc-llvm-goobj.md)。本文后续章节保留了
+> 此前 sidecar 原型的背景和升级记录。
+
 ## 1. 项目目标
 
 GoALLC 的目标是在尽量保持社区 Go 前端、语言语义、运行时、包格式和
