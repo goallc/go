@@ -6,6 +6,12 @@
 
 package codegen
 
+// LLVM-DAG: define goabiinternal i64 @codegen.andWithUse
+// LLVM-DAG: and i64
+// LLVM-DAG: or i64
+// LLVM-DAG: xor i64
+// LLVM-DAG: br i1
+
 // Test to make sure that (CMPQ (ANDQ x y) [0]) does not get rewritten to
 // (TESTQ x y) if the ANDQ has other uses. If that rewrite happens, then one
 // of the args of the ANDQ needs to be saved so it can be used as the arg to TESTQ.

@@ -156,6 +156,7 @@ func Test(t *testing.T) {
 			})
 		}
 	}
+	runLLVMTests(t, common)
 }
 
 func shardMatch(name string) bool {
@@ -274,6 +275,7 @@ type test struct {
 	// dir and goFile identify the test case.
 	// For example, "fixedbugs", "bug000.go".
 	dir, goFile string
+	llvm        bool
 }
 
 // expectFail reports whether the (overall) test recipe is
@@ -1052,6 +1054,10 @@ func (t test) run() error {
 		return t.checkExpectedOutput(out)
 
 	case "run":
+		if t.llvm {
+			runInDir = ""
+			return t.runLLVMCase(tempDir, flags, args, runcmd)
+		}
 		// Run Go file if no special go command flags are provided;
 		// otherwise build an executable and run it.
 		// Verify the output.
@@ -1609,6 +1615,12 @@ func (t test) wantedAsmOpcodes(fn string) asmChecks {
 		matches := rxAsmComment.FindStringSubmatch(line)
 		code, cmt := matches[1], matches[2]
 
+		// LLVM codegen checks use FileCheck directives in the same source
+		// files. They are not architecture specifications for asmcheck.
+		if code == "" && isLLVMFileCheckDirective(cmt) {
+			continue
+		}
+
 		// Keep comments pending in the comment variable until
 		// we find a line that contains some code.
 		comment += " " + cmt
@@ -1728,6 +1740,15 @@ func (t test) wantedAsmOpcodes(fn string) asmChecks {
 	}
 
 	return ops
+}
+
+func isLLVMFileCheckDirective(comment string) bool {
+	comment = strings.TrimSpace(comment)
+	if !strings.HasPrefix(comment, "LLVM") {
+		return false
+	}
+	suffix := strings.TrimPrefix(comment, "LLVM")
+	return strings.HasPrefix(suffix, ":") || strings.HasPrefix(suffix, "-")
 }
 
 func (t test) asmCheck(outStr string, fn string, env buildEnv, fullops map[string][]wantedAsmOpcode) error {

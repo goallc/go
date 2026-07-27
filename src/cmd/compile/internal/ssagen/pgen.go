@@ -304,9 +304,9 @@ func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
 	f := buildssa(fn, worker, inline.IsPgoHotFunc(fn, profile) || inline.HasPgoHotInline(fn))
 	if base.Flag.EnableLLVM && base.Flag.LLVMIROnly {
 		// The LLVM-only pipeline ends at IR emission. In particular, do not
-		// enter genssa: it consumes native register-allocation state and
-		// emits the _go_.o member that llc is replacing.
-		ssa.LLVMCompile(f)
+		// enter genssa: ssa.Compile has already emitted LLVM IR, while genssa
+		// consumes native register-allocation state and emits the _go_.o
+		// member that llc is replacing.
 		return
 	}
 	// Note: check arg size to fix issue 25507.

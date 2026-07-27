@@ -6,6 +6,14 @@
 
 package codegen
 
+// LLVM-DAG: define goabiinternal { i64, i8 } @codegen.div_ndivis6_int64
+// LLVM-DAG: sdiv i64
+// LLVM-DAG: srem i64
+// LLVM-DAG: udiv i64
+// LLVM-DAG: urem i64
+// LLVM-DAG: .overflow = and i1
+// LLVM-DAG: "go_results_tuple"
+
 // Div and mod rewrites, testing cmd/compile/internal/ssa/_gen/divmod.rules.
 // See comments there for "Case 1" etc.
 

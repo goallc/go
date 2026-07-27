@@ -273,47 +273,39 @@ LLVM 主题分支已经实现：
 
 ## 5. 尚未完成或存在风险的部分
 
-### 5.1 Go SSA path 仍是 sidecar prototype
+### 5.1 Go SSA path 仍是受限原型
 
-- `-enablellvm` 不会替换原生 backend；
-- 编译器仍生成原生 Go machine code；
-- LLVM module 只写为 `.ll`；
-- `compileFunctions` 中的 assemble 阶段仍是 TODO；
-- 没有把 LLVM GoObj 自动加入当前 package archive；
-- 没有在 Go branch 中增加 lowering regression tests。
+- 单独使用 `-enablellvm` 时仍会继续运行原生 backend，并额外写出 `.ll`；
+- `-enablellvm -llvmironly` 可停止在 LLVM IR，由 `cmd/llvmtoolexec`
+  调用 `llc`、追加唯一的 `_go_.o` 并进入正常 Go linker；
+- 当前 wrapper 通常只选择简单的 `main` package，不能把完整标准库切换到
+  LLVM；
+- Go branch 已增加复用 `test/codegen` 和现有 `// run` 用例的黑白名单
+  回归机制，具体维护方式见
+  [doc/goallc-llvm-goobj.md](doc/goallc-llvm-goobj.md#回归测试机制)。
 
-### 5.2 Go lowering 尚未采用新的 Go ABI/GoObj 能力
+### 5.2 Go ABI/GoObj lowering 覆盖仍有限
 
-Go SSA 分支形成于 LLVM Go ABI 工作之前，目前：
-
-- 没有给函数设置 `goabiinternal` / `goabi0` calling convention；
-- 没有给 call instruction 设置相应 calling convention；
-- module 没有 target triple；
-- module 没有 target data layout；
-- 没有生成 GoObj package-path metadata、symbol flags 或 type metadata；
-- 没有把 Go liveness、stack maps、write barriers、defer/panic metadata
-  传给 LLVM。
-
-因此 personal Go lowering 输出不能直接被视为正确的 Go ABI LLVM IR。
+当前已为函数和 direct static call 设置 `goabiinternal` / `goabi0` calling
+convention，支持多返回值 tuple 属性，并在 module 中携带 GoObj target
+triple 和结构化 package 配置。尚未覆盖 closure/interface dispatch、完整
+tail-call 语义、Go liveness、精确 stack maps、write barriers、defer/panic
+metadata 和类型描述符生成。
 
 ### 5.3 lowering 正确性缺口
 
-当前源码中已经可以直接识别出以下原型级问题：
+当前源码中的主要限制为：
 
-- 未支持 SSA op 只打印 `skip value`，不会使编译失败；
-- verifier 错误被忽略；
-- `OpNilCheck` 没有生成 nil check；
-- `OpBitLen32/64` 暂时错误地当作 identity；
-- control-flow block 只处理 `Ret`、`If`、`Plain`；
-- type lowering 只覆盖有限的 primitive、pointer、function、struct、
-  string 和 slice；
-- type table 初始化中 `TUINT32` 重复、`TINT32` 缺失，并把一个
-  `TUINT8` entry 错写为 `i64`，显然需要在恢复开发前修正；
-- global context/module/type cache 的生命周期是 process-global；
-- call lowering 只按 LLVM type 拼函数签名，尚未实现 Go ABI、closure
-  context、interface dispatch、panic edge 和 tail-call 语义；
-- `runtime.memclrHasPointers` 直接替换为 `memset` 需要重新审计 GC/write
-  barrier 语义。
+- 未支持的 SSA op/type/block 会 fail fast；这能避免错误 IR 静默进入后续
+  pipeline，但也意味着一个文件中任一未支持函数都会阻止整个 package；
+- 每个函数结束后运行 LLVM verifier，module/context/type cache 仍是
+  process-global，因此 LLVM 模式强制 backend 并发为 1；
+- control flow、基础算术/比较/转换、聚合类型和 direct static call 已有
+  初步覆盖，memory、global address、closure/interface call 等仍不完整；
+- call lowering 已使用 Go ABI 信息，但尚未覆盖 closure context、
+  interface dispatch、panic edge 和完整 tail-call 语义；
+- GC/write barrier、pointer liveness、defer/panic 和类型描述符仍需独立
+  设计与验证。
 
 ### 5.4 GC、调试信息和完整兼容性
 

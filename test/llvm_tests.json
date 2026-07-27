@@ -1,0 +1,19 @@
+{
+  "codegen": {
+    "whitelist": {
+      "codegen/divmod.go": "integer division, remainder, overflow handling, and tuple ABI",
+      "codegen/logic.go": "integer logic and conditional control flow"
+    },
+    "blacklist": {
+      "codegen/*": "LLVM lowering support has not reached this complete source file yet"
+    }
+  },
+  "runtime": {
+    "whitelist": {
+      "helloworld.go": "basic main-to-runtime call and execution"
+    },
+    "blacklist": {
+      "*": "LLVM lowering or runtime ABI support has not reached this test yet"
+    }
+  }
+}
