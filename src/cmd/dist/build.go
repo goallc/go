@@ -68,8 +68,9 @@ var (
 )
 
 var (
-	goallcLLVMDir  string
-	goallcLLVMLink string
+	goallcLLVMDir     string
+	goallcLLVMLink    string
+	goallcLLVMVersion string
 )
 
 // The known architectures.
@@ -126,6 +127,10 @@ func xinit() {
 	goallcLLVMLink = os.Getenv("GOALLC_LLVM_LINK")
 	if goallcLLVMLink == "" {
 		goallcLLVMLink = "dynamic"
+	}
+	goallcLLVMVersion = os.Getenv("GOALLC_LLVM_VERSION")
+	if goallcLLVMVersion == "" {
+		goallcLLVMVersion = "23"
 	}
 
 	// Don't run just 'go' because the build infrastructure
@@ -1411,10 +1416,7 @@ func toolenv() []string {
 		// as the original build system.
 		env = append(env, "CGO_ENABLED=0")
 	}
-	goallcTags := "goallc,llvm23"
-	if goallcLLVMLink == "static" {
-		goallcTags += ",staticllvm"
-	}
+	goallcTags := "llvm" + goallcLLVMVersion + "," + goallcLLVMLink + "llvm"
 	goFlags = append(goFlags, "-tags="+goallcTags)
 	if isRelease || os.Getenv("GO_BUILDER_NAME") != "" {
 		// Add -trimpath for reproducible builds of releases.
@@ -1466,9 +1468,10 @@ func cmdbootstrap() {
 	flag.BoolVar(&noClean, "no-clean", noClean, "print deprecation warning")
 	flag.StringVar(&goallcLLVMDir, "llvm-dir", goallcLLVMDir, "LLVM payload directory (default $GOROOT/llvm)")
 	flag.StringVar(&goallcLLVMLink, "llvm-link", goallcLLVMLink, "LLVM link mode: dynamic or static")
+	flag.StringVar(&goallcLLVMVersion, "llvm-version", goallcLLVMVersion, "LLVM API version: 23")
 
 	xflagparse(0)
-	generateGoallcLLVMConfig()
+	configureGoallcLLVM()
 
 	if noClean {
 		xprintf("warning: --no-clean is deprecated and has no effect; use 'go install std cmd' instead\n")
@@ -1738,7 +1741,13 @@ func cmdbootstrap() {
 	}
 }
 
-func generateGoallcLLVMConfig() {
+func configureGoallcLLVM() {
+	if gohostos != "darwin" && gohostos != "linux" {
+		fatalf("GoALLC LLVM currently supports Darwin and Linux hosts, not %s", gohostos)
+	}
+	if goallcLLVMVersion != "23" {
+		fatalf("-llvm-version must be 23, not %q", goallcLLVMVersion)
+	}
 	switch goallcLLVMLink {
 	case "dynamic", "static":
 	default:
@@ -1751,17 +1760,68 @@ func generateGoallcLLVMConfig() {
 	}
 	goallcLLVMDir = filepath.Clean(absDir)
 
-	bindingDir := pathf("%s/src/cmd/vendor/github.com/goallc/go-llvm", goroot)
-	generator := pathf("%s/gen_llvm_config.sh", bindingDir)
-	output := pathf("%s/llvm_config_goallc_generated.go", bindingDir)
-	if _, err := os.Stat(generator); err != nil {
-		fatalf("GoALLC LLVM binding generator not found: %v", err)
+	for _, required := range []string{
+		pathf("%s/include/llvm-c", goallcLLVMDir),
+		pathf("%s/lib", goallcLLVMDir),
+		pathf("%s/bin/llvm-config", goallcLLVMDir),
+	} {
+		if _, err := os.Stat(required); err != nil {
+			fatalf("invalid LLVM payload %q: %v", goallcLLVMDir, err)
+		}
+	}
+	llvmConfig := pathf("%s/bin/llvm-config", goallcLLVMDir)
+	versionOutput, err := exec.Command(llvmConfig, "--version").Output()
+	if err != nil {
+		fatalf("running %s --version: %v", llvmConfig, err)
+	}
+	version := strings.TrimSpace(string(versionOutput))
+	if version != goallcLLVMVersion && !strings.HasPrefix(version, goallcLLVMVersion+".") {
+		fatalf("LLVM payload version is %q; -llvm-version requires %s", version, goallcLLVMVersion)
 	}
 
-	run(bindingDir, CheckExit|ShowOutput, "bash", generator,
-		"--llvm-dir", goallcLLVMDir,
-		"--link", goallcLLVMLink,
-		"--output", output)
+	var libraries []string
+	if goallcLLVMLink == "static" {
+		libraries = []string{pathf("%s/lib/libLLVMGoALLC.a", goallcLLVMDir)}
+	} else if gohostos == "darwin" {
+		libraries, _ = filepath.Glob(pathf("%s/lib/libLLVM*.dylib", goallcLLVMDir))
+	} else {
+		libraries, _ = filepath.Glob(pathf("%s/lib/libLLVM*.so*", goallcLLVMDir))
+	}
+	if len(libraries) == 0 {
+		fatalf("LLVM payload %q has no %s library", goallcLLVMDir, goallcLLVMLink)
+	}
+	for _, library := range libraries {
+		if _, err := os.Stat(library); err != nil {
+			fatalf("invalid LLVM library %q: %v", library, err)
+		}
+	}
+
+	bindingDir := pathf("%s/src/cmd/vendor/github.com/goallc/go-llvm", goroot)
+	link := pathf("%s/llvm", bindingDir)
+	if info, err := os.Lstat(link); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			fatalf("LLVM binding payload path %q exists and is not a symlink", link)
+		}
+		if target, err := os.Readlink(link); err == nil && target == goallcLLVMDir {
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		fatalf("examining LLVM binding payload path %q: %v", link, err)
+	}
+
+	temporaryLink := fmt.Sprintf("%s.tmp.%d", link, os.Getpid())
+	if _, err := os.Lstat(temporaryLink); err == nil {
+		fatalf("temporary LLVM binding payload path already exists: %s", temporaryLink)
+	} else if !os.IsNotExist(err) {
+		fatalf("examining temporary LLVM binding payload path %q: %v", temporaryLink, err)
+	}
+	if err := os.Symlink(goallcLLVMDir, temporaryLink); err != nil {
+		fatalf("creating LLVM binding payload symlink: %v", err)
+	}
+	if err := os.Rename(temporaryLink, link); err != nil {
+		os.Remove(temporaryLink)
+		fatalf("installing LLVM binding payload symlink: %v", err)
+	}
 }
 
 func wrapperPathFor(goos, goarch string) string {

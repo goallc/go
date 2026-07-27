@@ -5,6 +5,7 @@ package llvm
 #include <stdlib.h>
 */
 import "C"
+
 import (
 	"errors"
 	"unsafe"
@@ -22,13 +23,13 @@ func LLVMPrintModuleToFile(module Module, filename string) error {
 	return nil
 }
 
-func LLVMSetValueName2(value Value, name string)  {
+func LLVMSetValueName2(value Value, name string) {
 	namestr := C.CString(name)
 	defer C.free(unsafe.Pointer(namestr))
 	C.LLVMSetValueName2(value.C, namestr, C.size_t(len(name)))
 }
 
-func (c Context) PointerType(AddressSpace uint32) (t Type) {
-	t.C = C.LLVMPointerTypeInContext(c.C, C.unsigned(AddressSpace))
+func (c Context) PointerType(addressSpace uint32) (t Type) {
+	t.C = C.LLVMPointerTypeInContext(c.C, C.unsigned(addressSpace))
 	return
 }

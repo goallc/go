@@ -26,6 +26,7 @@ _testmain.go
 /goinstall.log
 /last-change
 /llvm/
+/src/cmd/vendor/github.com/goallc/go-llvm/llvm
 /misc/cgo/life/run.out
 /misc/cgo/stdio/run.out
 /misc/cgo/testso/main

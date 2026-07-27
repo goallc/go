@@ -66,6 +66,9 @@
 # GOALLC_LLVM_LINK: LLVM link mode, either dynamic (the default) or static.
 # It may instead be passed as -llvm-link on the make.bash command line.
 #
+# GOALLC_LLVM_VERSION: LLVM API version. Defaults to 23 and may instead be
+# passed as -llvm-version on the make.bash command line.
+#
 # GOBUILDTIMELOGFILE: If set, make.bash and all.bash write
 # timing information to this file. Useful for profiling where the
 # time goes when these scripts run.

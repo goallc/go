@@ -6,13 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file ensures that the LLVM libraries are built before using the
-// bindings.
+// This file makes selecting an LLVM API version and link mode mandatory.
 //
 //===----------------------------------------------------------------------===//
 
-//go:build !byollvm
-
 package llvm
 
-var _ run_build_sh
+var (
+	_ llvmVersionSelected
+	_ llvmLinkModeSelected
+)
