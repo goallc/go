@@ -77,7 +77,7 @@ Remote：
 - 由 `tinygo.org/x/go-llvm` 派生，module path 为
   `github.com/goallc/go-llvm`；
 - LLVM 23 基础兼容已进入 `master`；当前清理方案在 GoALLC PR #3 的
-  `codex/explicit-llvm-config` 分支审核，HEAD 为 `223f6a971614`；
+  `codex/explicit-llvm-config` 分支审核，HEAD 为 `f21ebd5`；
 - 本项目只支持 GoALLC 定制 LLVM，不再支持系统预安装 LLVM、
   `byollvm`，也不保留 LLVM 14--22 的兼容配置；
 - LLVM API 版本和链接模式是两个正交、必选的 build-tag 维度：
@@ -92,8 +92,11 @@ Remote：
 - 没有生成 Go 文件，没有 `LLVMROOT`，也不把路径塞进普通 cgo 的
   `CGO_CPPFLAGS`、`CGO_LDFLAGS` 或全局动态库环境；
 - `goallc_ext.go` 已从 Go vendor 私有补丁收回 binding 仓库。
+- 自动 CI 暂时只做源码格式检查，不再为每个 PR 从源码冷构建 LLVM；
+  项目发布预构建 LLVM payload 后，CI 将直接下载 artifact 并恢复动态、
+  静态两种 binding 测试。
 
-Go 仓库依赖当前 PR HEAD 的 pseudo-version：
+Go 仓库依赖 PR 中最后一个 binding 代码提交的 pseudo-version：
 `v0.0.0-20260727045305-223f6a971614`。
 
 ### 2.3 `llvm-project`
