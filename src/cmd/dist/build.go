@@ -67,7 +67,10 @@ var (
 	vflag int // verbosity
 )
 
-var goallcLLVMBuildTags string
+var (
+	goallcLLVMDir  string
+	goallcLLVMLink string
+)
 
 // The known architectures.
 var okgoarch = []string{
@@ -110,14 +113,20 @@ var okgoos = []string{
 
 // xinit handles initialization of the various global state, like goroot and goarch.
 func xinit() {
-	goallcLLVMBuildTags = os.Getenv("GOALLC_LLVM_BUILD_TAGS")
-
 	b := os.Getenv("GOROOT")
 	if b == "" {
 		fatalf("$GOROOT must be set")
 	}
 	goroot = filepath.Clean(b)
 	gorootBin = pathf("%s/bin", goroot)
+	goallcLLVMDir = os.Getenv("GOALLC_LLVM_DIR")
+	if goallcLLVMDir == "" {
+		goallcLLVMDir = pathf("%s/llvm", goroot)
+	}
+	goallcLLVMLink = os.Getenv("GOALLC_LLVM_LINK")
+	if goallcLLVMLink == "" {
+		goallcLLVMLink = "dynamic"
+	}
 
 	// Don't run just 'go' because the build infrastructure
 	// runs cmd/dist inside go/bin often, and on Windows
@@ -1402,9 +1411,11 @@ func toolenv() []string {
 		// as the original build system.
 		env = append(env, "CGO_ENABLED=0")
 	}
-	if goallcLLVMBuildTags != "" {
-		goFlags = append(goFlags, "-tags="+goallcLLVMBuildTags)
+	goallcTags := "goallc,llvm23"
+	if goallcLLVMLink == "static" {
+		goallcTags += ",staticllvm"
 	}
+	goFlags = append(goFlags, "-tags="+goallcTags)
 	if isRelease || os.Getenv("GO_BUILDER_NAME") != "" {
 		// Add -trimpath for reproducible builds of releases.
 		// Include builders so that -trimpath is well-tested ahead of releases.
@@ -1453,8 +1464,11 @@ func cmdbootstrap() {
 	flag.BoolVar(&force, "force", force, "build even if the port is marked as broken")
 	flag.BoolVar(&noBanner, "no-banner", noBanner, "do not print banner")
 	flag.BoolVar(&noClean, "no-clean", noClean, "print deprecation warning")
+	flag.StringVar(&goallcLLVMDir, "llvm-dir", goallcLLVMDir, "LLVM payload directory (default $GOROOT/llvm)")
+	flag.StringVar(&goallcLLVMLink, "llvm-link", goallcLLVMLink, "LLVM link mode: dynamic or static")
 
 	xflagparse(0)
+	generateGoallcLLVMConfig()
 
 	if noClean {
 		xprintf("warning: --no-clean is deprecated and has no effect; use 'go install std cmd' instead\n")
@@ -1722,6 +1736,32 @@ func cmdbootstrap() {
 	if !noBanner {
 		banner()
 	}
+}
+
+func generateGoallcLLVMConfig() {
+	switch goallcLLVMLink {
+	case "dynamic", "static":
+	default:
+		fatalf("-llvm-link must be dynamic or static, not %q", goallcLLVMLink)
+	}
+
+	absDir, err := filepath.Abs(goallcLLVMDir)
+	if err != nil {
+		fatalf("resolving -llvm-dir %q: %v", goallcLLVMDir, err)
+	}
+	goallcLLVMDir = filepath.Clean(absDir)
+
+	bindingDir := pathf("%s/src/cmd/vendor/github.com/goallc/go-llvm", goroot)
+	generator := pathf("%s/gen_llvm_config.sh", bindingDir)
+	output := pathf("%s/llvm_config_goallc_generated.go", bindingDir)
+	if _, err := os.Stat(generator); err != nil {
+		fatalf("GoALLC LLVM binding generator not found: %v", err)
+	}
+
+	run(bindingDir, CheckExit|ShowOutput, "bash", generator,
+		"--llvm-dir", goallcLLVMDir,
+		"--link", goallcLLVMLink,
+		"--output", output)
 }
 
 func wrapperPathFor(goos, goarch string) string {

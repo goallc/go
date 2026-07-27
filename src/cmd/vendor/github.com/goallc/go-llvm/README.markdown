@@ -13,9 +13,17 @@ build tag, for example `-tags=llvm17` to use LLVM 17. When using a manually
 built LLVM 22 or newer, combine the version and custom-build tags, for example
 `-tags="byollvm llvm23"`.
 
-The GoALLC in-tree static LLVM payload is selected explicitly with
-`-tags=staticllvm`. Add a version tag when the payload is not LLVM 23, for
-example `-tags="staticllvm llvm20"`.
+GoALLC uses an explicit LLVM payload directory instead of ambient cgo
+environment variables. Generate the project configuration with:
+
+    ./gen_llvm_config.sh --llvm-dir /path/to/llvm --link dynamic
+
+The directory must contain `bin/llvm-config`, `include/llvm-c`, and `lib`.
+`--link` accepts `dynamic` (the default) or `static`; both modes use the same
+directory layout. The generated file is selected by the `goallc` build tag.
+Static mode uses `llvm-config` to select the LLVM archives and their system
+libraries, including correct archive grouping on Linux and dependency ordering
+on macOS.
 
 ## Usage
 

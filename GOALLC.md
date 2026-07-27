@@ -77,24 +77,31 @@ Remote：
 - 上游：`tinygo-org/go-llvm` 的 `main`
 - LLVM 23 集成通过 GoALLC PR #2 进入 `master`
 - 合并后的 `master` 提交为 `7467f945baac`
+- 显式 LLVM payload 配置通过 GoALLC PR #3 提交审核，当前提交为
+  `c9f95165b560`
 - Go 仓库依赖版本为
-  `v0.0.0-20260726171243-7467f945baac`
+  `v0.0.0-20260727005509-c9f95165b560`
 - 以 TinyGo 上游 `185673e` 为基础，重放 GoALLC 的 module path 和静态
   链接改动
 - 由 `tinygo.org/x/go-llvm` 派生
 - 上游代码已经支持 LLVM 14--22；本轮为 LLVM 23 增加相同的版本选择和
   系统安装配置
 - 本项目把 module path 改成 `github.com/goallc/go-llvm`
-- 无版本 build tag 时默认选择 LLVM 23；项目内静态 payload 改为显式
-  `staticllvm` build tag
+- 无版本 build tag 时默认选择 LLVM 23；GoALLC 构建由 binding 直接生成
+  项目专用 cgo 配置，不再依赖 overlay 或外部 `CGO_*` 参数
+- 动态和静态模式使用同一个 LLVM payload 根目录布局：
+  `bin/llvm-config`、`include/llvm-c` 和 `lib`
+- 默认动态链接；静态模式由 binding 通过 `llvm-config` 选择完整的 LLVM
+  archive 依赖，Linux 使用 archive group，macOS 使用依赖顺序
 - Linux 使用 apt.llvm.org 的 LLVM 23 当前快照 suite；Homebrew 当前仍以
   LLVM 22 为未版本化公式，因此 macOS 的 LLVM 23 验证使用本地源码构建
 - Go 仓库中的 vendored binding 已同步上述更新
 - personal lowering 分支额外增加了 `goallc_ext.go`，包装
   `LLVMPrintModuleToFile`、`LLVMSetValueName2` 和 opaque pointer type
 
-当前 `go-llvm/llvm/` 只包含 4 个 `.gitignore`，没有实际 LLVM headers、
-libraries 或 binaries。默认静态构建因此不是开箱即用的。
+standalone binding 可用 `gen_llvm_config.sh --llvm-dir DIR
+--link dynamic|static` 生成相同配置。生成文件由 `goallc` build tag 选择，
+并被版本控制忽略。
 
 ### 2.3 `llvm-project`
 
@@ -323,8 +330,10 @@ Go SSA 分支形成于 LLVM Go ABI 工作之前，目前：
 - bootstrap Go：Go 1.26.5；
 - vendored/standalone binding：LLVM 23 为默认版本；
 - LLVM source/build：23.1.0git；
-- 本轮通过 `byollvm,llvm23` build tags、显式 include/library 路径和
-  `libLLVM` 共享库直接使用 LLVM build tree。
+- LLVM payload 默认位于 `$GOROOT/llvm`，也可用 `-llvm-dir` 或专用环境
+  变量 `GOALLC_LLVM_DIR` 指定；
+- 默认通过 payload 中的 `libLLVM` 动态链接；`-llvm-link=static` 或
+  `GOALLC_LLVM_LINK=static` 选择静态 LLVM archives。
 
 当前 LLVM 由 macOS 26 SDK 构建，而 Go 1.27 工具链默认链接目标为 macOS
 16，因此链接时会产生 deployment-target 警告。构建和 smoke test
@@ -332,9 +341,10 @@ Go SSA 分支形成于 LLVM Go ABI 工作之前，目前：
 
 `cmd/dist` 还用一个恒为 true 的 `buildGoallc` 强制所有工具走 external
 link。这是早期 bring-up 手段，后续应缩小到真正依赖 LLVM 的 compiler
-阶段和受支持平台。本轮新增 `GOALLC_LLVM_BUILD_TAGS`，因为 `cmd/dist`
-会清空调用者的 `GOFLAGS`；它只把指定 tags 注入 toolchain2/3，bootstrap
-仍使用 `compiler_bootstrap` stub。
+阶段和受支持平台。`cmd/dist` 现在自行注入 `goallc,llvm23` tags，静态
+模式额外注入 `staticllvm`；bootstrap 仍使用 `compiler_bootstrap` stub。
+LLVM 的 include 和 link 参数只存在于 binding 生成的 cgo 配置中，不与
+普通 cgo 构建的外部环境变量混用。
 
 ## 6. 当前验证状态
 
@@ -352,12 +362,13 @@ link。这是早期 bring-up 手段，后续应缩小到真正依赖 LLVM 的 co
   LLVM 22；
 - 在上游 `185673e` 上重放 GoALLC 改动，并补齐 LLVM 23 的 branch opcode、
   branch type query、build tags 和 config；
-- standalone `go-llvm` 使用新 LLVM 23 头文件和共享库，在显式
-  `byollvm,llvm23` 和默认无版本标签两种模式下完成全测试；
+- standalone `go-llvm` 通过项目生成配置，在不设置外部 `CGO_*` 参数的
+  情况下完成 LLVM 23 动态与静态两种模式的全测试；
 - GoALLC PR #2 CI 通过 Linux LLVM 14--23、Fedora LLVM 19--21 和
   macOS LLVM 14--22；Linux LLVM 23 同时验证默认无版本标签模式；
 - 更新后的 binding 已同步到 Go vendor，并保留 `goallc_ext.go`；
-- Go 三阶段工具链集成构建成功，`bin/go version` 为
+- Go 三阶段工具链在默认动态模式和 `-llvm-link=static` 模式下均构建
+  成功，`bin/go version` 为
   `go1.27rc2 darwin/arm64`，`compile -h` 包含 `-enablellvm`；
 - `go test cmd/dist`、`go test cmd/compile/internal/ssa cmd/objview` 通过；
 - 最小 `Add(int64, int64)` 包经 `compile -enablellvm` 同时生成 Go archive
@@ -453,35 +464,41 @@ cmake -S llvm -B llvm/cmake-build-debug -G Ninja \
 ninja -C llvm/cmake-build-debug -j6
 ```
 
-在 macOS 上用 build tree 配置 cgo：
+准备统一的 LLVM payload 布局：
 
 ```sh
-goallc_llvm_build=/Volumes/Disk1/00.Work/00.Code/goallc/llvm-project/llvm/cmake-build-debug
-export CGO_CPPFLAGS="-I$goallc_llvm_build/include -I$goallc_llvm_build/../include"
-export CGO_CXXFLAGS="-std=c++17"
-export CGO_LDFLAGS="-L$goallc_llvm_build/lib -Wl,-rpath,$goallc_llvm_build/lib -lLLVM -L/opt/homebrew/lib -lz -lzstd -lxml2 -lm"
+$GOROOT/llvm/bin/llvm-config
+$GOROOT/llvm/include/llvm-c/Core.h
+$GOROOT/llvm/lib/libLLVM.dylib       # dynamic
+$GOROOT/llvm/lib/libLLVMCore.a       # static
 ```
 
 不要把 LLVM build 目录全局写入 `DYLD_LIBRARY_PATH`；这会让 Homebrew 的
 clang 等 LLVM 工具误加载该开发版共享库。`cmd/compile` 的链接命令已经写入
-build-tree rpath。
+payload rpath。
 
 验证 standalone binding：
 
 ```sh
 cd /Volumes/Disk1/00.Work/00.Code/goallc/go-llvm
-GOCACHE=/private/tmp/goallc-gocache \
-  go test -tags='byollvm llvm23' ./...
+./gen_llvm_config.sh \
+  --llvm-dir /Volumes/Disk1/00.Work/00.Code/goallc/go/llvm \
+  --link dynamic
+go test -tags='goallc llvm23' ./...
+
+./gen_llvm_config.sh \
+  --llvm-dir /Volumes/Disk1/00.Work/00.Code/goallc/go/llvm \
+  --link static
+go test -tags='goallc llvm23 staticllvm' ./...
 ```
 
 构建 Go 集成工具链：
 
 ```sh
 cd /Volumes/Disk1/00.Work/00.Code/goallc/go/src
-GOROOT_BOOTSTRAP=/opt/homebrew/Cellar/go/1.26.5/libexec \
-GOCACHE=/private/tmp/goallc-toolchain-gocache \
-GOALLC_LLVM_BUILD_TAGS=byollvm,llvm23 \
-  ./make.bash
+./make.bash
+./make.bash -llvm-dir=/path/to/llvm -llvm-link=dynamic
+./make.bash -llvm-dir=/path/to/llvm -llvm-link=static
 ```
 
 最小 IR smoke test：
