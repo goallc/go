@@ -1751,9 +1751,14 @@ func configureGoallcLLVM() {
 	}
 	goallcLLVMDir = filepath.Clean(absDir)
 
+	pluginSuffix := ".so"
+	if gohostos == "darwin" {
+		pluginSuffix = ".dylib"
+	}
 	for _, required := range []string{
 		pathf("%s/include/llvm-c", goallcLLVMDir),
 		pathf("%s/lib", goallcLLVMDir),
+		pathf("%s/lib/GoALLCStatepoints%s", goallcLLVMDir, pluginSuffix),
 		pathf("%s/bin/llvm-config", goallcLLVMDir),
 	} {
 		if _, err := os.Stat(required); err != nil {

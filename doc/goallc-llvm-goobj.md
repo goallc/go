@@ -14,7 +14,8 @@ go build -toolexec=llvmtoolexec
   -> llvmtoolexec 拦截选中的 compile 调用
   -> compile -enablellvm -llvmironly
        -> __.PKGDEF + <archive>.ll
-  -> llc -filetype=obj <archive>.ll
+  -> llc -load-pass-plugin=<GoALLCStatepoints> -filetype=obj <archive>.ll
+       -> Go 仓库维护的 pre-codegen pipeline
        -> LLVM GoObj
   -> cmd/internal/archive 将 GoObj 追加为 _go_.o
   -> cmd/link 读取 __.PKGDEF 和 _go_.o
@@ -225,7 +226,10 @@ header。`llc` 在建立 code-generation pipeline 前读取并严格校验这些
 `cmd/llvmtoolexec` 只处理 `compile`，其余 Go tool 调用原样透传。它：
 
 1. 为选中的 compile 调用增加 `-enablellvm -llvmironly`；
-2. 调用 `llc -filetype=obj`，不传递或重建 GoObj header 配置；
+2. 调用
+   `llc -load-pass-plugin=<GoALLCStatepoints> -filetype=obj`；插件的
+   pre-codegen callback 是当前外部链路与未来 compiler 进程内 LLVM
+   集成共用的 pass pipeline 入口，wrapper 不在命令行中重建 pipeline；
 3. 使用 `cmd/internal/archive` 打开 compiler archive，并将对象以 `_go_.o`
    追加进去；
 4. 默认删除 IR 和临时 object，`-keep-ir` 可保留 IR 供检查。
@@ -237,6 +241,43 @@ header。使用 Go 自己的 archive writer 可保证 `__.PKGDEF` 保持第一�
 可用 `-package` 或环境变量 `GOALLC_LLVM_PACKAGE` 限定 import path；未设置时
 所有 `compile` 调用都会走这条实验链路。`-llc` 或 `GOALLC_LLC` 必须指向带有
 GoObj metadata 支持的 GoALLC LLVM 构建。
+
+pass plugin 默认从 `llc` 所属 LLVM payload 的
+`lib/GoALLCStatepoints.{dylib,so}` 查找。也可使用 `-pass-plugin` 或
+`GOALLC_PASS_PLUGIN` 指定精确路径。wrapper 对选中的 compile 强制加载插件；
+插件缺失时在运行 compiler 前 fail fast，不能静默绕过 pre-codegen pipeline。
+插件必须来自与 `llc` 相同的 LLVM checkout/payload，不能只按 LLVM major
+版本混用。`cmd/dist` 在配置 LLVM payload 时也会检查这个插件，避免生成一个
+能够构建 compiler、但运行 `llvmtoolexec` 时才发现缺少 pre-codegen pipeline
+的工具链。
+
+插件的功能性源码和测试位于 Go 仓库
+`src/cmd/llvmplugin`，不放入 LLVM 源码树。LLVM 只提供通用的
+`-load-pass-plugin` 和 pre-codegen callback；GoALLC statepoint rewrite 及其
+pass 顺序都应继续在这个 Go-owned 工程中实现。当前
+`runPreCodeGenPipeline` 是刻意保留的 no-op 接口，本阶段测试只验证外部插件
+能够被所选 `llc` 加载并在 codegen 前收到 module。未来 compile 进程内集成
+LLVM 时直接复用该 core 入口，不经过 plugin adapter。
+
+在构建 Go toolchain 前，使用同一个 LLVM payload 的 CMake config 构建、
+测试并安装插件：
+
+```sh
+LLVM_PAYLOAD=/path/to/goallc-llvm
+PLUGIN_BUILD=/path/to/empty/plugin-build
+
+cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
+  -DLLVM_DIR="$LLVM_PAYLOAD/lib/cmake/llvm" \
+  -DCMAKE_INSTALL_PREFIX="$LLVM_PAYLOAD"
+cmake --build "$PLUGIN_BUILD"
+ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
+cmake --install "$PLUGIN_BUILD"
+```
+
+安装结果为 Darwin 上的
+`$LLVM_PAYLOAD/lib/GoALLCStatepoints.dylib` 或 Linux 上的
+`$LLVM_PAYLOAD/lib/GoALLCStatepoints.so`。不要用其他 LLVM 安装构建后再复制
+产物；pass plugin 的 C++ ABI 必须和负责加载它的 `llc` 精确匹配。
 
 ## 最小使用方式
 

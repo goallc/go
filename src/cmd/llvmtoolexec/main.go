@@ -16,13 +16,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 var (
-	llcPath     = flag.String("llc", os.Getenv("GOALLC_LLC"), "path to llc")
-	keepIR      = flag.Bool("keep-ir", false, "keep the compiler-generated .ll sidecar")
-	packageOnly = flag.String("package", os.Getenv("GOALLC_LLVM_PACKAGE"), "only replace this Go import path")
+	llcPath        = flag.String("llc", os.Getenv("GOALLC_LLC"), "path to llc")
+	passPluginPath = flag.String("pass-plugin", os.Getenv("GOALLC_PASS_PLUGIN"), "path to the GoALLC LLVM pass plugin (default next to llc)")
+	keepIR         = flag.Bool("keep-ir", false, "keep the compiler-generated .ll sidecar")
+	packageOnly    = flag.String("package", os.Getenv("GOALLC_LLVM_PACKAGE"), "only replace this Go import path")
 )
 
 func main() {
@@ -38,6 +40,10 @@ func main() {
 	}
 	if *llcPath == "" {
 		fatalf("missing llc path: pass -llc or set GOALLC_LLC")
+	}
+	pluginPath, err := resolvePassPlugin(*llcPath, *passPluginPath)
+	if err != nil {
+		fatalf("%v", err)
 	}
 
 	output, ok := toolFlag(args, "-o")
@@ -55,6 +61,7 @@ func main() {
 	}
 	objPath := filepath.Join(filepath.Dir(output), "llvm-goobj.o")
 	llcArgs := []string{
+		"-load-pass-plugin=" + pluginPath,
 		"-filetype=obj",
 		irPath,
 		"-o", objPath,
@@ -71,6 +78,69 @@ func main() {
 			fatalf("remove %s: %v", irPath, err)
 		}
 	}
+}
+
+func resolvePassPlugin(llc, configured string) (string, error) {
+	if configured != "" {
+		path, err := filepath.Abs(configured)
+		if err != nil {
+			return "", fmt.Errorf("resolving pass plugin %q: %w", configured, err)
+		}
+		if err := requireRegularFile(path); err != nil {
+			return "", fmt.Errorf("invalid pass plugin %q: %w", path, err)
+		}
+		return path, nil
+	}
+
+	llcPath, err := exec.LookPath(llc)
+	if err != nil {
+		return "", fmt.Errorf("resolving llc %q to locate its pass plugin: %w", llc, err)
+	}
+	llcPath, err = filepath.Abs(llcPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving llc %q to locate its pass plugin: %w", llc, err)
+	}
+
+	filename, err := passPluginFilename()
+	if err != nil {
+		return "", err
+	}
+	llcPaths := []string{llcPath}
+	if resolved, err := filepath.EvalSymlinks(llcPath); err == nil && resolved != llcPath {
+		llcPaths = append(llcPaths, resolved)
+	}
+	for _, path := range llcPaths {
+		root := filepath.Dir(filepath.Dir(path))
+		for _, libdir := range []string{"lib", "lib64"} {
+			plugin := filepath.Join(root, libdir, filename)
+			if requireRegularFile(plugin) == nil {
+				return plugin, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("GoALLC pass plugin not found next to llc %q; pass -pass-plugin or set GOALLC_PASS_PLUGIN", llcPath)
+}
+
+func passPluginFilename() (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return "GoALLCStatepoints.dylib", nil
+	case "linux":
+		return "GoALLCStatepoints.so", nil
+	default:
+		return "", fmt.Errorf("GoALLC pass plugins are unsupported on %s", runtime.GOOS)
+	}
+}
+
+func requireRegularFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file")
+	}
+	return nil
 }
 
 // appendArchiveMember uses the Go toolchain's archive writer. Unlike BSD ar,

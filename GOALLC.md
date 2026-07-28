@@ -469,11 +469,33 @@ $GOROOT/llvm/bin/llvm-ar
 $GOROOT/llvm/include/llvm-c/Core.h
 $GOROOT/llvm/lib/libLLVM.dylib       # dynamic
 $GOROOT/llvm/lib/libLLVM*.a          # static component archives
+$GOROOT/llvm/lib/GoALLCStatepoints.dylib  # Darwin pass plugin
+# Linux 对应 lib/GoALLCStatepoints.so
 ```
 
 不要把 LLVM build 目录全局写入 `DYLD_LIBRARY_PATH`；这会让 Homebrew 的
 clang 等 LLVM 工具误加载该开发版共享库。`cmd/compile` 的链接命令已经写入
 payload rpath。
+
+GoALLC 的功能性 pass 源码位于 Go 仓库 `src/cmd/llvmplugin`，不放入 LLVM
+源码树。LLVM 只保留通用的 `llc -load-pass-plugin` 和 pre-codegen callback
+机制。准备 LLVM payload 后、运行 `make.bash` 前，必须用该 payload 自己的
+CMake config 构建并安装插件：
+
+```sh
+LLVM_PAYLOAD=/path/to/llvm
+PLUGIN_BUILD=/path/to/empty/plugin-build
+cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
+  -DLLVM_DIR="$LLVM_PAYLOAD/lib/cmake/llvm" \
+  -DCMAKE_INSTALL_PREFIX="$LLVM_PAYLOAD"
+cmake --build "$PLUGIN_BUILD"
+ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
+cmake --install "$PLUGIN_BUILD"
+```
+
+当前插件 core 是 no-op，只建立稳定的 pre-codegen 接口和独立构建边界。
+后续 statepoint rewrite 放在 Go 仓库中实现；未来 `cmd/compile` 通过 API
+进程内集成 LLVM 时复用同一 core，而不依赖 `llc` plugin adapter。
 
 验证 standalone binding：
 
