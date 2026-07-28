@@ -7,6 +7,10 @@ package main
 import (
 	"bytes"
 	"cmd/internal/archive"
+	"cmd/internal/disasm"
+	"cmd/internal/goobj"
+	"cmd/internal/objfile"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"os"
@@ -206,6 +210,94 @@ func TestCanonicalArchiveMemberKinds(t *testing.T) {
 		if !kinds[kind] {
 			t.Errorf("archive has no %s member", kind)
 		}
+	}
+}
+
+func TestLLVMGoObject(t *testing.T) {
+	encoded, err := os.ReadFile(filepath.Join("testdata", "multiple-calls.goobj.base64"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encoded)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "multiple-calls.goobj")
+	if err := os.WriteFile(path, data, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	// The canonical parser owns LLVM-emitted PC metadata in the non-package
+	// definition class. It must not depend on cmd/internal/objfile accepting
+	// this GoALLC-specific representation.
+	doc, err := parseCanonicalFile(path)
+	if err != nil {
+		t.Fatalf("canonical parse: %v", err)
+	}
+	object := onlyGoObject(t, doc)
+	fn := findSymbol(t, object, "different_pointer_sets_across_calls")
+	if fn.Function == nil {
+		t.Fatal("LLVM text symbol has no decoded function metadata")
+	}
+	for _, kind := range []string{"pcfile", "pcline"} {
+		table := findPCTable(fn.Function.PCTables, kind)
+		if table == nil || table.Error != "" || len(table.Ranges) == 0 {
+			t.Fatalf("LLVM %s table was not decoded: %+v", kind, table)
+		}
+	}
+	pcfile := findPCTable(fn.Function.PCTables, "pcfile")
+	if pcfile.Ranges[0].File != "llvm-ir" {
+		t.Fatalf("LLVM pcfile range = %+v, want llvm-ir", pcfile.Ranges[0])
+	}
+	references := make(map[string]bool)
+	for _, ref := range object.References {
+		references[ref.Name] = true
+	}
+	for _, name := range []string{"first_callee", "second_callee", "runtime.morestack_noctxt"} {
+		if !references[name] {
+			t.Errorf("LLVM object has no reference to %q", name)
+		}
+	}
+
+	// Legacy human output is best-effort. Upstream objfile currently cannot
+	// line-map these non-package PC metadata symbols, so objview must recover
+	// and show raw code instead of changing objfile or panicking.
+	objectFile, err := objfile.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer objectFile.Close()
+	d, err := disasm.DisasmForFile(objectFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	a, err := archive.Parse(f, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := a.Entries[0]
+	objectData := make([]byte, entry.Obj.Size)
+	if _, err := f.ReadAt(objectData, entry.Obj.Offset); err != nil {
+		t.Fatal(err)
+	}
+	r := goobj.NewReaderFromBytes(objectData, false)
+	if r == nil {
+		t.Fatal("invalid Go object reader")
+	}
+	var header goobj.Header
+	if err := header.Read(r); err != nil {
+		t.Fatal(err)
+	}
+	sym := r.Sym(0)
+	text := extractSymData(r, 0, sym, "", d, header.Offsets[goobj.BlkData])
+	if !strings.Contains(text, "disassembly unavailable") ||
+		!strings.Contains(text, "code=") {
+		t.Fatalf("human output did not fall back to raw code:\n%s", text)
 	}
 }
 

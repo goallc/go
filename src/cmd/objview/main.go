@@ -470,9 +470,12 @@ func extractSymData(r *goobj.Reader, i uint32, sym *goobj.Sym, content string, d
 		b := r.Data(i)
 		content = tryAux(sym, content, i, b)
 	case objabi.STEXT:
-		var sb strings.Builder
-		dis.Print(&sb, nil, uint64(offset), uint64(offset)+uint64(sym.Siz()), false, false)
-		content += fmt.Sprintf("%v %v\n", i, sb.String())
+		text, err := disassembleText(dis, uint64(offset), uint64(offset)+uint64(sym.Siz()))
+		if err != nil {
+			content += fmt.Sprintf("%v disassembly unavailable: %v; code=%x\n", i, err, r.Data(i))
+		} else {
+			content += fmt.Sprintf("%v %v\n", i, text)
+		}
 	case objabi.Sxxx:
 	case objabi.SBSS:
 	case objabi.SNOPTRBSS:
@@ -497,6 +500,21 @@ func extractSymData(r *goobj.Reader, i uint32, sym *goobj.Sym, content string, d
 	case objabi.SSEHUNWINDINFO:
 	}
 	return content
+}
+
+func disassembleText(dis *disasm.Disasm, start, end uint64) (text string, err error) {
+	if dis == nil {
+		return "", fmt.Errorf("disassembler is unavailable")
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			text = ""
+			err = fmt.Errorf("%v", p)
+		}
+	}()
+	var out strings.Builder
+	dis.Print(&out, nil, start, end, false, false)
+	return out.String(), nil
 }
 
 type stackObjectRecord struct {
