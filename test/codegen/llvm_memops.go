@@ -1,0 +1,60 @@
+// asmcheck
+
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package codegen
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmZeroByte(
+// LLVM-DAG: store [1 x i8] zeroinitializer, ptr %dst, align 1
+func llvmZeroByte(dst *[1]byte) {
+	*dst = [1]byte{}
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmZeroBytes(
+// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 1 %dst, i8 0, i64 24, i1 false)
+func llvmZeroBytes(dst *[24]byte) {
+	*dst = [24]byte{}
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmZeroAligned(
+// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 8 %dst, i8 0, i64 24, i1 false)
+func llvmZeroAligned(dst *[3]uint64) {
+	*dst = [3]uint64{}
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmMoveOverlapSized(
+// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
+func llvmMoveOverlapSized(dst, src *[32]byte) {
+	*dst = *src
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmMoveAligned(
+// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 8 %dst, ptr align 8 %src, i64 24, i1 false)
+func llvmMoveAligned(dst, src *[3]uint64) {
+	*dst = *src
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmMoveLarge(
+// LLVM-DAG: call goabiinternal void @runtime.memmove(ptr %dst, ptr {{%.*}}, i64 128) #{{[0-9]+}}
+// LLVM-DAG: declare goabiinternal void @runtime.memmove(ptr, ptr, i64) #{{[0-9]+}}
+func llvmMoveLarge(dst *[128]byte, src [128]byte) {
+	*dst = src
+}
+
+// LLVM-DAG: define goabiinternal i8 @codegen.llvmMemEq(
+// LLVM-DAG: call goabiinternal i8 @runtime.memequal(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}}) #{{[0-9]+}}
+// LLVM-DAG: declare goabiinternal i8 @runtime.memequal(ptr, ptr, i64) #{{[0-9]+}}
+func llvmMemEq(a, b string) bool {
+	return a == b
+}
+
+// LLVM-DAG: define goabiinternal { ptr, i64, i64 } @codegen.llvmSlicemask(
+// LLVM-DAG: {{%.*}} = sub i64 0, {{%.*}}
+// LLVM-DAG: {{%.*}} = ashr i64 {{%.*}}, 63
+func llvmSlicemask(a []byte, i int) []byte {
+	return a[i:]
+}
+
+// LLVM-DAG: attributes #{{[0-9]+}} = { "gc-leaf-function" }

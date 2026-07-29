@@ -78,6 +78,8 @@ func runLLVMTests(t *testing.T, common testCommon) {
 				})
 			}
 		})
+
+		t.Run("fail-closed", runLLVMMemoryOpFailClosedTests)
 	})
 }
 
@@ -285,6 +287,54 @@ func runLLVMCodegenTest(t *testing.T, gorootTestDir, name string) {
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("optimized LLVM FileCheck failed: %v\n%s", err, out)
+	}
+}
+
+func runLLVMMemoryOpFailClosedTests(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "ZeroWithPointers",
+			source: "package p\nfunc zero(dst *[2]*int) { *dst = [2]*int{} }\n",
+			want:   "Zero of pointer-containing type [2]*int requires write-barrier lowering before LLVM",
+		},
+		{
+			name:   "MoveWithPointers",
+			source: "package p\nfunc move(dst, src *[2]*int) { *dst = *src }\n",
+			want:   "Move of pointer-containing type [2]*int requires write-barrier lowering before LLVM",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "fail.go")
+			if err := os.WriteFile(source, []byte(tc.source), 0o666); err != nil {
+				t.Fatal(err)
+			}
+			archive := filepath.Join(dir, "fail.a")
+			cmd := exec.Command(goTool, "tool", "compile",
+				"-p=p",
+				"-importcfg="+stdlibImportcfgFile(),
+				"-enablellvm",
+				"-llvmironly",
+				"-o", archive,
+				source,
+			)
+			cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("LLVM compilation unexpectedly succeeded")
+			}
+			if !bytes.Contains(out, []byte(tc.want)) {
+				t.Fatalf("LLVM compilation error does not contain %q:\n%s", tc.want, out)
+			}
+			if _, err := os.Stat(archive + ".ll"); !os.IsNotExist(err) {
+				t.Fatalf("failed LLVM compilation left IR output: %v", err)
+			}
+		})
 	}
 }
 

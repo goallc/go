@@ -48,9 +48,16 @@ const goABIInternalCallConv llvm.CallConv = 22
 const goABI0CallConv llvm.CallConv = 23
 const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
+const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
+
+// Keep fixed-size memmoves within the store expansion limits of the supported
+// LLVM targets. Larger moves must use runtime.memmove rather than a libc symbol,
+// which the GoObj pipeline cannot resolve.
+const llvmInlineMemmoveLimit = 64
+const llvmAttributeFunctionIndex = -1
 
 type llvmFuncSignature struct {
 	Type                llvm.Type
@@ -168,6 +175,176 @@ func getOrInsertLLVMFunction(name string, sig llvmFuncSignature, cc llvm.CallCon
 	}
 	configureLLVMFunction(fn, sig, cc)
 	return fn
+}
+
+func getOrInsertLLVMIntrinsic(name string, typ llvm.Type) llvm.Value {
+	fn := CurrentModule.NamedFunction(name)
+	if fn.IsNil() {
+		return llvm.AddFunction(CurrentModule, name, typ)
+	}
+	if got := fn.GlobalValueType(); got != typ {
+		base.Fatalf("conflicting LLVM intrinsic type for %s", name)
+	}
+	return fn
+}
+
+func markLLVMGCLeaf(fn, call llvm.Value) {
+	attr := GlobalCtxt.CreateStringAttribute(goGCLeafFunctionAttr, "")
+	fn.AddFunctionAttr(attr)
+	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, attr)
+}
+
+func llvmMemoryOpInfo(v *Value) (int64, int) {
+	t, ok := v.Aux.(*types.Type)
+	if !ok || t == nil {
+		v.Fatalf("%s has no memory type", v.Op)
+	}
+	if t.HasPointers() {
+		v.Fatalf("%s of pointer-containing type %v requires write-barrier lowering before LLVM", v.Op, t)
+	}
+	size := auxIntToInt64(v.AuxInt)
+	if size < 0 {
+		v.Fatalf("%s has negative size %d", v.Op, size)
+	}
+	align := t.Alignment()
+	if align <= 0 || align&(align-1) != 0 {
+		v.Fatalf("%s has invalid alignment %d for %v", v.Op, align, t)
+	}
+	return size, int(align)
+}
+
+func (lfc *LLVMFuncContext) llvmMemoryLength(v *Value, size int64) llvm.Value {
+	t := getLLVMType(types.Types[types.TUINTPTR])
+	bits := t.IntTypeWidth()
+	if bits != 32 && bits != 64 {
+		v.Fatalf("%s has unsupported uintptr width %d", v.Op, bits)
+	}
+	if bits == 32 && uint64(size) > uint64(^uint32(0)) {
+		v.Fatalf("%s size %d overflows uintptr", v.Op, size)
+	}
+	return llvm.ConstInt(t, uint64(size), false)
+}
+
+func (lfc *LLVMFuncContext) llvmMemoryPointer(v *Value, arg int) llvm.Value {
+	p := lfc.GenLV(v.Args[arg])
+	if p.Type().TypeKind() != llvm.PointerTypeKind {
+		v.Fatalf("%s argument %d has non-pointer LLVM type", v.Op, arg)
+	}
+	return p
+}
+
+func (lfc *LLVMFuncContext) llvmZero(v *Value) llvm.Value {
+	size, align := llvmMemoryOpInfo(v)
+	dst := lfc.llvmMemoryPointer(v, 0)
+	length := lfc.llvmMemoryLength(v, size)
+	sig := llvm.FunctionType(
+		GlobalCtxt.VoidType(),
+		[]llvm.Type{dst.Type(), GlobalCtxt.Int8Type(), length.Type(), GlobalCtxt.Int1Type()},
+		false,
+	)
+	name := "llvm.memset.inline.p0.i64"
+	if length.Type().IntTypeWidth() == 32 {
+		name = "llvm.memset.inline.p0.i32"
+	}
+	fn := getOrInsertLLVMIntrinsic(name, sig)
+	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
+		dst,
+		llvm.ConstInt(GlobalCtxt.Int8Type(), 0, false),
+		length,
+		llvm.ConstInt(GlobalCtxt.Int1Type(), 0, false),
+	}, "")
+	call.SetInstrParamAlignment(1, align)
+	return call
+}
+
+func (lfc *LLVMFuncContext) llvmRuntimeMemmove(dst, src, length llvm.Value) llvm.Value {
+	sig := llvmFuncSignature{
+		Type: llvm.FunctionType(
+			GlobalCtxt.VoidType(),
+			[]llvm.Type{dst.Type(), src.Type(), length.Type()},
+			false,
+		),
+		ReturnType:          GlobalCtxt.VoidType(),
+		ClosureContextIndex: -1,
+	}
+	fn := getOrInsertLLVMFunction("runtime.memmove", sig, goABIInternalCallConv)
+	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{dst, src, length}, "")
+	call.SetInstructionCallConv(goABIInternalCallConv)
+	markLLVMGCLeaf(fn, call)
+	return call
+}
+
+func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
+	size, align := llvmMemoryOpInfo(v)
+	dst := lfc.llvmMemoryPointer(v, 0)
+	src := lfc.llvmMemoryPointer(v, 1)
+	length := lfc.llvmMemoryLength(v, size)
+	if size > llvmInlineMemmoveLimit {
+		return lfc.llvmRuntimeMemmove(dst, src, length)
+	}
+
+	sig := llvm.FunctionType(
+		GlobalCtxt.VoidType(),
+		[]llvm.Type{dst.Type(), src.Type(), length.Type(), GlobalCtxt.Int1Type()},
+		false,
+	)
+	name := "llvm.memmove.p0.p0.i64"
+	if length.Type().IntTypeWidth() == 32 {
+		name = "llvm.memmove.p0.p0.i32"
+	}
+	fn := getOrInsertLLVMIntrinsic(name, sig)
+	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
+		dst,
+		src,
+		length,
+		llvm.ConstInt(GlobalCtxt.Int1Type(), 0, false),
+	}, "")
+	call.SetInstrParamAlignment(1, align)
+	call.SetInstrParamAlignment(2, align)
+	return call
+}
+
+func (lfc *LLVMFuncContext) llvmMemEq(v *Value) llvm.Value {
+	left := lfc.llvmMemoryPointer(v, 0)
+	right := lfc.llvmMemoryPointer(v, 1)
+	size := lfc.GenLV(v.Args[2])
+	uintptrType := getLLVMType(types.Types[types.TUINTPTR])
+	if size.Type() != uintptrType {
+		v.Fatalf("MemEq size has incompatible LLVM type")
+	}
+	boolType := getLLVMType(types.Types[types.TBOOL])
+	if getLLVMType(v.Type) != boolType {
+		v.Fatalf("MemEq result has incompatible LLVM type")
+	}
+	sig := llvmFuncSignature{
+		Type:                llvm.FunctionType(boolType, []llvm.Type{left.Type(), right.Type(), uintptrType}, false),
+		ReturnType:          boolType,
+		ResultCount:         1,
+		ClosureContextIndex: -1,
+	}
+	fn := getOrInsertLLVMFunction("runtime.memequal", sig, goABIInternalCallConv)
+	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{left, right, size}, v.String())
+	call.SetInstructionCallConv(goABIInternalCallConv)
+	markLLVMGCLeaf(fn, call)
+	return call
+}
+
+func (lfc *LLVMFuncContext) llvmSlicemask(v *Value) llvm.Value {
+	if v.Type != types.Types[types.TINT] {
+		v.Fatalf("Slicemask has non-native-int type %v", v.Type)
+	}
+	x := lfc.GenLV(v.Args[0])
+	t := getLLVMType(v.Type)
+	if x.Type() != t || t.TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("Slicemask has incompatible LLVM operand type")
+	}
+	bits := t.IntTypeWidth()
+	if bits != int(lfc.F.Config.PtrSize*8) {
+		v.Fatalf("Slicemask has width %d, want native int width %d", bits, lfc.F.Config.PtrSize*8)
+	}
+	neg := lfc.b.CreateSub(llvm.ConstInt(t, 0, false), x, v.String()+".neg")
+	shift := llvm.ConstInt(t, uint64(bits-1), false)
+	return lfc.b.CreateAShr(neg, shift, v.String())
 }
 
 func (lfc *LLVMFuncContext) goBool(cond llvm.Value, name string) llvm.Value {
@@ -794,6 +971,14 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = p
 	case OpStore:
 		lVal = lfc.b.CreateStore(arg1(), arg0())
+	case OpZero:
+		lVal = lfc.llvmZero(v)
+	case OpMove:
+		lVal = lfc.llvmMove(v)
+	case OpMemEq:
+		lVal = lfc.llvmMemEq(v)
+	case OpSlicemask:
+		lVal = lfc.llvmSlicemask(v)
 	case OpStructSelect:
 		lVal = lfc.b.CreateExtractValue(arg0(), int(auxIntToInt32(v.AuxInt)), v.String())
 	case OpStructMake:
