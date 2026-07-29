@@ -69,22 +69,28 @@ results have IR and verifier coverage, but are not yet runtime-qualified:
 focused execution trials currently expose invalid post-call values or
 traceback/stack-map failures in those shapes.
 
-Before final liveness, the statepoint pass normalizes each supported live
-pointer-containing aggregate into scalar leaves. Every explicit leaf is
-extracted next to the aggregate definition, and each aggregate use is rebuilt
-next to that use from `poison` with every required leaf inserted. Rebuilding
-from the original aggregate would keep that aggregate live across the
-safepoint and is forbidden. Exact `extractvalue` uses consume the corresponding
-leaf directly.
+The statepoint pass first computes aggregate-only liveness to find each
+supported pointer-containing aggregate that is live at a safepoint. Every
+explicit leaf is extracted next to the aggregate definition, and each
+aggregate use is rebuilt next to that use from `poison` with every required
+leaf inserted. Rebuilding from the original aggregate would keep that
+aggregate live across the safepoint and is forbidden. Exact `extractvalue`
+uses consume the corresponding leaf directly.
+
+After normalization, a second liveness computation tracks scalar pointers
+only. Walking backwards through the use-local `insertvalue` chain naturally
+finds its pointer operands, including when the rebuilt aggregate is the
+current call's ABI argument. No rebuilt aggregate or side table participates
+in final liveness.
 
 This normalization has four invariants:
 
 1. `gc-live` contains only scalar pointers, never an aggregate.
 2. The original aggregate is used only by definition-local extracts and cannot
    cross a safepoint.
-3. A use-local rebuilt aggregate cannot cross a safepoint. When it is the
-   current call's ABI argument, its pointer leaves are explicitly added to
-   `gc-live` while the wrapped call retains the real aggregate operand.
+3. A use-local rebuilt aggregate cannot cross a safepoint. The wrapped call
+   retains the real aggregate operand, while scalar-only liveness discovers
+   the pointer leaves used to build it.
 4. Post-safepoint reconstruction uses the current SSA definition produced by
    `gc.relocate` and the whole-function relocation PHIs.
 
@@ -111,9 +117,9 @@ narrow Go ABI contract above.
 
 The final combined order is:
 
-1. **Aggregate normalization.** Decompose supported live first-class
-   struct/array values and record the pointer leaves of short-lived ABI
-   reconstructions.
+1. **Aggregate normalization.** Use aggregate-only liveness to find and
+   decompose supported live first-class struct/array values, then rebuild
+   aggregates immediately before their uses.
 2. **Scalar statepoint insertion.** Compute liveness, build scalar-only
    `gc-live` bundles, and emit `gc.result` and `gc.relocate`.
 3. **Whole-function relocation SSA.** Model the original scalar definition and
