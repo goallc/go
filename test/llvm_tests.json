@@ -75,6 +75,7 @@
       "llvm_interface_assertion.go": "comma-ok and panic-form assertions, cache fallback, mismatch, nil, and execution",
       "llvm_interface_equality.go": "empty and non-empty interface equality for matching and differing dynamic values",
       "llvm_interface_switch.go": "nil, concrete, multiple interface, and default type-switch cases with execution",
+      "llvm_args_pointer_maps_gc.go": "entry argument pointer maps across recursive stack growth, ordinary safepoints, and runtime.GC",
       "llvm_closure.go": "escaping funcval allocation, hidden closure context, indirect call, capture access, and tuple return",
       "llvm_statepoint_branch_gc.go": "pointer relocation across either arm of a two-safepoint branch",
       "llvm_statepoint_conditional_gc.go": "pointer relocation merged with the original value when a path skips runtime.GC",

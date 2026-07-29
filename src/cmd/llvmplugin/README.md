@@ -16,6 +16,14 @@ carry `gc "goallc"` and the `go-stack-growth-statepoint` attribute. Loading this
 plugin registers the named GC strategy and its metadata printer; the rewrite
 pass consumes the frontend markers rather than adding them.
 
+Entry argument pointer maps do not use an IR marker or intrinsic. After LLVM
+optimization and inlining, target formal-argument lowering recursively derives
+pointer words from the surviving function's LLVM parameter types and combines
+them with the Go calling-convention layout. Results, padding, integer words,
+and the hidden `nest` closure context are not entry pointer bits. Keeping this
+calculation at formal lowering prevents an inlined callee's entry contract from
+being cloned into its caller.
+
 The initial statepoint pass handles ordinary calls in Go ABI functions. It
 computes pointer liveness with a backwards CFG dataflow analysis, assigns
 stable callsite IDs, emits `gc.statepoint` and `gc.relocate`, and respects
@@ -102,10 +110,16 @@ GoALLC or GoObj branch. LLVM records GoObj statepoint callsites at the CALL
 start, matching Go's `PCDATA_StackMapIndex` convention without a command-line
 mode. The frontend's stack-growth attribute
 asks LLVM to express the late-generated `runtime.morestack` call as a physical
-MIR `STATEPOINT` with empty deopt, GC pointer, GC alloca, and GC relocation
-sections. Its empty locals bitmap starts at the morestack CALL, so ordinary and
-stack-growth calls use the same Machine StackMaps pipeline without relying on
-a return-PC convention. GoObj functions that already contain a Machine
+MIR `STATEPOINT` with empty deopt and GC-alloca sections. Before frame
+allocation, AArch64 formal lowering maps every type-derived input pointer word
+onto the existing fixed home reserved for that ABI input. Frame lowering encodes
+those homes in the morestack statepoint's GC pointer section as indirect
+`SP+offset` locations with base-equals-derived pairs; it never asks the
+statepoint machinery to allocate another spill. The GoObj writer recognizes
+the stack-growth ID, interprets those offsets in the entry-SP geometry, and
+selects pair 0: non-empty `EntryArgs` when present and empty locals. Ordinary
+and stack-growth calls use the same Machine StackMaps pipeline without relying
+on a return-PC convention. GoObj functions that already contain a Machine
 `STATEPOINT` but lack the frontend stack-growth attribute fail closed; there is
 no slow-path reset-label fallback for a raw morestack call.
 GoObj emits the currently constant safe `PCDATA_UnsafePoint` table first and
@@ -128,13 +142,31 @@ native arm64 backend, small frames atomically save LR while updating SP with a
 pre-indexed store; frames above `0xf0` compute NewSP and save `(FP, LR)` before
 moving SP so asynchronous traceback cannot observe a half-built frame.
 
-The first phase emits count-aligned, empty `FUNCDATA_ArgsPointerMaps`; it does
-not yet classify Go ABI argument home slots. `FUNCDATA_StackObjects` is also
-not implemented, so pointer-containing address-taken alloca storage is outside
-the supported first phase. Tracking an alloca address across a statepoint does
-not describe the pointer fields stored inside that object. Both stack objects
-and non-empty argument maps remain P0 follow-ups. These boundaries should be
-expanded without moving Go policy into LLVM's generic StackMaps implementation.
+The first ArgsPointerMaps phase supports scalar LLVM pointer inputs and
+receivers in ABIInternal register homes, ABIInternal stack-input slots, and
+ABI0 stack-input slots on AArch64. Pair 0 is always
+`(EntryArgs, empty locals)`. Ordinary
+statepoints classify their post-prologue indirect stack roots as locals and
+jointly deduplicate the complete `(Args, locals)` pair; the Args and Locals
+tables therefore always have the same count. A direct stack address is not a
+bitmap root.
+
+This phase fails closed for unsupported pointer-containing aggregate layouts
+and aggregates live at an ordinary statepoint; dynamic or realigned frames;
+raw register roots; pointer vectors or ABI layouts whose pointer words do not
+map to fixed homes; and an ordinary statepoint path that would recover a
+pointer from an unadjusted original argument home. `FUNCDATA_StackObjects` and
+`PCDATA_ArgLiveIndex` are not implemented. Tracking an alloca address across a
+statepoint does not describe pointer fields stored inside that object, and
+ArgLive is not a replacement for the entry argument bitmap. Precise handling
+of pointer-containing address-taken stack storage belongs to the separate
+StackObjects work rather than this ArgsPointerMaps change.
+
+TODO: LLVM opaque pointer types currently make the first itab/type word of a
+Go interface and pointers to `NotInHeap` types look like ordinary GC pointers.
+The type-derived entry map conservatively marks those words for now. A later
+change should give non-GC address words a distinct IR representation or a
+signature-level GC-shape attribute.
 
 Build, test, and install it into the LLVM payload that contains `llc`:
 

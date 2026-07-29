@@ -63,13 +63,13 @@ def main():
     )
     ranges = stack_index["ranges"]
     values = [item["value"] for item in ranges]
-    if values != [-1, 0, 1]:
+    if values != [-1, 1, 0]:
         fail(f"unexpected stack-map range values: {values}")
 
     queries = metadata["stack_map_queries"]
     if len(queries) != 2:
         fail(f"found {len(queries)} call queries, want 2")
-    if [item["stack_map_index"] for item in queries] != [0, 1]:
+    if [item["stack_map_index"] for item in queries] != [1, 0]:
         fail(f"unexpected call stack-map indexes: {queries}")
     # X86 R_CALL relocations point one byte after the CALL opcode. The PCDATA
     # range must begin at the opcode itself.
@@ -85,8 +85,8 @@ def main():
     )["stack_map"]
     if locals_maps["count"] != 2:
         fail(f"locals stack-map count is {locals_maps['count']}, want 2")
-    safepoint_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
-    morestack_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
+    morestack_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
+    safepoint_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
     if safepoint_bits != {0}:
         fail(f"unexpected safepoint pointer bits: {safepoint_bits}")
     if morestack_bits:

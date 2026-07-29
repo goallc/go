@@ -70,13 +70,13 @@ def main():
     )
     ranges = stack_index["ranges"]
     values = [item["value"] for item in ranges]
-    if values != [-1, 0, 1, 2]:
+    if values != [-1, 1, 2, 0]:
         fail(f"unexpected stack-map range values: {values}")
 
     queries = metadata["stack_map_queries"]
     if len(queries) != 3:
         fail(f"found {len(queries)} call queries, want 3")
-    if [item["stack_map_index"] for item in queries] != [0, 1, 2]:
+    if [item["stack_map_index"] for item in queries] != [1, 2, 0]:
         fail(f"unexpected call stack-map indexes: {queries}")
     for query in queries:
         if pc_value(ranges, query["lookup_pc"]) != query["stack_map_index"]:
@@ -98,9 +98,9 @@ def main():
     )["stack_map"]
     if locals_maps["count"] != 3:
         fail(f"locals stack-map count is {locals_maps['count']}, want 3")
-    first_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
-    second_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
-    morestack_bits = set(locals_maps["bitmaps"][2]["set_bits"] or [])
+    morestack_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
+    first_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
+    second_bits = set(locals_maps["bitmaps"][2]["set_bits"] or [])
     if len(first_bits) != 2 or len(second_bits) != 1:
         fail(f"unexpected live pointer sets: {first_bits}, {second_bits}")
     if morestack_bits:

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/GCMetadataPrinter.h"
 #include "llvm/CodeGen/GoCallingConv.h"
@@ -41,7 +42,7 @@ convertLocationType(StackMaps::Location::LocationType Type) {
 uint64_t getNonnegativeConstant(const StackMaps::Location &Location,
                                 StringRef Description) {
   if (Location.Type != StackMaps::Location::Constant || Location.Offset < 0)
-    report_fatal_error("malformed GoALLC statepoint " + Description);
+    report_fatal_error("malformed GoALLC stackmap " + Description);
   return static_cast<uint64_t>(Location.Offset);
 }
 
@@ -82,10 +83,6 @@ bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
       if (NumDeopts > CSI.Locations.size() - 3)
         report_fatal_error("malformed GoALLC statepoint deopt operands");
       size_t FirstGCLocation = 3 + static_cast<size_t>(NumDeopts);
-      if (CSI.ID == goabi::StackGrowthStatepointID &&
-          FirstGCLocation != CSI.Locations.size())
-        report_fatal_error(
-            "GoALLC stack-growth statepoint contains GC live locations");
 
       MCContext::GoObjStackMapEntry Entry{
           CSI.CSOffsetExpr, CSI.ID, Info.StackSize, PointerSize, {}};
