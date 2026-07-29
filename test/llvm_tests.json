@@ -77,6 +77,7 @@
       "llvm_interface_equality.go": "empty and non-empty interface equality for matching and differing dynamic values",
       "llvm_interface_switch.go": "nil, concrete, multiple interface, and default type-switch cases with execution",
       "llvm_args_pointer_maps_gc.go": "entry argument pointer maps across recursive stack growth, ordinary safepoints, and runtime.GC",
+      "llvm_aggregate_call_argument.go": "pointer-containing struct used only as a call argument, without caller gc-live or relocation",
       "llvm_memeq.go": "raw memory equality for true, false, different-length, and offset substring inputs",
       "llvm_move.go": "overlap-safe, aligned, and runtime-helper memory moves",
       "llvm_slicemask.go": "slice start, middle, and zero-capacity end boundary semantics",
