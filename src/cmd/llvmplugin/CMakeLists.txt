@@ -128,17 +128,13 @@ if(BUILD_TESTING)
   )
 
   add_test(
-    NAME GoALLCStatepoints.IndirectCalleeConservativeRoot
+    NAME GoALLCStatepoints.CallOnlyPointersNotLive
     COMMAND
-      "${GOALLC_LLC_EXECUTABLE}"
-      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
-      -goallc-pass-plugin-emit-ir
-      -filetype=null
-      -o -
-      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/indirect-callee.ll"
-  )
-  set_tests_properties(GoALLCStatepoints.IndirectCalleeConservativeRoot PROPERTIES
-    PASS_REGULAR_EXPRESSION "gc-live"
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-call-only-liveness.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input "${CMAKE_CURRENT_SOURCE_DIR}/testdata/indirect-callee.ll"
   )
 
   add_test(

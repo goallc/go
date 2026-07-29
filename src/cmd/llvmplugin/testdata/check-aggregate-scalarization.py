@@ -71,7 +71,7 @@ def main():
         "aggregate call result":
             r"call %pair @llvm\.experimental\.gc\.result\.[^(]+",
         "aggregate current call argument":
-            r'@consume_pair.*"gc-live"\(ptr %value\.leaf\.0\)',
+            r"@llvm\.experimental\.gc\.statepoint.*@consume_pair.*%pair %value",
         "multiple relocation chain": r"%value\.leaf\.0\.relocated2",
         "aggregate load result": r"%value\.leaf\.0 = extractvalue %pair %value, 0",
         "freeze preserved before extraction": r"%value = freeze %pair poison",
@@ -82,6 +82,17 @@ def main():
 
     if re.search(r'"gc-live"\([^)]*(?:%pair|%triple|%nested)', ir):
         fail("named aggregate type/value survived in gc-live")
+    current_arg = re.search(
+        r"define goabiinternal void @aggregate_current_call_argument.*?^}",
+        ir,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not current_arg:
+        fail("missing aggregate_current_call_argument function")
+    if '"gc-live"' in current_arg.group(0):
+        fail("call-only aggregate argument was recorded in caller gc-live")
+    if "extractvalue" in current_arg.group(0):
+        fail("call-only aggregate argument was unnecessarily scalarized")
 
 
 if __name__ == "__main__":

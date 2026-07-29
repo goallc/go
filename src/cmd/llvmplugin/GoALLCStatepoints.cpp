@@ -115,21 +115,8 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
 }
 
 void addLiveValue(Value *V, ValueSet &Live, LivenessKind Kind) {
-  if (isTrackedValue(V, Kind)) {
+  if (isTrackedValue(V, Kind))
     Live.insert(V);
-    return;
-  }
-  if (Kind != LivenessKind::ScalarPointers || isa<Constant>(V))
-    return;
-
-  // Aggregate normalization rebuilds every non-extract use as an insertvalue
-  // chain. Treat that chain as a transparent use adapter so scalar liveness
-  // naturally sees its pointer leaves, including for a current call argument.
-  auto *Insert = dyn_cast<InsertValueInst>(V);
-  if (!Insert)
-    return;
-  addLiveValue(Insert->getAggregateOperand(), Live, Kind);
-  addLiveValue(Insert->getInsertedValueOperand(), Live, Kind);
 }
 
 bool isLeafCall(const CallBase &Call) {
@@ -224,7 +211,10 @@ LivenessData computeLiveness(Function &F, LivenessKind Kind) {
 
 ValueSet liveAtCall(CallInst &Call, LivenessData &Data, LivenessKind Kind) {
   ValueSet Live = Data.LiveOut[Call.getParent()];
-  scanBackward(Call.getParent()->rbegin(), ++Call.getIterator().getReverse(),
+  // Go scans the callee's incoming arguments through
+  // FUNCDATA_ArgsPointerMaps. The caller's statepoint therefore contains only
+  // values live after the call, not values whose sole use is the call itself.
+  scanBackward(Call.getParent()->rbegin(), Call.getIterator().getReverse(),
                Live, Kind);
   Live.remove(&Call);
   return Live;

@@ -45,7 +45,7 @@ The current SSA value and CFG rewrite support matrix is:
 
 | Value or control-flow shape | Status | Current contract |
 | --- | --- | --- |
-| Pointer arguments | Supported | Tracked independently at every safepoint. |
+| Pointer arguments | Partially supported | Values live after a call use caller statepoints; call-only arguments belong to the callee's argument map, whose non-empty form remains a P0 follow-up. |
 | `alloca` and alloca-derived pointers | Supported | The pointer value is live; pointer fields stored in the allocation are not described. |
 | `select`, GEP, and pointer casts | Supported | Each resulting pointer SSA value is tracked conservatively. |
 | Pointer-valued call results | Supported | `gc.result` replaces the ordinary result and later safepoints relocate it. |
@@ -53,7 +53,7 @@ The current SSA value and CFG rewrite support matrix is:
 | Ordinary CFG merges | Supported | Call/skip and multiple-safepoint paths merge through pointer PHIs formed by `PromoteMemToReg`. |
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
 | Fixed struct/array SSA aggregates | Supported | Pointer leaves are scalarized before liveness and reconstructed from the current relocated SSA leaves. |
-| Aggregate arguments and call results | Supported | The wrapped call keeps its real aggregate ABI type; `gc-live` contains only scalar pointer leaves. |
+| Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; call-only arguments require the callee's argument map for runtime qualification. |
 | Aggregate load results and store operands | Supported | Only the first-class SSA value is normalized; the underlying memory object's pointer slots are not described. |
 | Pointer-containing `alloca` storage | Unsupported | Requires locals pointer maps or `FUNCDATA_StackObjects`; fails closed. |
 | Fixed and scalable vectors | Unsupported | Vector lane and scalable-count semantics require a separate design; fails closed. |
@@ -70,7 +70,7 @@ focused execution trials currently expose invalid post-call values or
 traceback/stack-map failures in those shapes.
 
 The statepoint pass first computes aggregate-only liveness to find each
-supported pointer-containing aggregate that is live at a safepoint. Every
+supported pointer-containing aggregate that is live after a safepoint. Every
 explicit leaf is extracted next to the aggregate definition, and each
 aggregate use is rebuilt next to that use from `poison` with every required
 leaf inserted. Rebuilding from the original aggregate would keep that
@@ -78,19 +78,19 @@ aggregate live across the safepoint and is forbidden. Exact `extractvalue`
 uses consume the corresponding leaf directly.
 
 After normalization, a second liveness computation tracks scalar pointers
-only. Walking backwards through the use-local `insertvalue` chain naturally
-finds its pointer operands, including when the rebuilt aggregate is the
-current call's ABI argument. No rebuilt aggregate or side table participates
-in final liveness.
+only. Both computations inspect instructions strictly after the current call:
+the caller statepoint describes values live across that call, while values used
+only as call arguments belong to the callee's `FUNCDATA_ArgsPointerMaps`.
+No rebuilt aggregate or side table participates in final liveness.
 
 This normalization has four invariants:
 
 1. `gc-live` contains only scalar pointers, never an aggregate.
 2. The original aggregate is used only by definition-local extracts and cannot
    cross a safepoint.
-3. A use-local rebuilt aggregate cannot cross a safepoint. The wrapped call
-   retains the real aggregate operand, while scalar-only liveness discovers
-   the pointer leaves used to build it.
+3. A use-local rebuilt aggregate cannot cross a safepoint. A call-only
+   aggregate argument stays as the real ABI operand and is neither scalarized
+   nor recorded in caller `gc-live`.
 4. Post-safepoint reconstruction uses the current SSA definition produced by
    `gc.relocate` and the whole-function relocation PHIs.
 
