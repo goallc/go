@@ -40,8 +40,14 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   find_program(GOALLC_LLC_EXECUTABLE
     NAMES llc
+    HINTS "${LLVM_TOOLS_BINARY_DIR}"
+    REQUIRED
+  )
+  find_program(GOALLC_OPT_EXECUTABLE
+    NAMES opt
     HINTS "${LLVM_TOOLS_BINARY_DIR}"
     REQUIRED
   )
@@ -209,13 +215,23 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/multiple-calls.ll"
   )
 
+  add_test(
+    NAME GoALLCStatepoints.AggregateCallResultGoObj
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=obj
+      -o "${CMAKE_CURRENT_BINARY_DIR}/aggregate-call-result.goobj"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-call-result-goobj.ll"
+  )
+
   if(GOALLC_OBJVIEW_EXECUTABLE)
     if(NOT EXISTS "${GOALLC_OBJVIEW_EXECUTABLE}")
       message(FATAL_ERROR
         "GOALLC_OBJVIEW_EXECUTABLE does not exist: "
         "${GOALLC_OBJVIEW_EXECUTABLE}")
     endif()
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(
       NAME GoALLCStatepoints.MultipleCallsObjView
       COMMAND
@@ -251,10 +267,22 @@ if(BUILD_TESTING)
     set_tests_properties(GoALLCStatepoints.ConditionalRelocationObjView PROPERTIES
       DEPENDS GoALLCStatepoints.ConditionalRelocationGoObj
     )
+
+    add_test(
+      NAME GoALLCStatepoints.AggregateCallResultObjView
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-aggregate-call-result.py"
+        --objview "${GOALLC_OBJVIEW_EXECUTABLE}"
+        --object "${CMAKE_CURRENT_BINARY_DIR}/aggregate-call-result.goobj"
+    )
+    set_tests_properties(GoALLCStatepoints.AggregateCallResultObjView PROPERTIES
+      DEPENDS GoALLCStatepoints.AggregateCallResultGoObj
+    )
   endif()
 
   add_test(
-    NAME GoALLCStatepoints.LiveAggregateFails
+    NAME GoALLCStatepoints.LiveAggregateRewrite
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"
       "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
@@ -263,8 +291,117 @@ if(BUILD_TESTING)
       -o -
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/live-aggregate.ll"
   )
-  set_tests_properties(GoALLCStatepoints.LiveAggregateFails PROPERTIES
-    WILL_FAIL TRUE
+  set_tests_properties(GoALLCStatepoints.LiveAggregateRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "value\\.leaf\\.0\\.relocated"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateScalarization
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-aggregate-scalarization.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --opt "${GOALLC_OPT_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-scalarization.ll"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateFixedVectorFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-vector-unsupported.ll"
+      --contains
+      "do not support vectors inside live pointer aggregates"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateScalableVectorFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-scalable-vector-unsupported.ll"
+      --contains
+      "do not support vectors inside live pointer aggregates"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateMemoryObjectFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-memory-object-unsupported.ll"
+      --contains
+      "SSA aggregate scalarization cannot describe their internal pointer slots"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateConditionalRewrite
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-conditional-stage-b.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.AggregateConditionalRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "value\\.leaf\\.0\\.relocated\\.merge.* = phi ptr"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateConditionalStableID
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-conditional-stage-b.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.AggregateConditionalStableID PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "i64 -978360670708369630"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateLoopRewrite
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-loop-stage-b.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.AggregateLoopRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "value\\.leaf\\.0\\.relocated\\.merge.* = phi ptr"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.AggregateCFGRewrite
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-aggregate-cfg.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --opt "${GOALLC_OPT_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-cfg.ll"
   )
 
   add_test(

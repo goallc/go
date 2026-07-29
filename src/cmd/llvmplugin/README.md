@@ -52,7 +52,11 @@ The current SSA value and CFG rewrite support matrix is:
 | Multiple ordinary calls | Supported | Stable IDs and live sets remain per call; the next statepoint consumes the current relocated SSA value. |
 | Ordinary CFG merges | Supported | Call/skip and multiple-safepoint paths merge through pointer PHIs formed by `PromoteMemToReg`. |
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
-| Pointer-containing aggregates | Unsupported | Fails closed before rewriting. |
+| Fixed struct/array SSA aggregates | Supported | Pointer leaves are scalarized before liveness and reconstructed from the current relocated SSA leaves. |
+| Aggregate arguments and call results | Supported | The wrapped call keeps its real aggregate ABI type; `gc-live` contains only scalar pointer leaves. |
+| Aggregate load results and store operands | Supported | Only the first-class SSA value is normalized; the underlying memory object's pointer slots are not described. |
+| Pointer-containing `alloca` storage | Unsupported | Requires locals pointer maps or `FUNCDATA_StackObjects`; fails closed. |
+| Fixed and scalable vectors | Unsupported | Vector lane and scalable-count semantics require a separate design; fails closed. |
 | General moving-GC base/derived analysis | Unsupported | Base and derived indexes are identical in the current non-moving-heap phase. |
 | `invoke`, `callbr`, operand bundles, non-`nest` parameter attributes, and `musttail` | Unsupported | Fails closed rather than widening the call contract. |
 
@@ -65,33 +69,67 @@ results have IR and verifier coverage, but are not yet runtime-qualified:
 focused execution trials currently expose invalid post-call values or
 traceback/stack-map failures in those shapes.
 
+Before final liveness, the statepoint pass normalizes each supported live
+pointer-containing aggregate into scalar leaves. Every explicit leaf is
+extracted next to the aggregate definition, and each aggregate use is rebuilt
+next to that use from `poison` with every required leaf inserted. Rebuilding
+from the original aggregate would keep that aggregate live across the
+safepoint and is forbidden. Exact `extractvalue` uses consume the corresponding
+leaf directly.
+
+This normalization has four invariants:
+
+1. `gc-live` contains only scalar pointers, never an aggregate.
+2. The original aggregate is used only by definition-local extracts and cannot
+   cross a safepoint.
+3. A use-local rebuilt aggregate cannot cross a safepoint. When it is the
+   current call's ABI argument, its pointer leaves are explicitly added to
+   `gc-live` while the wrapped call retains the real aggregate operand.
+4. Post-safepoint reconstruction uses the current SSA definition produced by
+   `gc.relocate` and the whole-function relocation PHIs.
+
+Nested fixed structs and arrays are enumerated by leaf index path. Extracting
+after an aggregate `freeze` preserves its correlated choice; rebuilding all
+explicit leaves preserves `undef` and `poison` field semantics. LLVM struct
+padding is not a first-class leaf. LLVM 23 permits an aggregate `gc.result`, so
+an aggregate call result is projected first and its pointer leaves become roots
+at later safepoints.
+
+An aggregate loaded from memory can be normalized as an SSA value and an
+aggregate store can consume a rebuilt value, but this does not describe
+pointers that remain in the memory object. Pointer-containing `alloca` storage
+therefore fails closed. Tracking the alloca's scalar address is not a substitute
+for locals pointer maps or `FUNCDATA_StackObjects`. Constants are not roots in
+the current conservative model; null or constant pointer leaves extracted from
+a non-constant aggregate may be reported conservatively.
+
 LLVM's generic `RewriteStatepointsForGC` pass is the design reference for
 liveness and relocation SSA formation. GoALLC does not run it directly:
 that pass also owns base-pointer inference, EH/invoke rewriting, deopt bundles,
 and module-wide attribute cleanup. Those policies exceed the deliberately
 narrow Go ABI contract above.
 
-The staged reuse plan is:
+The final combined order is:
 
-1. **Global relocation SSA (current).** Keep GoALLC's call eligibility,
-   stable IDs, per-safepoint live sets, and base-equals-derived convention.
-   Adapt the structure of LLVM's
-   `relocationViaAlloca`: model the original definition and every relocate as
-   stores to temporary promotable allocas, rewrite old uses through loads, and
-   call the public `PromoteMemToReg` utility. This handles loop/backedge PHIs,
-   multiple relocation definitions in one block, and irreducible CFG without
-   importing the generic pass's broader call policy. GoALLC validation remains
-   in front of the transform.
-2. **Base/derived pointers.** Adapt the scalar GEP/cast path of LLVM's
-   `findBasePointer` first, then add `select` and PHI conflict handling. Inserted
-   base PHIs become explicit definitions, and liveness must be recomputed before
-   finalizing each statepoint live set. Ambiguous relationships continue to
-   fail closed.
-3. **Aggregates and rematerialization.** Add pointer aggregate decomposition
-   and only then consider LLVM's GEP/cast rematerialization optimization.
-   `ArgsPointerMaps`, `StackObjects`, and write barriers remain separate Go
-   runtime metadata projects.
-4. **Additional call shapes only when required by Go.** Do not import generic
+1. **Aggregate normalization.** Decompose supported live first-class
+   struct/array values and record the pointer leaves of short-lived ABI
+   reconstructions.
+2. **Scalar statepoint insertion.** Compute liveness, build scalar-only
+   `gc-live` bundles, and emit `gc.result` and `gc.relocate`.
+3. **Whole-function relocation SSA.** Model the original scalar definition and
+   every relocate as stores to temporary promotable allocas, rewrite old uses
+   through loads, and call the public `PromoteMemToReg` utility. This constructs
+   conditional, loop/backedge, and irreducible-CFG PHIs and removes all
+   temporary memory traffic.
+
+Future stages remain:
+
+1. **Base/derived pointers.** Adapt the scalar GEP/cast path of LLVM's
+   `findBasePointer`, then add `select` and PHI conflict handling. Ambiguous
+   relationships continue to fail closed.
+2. **Rematerialization.** Consider LLVM's GEP/cast rematerialization only after
+   base/derived correctness.
+3. **Additional call shapes only when required by Go.** Do not import generic
    deopt, transition-bundle, invoke/EH edge normalization, or module-wide
    attribute stripping merely because the LLVM pass supports them.
 

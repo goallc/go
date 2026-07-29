@@ -3,7 +3,9 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCStatepoints.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -75,6 +77,18 @@ struct SafepointRecord {
   SmallVector<CallInst *, 8> Relocates;
 };
 
+struct AggregateLeaf {
+  SmallVector<unsigned, 4> Indices;
+  Type *Ty;
+};
+
+struct AggregateScalarization {
+  // Rebuilt aggregates are deliberately short-lived ABI/use adapters, not GC
+  // roots. Pointer leaves are kept here so a rebuilt aggregate used as the
+  // current call argument can still contribute scalar gc-live operands.
+  DenseMap<Value *, SmallVector<Value *, 4>> TransientRoots;
+};
+
 bool isGoCallingConv(CallingConv::ID CC) {
   return CC == CallingConv::GoABIInternal || CC == CallingConv::GoABI0;
 }
@@ -91,7 +105,10 @@ bool containsPointer(Type *Ty) {
   return false;
 }
 
-bool isTrackedValue(const Value *V) {
+bool isTrackedValue(const Value *V,
+                    const AggregateScalarization *Scalarization = nullptr) {
+  if (Scalarization && Scalarization->TransientRoots.contains(V))
+    return false;
   return !isa<Constant>(V) && containsPointer(V->getType());
 }
 
@@ -118,45 +135,49 @@ uint64_t stableStatepointID(StringRef FunctionName, uint64_t CallOrdinal) {
 }
 
 void scanBackward(BasicBlock::reverse_iterator Begin,
-                  BasicBlock::reverse_iterator End, ValueSet &Live) {
+                  BasicBlock::reverse_iterator End, ValueSet &Live,
+                  const AggregateScalarization *Scalarization = nullptr) {
   for (Instruction &I : make_range(Begin, End)) {
     Live.remove(&I);
     if (isa<PHINode>(I))
       continue;
     for (Value *Operand : I.operands())
-      if (isTrackedValue(Operand))
+      if (isTrackedValue(Operand, Scalarization))
         Live.insert(Operand);
   }
 }
 
-void seedPhiUses(BasicBlock &BB, ValueSet &LiveOut) {
+void seedPhiUses(BasicBlock &BB, ValueSet &LiveOut,
+                 const AggregateScalarization *Scalarization = nullptr) {
   for (BasicBlock *Succ : successors(&BB)) {
     for (Instruction &I : *Succ) {
       auto *Phi = dyn_cast<PHINode>(&I);
       if (!Phi)
         break;
       Value *Incoming = Phi->getIncomingValueForBlock(&BB);
-      if (isTrackedValue(Incoming))
+      if (isTrackedValue(Incoming, Scalarization))
         LiveOut.insert(Incoming);
     }
   }
 }
 
-LivenessData computeLiveness(Function &F) {
+LivenessData
+computeLiveness(Function &F,
+                const AggregateScalarization *Scalarization = nullptr) {
   LivenessData Data;
   SmallSetVector<BasicBlock *, 32> Worklist;
 
   for (BasicBlock &BB : F) {
     ValueSet &Kill = Data.Kill[&BB];
     for (Instruction &I : BB)
-      if (containsPointer(I.getType()))
+      if (isTrackedValue(&I, Scalarization))
         Kill.insert(&I);
 
     ValueSet &Gen = Data.Gen[&BB];
-    scanBackward(BB.rbegin(), BB.rend(), Gen);
+    scanBackward(BB.rbegin(), BB.rend(), Gen, Scalarization);
 
     ValueSet &Out = Data.LiveOut[&BB];
-    seedPhiUses(BB, Out);
+    seedPhiUses(BB, Out, Scalarization);
 
     ValueSet &In = Data.LiveIn[&BB];
     In = Gen;
@@ -186,12 +207,206 @@ LivenessData computeLiveness(Function &F) {
   return Data;
 }
 
-ValueSet liveAtCall(CallInst &Call, LivenessData &Data) {
+ValueSet liveAtCall(CallInst &Call, LivenessData &Data,
+                    const AggregateScalarization *Scalarization = nullptr) {
   ValueSet Live = Data.LiveOut[Call.getParent()];
   scanBackward(Call.getParent()->rbegin(), ++Call.getIterator().getReverse(),
-               Live);
+               Live, Scalarization);
   Live.remove(&Call);
+  if (Scalarization) {
+    for (Value *Arg : Call.args()) {
+      auto It = Scalarization->TransientRoots.find(Arg);
+      if (It != Scalarization->TransientRoots.end())
+        Live.insert_range(It->second);
+    }
+  }
   return Live;
+}
+
+Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
+                               SmallVectorImpl<AggregateLeaf> &Leaves) {
+  if (auto *ST = dyn_cast<StructType>(Ty)) {
+    if (ST->isOpaque())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints cannot scalarize an opaque struct");
+    for (auto [Index, ElementTy] : llvm::enumerate(ST->elements())) {
+      Path.push_back(Index);
+      if (Error Err = enumerateAggregateLeaves(ElementTy, Path, Leaves))
+        return Err;
+      Path.pop_back();
+    }
+    return Error::success();
+  }
+  if (auto *AT = dyn_cast<ArrayType>(Ty)) {
+    for (uint64_t Index = 0; Index != AT->getNumElements(); ++Index) {
+      Path.push_back(Index);
+      if (Error Err =
+              enumerateAggregateLeaves(AT->getElementType(), Path, Leaves))
+        return Err;
+      Path.pop_back();
+    }
+    return Error::success();
+  }
+  if (Ty->isVectorTy())
+    return createStringError(
+        std::errc::not_supported,
+        "GoALLC statepoints do not support vectors inside live pointer "
+        "aggregates");
+  if (!Ty->isIntegerTy() && !Ty->isFloatingPointTy() && !Ty->isPointerTy())
+    return createStringError(
+        std::errc::not_supported,
+        "GoALLC statepoints require scalar first-class aggregate leaves");
+  Leaves.push_back({SmallVector<unsigned, 4>(ArrayRef<unsigned>(Path)), Ty});
+  return Error::success();
+}
+
+std::string leafName(Value &Aggregate, ArrayRef<unsigned> Indices) {
+  std::string Name =
+      Aggregate.hasName() ? (Aggregate.getName() + ".leaf").str() : "agg.leaf";
+  for (unsigned Index : Indices)
+    Name += "." + std::to_string(Index);
+  return Name;
+}
+
+Expected<SmallVector<Value *, 8>>
+extractAggregateLeaves(Value &Aggregate, ArrayRef<AggregateLeaf> Leaves,
+                       Function &F) {
+  IRBuilder<> Builder(F.getContext());
+  if (auto *Arg = dyn_cast<Argument>(&Aggregate)) {
+    Builder.SetInsertPoint(&F.getEntryBlock(),
+                           F.getEntryBlock().getFirstInsertionPt());
+    (void)Arg;
+  } else {
+    auto *Definition = cast<Instruction>(&Aggregate);
+    if (auto *Call = dyn_cast<CallInst>(Definition);
+        Call && Call->isMustTailCall())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints cannot scalarize a musttail aggregate result");
+    if (isa<PHINode>(Definition))
+      Builder.SetInsertPoint(Definition->getParent(),
+                             Definition->getParent()->getFirstNonPHIIt());
+    else if (Instruction *Next = Definition->getNextNode())
+      Builder.SetInsertPoint(Next);
+    else
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints cannot extract leaves after an aggregate "
+          "terminator");
+    Builder.SetCurrentDebugLocation(Definition->getDebugLoc());
+  }
+
+  SmallVector<Value *, 8> Values;
+  Values.reserve(Leaves.size());
+  for (const AggregateLeaf &Leaf : Leaves)
+    Values.push_back(Builder.CreateExtractValue(
+        &Aggregate, Leaf.Indices, leafName(Aggregate, Leaf.Indices)));
+  return Values;
+}
+
+Instruction *aggregateUseInsertionPoint(Use &U) {
+  auto *User = dyn_cast<Instruction>(U.getUser());
+  if (!User)
+    return nullptr;
+  if (auto *Phi = dyn_cast<PHINode>(User))
+    return Phi->getIncomingBlock(U)->getTerminator();
+  return User;
+}
+
+Expected<AggregateScalarization> scalarizeLivePointerAggregates(Function &F) {
+  AggregateScalarization Result;
+  LivenessData InitialLiveness = computeLiveness(F);
+  ValueSet Candidates;
+
+  for (Instruction &I : instructions(F)) {
+    auto *Call = dyn_cast<CallBase>(&I);
+    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call))
+      continue;
+    auto *OrdinaryCall = dyn_cast<CallInst>(Call);
+    if (!OrdinaryCall)
+      continue;
+    for (Value *V : liveAtCall(*OrdinaryCall, InitialLiveness))
+      if (!V->getType()->isPointerTy())
+        Candidates.insert(V);
+  }
+
+  for (Value *Candidate : Candidates) {
+    SmallVector<AggregateLeaf, 8> Leaves;
+    SmallVector<unsigned, 4> Path;
+    if (Error Err =
+            enumerateAggregateLeaves(Candidate->getType(), Path, Leaves))
+      return std::move(Err);
+
+    SmallVector<Use *, 16> OriginalUses;
+    for (Use &U : Candidate->uses())
+      OriginalUses.push_back(&U);
+
+    Expected<SmallVector<Value *, 8>> LeafValuesOrErr =
+        extractAggregateLeaves(*Candidate, Leaves, F);
+    if (!LeafValuesOrErr)
+      return LeafValuesOrErr.takeError();
+    SmallVector<Value *, 8> LeafValues = std::move(*LeafValuesOrErr);
+
+    for (Use *U : OriginalUses) {
+      auto *Extract = dyn_cast<ExtractValueInst>(U->getUser());
+      if (Extract) {
+        auto Match = llvm::find_if(Leaves, [&](const AggregateLeaf &Leaf) {
+          return ArrayRef<unsigned>(Leaf.Indices) == Extract->getIndices();
+        });
+        if (Match != Leaves.end()) {
+          size_t Index = std::distance(Leaves.begin(), Match);
+          Extract->replaceAllUsesWith(LeafValues[Index]);
+          Extract->eraseFromParent();
+          continue;
+        }
+      }
+
+      Instruction *InsertBefore = aggregateUseInsertionPoint(*U);
+      if (!InsertBefore)
+        return createStringError(
+            std::errc::not_supported,
+            "GoALLC statepoints cannot rebuild a non-instruction aggregate "
+            "use");
+      IRBuilder<> Builder(InsertBefore);
+      Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
+      Value *Rebuilt = PoisonValue::get(Candidate->getType());
+      SmallVector<Value *, 4> PointerLeaves;
+      for (auto [Leaf, LeafValue] : llvm::zip(Leaves, LeafValues)) {
+        Rebuilt = Builder.CreateInsertValue(
+            Rebuilt, LeafValue, Leaf.Indices,
+            Candidate->hasName() ? Candidate->getName() + ".rebuilt" : "");
+        if (Leaf.Ty->isPointerTy())
+          PointerLeaves.push_back(LeafValue);
+      }
+      U->set(Rebuilt);
+      Result.TransientRoots[Rebuilt] = std::move(PointerLeaves);
+    }
+    for (Value *LeafValue : LeafValues)
+      if (auto *LeafInst = dyn_cast<Instruction>(LeafValue);
+          LeafInst && LeafInst->use_empty())
+        LeafInst->eraseFromParent();
+  }
+  return Result;
+}
+
+Error validateMemoryObjects(Function &F) {
+  bool HasSafepoint = llvm::any_of(instructions(F), [](Instruction &I) {
+    auto *Call = dyn_cast<CallBase>(&I);
+    return Call && !isa<GCStatepointInst>(Call) && !isLeafCall(*Call);
+  });
+  if (!HasSafepoint)
+    return Error::success();
+  for (Instruction &I : instructions(F)) {
+    auto *Alloca = dyn_cast<AllocaInst>(&I);
+    if (Alloca && containsPointer(Alloca->getAllocatedType()))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support pointer-containing memory "
+          "objects; SSA aggregate scalarization cannot describe their "
+          "internal pointer slots");
+  }
+  return Error::success();
 }
 
 Error validateSafepoint(const SafepointRecord &Record) {
@@ -372,8 +587,16 @@ Error rewriteFunction(Function &F) {
     return Error::success();
   }
 
+  if (Error Err = validateMemoryObjects(F))
+    return Err;
+  Expected<AggregateScalarization> ScalarizationOrErr =
+      scalarizeLivePointerAggregates(F);
+  if (!ScalarizationOrErr)
+    return ScalarizationOrErr.takeError();
+  AggregateScalarization Scalarization = std::move(*ScalarizationOrErr);
+
   DominatorTree DT(F);
-  LivenessData Data = computeLiveness(F);
+  LivenessData Data = computeLiveness(F, &Scalarization);
   SmallVector<SafepointRecord, 8> Records;
   uint64_t CallOrdinal = 0;
 
@@ -388,7 +611,7 @@ Error rewriteFunction(Function &F) {
           "GoALLC statepoints do not yet support invoke or callbr");
     Records.push_back({OrdinaryCall,
                        stableStatepointID(F.getName(), CallOrdinal++),
-                       liveAtCall(*OrdinaryCall, Data)});
+                       liveAtCall(*OrdinaryCall, Data, &Scalarization)});
   }
   for (const SafepointRecord &Record : Records)
     if (Error Err = validateSafepoint(Record))
