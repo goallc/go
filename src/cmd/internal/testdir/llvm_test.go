@@ -64,6 +64,10 @@ func runLLVMTests(t *testing.T, common testCommon) {
 			runLLVMABIDifferentialTest(t, common.gorootTestDir)
 		})
 
+		t.Run("alloca-statepoint", func(t *testing.T) {
+			runLLVMAllocaStatepointTest(t, common.gorootTestDir)
+		})
+
 		t.Run("runtime", func(t *testing.T) {
 			names := sortedLLVMWhitelist(policy.Runtime.Whitelist)
 			for _, name := range names {
