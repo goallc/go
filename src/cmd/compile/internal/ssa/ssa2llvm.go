@@ -50,6 +50,7 @@ const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
+const goNilCheckMetadata = "goallc.nilcheck"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 
@@ -1010,6 +1011,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		check := lfc.b.CreateLoad(GlobalCtxt.Int8Type(), p, v.String()+".nilcheck")
 		check.SetVolatile(true)
 		check.SetAlignment(1)
+		// Distinguish the compiler's faulting nil check from volatile memory
+		// semantics in externally supplied IR. The statepoint plugin may
+		// encounter this load through a pointer-containing static alloca, but
+		// must continue to reject every unmarked volatile or atomic access to
+		// such storage.
+		check.SetMetadata(GlobalCtxt.MDKindID(goNilCheckMetadata), GlobalCtxt.MDNode(nil))
 		lVal = p
 	case OpStore:
 		lVal = lfc.b.CreateStore(arg1(), arg0())

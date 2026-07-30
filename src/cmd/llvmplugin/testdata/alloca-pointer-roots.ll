@@ -10,6 +10,7 @@ define goabiinternal ptr @pointer_slot(ptr %pointer) "go-stack-growth-statepoint
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
+  %nilcheck = load volatile i8, ptr %slot, align 1, !goallc.nilcheck !0
   call goabiinternal void @safepoint()
   %result = load ptr, ptr %slot, align 8
   ret ptr %result
@@ -101,3 +102,5 @@ entry:
   store ptr %pointer, ptr %slot, align 8
   ret void
 }
+
+!0 = !{}
