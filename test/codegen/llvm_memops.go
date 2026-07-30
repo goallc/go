@@ -24,6 +24,21 @@ func llvmZeroAligned(dst *[3]uint64) {
 	*dst = [3]uint64{}
 }
 
+type llvmPointerStackZero [4]*int
+
+//go:noescape
+func llvmPointerStackZeroSink(*llvmPointerStackZero)
+
+// LLVM-DAG: define goabiinternal ptr @codegen.llvmZeroFreshPointerStack(
+// LLVM-DAG: {{%.*}} = alloca [4 x ptr], align 8
+// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
+func llvmZeroFreshPointerStack(p *int) *int {
+	var local llvmPointerStackZero
+	local[3] = p
+	llvmPointerStackZeroSink(&local)
+	return local[3]
+}
+
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveOverlapSized(
 // LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
 func llvmMoveOverlapSized(dst, src *[32]byte) {
