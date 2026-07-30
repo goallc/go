@@ -282,12 +282,16 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 
 func llvmDataSection(s *obj.LSym) string {
 	switch s.Type {
-	case objabi.SRODATA, objabi.SRODATAFIPS, objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS:
+	case objabi.SRODATA, objabi.SRODATAFIPS:
 		return ".rodata"
+	case objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS:
+		return ".noptrdata"
 	case objabi.SDATA, objabi.SDATAFIPS:
 		return ".data"
-	case objabi.SBSS, objabi.SNOPTRBSS:
+	case objabi.SBSS:
 		return ".bss"
+	case objabi.SNOPTRBSS:
+		return ".noptrbss"
 	default:
 		base.Fatalf("unsupported Go data symbol kind %s for %s", s.Type, s.Name)
 		return ""
@@ -296,7 +300,7 @@ func llvmDataSection(s *obj.LSym) string {
 
 func llvmDataIsReadOnly(s *obj.LSym) bool {
 	switch s.Type {
-	case objabi.SRODATA, objabi.SRODATAFIPS, objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS:
+	case objabi.SRODATA, objabi.SRODATAFIPS:
 		return true
 	default:
 		return false

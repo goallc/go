@@ -30,6 +30,7 @@
       "codegen/issue74485.go": "unsigned division and remainder at integer sign-bit constants",
       "codegen/known_bits.go": "phi-carried known-bit masking and boolean control flow",
       "codegen/logic.go": "integer logic and conditional control flow",
+      "codegen/llvm_data_sections.go": "preserve data, bss, noptrdata, and noptrbss identities in LLVM IR",
       "codegen/llvm_dereference.go": "address-taken named stack results loaded for return",
       "codegen/llvm_memops.go": "pointer-free zero and overlap-safe move intrinsics, runtime memequal, and native-int slice masks",
       "codegen/memops.go": "typed indexed loads, stores, comparisons, bounds checks, and scalar memory operations",
