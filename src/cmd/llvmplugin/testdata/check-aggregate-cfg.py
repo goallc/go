@@ -77,7 +77,11 @@ def main():
         if not re.search(r'"gc-live"\(ptr ', line):
             fail(f"gc-live contains a non-scalar-pointer operand: {line.strip()}")
 
-    if re.search(r"\b(?:alloca|load|store)\b", ir):
+    if re.search(
+        r"^\s*(?:%[-\w.]+ = )?(?:alloca|load)\b|^\s*store\b",
+        ir,
+        re.MULTILINE,
+    ):
         fail("temporary relocation memory traffic survived PromoteMemToReg")
 
     diamond = function_body(ir, "aggregate_diamond_call_skip")

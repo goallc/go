@@ -77,6 +77,8 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.Rewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
+      "p.relocated"
+    FAIL_REGULAR_EXPRESSION
       "slot.relocated"
   )
 
@@ -357,16 +359,80 @@ if(BUILD_TESTING)
   )
 
   add_test(
-    NAME GoALLCStatepoints.AggregateMemoryObjectFails
+    NAME GoALLCStatepoints.AllocaPointerRoots
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-alloca-pointer-roots.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --opt "${GOALLC_OPT_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-roots.ll"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.DynamicPointerAllocaFails
     COMMAND
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
       --llc "${GOALLC_LLC_EXECUTABLE}"
       --plugin "$<TARGET_FILE:GoALLCStatepoints>"
       --input
-        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-memory-object-unsupported.ll"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-dynamic-unsupported.ll"
       --contains
-      "SSA aggregate scalarization cannot describe their internal pointer slots"
+      "require a single fixed entry-block pointer-containing alloca"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.RealignedPointerAllocaFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-realigned-unsupported.ll"
+      --contains
+      "do not support realigned pointer-containing allocas"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.PointerVectorAllocaFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-vector-unsupported.ll"
+      --contains
+      "do not support pointer vectors in allocas"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.PointerAllocaLifetimeFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-lifetime-unsupported.ll"
+      --contains
+      "do not support lifetime markers on pointer-containing allocas"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.VolatilePointerAllocaFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-volatile-unsupported.ll"
+      --contains
+      "do not support volatile or atomic access to pointer-containing allocas"
   )
 
   add_test(

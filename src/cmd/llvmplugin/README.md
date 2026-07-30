@@ -36,17 +36,18 @@ the old uses make the required reaching definition explicit, and LLVM's public
 `PromoteMemToReg` utility removes the temporary memory operations and forms the
 relocation PHIs. This applies the same SSA construction to straight-line code,
 conditional paths, loop backedges, and irreducible control flow.
-The initial implementation keeps live `alloca` addresses and alloca-derived
-pointer values in `gc-live`; it does not try to predict whether instruction
-selection will rematerialize a frame address or spill a materialized pointer
-value.
+Static `alloca` addresses and constant GEP/cast forms derived from them are
+native frame addresses, not Go heap pointers, and are excluded from `gc-live`.
+SelectionDAG rematerializes those addresses from their fixed frame indexes
+after stack growth. Pointer values loaded from the allocation remain ordinary
+tracked roots.
 
 The current SSA value and CFG rewrite support matrix is:
 
 | Value or control-flow shape | Status | Current contract |
 | --- | --- | --- |
 | Pointer arguments | AArch64 GoObj qualified; SelectionDAG home reuse also tested on X86 | Values live after a call use caller statepoints; exact stack inputs stay in their fixed ABI homes, while register inputs and transformed values use normal statepoint spills. Call-only arguments are described by the callee's type-derived entry map. |
-| `alloca` and alloca-derived pointers | Supported | The pointer value is live; pointer fields stored in the allocation are not described. |
+| Static `alloca` addresses | Supported | Proven static-allocation addresses and constant GEP/cast forms are frame addresses and do not enter `gc-live`; pointers loaded from memory remain tracked. |
 | `select`, GEP, and pointer casts | Supported | Each resulting pointer SSA value is tracked conservatively. |
 | Pointer-valued call results | Supported | `gc.result` replaces the ordinary result and later safepoints relocate it. |
 | Multiple ordinary calls | Supported | Stable IDs and live sets remain per call; the next statepoint consumes the current relocated SSA value. |
@@ -54,8 +55,8 @@ The current SSA value and CFG rewrite support matrix is:
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
 | Fixed struct/array SSA aggregates | Supported | Pointer leaves are scalarized before liveness and reconstructed from the current relocated SSA leaves. |
 | Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; supported fixed formal layouts also contribute pointer words to AArch64 entry maps. |
-| Aggregate load results and store operands | Supported | Only the first-class SSA value is normalized; the underlying memory object's pointer slots are not described. |
-| Pointer-containing `alloca` storage | Unsupported | Requires locals pointer maps or `FUNCDATA_StackObjects`; fails closed. |
+| Aggregate load results and store operands | Supported | First-class SSA values use aggregate normalization; fixed pointer-containing allocas additionally keep every pointer leaf synchronized around safepoints. |
+| Pointer-containing `alloca` storage | Supported for IR rewriting | Every pointer leaf in a single fixed entry-block alloca is zero-initialized, loaded before each safepoint, relocated as a scalar root, and written back. The canonical load requires exact fixed-home lowering and must never fall back to a separate spill. |
 | Fixed and scalable vectors | Unsupported | Vector lane and scalable-count semantics require a separate design; fails closed. |
 | General moving-GC base/derived analysis | Unsupported | Base and derived indexes are identical in the current non-moving-heap phase. |
 | `invoke`, `callbr`, operand bundles, non-`nest` parameter attributes, and `musttail` | Unsupported | Fails closed rather than widening the call contract. |
@@ -101,13 +102,28 @@ padding is not a first-class leaf. LLVM 23 permits an aggregate `gc.result`, so
 an aggregate call result is projected first and its pointer leaves become roots
 at later safepoints.
 
-An aggregate loaded from memory can be normalized as an SSA value and an
-aggregate store can consume a rebuilt value, but this does not describe
-pointers that remain in the memory object. Pointer-containing `alloca` storage
-therefore fails closed. Tracking the alloca's scalar address is not a substitute
-for locals pointer maps or `FUNCDATA_StackObjects`. Constants are not roots in
-the current conservative model; null or constant pointer leaves extracted from
-a non-constant aggregate may be reported conservatively.
+An aggregate loaded from memory can be normalized as an independent SSA value
+and an aggregate store can consume a rebuilt value. For a fixed
+pointer-containing alloca, a separate memory-root normalization enumerates its
+pointer leaf offsets. It first zeroes those slots, then inserts a canonical load
+before every ordinary call and a matching write-back after it. The existing
+whole-function relocation SSA rewrite turns the stored pre-call definition
+into the corresponding `gc.relocate` result on the returning edge. The
+canonical load is volatile so SelectionDAG cannot fold distinct field homes
+together, and carries `!llvm.statepoint.fixed_stack_home`; SelectionDAG must map
+it to the original alloca frame index and byte offset or fail closed.
+Falling back to an extra spill would be incorrect when the callee updates the
+address-passed object.
+
+This first implementation conservatively records every pointer leaf at every
+safepoint for the lifetime of the frame. It may therefore retain otherwise dead
+heap objects longer than native Go's reachability-sensitive stack-object
+metadata, but its locals pointer map is functionally sufficient for scanning
+and relocation. Constants are not roots in the general SSA model; canonical
+alloca roots are loads even when the slot currently contains null.
+Address passing to a callee is supported. Dynamic, multiple-element, scalable,
+or realigned allocas, pointer vectors, lifetime markers, and volatile or atomic
+accesses fail closed until their frame-home and update semantics are explicit.
 
 LLVM's generic `RewriteStatepointsForGC` pass is the design reference for
 liveness and relocation SSA formation. GoALLC does not run it directly:
@@ -117,12 +133,15 @@ narrow Go ABI contract above.
 
 The final combined order is:
 
-1. **Aggregate normalization.** Use aggregate-only liveness to find and
+1. **Fixed alloca memory-root normalization.** Enumerate fixed pointer leaves,
+   zero them before the first safepoint, and insert canonical load/write-back
+   pairs around every ordinary call.
+2. **Aggregate normalization.** Use aggregate-only liveness to find and
    decompose supported live first-class struct/array values, then rebuild
    aggregates immediately before their uses.
-2. **Scalar statepoint insertion.** Compute liveness, build scalar-only
+3. **Scalar statepoint insertion.** Compute liveness, build scalar-only
    `gc-live` bundles, and emit `gc.result` and `gc.relocate`.
-3. **Whole-function relocation SSA.** Model the original scalar definition and
+4. **Whole-function relocation SSA.** Model the original scalar definition and
    every relocate as stores to temporary promotable allocas, rewrite old uses
    through loads, and call the public `PromoteMemToReg` utility. This constructs
    conditional, loop/backedge, and irreducible-CFG PHIs and removes all
@@ -174,8 +193,8 @@ The GoObj writer interprets locations after final layout. An
 pointer bit; one in the post-prologue caller-owned argument/result area
 contributes an args pointer bit. A `Direct SP+offset` stack address contributes
 to neither bitmap because the address itself, rather than the slot contents,
-is the pointer. This permits conservative IR tracking without confusing an
-alloca's address with pointer data stored in the alloca.
+is the pointer. Static alloca addresses are excluded from `gc-live` before this
+point; only their loaded pointer leaves request indirect fixed-home locations.
 
 Ordinary stack inputs use the same statepoint path. SelectionDAG formal
 lowering records a value home only when a Go ABI pointer part is a direct,
@@ -218,12 +237,15 @@ realigned frames; raw register roots; pointer vectors or ABI layouts whose
 pointer words do not map to fixed homes; and ordinary statepoint stack
 locations outside either the GC locals range or the adjusted caller-owned
 argument/result range.
-`FUNCDATA_StackObjects` and `PCDATA_ArgLiveIndex` are not implemented. Tracking
-an alloca address across a statepoint does not describe pointer fields stored
-inside that object, and ArgLive is not a replacement for the entry argument
-bitmap. Precise handling of pointer-containing address-taken stack storage
-belongs to the separate StackObjects work rather than this ArgsPointerMaps
-change.
+`FUNCDATA_StackObjects` and `PCDATA_ArgLiveIndex` are not implemented.
+Pointer-containing fixed allocas are represented conservatively in
+`LocalsPointerMaps`; the alloca address itself is never treated as the root.
+ArgLive is not a replacement for the entry argument bitmap.
+
+TODO: add native-style `FUNCDATA_StackObjects` reachability so pointer leaves of
+dead address-taken objects stop retaining heap objects. This is an optimization
+of the conservative locals-map implementation, not a prerequisite for correct
+scanning or relocation.
 
 TODO: LLVM opaque pointer types currently make the first itab/type word of a
 Go interface and pointers to `NotInHeap` types look like ordinary GC pointers.
