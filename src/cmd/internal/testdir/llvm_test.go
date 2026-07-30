@@ -60,6 +60,10 @@ func runLLVMTests(t *testing.T, common testCommon) {
 			}
 		})
 
+		t.Run("abi-differential", func(t *testing.T) {
+			runLLVMABIDifferentialTest(t, common.gorootTestDir)
+		})
+
 		t.Run("runtime", func(t *testing.T) {
 			names := sortedLLVMWhitelist(policy.Runtime.Whitelist)
 			for _, name := range names {

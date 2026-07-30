@@ -331,6 +331,9 @@ func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 	if s.UsedInIface() {
 		flag2 |= 1 << 0 // goobj.SymFlagUsedInIface
 	}
+	if s.ItabInfo() != nil {
+		flag2 |= 1 << 1 // goobj.SymFlagItab
+	}
 	if s.IsLinkname() {
 		flag2 |= 1 << 4 // goobj.SymFlagLinkname
 	}

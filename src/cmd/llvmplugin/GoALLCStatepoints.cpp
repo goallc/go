@@ -32,6 +32,7 @@ namespace {
 
 constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
+constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
 // statepoint insertion, so UseRS4GC deliberately remains false.
@@ -444,6 +445,9 @@ Error rewriteCall(SafepointRecord &Record) {
   Record.Statepoint = Builder.CreateGCStatepointCall(
       Record.ID, 0, Callee, CallArgs, std::nullopt, GCLive, "statepoint_token");
   Record.Statepoint->setCallingConv(Call->getCallingConv());
+  if (Call->hasFnAttr(GoResultsTupleAttr))
+    Record.Statepoint->addFnAttr(
+        Attribute::get(Call->getContext(), GoResultsTupleAttr));
   for (unsigned I = 0; I != Call->arg_size(); ++I) {
     for (Attribute Attr : Call->getAttributes().getParamAttrs(I))
       Record.Statepoint->addParamAttr(GCStatepointInst::CallArgsBeginPos + I,
