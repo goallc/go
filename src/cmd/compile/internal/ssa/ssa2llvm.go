@@ -948,14 +948,29 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		if !v.Type.IsMemory() {
 			lVal = lfc.b.CreatePHI(getLLVMType(v.Type), v.String())
 		}
-	case OpLoad:
+	case OpLoad, OpDereference:
+		// LLVM lowering runs before expandCalls, where the native backend
+		// normally rewrites Dereference to Load while decomposing call
+		// arguments and results. Address-taken, non-SSA-able named results can
+		// therefore still reach this point as Dereference.
 		typ := getLLVMType(v.Type)
 		if lfc.ItabMethods[v.ID] || lfc.ClosureCodeLoads[v.ID] {
 			// Native SSA uses uintptr for an itab method slot. Preserve its
 			// pointer-sized storage but expose the callable pointer to LLVM.
 			typ = GlobalCtxt.PointerType(0)
 		}
-		lVal = lfc.b.CreateLoad(typ, arg0(), v.String())
+		addr := arg0()
+		if addr.Type().TypeKind() != llvm.PointerTypeKind {
+			v.Fatalf("%s address has non-pointer LLVM type", v.Op)
+		}
+		lVal = lfc.b.CreateLoad(typ, addr, v.String())
+		if v.Op == OpDereference {
+			align := v.Type.Alignment()
+			if align <= 0 || align&(align-1) != 0 {
+				v.Fatalf("%s has invalid alignment %d for %v", v.Op, align, v.Type)
+			}
+			lVal.SetAlignment(int(align))
+		}
 	case OpAtomicLoadPtr:
 		lVal = lfc.b.CreateLoad(GlobalCtxt.PointerType(0), arg0(), v.String())
 		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
