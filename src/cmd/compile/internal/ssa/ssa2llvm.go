@@ -194,12 +194,39 @@ func markLLVMGCLeaf(fn, call llvm.Value) {
 	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, attr)
 }
 
+// A full zero immediately following VarDef initializes a non-escaping Go
+// stack slot and therefore needs no heap write barrier. Keep this exception
+// tied to the direct PAUTO allocation; pointer writes through arguments,
+// globals, heap objects, or derived addresses must remain fail closed.
+func isFreshPointerStackZero(v *Value, t *types.Type) bool {
+	if v.Op != OpZero || len(v.Args) != 2 {
+		return false
+	}
+	dst := v.Args[0]
+	if dst.Op != OpLocalAddr {
+		return false
+	}
+	name, dstKey := llvmLocalName(dst)
+	if name.Class != ir.PAUTO || !types.Identical(name.Type(), t) || auxIntToInt64(v.AuxInt) != t.Size() {
+		return false
+	}
+	mem := v.Args[1]
+	for mem.Op == OpCopy && len(mem.Args) == 1 {
+		mem = mem.Args[0]
+	}
+	if mem.Op != OpVarDef {
+		return false
+	}
+	_, memKey := llvmLocalName(mem)
+	return memKey == dstKey
+}
+
 func llvmMemoryOpInfo(v *Value) (int64, int) {
 	t, ok := v.Aux.(*types.Type)
 	if !ok || t == nil {
 		v.Fatalf("%s has no memory type", v.Op)
 	}
-	if t.HasPointers() {
+	if t.HasPointers() && !isFreshPointerStackZero(v, t) {
 		v.Fatalf("%s of pointer-containing type %v requires write-barrier lowering before LLVM", v.Op, t)
 	}
 	size := auxIntToInt64(v.AuxInt)
