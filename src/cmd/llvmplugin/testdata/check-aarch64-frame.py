@@ -21,6 +21,20 @@ def only(items, predicate, description):
     return matches[0]
 
 
+def reference_name(obj, target):
+    if target["pkg_kind"] != "none":
+        fail(f"cannot resolve non-reference target: {target}")
+    reference = only(
+        obj["references"],
+        lambda item: (
+            item["class"] == "nonpackage_reference"
+            and item["class_index"] == target["sym_index"]
+        ),
+        f"references for target {target}",
+    )
+    return reference["name"]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--objview", required=True)
@@ -120,10 +134,57 @@ def main():
     if values != [-1, 1, 0]:
         fail(f"unexpected stack-map range values: {values}")
     queries = metadata["stack_map_queries"]
-    if len(queries) != 1 or queries[0]["stack_map_index"] != 0:
-        fail(f"unexpected morestack call query: {queries}")
-    if stack_index["ranges"][-1]["start"] != queries[0]["call_offset"]:
-        fail("morestack stack-map range does not start at the CALL")
+    if len(queries) != 2:
+        fail(f"unexpected call queries: {queries}")
+    indirect_query = only(
+        queries,
+        lambda item: item["relocation_type"] == "R_CALLIND",
+        "R_CALLIND queries",
+    )
+    morestack_query = only(
+        queries,
+        lambda item: item["relocation_type"] == "R_CALLARM64",
+        "R_CALLARM64 queries",
+    )
+    if indirect_query["target"] != {
+        "pkg_index": 0,
+        "pkg_kind": "invalid",
+        "sym_index": 0,
+    }:
+        fail(f"R_CALLIND has a non-empty target: {indirect_query}")
+    if reference_name(obj, morestack_query["target"]) != (
+        "runtime.morestack_noctxt"
+    ):
+        fail(f"unexpected direct call query: {morestack_query}")
+    if indirect_query["stack_map_index"] != 1:
+        fail(f"indirect call does not select map 1: {indirect_query}")
+    if morestack_query["stack_map_index"] != 0:
+        fail(f"morestack call does not select map 0: {morestack_query}")
+    for query in queries:
+        if (
+            query["instruction_size"] != 4
+            or query["return_pc"] != query["call_offset"] + 4
+            or query["lookup_pc"] != query["return_pc"] - 1
+        ):
+            fail(f"unexpected AArch64 call query coordinates: {query}")
+    actual_ranges = [
+        (item["start"], item["end"], item["value"])
+        for item in stack_index["ranges"]
+    ]
+    want_ranges = [
+        (0, indirect_query["call_offset"], -1),
+        (
+            indirect_query["call_offset"],
+            morestack_query["call_offset"],
+            1,
+        ),
+        (morestack_query["call_offset"], function["size"], 0),
+    ]
+    if actual_ranges != want_ranges:
+        fail(
+            f"unexpected exact stack-map ranges: {actual_ranges}, "
+            f"want {want_ranges}"
+        )
 
     def check_entry_only(name, arg_size, num_bits, want_entry_bits):
         symbol = only(
@@ -170,11 +231,16 @@ def main():
                 f"locals={sorted(actual_locals_bits)}"
             )
         function_queries = function_metadata["stack_map_queries"]
-        if (
-            len(function_queries) != 1
-            or function_queries[0]["stack_map_index"] != 0
-        ):
+        if len(function_queries) != 1:
             fail(f"{name} has unexpected morestack query: {function_queries}")
+        function_query = function_queries[0]
+        if (
+            function_query["stack_map_index"] != 0
+            or function_query["relocation_type"] != "R_CALLARM64"
+            or reference_name(obj, function_query["target"])
+            != "runtime.morestack_noctxt"
+        ):
+            fail(f"{name} has unexpected morestack query: {function_query}")
 
     # ABI0's input pointer occupies word 0 and its pointer result occupies word
     # 1. The entry bitmap must leave the uninitialized result word clear.

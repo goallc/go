@@ -20,6 +20,20 @@ def only(items, predicate, description):
     return matches[0]
 
 
+def reference_name(obj, target):
+    if target["pkg_kind"] != "none":
+        fail(f"cannot resolve non-reference target: {target}")
+    reference = only(
+        obj["references"],
+        lambda item: (
+            item["class"] == "nonpackage_reference"
+            and item["class_index"] == target["sym_index"]
+        ),
+        f"references for target {target}",
+    )
+    return reference["name"]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--objview", required=True)
@@ -54,47 +68,83 @@ def main():
         "PCDATA_StackMapIndex tables",
     )
     ranges = stack_index["ranges"]
-    if [item["value"] for item in ranges] != [-1, 0, 1, 0]:
-        fail(f"unexpected stack-map ranges: {ranges}")
-
     queries = metadata["stack_map_queries"]
+    if len(queries) != 4:
+        fail(f"unexpected call queries: {queries}")
+    target_names = [reference_name(obj, item["target"]) for item in queries]
+    want_target_names = [
+        "make_pair",
+        "safepoint",
+        "leaf_consume_pair",
+        "runtime.morestack_noctxt",
+    ]
+    if target_names != want_target_names:
+        fail(
+            f"unexpected call targets: {target_names}, "
+            f"want {want_target_names}"
+        )
+    if any(item["relocation_type"] != "R_CALL" for item in queries):
+        fail(f"unexpected call relocation types: {queries}")
     indexes = [item["stack_map_index"] for item in queries]
-    if indexes != [0, 1, 1, 0]:
+    if indexes != [1, 2, 2, 0]:
         fail(f"unexpected call stack-map indexes: {indexes}")
-    if ranges[1]["start"] != queries[0]["call_offset"] - 1:
-        fail("empty entry map does not begin at the first statepoint CALL")
-    if ranges[2]["start"] != queries[1]["call_offset"] - 1:
-        fail("aggregate-result map does not begin at the live statepoint CALL")
-    if ranges[3]["start"] != queries[-1]["call_offset"] - 1:
-        fail("empty stack-growth map does not begin at the morestack CALL")
+    call_starts = [item["call_offset"] - 1 for item in queries]
+    if any(
+        item["return_pc"] != item["call_offset"] + item["instruction_size"]
+        or item["lookup_pc"] != item["return_pc"] - 1
+        for item in queries
+    ):
+        fail(f"unexpected x86 call query coordinates: {queries}")
+    actual_ranges = [
+        (item["start"], item["end"], item["value"]) for item in ranges
+    ]
+    want_ranges = [
+        (0, call_starts[0], -1),
+        (call_starts[0], call_starts[1], 1),
+        (call_starts[1], call_starts[-1], 2),
+        (call_starts[-1], function["size"], 0),
+    ]
+    if actual_ranges != want_ranges:
+        fail(
+            f"unexpected exact stack-map ranges: {actual_ranges}, "
+            f"want {want_ranges}"
+        )
+    if not ranges[2]["start"] <= call_starts[2] < ranges[2]["end"]:
+        fail("leaf aggregate consumer is not covered by live map 2")
 
     args_maps = only(
         metadata["funcdata"],
         lambda item: item["kind"] == "args_pointer_maps",
         "FUNCDATA_ArgsPointerMaps tables",
     )["stack_map"]
-    if args_maps["count"] != 2 or args_maps["num_bits"] != 2:
+    if args_maps["count"] != 3 or args_maps["num_bits"] != 2:
         fail(f"unexpected argument-map dimensions: {args_maps}")
-    if any(item["set_bits"] for item in args_maps["bitmaps"]):
-        fail(f"x86 aggregate test unexpectedly has argument roots: {args_maps}")
+    args_bits = [
+        set(item["set_bits"] or []) for item in args_maps["bitmaps"]
+    ]
+    # Map 0 is the stack-growth entry map and retains seed. Ordinary maps 1
+    # and 2 move all live roots out of the incoming argument area.
+    if args_bits != [{0}, set(), set()]:
+        fail(f"unexpected argument roots: {args_bits}")
 
     locals_maps = only(
         metadata["funcdata"],
         lambda item: item["kind"] == "locals_pointer_maps",
         "FUNCDATA_LocalsPointerMaps tables",
     )["stack_map"]
-    if locals_maps["count"] != 2:
-        fail(f"locals stack-map count is {locals_maps['count']}, want 2")
-    morestack_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
-    live_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
-    if len(live_bits) != 1:
-        fail(f"aggregate result has unexpected live pointer bits: {live_bits}")
-    if morestack_bits:
-        fail(f"morestack statepoint has GC live pointers: {morestack_bits}")
+    if locals_maps["count"] != 3 or locals_maps["num_bits"] != 5:
+        fail(f"unexpected locals-map dimensions: {locals_maps}")
+    locals_bits = [
+        set(item["set_bits"] or []) for item in locals_maps["bitmaps"]
+    ]
+    # Map 1 covers make_pair before it produces a result. Map 2 then keeps
+    # the aggregate result's pointer field live through both later calls.
+    if locals_bits != [set(), set(), {3}]:
+        fail(f"unexpected local roots: {locals_bits}")
 
     print(
-        f"{FUNCTION}: call maps {indexes}, "
-        f"locals bits {sorted(live_bits)} -> {sorted(morestack_bits)}"
+        f"{FUNCTION}: targets {target_names}, call maps {indexes}, "
+        f"args {args_bits}, locals {locals_bits}"
     )
 
 
