@@ -38,6 +38,7 @@ constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral FixedStackHomeMD = "llvm.statepoint.fixed_stack_home";
+constexpr StringLiteral GoNilCheckMD = "goallc.nilcheck";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
 // statepoint insertion, so UseRS4GC deliberately remains false.
@@ -519,7 +520,13 @@ Error validatePointerAllocaAccesses(AllocaInst &Alloca, Function &F) {
     bool UnsupportedAccess = false;
     if (auto *Load = dyn_cast<LoadInst>(&I)) {
       Address = Load->getPointerOperand();
-      UnsupportedAccess = Load->isVolatile() || Load->isAtomic();
+      MDNode *NilCheck = Load->getMetadata(GoNilCheckMD);
+      bool IsFrontendNilCheck =
+          NilCheck && NilCheck->getNumOperands() == 0 && Load->isVolatile() &&
+          !Load->isAtomic() && Load->getType()->isIntegerTy(8) &&
+          Load->getAlign() == Align(1);
+      UnsupportedAccess =
+          Load->isAtomic() || (Load->isVolatile() && !IsFrontendNilCheck);
     } else if (auto *Store = dyn_cast<StoreInst>(&I)) {
       Address = Store->getPointerOperand();
       UnsupportedAccess = Store->isVolatile() || Store->isAtomic();

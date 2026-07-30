@@ -97,6 +97,12 @@ def main():
     pointer_slot = function_body(ir, "pointer_slot")
     require(
         pointer_slot,
+        r"%nilcheck = load volatile i8, ptr %slot, align 1, "
+        r"!goallc\.nilcheck !\d+",
+        "frontend-marked alloca nil check",
+    )
+    require(
+        pointer_slot,
         r"%slot\.gc\.leaf\.root\.relocated = call coldcc ptr "
         r"@llvm\.experimental\.gc\.relocate",
         "scalar alloca leaf relocation",

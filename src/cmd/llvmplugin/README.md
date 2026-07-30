@@ -121,9 +121,13 @@ heap objects longer than native Go's reachability-sensitive stack-object
 metadata, but its locals pointer map is functionally sufficient for scanning
 and relocation. Constants are not roots in the general SSA model; canonical
 alloca roots are loads even when the slot currently contains null.
-Address passing to a callee is supported. Dynamic, multiple-element, scalable,
-or realigned allocas, pointer vectors, lifetime markers, and volatile or atomic
-accesses fail closed until their frame-home and update semantics are explicit.
+Address passing to a callee is supported. A volatile byte load carrying the
+compiler-owned empty `!goallc.nilcheck` marker is recognized as an SSA
+`OpNilCheck` and remains in place for its faulting semantics; this does not
+represent a volatile read of the pointer storage. Dynamic, multiple-element,
+scalable, or realigned allocas, pointer vectors, lifetime markers, every
+unmarked volatile access, and every atomic access fail closed until their
+frame-home and update semantics are explicit.
 
 LLVM's generic `RewriteStatepointsForGC` pass is the design reference for
 liveness and relocation SSA formation. GoALLC does not run it directly:
