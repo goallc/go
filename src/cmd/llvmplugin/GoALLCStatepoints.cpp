@@ -9,6 +9,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
@@ -20,9 +21,12 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Statepoint.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/CheckedArithmetic.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -33,6 +37,7 @@ namespace {
 constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
+constexpr StringLiteral FixedStackHomeMD = "llvm.statepoint.fixed_stack_home";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
 // statepoint insertion, so UseRS4GC deliberately remains false.
@@ -81,6 +86,12 @@ struct AggregateLeaf {
   SmallVector<unsigned, 4> Indices;
 };
 
+struct PointerAllocaLeaf {
+  SmallVector<unsigned, 4> Indices;
+  uint64_t Offset;
+  PointerType *Type;
+};
+
 enum class LivenessKind {
   PointerAggregates,
   ScalarPointers,
@@ -102,6 +113,14 @@ bool containsPointer(Type *Ty) {
   return false;
 }
 
+bool isStaticAllocaAddress(const Value *V) {
+  if (!V->getType()->isPointerTy())
+    return false;
+  const Value *Object = getUnderlyingObject(V);
+  const auto *Alloca = dyn_cast<AllocaInst>(Object);
+  return Alloca && Alloca->isStaticAlloca();
+}
+
 bool isTrackedValue(const Value *V, LivenessKind Kind) {
   if (isa<Constant>(V))
     return false;
@@ -110,7 +129,11 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
   case LivenessKind::PointerAggregates:
     return !Ty->isPointerTy() && containsPointer(Ty);
   case LivenessKind::ScalarPointers:
-    return Ty->isPointerTy();
+    // A fixed alloca address is a native stack-frame address, not a Go heap
+    // pointer. SelectionDAG rematerializes it from its FrameIndex after stack
+    // growth. Pointer values loaded from the alloca are distinct Values whose
+    // underlying object is the load, so they remain tracked.
+    return Ty->isPointerTy() && !isStaticAllocaAddress(V);
   }
   llvm_unreachable("unknown GoALLC liveness kind");
 }
@@ -383,21 +406,238 @@ Error scalarizeLivePointerAggregates(Function &F) {
   return Error::success();
 }
 
-Error validateMemoryObjects(Function &F) {
+Error enumeratePointerAllocaLeaves(Type *Ty, const DataLayout &DL,
+                                   SmallVectorImpl<unsigned> &Path,
+                                   uint64_t Offset,
+                                   SmallVectorImpl<PointerAllocaLeaf> &Leaves) {
+  if (auto *ST = dyn_cast<StructType>(Ty)) {
+    if (ST->isOpaque())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints cannot describe an opaque alloca struct");
+    const StructLayout *Layout = DL.getStructLayout(ST);
+    for (auto [Index, ElementTy] : llvm::enumerate(ST->elements())) {
+      TypeSize LayoutOffset = Layout->getElementOffset(Index);
+      if (LayoutOffset.isScalable())
+        return createStringError(
+            std::errc::not_supported,
+            "GoALLC statepoints do not support scalable alloca structs");
+      auto ElementOffset =
+          checkedAddUnsigned(Offset, LayoutOffset.getFixedValue());
+      if (!ElementOffset)
+        return createStringError(
+            std::errc::value_too_large,
+            "GoALLC statepoint alloca pointer offset overflow");
+      Path.push_back(Index);
+      if (Error Err = enumeratePointerAllocaLeaves(ElementTy, DL, Path,
+                                                   *ElementOffset, Leaves))
+        return std::move(Err);
+      Path.pop_back();
+    }
+    return Error::success();
+  }
+  if (auto *AT = dyn_cast<ArrayType>(Ty)) {
+    if (AT->getNumElements() > std::numeric_limits<unsigned>::max())
+      return createStringError(
+          std::errc::value_too_large,
+          "GoALLC statepoints cannot enumerate an oversized alloca array");
+    TypeSize ElementSize = DL.getTypeAllocSize(AT->getElementType());
+    if (ElementSize.isScalable())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support scalable alloca elements");
+    for (uint64_t Index = 0; Index != AT->getNumElements(); ++Index) {
+      auto RelativeOffset =
+          checkedMulUnsigned(Index, ElementSize.getFixedValue());
+      auto ElementOffset = RelativeOffset
+                               ? checkedAddUnsigned(Offset, *RelativeOffset)
+                               : std::optional<uint64_t>();
+      if (!ElementOffset)
+        return createStringError(
+            std::errc::value_too_large,
+            "GoALLC statepoint alloca pointer offset overflow");
+      Path.push_back(static_cast<unsigned>(Index));
+      if (Error Err = enumeratePointerAllocaLeaves(
+              AT->getElementType(), DL, Path, *ElementOffset, Leaves))
+        return std::move(Err);
+      Path.pop_back();
+    }
+    return Error::success();
+  }
+  if (Ty->isVectorTy() && containsPointer(Ty))
+    return createStringError(
+        std::errc::not_supported,
+        "GoALLC statepoints do not support pointer vectors in allocas");
+  if (auto *PointerTy = dyn_cast<PointerType>(Ty)) {
+    TypeSize PointerSize = DL.getTypeStoreSize(PointerTy);
+    if (PointerTy->getAddressSpace() != 0 || PointerSize.isScalable() ||
+        PointerSize.getFixedValue() != DL.getPointerSize(0))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints require default-address-space pointer words in "
+          "allocas");
+    Leaves.push_back({SmallVector<unsigned, 4>(ArrayRef<unsigned>(Path)),
+                      Offset, PointerTy});
+  }
+  return Error::success();
+}
+
+Value *pointerAllocaLeafAddress(IRBuilder<> &Builder, AllocaInst &Alloca,
+                                const PointerAllocaLeaf &Leaf,
+                                const Twine &Name) {
+  if (Leaf.Indices.empty())
+    return &Alloca;
+  SmallVector<Value *, 8> GEPIndices;
+  GEPIndices.push_back(Builder.getInt32(0));
+  for (unsigned Index : Leaf.Indices)
+    GEPIndices.push_back(Builder.getInt32(Index));
+  return Builder.CreateInBoundsGEP(Alloca.getAllocatedType(), &Alloca,
+                                   GEPIndices, Name);
+}
+
+std::string allocaLeafName(AllocaInst &Alloca, const PointerAllocaLeaf &Leaf) {
+  std::string Name =
+      Alloca.hasName() ? (Alloca.getName() + ".gc.leaf").str() : "gc.leaf";
+  for (unsigned Index : Leaf.Indices)
+    Name += "." + std::to_string(Index);
+  return Name;
+}
+
+Error validatePointerAllocaAccesses(AllocaInst &Alloca, Function &F) {
+  for (Instruction &I : instructions(F)) {
+    if (auto *Intrinsic = dyn_cast<IntrinsicInst>(&I);
+        Intrinsic && Intrinsic->isLifetimeStartOrEnd() &&
+        Intrinsic->arg_size() != 0 &&
+        getUnderlyingObject(
+            Intrinsic->getArgOperand(Intrinsic->arg_size() - 1)) == &Alloca)
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support lifetime markers on "
+          "pointer-containing allocas");
+
+    Value *Address = nullptr;
+    bool UnsupportedAccess = false;
+    if (auto *Load = dyn_cast<LoadInst>(&I)) {
+      Address = Load->getPointerOperand();
+      UnsupportedAccess = Load->isVolatile() || Load->isAtomic();
+    } else if (auto *Store = dyn_cast<StoreInst>(&I)) {
+      Address = Store->getPointerOperand();
+      UnsupportedAccess = Store->isVolatile() || Store->isAtomic();
+    } else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
+      Address = RMW->getPointerOperand();
+      UnsupportedAccess = true;
+    } else if (auto *CmpXchg = dyn_cast<AtomicCmpXchgInst>(&I)) {
+      Address = CmpXchg->getPointerOperand();
+      UnsupportedAccess = true;
+    }
+    if (Address && UnsupportedAccess && getUnderlyingObject(Address) == &Alloca)
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support volatile or atomic access to "
+          "pointer-containing allocas");
+  }
+  return Error::success();
+}
+
+Error normalizePointerAllocas(Function &F) {
   bool HasSafepoint = llvm::any_of(instructions(F), [](Instruction &I) {
     auto *Call = dyn_cast<CallBase>(&I);
     return Call && !isa<GCStatepointInst>(Call) && !isLeafCall(*Call);
   });
   if (!HasSafepoint)
     return Error::success();
+
+  SmallVector<CallInst *, 8> Calls;
+  for (Instruction &I : instructions(F)) {
+    auto *Call = dyn_cast<CallBase>(&I);
+    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call))
+      continue;
+    auto *OrdinaryCall = dyn_cast<CallInst>(Call);
+    if (!OrdinaryCall)
+      continue;
+    if (OrdinaryCall->isMustTailCall())
+      return createStringError(std::errc::not_supported,
+                               "GoALLC statepoints do not support musttail");
+    Calls.push_back(OrdinaryCall);
+  }
+
+  const DataLayout &DL = F.getDataLayout();
+  SmallVector<std::pair<AllocaInst *, SmallVector<PointerAllocaLeaf, 8>>, 8>
+      PointerAllocas;
   for (Instruction &I : instructions(F)) {
     auto *Alloca = dyn_cast<AllocaInst>(&I);
-    if (Alloca && containsPointer(Alloca->getAllocatedType()))
+    if (!Alloca || !containsPointer(Alloca->getAllocatedType()))
+      continue;
+    auto *ArraySize = dyn_cast<ConstantInt>(Alloca->getArraySize());
+    if (!Alloca->isStaticAlloca() || !ArraySize || !ArraySize->isOne())
       return createStringError(
           std::errc::not_supported,
-          "GoALLC statepoints do not support pointer-containing memory "
-          "objects; SSA aggregate scalarization cannot describe their "
-          "internal pointer slots");
+          "GoALLC statepoints require a single fixed entry-block "
+          "pointer-containing alloca");
+    std::optional<TypeSize> AllocationSize = Alloca->getAllocationSize(DL);
+    if (!AllocationSize || AllocationSize->isScalable())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support scalable pointer-containing "
+          "allocas");
+    if (std::optional<Align> StackAlign = DL.getStackAlignment();
+        StackAlign && Alloca->getAlign() > *StackAlign)
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support realigned pointer-containing "
+          "allocas");
+    if (Error Err = validatePointerAllocaAccesses(*Alloca, F))
+      return std::move(Err);
+
+    SmallVector<PointerAllocaLeaf, 8> Leaves;
+    SmallVector<unsigned, 4> Path;
+    if (Error Err = enumeratePointerAllocaLeaves(Alloca->getAllocatedType(), DL,
+                                                 Path, 0, Leaves))
+      return std::move(Err);
+    PointerAllocas.push_back({Alloca, std::move(Leaves)});
+  }
+
+  MDNode *FixedHome = MDNode::get(F.getContext(), {});
+  for (auto &[Alloca, Leaves] : PointerAllocas) {
+    IRBuilder<> InitBuilder(Alloca->getNextNode());
+    InitBuilder.SetCurrentDebugLocation(Alloca->getDebugLoc());
+    for (const PointerAllocaLeaf &Leaf : Leaves) {
+      std::string Name = allocaLeafName(*Alloca, Leaf);
+      Value *Address = pointerAllocaLeafAddress(InitBuilder, *Alloca, Leaf,
+                                                Name + ".init.addr");
+      Align Alignment = commonAlignment(Alloca->getAlign(), Leaf.Offset);
+      InitBuilder.CreateAlignedStore(ConstantPointerNull::get(Leaf.Type),
+                                     Address, Alignment);
+    }
+  }
+
+  for (CallInst *Call : Calls) {
+    IRBuilder<> Before(Call);
+    Before.SetCurrentDebugLocation(Call->getDebugLoc());
+    Instruction *InsertBefore = Call->getNextNode();
+    IRBuilder<> After(InsertBefore);
+    After.SetCurrentDebugLocation(Call->getDebugLoc());
+    for (auto &[Alloca, Leaves] : PointerAllocas) {
+      for (const PointerAllocaLeaf &Leaf : Leaves) {
+        std::string Name = allocaLeafName(*Alloca, Leaf);
+        Align Alignment = commonAlignment(Alloca->getAlign(), Leaf.Offset);
+        Value *BeforeAddress =
+            pointerAllocaLeafAddress(Before, *Alloca, Leaf, Name + ".pre.addr");
+        LoadInst *Root = Before.CreateAlignedLoad(Leaf.Type, BeforeAddress,
+                                                  Alignment, Name + ".root");
+        // Keep each memory root as a distinct SelectionDAG value. A plain load
+        // can be forwarded from an earlier store or folded with another leaf
+        // (notably when zero initialization makes both values null), losing
+        // the one-to-one mapping between the root and its fixed stack home.
+        // Volatile preserves that identity without introducing another spill
+        // slot; LowerStatepoint still records the original alloca FI+offset.
+        Root->setVolatile(true);
+        Root->setMetadata(FixedStackHomeMD, FixedHome);
+        Value *AfterAddress =
+            pointerAllocaLeafAddress(After, *Alloca, Leaf, Name + ".post.addr");
+        After.CreateAlignedStore(Root, AfterAddress, Alignment);
+      }
+    }
   }
   return Error::success();
 }
@@ -583,7 +823,7 @@ Error rewriteFunction(Function &F) {
     return Error::success();
   }
 
-  if (Error Err = validateMemoryObjects(F))
+  if (Error Err = normalizePointerAllocas(F))
     return Err;
   if (Error Err = scalarizeLivePointerAggregates(F))
     return Err;
