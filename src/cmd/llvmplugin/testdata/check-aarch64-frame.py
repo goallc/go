@@ -84,11 +84,11 @@ def main():
 
     morestack_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
     ordinary_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
-    want_ordinary_bits = {0, 1}
+    want_ordinary_bits = {1}
     if ordinary_bits != want_ordinary_bits:
         fail(
-            "ordinary statepoint should conservatively contain the live data "
-            f"and code pointers at the first two GC locals, got "
+            "ordinary statepoint should contain only the data pointer live "
+            f"after the call, excluding the call-only code pointer; got "
             f"{sorted(ordinary_bits)}, want {sorted(want_ordinary_bits)}"
         )
     if any(bit < 0 or bit >= want_bits for bit in ordinary_bits):

@@ -2,7 +2,8 @@ target triple = "aarch64-apple-darwin-goobj"
 
 ; Go indirect-call code words originate as uintptr values, not GC pointers.
 ; Materialize the callable pointer only at the call so EntryArgs contains the
-; data pointer while ordinary statepoint liveness still sees the code pointer.
+; data pointer while ordinary statepoint liveness excludes the call-only code
+; pointer.
 define goabiinternal ptr @aarch64_pointer_and_code_live(
     i64 %callee_bits, ptr %pointer) #0 gc "goallc" {
 entry:

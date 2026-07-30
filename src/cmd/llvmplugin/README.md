@@ -45,7 +45,7 @@ The current SSA value and CFG rewrite support matrix is:
 
 | Value or control-flow shape | Status | Current contract |
 | --- | --- | --- |
-| Pointer arguments | Partially supported | Values live after a call use caller statepoints; call-only arguments belong to the callee's argument map, whose non-empty form remains a P0 follow-up. |
+| Pointer arguments | Supported on AArch64 | Values live after a call use caller statepoints; call-only arguments are described by the callee's type-derived entry map. |
 | `alloca` and alloca-derived pointers | Supported | The pointer value is live; pointer fields stored in the allocation are not described. |
 | `select`, GEP, and pointer casts | Supported | Each resulting pointer SSA value is tracked conservatively. |
 | Pointer-valued call results | Supported | `gc.result` replaces the ordinary result and later safepoints relocate it. |
@@ -53,7 +53,7 @@ The current SSA value and CFG rewrite support matrix is:
 | Ordinary CFG merges | Supported | Call/skip and multiple-safepoint paths merge through pointer PHIs formed by `PromoteMemToReg`. |
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
 | Fixed struct/array SSA aggregates | Supported | Pointer leaves are scalarized before liveness and reconstructed from the current relocated SSA leaves. |
-| Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; call-only arguments require the callee's argument map for runtime qualification. |
+| Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; supported fixed formal layouts also contribute pointer words to AArch64 entry maps. |
 | Aggregate load results and store operands | Supported | Only the first-class SSA value is normalized; the underlying memory object's pointer slots are not described. |
 | Pointer-containing `alloca` storage | Unsupported | Requires locals pointer maps or `FUNCDATA_StackObjects`; fails closed. |
 | Fixed and scalable vectors | Unsupported | Vector lane and scalable-count semantics require a separate design; fails closed. |
@@ -187,24 +187,25 @@ pre-indexed store; frames above `0xf0` compute NewSP and save `(FP, LR)` before
 moving SP so asynchronous traceback cannot observe a half-built frame.
 
 The first ArgsPointerMaps phase supports scalar LLVM pointer inputs and
-receivers in ABIInternal register homes, ABIInternal stack-input slots, and
-ABI0 stack-input slots on AArch64. Pair 0 is always
+receivers, plus pointer leaves in supported fixed struct/array formal layouts,
+in ABIInternal register homes, ABIInternal stack-input slots, and ABI0
+stack-input slots on AArch64. Pair 0 is always
 `(EntryArgs, empty locals)`. Ordinary
 statepoints classify their post-prologue indirect stack roots as locals and
 jointly deduplicate the complete `(Args, locals)` pair; the Args and Locals
 tables therefore always have the same count. A direct stack address is not a
 bitmap root.
 
-This phase fails closed for unsupported pointer-containing aggregate layouts
-and aggregates live at an ordinary statepoint; dynamic or realigned frames;
-raw register roots; pointer vectors or ABI layouts whose pointer words do not
-map to fixed homes; and an ordinary statepoint path that would recover a
-pointer from an unadjusted original argument home. `FUNCDATA_StackObjects` and
-`PCDATA_ArgLiveIndex` are not implemented. Tracking an alloca address across a
-statepoint does not describe pointer fields stored inside that object, and
-ArgLive is not a replacement for the entry argument bitmap. Precise handling
-of pointer-containing address-taken stack storage belongs to the separate
-StackObjects work rather than this ArgsPointerMaps change.
+This phase fails closed for unsupported formal aggregate layouts; dynamic or
+realigned frames; raw register roots; pointer vectors or ABI layouts whose
+pointer words do not map to fixed homes; and an ordinary statepoint path that
+would recover a pointer from an unadjusted original argument home.
+`FUNCDATA_StackObjects` and `PCDATA_ArgLiveIndex` are not implemented. Tracking
+an alloca address across a statepoint does not describe pointer fields stored
+inside that object, and ArgLive is not a replacement for the entry argument
+bitmap. Precise handling of pointer-containing address-taken stack storage
+belongs to the separate StackObjects work rather than this ArgsPointerMaps
+change.
 
 TODO: LLVM opaque pointer types currently make the first itab/type word of a
 Go interface and pointers to `NotInHeap` types look like ordinary GC pointers.

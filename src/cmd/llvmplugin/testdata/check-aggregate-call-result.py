@@ -54,16 +54,18 @@ def main():
         "PCDATA_StackMapIndex tables",
     )
     ranges = stack_index["ranges"]
-    if [item["value"] for item in ranges] != [-1, 0, 1]:
+    if [item["value"] for item in ranges] != [-1, 0, 1, 0]:
         fail(f"unexpected stack-map ranges: {ranges}")
 
     queries = metadata["stack_map_queries"]
     indexes = [item["stack_map_index"] for item in queries]
-    if indexes != [0, 0, 0, 1]:
+    if indexes != [0, 1, 1, 0]:
         fail(f"unexpected call stack-map indexes: {indexes}")
     if ranges[1]["start"] != queries[0]["call_offset"] - 1:
-        fail("aggregate-result map does not begin at the first statepoint CALL")
-    if ranges[2]["start"] != queries[-1]["call_offset"] - 1:
+        fail("empty entry map does not begin at the first statepoint CALL")
+    if ranges[2]["start"] != queries[1]["call_offset"] - 1:
+        fail("aggregate-result map does not begin at the live statepoint CALL")
+    if ranges[3]["start"] != queries[-1]["call_offset"] - 1:
         fail("empty stack-growth map does not begin at the morestack CALL")
 
     args_maps = only(
@@ -71,8 +73,10 @@ def main():
         lambda item: item["kind"] == "args_pointer_maps",
         "FUNCDATA_ArgsPointerMaps tables",
     )["stack_map"]
-    if args_maps["count"] != 2 or args_maps["num_bits"] != 0:
-        fail(f"aggregate test widened the argument-map contract: {args_maps}")
+    if args_maps["count"] != 2 or args_maps["num_bits"] != 2:
+        fail(f"unexpected argument-map dimensions: {args_maps}")
+    if any(item["set_bits"] for item in args_maps["bitmaps"]):
+        fail(f"x86 aggregate test unexpectedly has argument roots: {args_maps}")
 
     locals_maps = only(
         metadata["funcdata"],
@@ -81,8 +85,8 @@ def main():
     )["stack_map"]
     if locals_maps["count"] != 2:
         fail(f"locals stack-map count is {locals_maps['count']}, want 2")
-    live_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
-    morestack_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
+    morestack_bits = set(locals_maps["bitmaps"][0]["set_bits"] or [])
+    live_bits = set(locals_maps["bitmaps"][1]["set_bits"] or [])
     if len(live_bits) != 1:
         fail(f"aggregate result has unexpected live pointer bits: {live_bits}")
     if morestack_bits:
