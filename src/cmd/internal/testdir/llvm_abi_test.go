@@ -34,6 +34,12 @@ type llvmABISymbol struct {
 			Args   uint32 `json:"args"`
 			Locals uint32 `json:"locals"`
 		} `json:"info"`
+		PCTables []struct {
+			Kind   string `json:"kind"`
+			Ranges []struct {
+				Value int32 `json:"value"`
+			} `json:"ranges"`
+		} `json:"pc_tables"`
 		PCData []struct {
 			Kind   string `json:"kind"`
 			Ranges []struct {
@@ -76,6 +82,10 @@ type llvmABICase struct {
 
 func runLLVMABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	t.Helper()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		runLLVMAMD64ArgsPointerMapDifferentialTest(t, gorootTestDir)
+		return
+	}
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("exact ABI differential expectations are currently qualified on darwin/arm64")
 	}
@@ -352,6 +362,194 @@ func runLLVMABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	t.Run("machine-args-pointer-maps", func(t *testing.T) {
 		runLLVMABIArgsPointerMapMachineTest(t, filepath.Dir(gorootTestDir), llc, plugin)
 	})
+}
+
+func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir string) {
+	t.Helper()
+	dir := t.TempDir()
+	source := filepath.Join(gorootTestDir, "abi", "llvm_args_pointer_maps.go")
+	nativeObject := filepath.Join(dir, "native.o")
+	goallcArchive := filepath.Join(dir, "goallc.a")
+	goallcIR := goallcArchive + ".ll"
+	goallcObject := filepath.Join(dir, "goallc.o")
+
+	nativeAssembly := runLLVMABICommand(t, nil, goTool, "tool", "compile",
+		"-S", "-l", "-p=p", "-o", nativeObject, source)
+	for _, pattern := range []string{
+		`TEXT\s+p\.initializedPointerResult\(SB\), ABIInternal, \$8-72`,
+		`(?s)TEXT\s+p\.initializedPointerResult.*?MOVQ\s+AX,\s+p\.pointer\+80\(SP\).*?CALL\s+p\.safepoint\(SB\).*?MOVQ\s+AX,\s+p\.result\+72\(SP\)`,
+		`(?s)TEXT\s+p\.partiallyInitializedAggregateResult.*?MOVQ\s+AX,\s+p\.first\+88\(SP\).*?MOVQ\s+BX,\s+p\.second\+96\(SP\).*?MOVQ\s+AX,\s+p\.result\+64\(SP\).*?MOVQ\s+AX,\s+p\.result\+80\(SP\)`,
+		`(?s)TEXT\s+p\.liveScalarStackArgument.*?CALL\s+p\.safepoint\(SB\).*?MOVQ\s+p\.pointer\+72\(SP\),\s+AX`,
+		`(?s)TEXT\s+p\.liveAggregateStackArgument.*?CALL\s+p\.safepoint\(SB\).*?MOVQ\s+p\.value\+56\(SP\),\s+AX.*?MOVQ\s+p\.value\+72\(SP\),\s+BX`,
+	} {
+		if !regexp.MustCompile(pattern).Match(nativeAssembly) {
+			t.Fatalf("native amd64 assembly does not match %q", pattern)
+		}
+	}
+
+	runLLVMABICommand(t, nil, goTool, "tool", "compile",
+		"-l", "-p=p", "-enablellvm", "-llvmironly", "-o", goallcArchive, source)
+	opt := llvmToolPath(t, "opt", "GOALLC_OPT")
+	runLLVMABICommand(t, nil, opt, "-passes=verify", "-disable-output", goallcIR)
+	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
+	plugin := llvmABIPassPlugin(t, llc)
+	rewrittenIR := runLLVMABICommand(t, nil, llc,
+		"-load-pass-plugin="+plugin, "-goallc-pass-plugin-emit-ir",
+		"-filetype=null", "-o", "-", goallcIR)
+	for _, pattern := range []string{
+		`(?s)define goabiinternal ptr @p\.liveScalarStackArgument.*?"gc-live"\(ptr %pointer\).*?gc\.relocate`,
+		`(?s)define goabiinternal \{ ptr, ptr \} @p\.liveAggregateStackArgument.*?"gc-live"\(ptr %value\.leaf\.2, ptr %value\.leaf\.0\).*?gc\.relocate`,
+	} {
+		if !regexp.MustCompile(pattern).Match(rewrittenIR) {
+			t.Fatalf("rewritten amd64 IR does not match %q", pattern)
+		}
+	}
+	runLLVMABICommand(t, rewrittenIR, opt, "-load-pass-plugin="+plugin,
+		"-passes=verify", "-disable-output", "-")
+
+	machineIR := runLLVMABICommand(t, nil, llc,
+		"-load-pass-plugin="+plugin, "-stop-after=prolog-epilog",
+		"-o", "-", goallcIR)
+	machinePatterns := map[string][]string{
+		"p.initializedPointerResult": {
+			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 72,`,
+			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 8,`,
+		},
+		"p.partiallyInitializedAggregateResult": {
+			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 80,[^\n]*\$rsp, 88,`,
+			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 0,[^\n]*\$rsp, 8,`,
+		},
+		"p.liveScalarStackArgument": {
+			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 64,`,
+			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 72,`,
+		},
+		"p.liveAggregateStackArgument": {
+			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 48,[^\n]*\$rsp, 64,`,
+			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 56,[^\n]*\$rsp, 72,`,
+		},
+	}
+	for name, patterns := range machinePatterns {
+		body := llvmABIMachineFunction(t, machineIR, name)
+		for _, pattern := range patterns {
+			if !regexp.MustCompile(pattern).Match(body) {
+				t.Fatalf("%s PEI MIR does not match %q\n%s", name, pattern, body)
+			}
+		}
+	}
+
+	goallcAssembly := runLLVMABICommand(t, nil, llc,
+		"-load-pass-plugin="+plugin, "-filetype=asm", "-o", "-", goallcIR)
+	for _, pattern := range []string{
+		`(?s)p\.initializedPointerResult:.*?movq\s+%rax, 72\(%rbp\)`,
+		`(?s)p\.partiallyInitializedAggregateResult:.*?movq\s+%rcx, 64\(%rbp\)`,
+		`(?s)p\.partiallyInitializedAggregateResult:.*?movq\s+%rax, 80\(%rbp\)`,
+		`(?s)p\.liveScalarStackArgument:.*?callq\s+p\.safepoint.*?movq\s+72\(%rbp\), %rax`,
+		`(?s)p\.liveAggregateStackArgument:.*?callq\s+p\.safepoint.*?movq\s+72\(%rbp\), %rbx.*?movq\s+56\(%rbp\), %rax`,
+	} {
+		if !regexp.MustCompile(pattern).Match(goallcAssembly) {
+			t.Fatalf("GoALLC amd64 assembly does not match %q", pattern)
+		}
+	}
+
+	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
+		"-filetype=obj", goallcIR, "-o", goallcObject)
+	native := readLLVMABIObject(t, nativeObject)
+	goallc := readLLVMABIObject(t, goallcObject)
+	type amd64Case struct {
+		name          string
+		args          uint32
+		entryBits     []int
+		goallcLocals  uint32
+		goallcArgs    [][]int
+		goallcMaps    [][]int
+		nativePCData  []int32
+		goallcPCData  []int32
+		nativeQueries []int32
+		goallcQueries []int32
+		nativePCSP    []int32
+		goallcPCSP    []int32
+	}
+	cases := []amd64Case{
+		{
+			name: "initializedPointerResult", args: 72, entryBits: []int{8},
+			goallcLocals: 24, goallcArgs: [][]int{{8}, nil},
+			goallcMaps:   [][]int{nil, {2}},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{1, 0},
+			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 24, 8, 0},
+		},
+		{
+			name: "partiallyInitializedAggregateResult", args: 88,
+			entryBits: []int{9, 10}, goallcLocals: 24,
+			goallcArgs: [][]int{{9, 10}, nil}, goallcMaps: [][]int{nil, {1, 2}},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
+			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{1, 1, 0},
+			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 24, 8, 0},
+		},
+		{
+			name: "liveScalarStackArgument", args: 136, entryBits: []int{7},
+			goallcLocals: 8, goallcArgs: [][]int{{7}}, goallcMaps: [][]int{nil},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 0},
+			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 0},
+		},
+		{
+			name: "liveAggregateStackArgument", args: 136, entryBits: []int{5, 7},
+			goallcLocals: 8, goallcArgs: [][]int{{5, 7}}, goallcMaps: [][]int{nil},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 0},
+			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 0},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nativeSymbol := findLLVMABISymbol(t, native, "p."+tc.name)
+			goallcSymbol := findLLVMABISymbol(t, goallc, "p."+tc.name)
+			base := llvmABICase{name: tc.name, args: tc.args, pointerBits: tc.entryBits}
+			checkLLVMABISymbol(t, "native", nativeSymbol, base)
+			checkLLVMABISymbol(t, "GoALLC", goallcSymbol, base)
+			checkLLVMABISourceStackMaps(t, "native", nativeSymbol,
+				8, [][]int{tc.entryBits, nil}, [][]int{nil, nil},
+				tc.nativePCData, tc.nativeQueries)
+			checkLLVMABISourceStackMaps(t, "GoALLC", goallcSymbol,
+				tc.goallcLocals, tc.goallcArgs, tc.goallcMaps,
+				tc.goallcPCData, tc.goallcQueries)
+			if got := llvmABIPCTableRanges(nativeSymbol, "pcsp"); !reflect.DeepEqual(got, tc.nativePCSP) {
+				t.Fatalf("native pcsp=%v, want %v", got, tc.nativePCSP)
+			}
+			if got := llvmABIPCTableRanges(goallcSymbol, "pcsp"); !reflect.DeepEqual(got, tc.goallcPCSP) {
+				t.Fatalf("GoALLC pcsp=%v, want %v", got, tc.goallcPCSP)
+			}
+		})
+	}
+}
+
+func llvmABIMachineFunction(t *testing.T, machineIR []byte, name string) []byte {
+	t.Helper()
+	startPattern := regexp.MustCompile(`(?m)^name:\s+` + regexp.QuoteMeta(name) + `\s*$`)
+	start := startPattern.FindIndex(machineIR)
+	if start == nil {
+		t.Fatalf("MIR has no machine function %s", name)
+	}
+	body := machineIR[start[0]:]
+	if end := bytes.Index(body, []byte("\n...")); end >= 0 {
+		body = body[:end]
+	}
+	return body
+}
+
+func llvmABIPCTableRanges(symbol llvmABISymbol, kind string) []int32 {
+	for _, table := range symbol.Function.PCTables {
+		if table.Kind != kind {
+			continue
+		}
+		values := make([]int32, 0, len(table.Ranges))
+		for _, r := range table.Ranges {
+			values = append(values, r.Value)
+		}
+		return values
+	}
+	return nil
 }
 
 func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, plugin string) {
