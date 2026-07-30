@@ -30,6 +30,7 @@
       "codegen/issue74485.go": "unsigned division and remainder at integer sign-bit constants",
       "codegen/known_bits.go": "phi-carried known-bit masking and boolean control flow",
       "codegen/logic.go": "integer logic and conditional control flow",
+      "codegen/llvm_argument_memory_home.go": "direct register arguments and local homes for memory-backed register aggregates",
       "codegen/llvm_data_sections.go": "preserve data, bss, noptrdata, and noptrbss identities in LLVM IR",
       "codegen/llvm_dereference.go": "address-taken named stack results loaded for return",
       "codegen/llvm_memops.go": "pointer-free zero and overlap-safe move intrinsics, runtime memequal, and native-int slice masks",
@@ -53,6 +54,9 @@
   },
   "runtime": {
     "whitelist": {
+      "abi/llvm_register_argument_pieces.go": "register-assigned and stack-assigned aggregate argument homes plus zero-width Empty values",
+      "abi/part_live.go": "pointer-to-uintptr Convert semantics and partial aggregate liveness across repeated runtime.GC",
+      "abi/part_live_2.go": "pointer-to-uintptr Convert with register poisoning and partial aggregate liveness across repeated runtime.GC",
       "abi/zombie_struct_select.go": "non-leaf Go frame with register-ABI struct arguments and a nested call",
       "alias1.go": "byte and rune aliases in concrete interface type switches",
       "char_lit.go": "character literal constants and external os.Exit reference",

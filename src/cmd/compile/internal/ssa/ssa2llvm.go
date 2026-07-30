@@ -502,14 +502,42 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 }
 
 func (lfc *LLVMFuncContext) paramForArg(v *Value) llvm.Value {
-	assignment := ParamAssignmentForArgName(lfc.F, v.Aux.(*ir.Name))
+	return lfc.paramForArgName(v, v.Aux.(*ir.Name))
+}
+
+func (lfc *LLVMFuncContext) paramForArgName(v *Value, name *ir.Name) llvm.Value {
+	key := llvmLocalKeyForName(name)
 	for i, param := range lfc.F.OwnAux.ABIInfo().InParams() {
-		if param.Name == assignment.Name {
+		if param.Name != nil && llvmLocalKeyForName(param.Name) == key {
 			return lfc.LF.Param(i)
 		}
 	}
-	v.Fatalf("could not find LLVM parameter for %v", assignment.Name)
+	v.Fatalf("could not find LLVM parameter for %v", name)
 	return llvm.Value{}
+}
+
+func (lfc *LLVMFuncContext) registerArgument(v *Value) llvm.Value {
+	aux, ok := v.Aux.(*AuxNameOffset)
+	if !ok || aux.Name == nil {
+		v.Fatalf("%s has invalid argument name/offset auxiliary %T", v.Op, v.Aux)
+	}
+	key := llvmLocalKeyForName(aux.Name)
+	slot, ok := lfc.Locals[key]
+	if !ok {
+		v.Fatalf("%s parameter %v has no LLVM memory home", v.Op, aux.Name)
+	}
+	if aux.Offset < 0 || v.Type.Size() < 0 || aux.Offset+v.Type.Size() > slot.Type.Size() {
+		v.Fatalf("%s parameter piece [%d,%d) is outside memory home %v", v.Op, aux.Offset, aux.Offset+v.Type.Size(), slot.Type)
+	}
+
+	addr := slot.Value
+	if aux.Offset != 0 {
+		off := llvmConstInt(types.Types[types.TINT], aux.Offset)
+		addr = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), addr, []llvm.Value{off}, v.String()+".addr")
+	}
+	value := lfc.b.CreateLoad(getLLVMType(v.Type), addr, v.String()+".home")
+	value.SetAlignment(int(v.Type.Alignment()))
+	return value
 }
 
 func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
@@ -629,7 +657,11 @@ func llvmLocalName(v *Value) (*ir.Name, llvmLocalKey) {
 	if !ok {
 		v.Fatalf("local address has no stack symbol")
 	}
-	return name, llvmLocalKey{Sym: name.Sym(), Pos: name.Pos()}
+	return name, llvmLocalKeyForName(name)
+}
+
+func llvmLocalKeyForName(name *ir.Name) llvmLocalKey {
+	return llvmLocalKey{Sym: name.Sym(), Pos: name.Pos()}
 }
 
 var llvmBoundsPanicNames = [...]string{
@@ -724,6 +756,13 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpArg:
 		lVal = lfc.paramForArg(v)
 		lVal.SetName(v.Aux.(*ir.Name).Sym().Name)
+	case OpArgIntReg, OpArgFloatReg:
+		lVal = lfc.registerArgument(v)
+	case OpEmpty:
+		if v.Type.Size() != 0 || len(v.Args) != 0 || v.Type.IsMemory() || v.Type.IsVoid() {
+			v.Fatalf("Empty has invalid type %v or %d arguments", v.Type, len(v.Args))
+		}
+		lVal = llvm.Undef(getLLVMType(v.Type))
 	case OpConst8, OpConst16, OpConst32, OpConst64:
 		// AuxInt already carries the two's-complement bit pattern. Asking LLVM
 		// to sign-extend the uint64 representation of a negative value makes
@@ -871,10 +910,31 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		if got, want := lVal.Type(), getLLVMType(v.Type); got != want {
 			v.Fatalf("%s changes LLVM representation", v.Op)
 		}
-	case OpCvtBoolToUint8, OpConvert:
+	case OpCvtBoolToUint8:
 		lVal = arg0()
 		if got, want := lVal.Type(), getLLVMType(v.Type); got != want {
 			v.Fatalf("%s changes LLVM representation", v.Op)
+		}
+	case OpConvert:
+		if len(v.Args) != 2 || !v.Args[1].Type.IsMemory() {
+			v.Fatalf("Convert has invalid memory dependency")
+		}
+		lVal = arg0()
+		want := getLLVMType(v.Type)
+		if lVal.Type() == want {
+			break
+		}
+		switch {
+		case lVal.Type().TypeKind() == llvm.PointerTypeKind &&
+			want.TypeKind() == llvm.IntegerTypeKind &&
+			want.IntTypeWidth() == types.PtrSize*8:
+			lVal = lfc.b.CreatePtrToInt(lVal, want, v.String()+".coerce")
+		case lVal.Type().TypeKind() == llvm.IntegerTypeKind &&
+			lVal.Type().IntTypeWidth() == types.PtrSize*8 &&
+			want.TypeKind() == llvm.PointerTypeKind:
+			lVal = lfc.b.CreateIntToPtr(lVal, want, v.String()+".coerce")
+		default:
+			v.Fatalf("%s changes machine representation", v.Op)
 		}
 	case OpOffPtr:
 		off := llvmConstInt(types.Types[types.TINT], auxIntToInt64(v.AuxInt))
@@ -1141,6 +1201,7 @@ func LLVMCompile(f *Func) {
 	// ordinary instruction emission so LocalAddr values in loops and branches
 	// cannot become dynamic allocas (which Go stack growth cannot support).
 	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
+	var parameterHomes []*Value
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
 			if v.Op != OpLocalAddr || v.Uses == 0 {
@@ -1159,6 +1220,9 @@ func LLVMCompile(f *Func) {
 			slot := FCtxt.b.CreateAlloca(getLLVMType(name.Type()), v.String())
 			slot.SetAlignment(int(name.Type().Alignment()))
 			FCtxt.Locals[key] = llvmStackSlot{Value: slot, Type: name.Type()}
+			if name.Class == ir.PPARAM {
+				parameterHomes = append(parameterHomes, v)
+			}
 		}
 	}
 	// LLVM requires all phi nodes to precede non-phi instructions in a
@@ -1171,6 +1235,29 @@ func LLVMCompile(f *Func) {
 				FCtxt.Vs[v.ID] = FCtxt.b.CreatePHI(getLLVMType(v.Type), v.String())
 			}
 		}
+	}
+	// Go's ABI assigns each parameter either wholly to registers or wholly to
+	// the stack. Give only parameters that already have an addressable Go SSA
+	// LocalAddr a complete LLVM memory home. Ordinary register parameters remain
+	// direct LLVM SSA values, while the backend remains responsible for the
+	// physical Go ABI assignment.
+	//
+	// This intentionally differs from the native lowering, which stores each
+	// incoming register piece separately and addresses stack-assigned parameters
+	// in their incoming slots. The full aggregate store makes any existing piece
+	// loads and stores redundant and lets normal LLVM memory optimization remove
+	// them. A future optimization may bind wholly stack-assigned parameters
+	// directly to their incoming fixed stack slots.
+	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
+	for _, v := range parameterHomes {
+		name, key := llvmLocalName(v)
+		slot := FCtxt.Locals[key]
+		param := FCtxt.paramForArgName(v, name)
+		if param.Type() != getLLVMType(slot.Type) {
+			v.Fatalf("parameter home changes LLVM representation")
+		}
+		init := FCtxt.b.CreateStore(param, slot.Value)
+		init.SetAlignment(int(slot.Type.Alignment()))
 	}
 	for _, BB := range f.Blocks {
 		FCtxt.CompileBlock(BB)
