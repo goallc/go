@@ -1,0 +1,41 @@
+GOOBJ "_go_.o" linux/amd64
+TEXT example.com/fixture.MetadataFixture(SB) fixture.go
+  size=83 args=16 locals=32
+  FUNCDATA_ArgsPointerMaps count=3 bits=1 map[0]=1 map[1]=0 map[2]=0
+  FUNCDATA_LocalsPointerMaps count=3 bits=2 map[0]=00 map[1]=10 map[2]=00
+  entry safepoint map[0] ArgsPointerMaps=1 LocalsPointerMaps=00
+  FUNCDATA_StackObjects independent object[0]={offset=-16 size=16 ptrbytes=8 pointers=1 gcdata=runtime.gcbits.0100000000000000+0}
+  FUNCDATA_ArgLiveInfo start=0 tracked=2 bitmap@1=00
+  fixture.go:10 +0x0000 PC 493b6610           CMPQ SP, 0x10(R14) | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:10 +0x0004 PC 7633               JBE <target>         | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:10 +0x0006 PC 55                 PUSHQ BP           | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:10 +0x0007 PC 4889e5             MOVQ SP, BP        | pcsp=8 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:11 +0x000e PC 4889442408         MOVQ AX, 0x8(SP) | pcsp=32 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:17 +0x0029 PC e800000000         CALL <target> [1:5]R_CALL:example.com/fixture.touch | pcsp=32 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=0 LocalsPointerMaps=10) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  | ordinary safepoint return=+0x2e lookup=+0x2d map[1] ArgsPointerMaps=0 LocalsPointerMaps=10
+  fixture.go:19 +0x0037 PC 5d                 POPQ BP          | pcsp=8 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=0 LocalsPointerMaps=10) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:19 +0x0038 PC c3                 RET              | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=0 LocalsPointerMaps=10) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:10 +0x0039 PC 4889442408         MOVQ AX, 0x8(SP) | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:10 +0x0042 PC e800000000         CALL <target> [1:5]R_CALL:runtime.morestack_noctxt
+  | stack-growth safepoint return=+0x47 lookup=+0x46 map[0] ArgsPointerMaps=1 LocalsPointerMaps=00
+  fixture.go:10 +0x0047 PC 488b442408         MOVQ 0x8(SP), AX | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+
+TEXT example.com/fixture.IndirectFixture(SB) fixture.go
+  size=58 args=16 locals=16
+  FUNCDATA_ArgsPointerMaps count=2 bits=2 map[0]=11 map[1]=00
+  FUNCDATA_LocalsPointerMaps count=2 bits=0 map[0]=- map[1]=-
+  entry safepoint map[0] ArgsPointerMaps=11 LocalsPointerMaps=-
+  FUNCDATA_ArgLiveInfo start=0 tracked=2 bitmap@1=00
+  fixture.go:23 +0x0000 PC 493b6610   CMPQ SP, 0x10(R14) | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:23 +0x0004 PC 7619       JBE <target>         | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:23 +0x0006 PC 55         PUSHQ BP           | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:23 +0x0007 PC 4889e5     MOVQ SP, BP        | pcsp=8 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:24 +0x000e PC 488b08     MOVQ 0(AX), CX | pcsp=16 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:24 +0x0017 PC ffd1       CALL CX [0:0]R_CALLIND | pcsp=16 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=00 LocalsPointerMaps=-) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  | ordinary safepoint return=+0x19 lookup=+0x18 map[1] ArgsPointerMaps=00 LocalsPointerMaps=-
+  fixture.go:25 +0x001d PC 5d         POPQ BP          | pcsp=8 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=00 LocalsPointerMaps=-) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:25 +0x001e PC c3         RET              | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=00 LocalsPointerMaps=-) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:23 +0x001f PC 4889442408 MOVQ AX, 0x8(SP) | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:23 +0x0029 PC e800000000 CALL <target> [1:5]R_CALL:runtime.morestack_noctxt
+  | stack-growth safepoint return=+0x2e lookup=+0x2d map[0] ArgsPointerMaps=11 LocalsPointerMaps=-
+  fixture.go:23 +0x002e PC 488b442408 MOVQ 0x8(SP), AX | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)

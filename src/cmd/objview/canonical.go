@@ -44,6 +44,8 @@ type canonicalMember struct {
 	GoVersion       string                    `json:"go_version,omitempty"`
 	BuildOptions    []string                  `json:"build_options,omitempty"`
 	GoObject        *canonicalGoObject        `json:"go_object,omitempty"`
+
+	rawEntry []byte
 }
 
 type canonicalArchiveMetadata struct {
@@ -64,6 +66,8 @@ type canonicalGoObject struct {
 	RefFlags    []canonicalRefFlags `json:"reference_flags"`
 	RefNames    []canonicalRefName  `json:"reference_names"`
 	Limitations []string            `json:"limitations,omitempty"`
+
+	rawData []byte
 }
 
 type canonicalHeader struct {
@@ -105,6 +109,9 @@ type canonicalSymbol struct {
 	Relocations []canonicalReloc   `json:"relocations"`
 	Aux         []canonicalAux     `json:"aux"`
 	Function    *canonicalFunction `json:"function,omitempty"`
+
+	dataOffset uint64
+	rawData    []byte
 }
 
 type canonicalReference struct {
@@ -218,6 +225,8 @@ type canonicalFuncData struct {
 	StackMap     *canonicalStackMap     `json:"stack_map,omitempty"`
 	StackObjects []canonicalStackObject `json:"stack_objects,omitempty"`
 	DecodeError  string                 `json:"decode_error,omitempty"`
+
+	rawData []byte
 }
 
 type canonicalStackMap struct {
@@ -239,6 +248,10 @@ type canonicalStackObject struct {
 	PtrBytes  int32               `json:"ptr_bytes"`
 	GCDataOff uint32              `json:"gcdata_offset"`
 	GCData    *canonicalReference `json:"gcdata,omitempty"`
+
+	gcDataAddend  int64
+	gcBits        []int
+	gcDataDecoded bool
 }
 
 type canonicalParser struct {
@@ -303,6 +316,7 @@ func parseCanonicalFile(path string) (doc *canonicalDocument, err error) {
 			}
 		}
 		if entry.Type == archive.EntryGoObj {
+			member.rawEntry = raw
 			member.TextHeader = string(entry.Obj.TextHeader)
 			member.Arch = entry.Obj.Arch
 			fields := strings.Fields(member.TextHeader)
@@ -392,6 +406,7 @@ func parseCanonicalGoObject(data []byte, archName string) (*canonicalGoObject, e
 		},
 		Packages: p.packages,
 		Files:    p.files,
+		rawData:  data,
 	}
 	for i := goobj.BlkAutolib; i <= goobj.BlkEnd; i++ {
 		start := h.Offsets[i]
@@ -625,6 +640,8 @@ func (p *canonicalParser) populateDefinitionDetails() {
 	for i := range p.defs {
 		idx := uint32(i)
 		data := p.reader.Data(idx)
+		p.defs[i].dataOffset = uint64(p.reader.DataOff(idx))
+		p.defs[i].rawData = data
 		if len(data) != 0 {
 			p.defs[i].Data = hex.EncodeToString(data)
 			p.defs[i].DataSHA256 = hashBytes(data)
@@ -985,7 +1002,7 @@ func readUvarint32(data []byte) (uint32, int, error) {
 }
 
 func (p *canonicalParser) decodeFuncData(index int, ref goobj.SymRef, data []byte, local bool) canonicalFuncData {
-	out := canonicalFuncData{Index: index, Kind: funcdataName(index), Symbol: p.resolve(ref)}
+	out := canonicalFuncData{Index: index, Kind: funcdataName(index), Symbol: p.resolve(ref), rawData: data}
 	if ref.IsZero() {
 		return out
 	}
@@ -1077,11 +1094,37 @@ func (p *canonicalParser) decodeStackObjects(ref goobj.SymRef, data []byte) ([]c
 			PtrBytes:  int32(binary.LittleEndian.Uint32(data[at+8:])),
 			GCDataOff: binary.LittleEndian.Uint32(data[at+12:]),
 		}
+		if item.Size < 0 || item.PtrBytes < 0 || item.PtrBytes > item.Size {
+			return nil, fmt.Errorf("stack object %d has invalid size %d and pointer bytes %d", i, item.Size, item.PtrBytes)
+		}
+		if item.PtrBytes%int32(ptrSize) != 0 {
+			return nil, fmt.Errorf("stack object %d pointer bytes %d are not pointer-aligned", i, item.PtrBytes)
+		}
 		for j := 0; j < p.reader.NReloc(symIndex); j++ {
 			reloc := p.reader.Reloc(symIndex, j)
 			if reloc.Off() == int32(at+12) {
 				target := p.resolve(reloc.Sym())
 				item.GCData = &target
+				item.gcDataAddend = reloc.Add()
+				gcdata, _, local := p.localData(reloc.Sym())
+				if local {
+					if reloc.Add() < 0 || uint64(reloc.Add()) > uint64(len(gcdata)) {
+						return nil, fmt.Errorf("stack object %d GC bitmap addend %d is outside %d-byte symbol", i, reloc.Add(), len(gcdata))
+					}
+					words := (uint64(item.PtrBytes) + uint64(ptrSize) - 1) / uint64(ptrSize)
+					bytesNeeded := (words + 7) / 8
+					start := uint64(reloc.Add())
+					if start+bytesNeeded > uint64(len(gcdata)) {
+						return nil, fmt.Errorf("stack object %d GC bitmap needs %d bytes at addend %d in %d-byte symbol", i, bytesNeeded, reloc.Add(), len(gcdata))
+					}
+					bitmap := gcdata[start : start+bytesNeeded]
+					item.gcDataDecoded = true
+					for bit := uint64(0); bit < words; bit++ {
+						if bitmap[bit/8]&(1<<uint(bit&7)) != 0 {
+							item.gcBits = append(item.gcBits, int(bit))
+						}
+					}
+				}
 				break
 			}
 		}

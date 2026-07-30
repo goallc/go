@@ -1,0 +1,41 @@
+GOOBJ "_go_.o" darwin/arm64
+TEXT example.com/fixture.MetadataFixture(SB) fixture.go
+  size=96 args=16 locals=40
+  FUNCDATA_ArgsPointerMaps count=3 bits=1 map[0]=1 map[1]=0 map[2]=0
+  FUNCDATA_LocalsPointerMaps count=3 bits=2 map[0]=00 map[1]=10 map[2]=00
+  entry safepoint map[0] ArgsPointerMaps=1 LocalsPointerMaps=00
+  FUNCDATA_StackObjects independent object[0]={offset=-16 size=16 ptrbytes=8 pointers=1 gcdata=runtime.gcbits.0100000000000000+0}
+  FUNCDATA_ArgLiveInfo start=0 tracked=2 bitmap@1=00
+  fixture.go:10 +0x0000 PC f9400b90          MOVD 16(R28), R16 | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:10 +0x0004 PC eb3063ff          CMP R16, RSP      | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:10 +0x000c PC f81d0ffe          MOVD.W R30, -48(RSP) | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:10 +0x0010 PC f81f83fd          MOVD R29, -8(RSP)    | pcsp=48 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:11 +0x0018 PC b2400be2          ORR $7, ZR, R2 | pcsp=48 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:17 +0x0028 PC 94000000          CALL 0(PC) [0:4]R_CALLARM64:example.com/fixture.touch | pcsp=48 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=0 LocalsPointerMaps=10) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  | ordinary safepoint return=+0x2c lookup=+0x2b map[1] ArgsPointerMaps=0 LocalsPointerMaps=10
+  fixture.go:19 +0x0038 PC d65f03c0          RET             | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=0 LocalsPointerMaps=10) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:10 +0x003c PC f90007e0          MOVD R0, 8(RSP) | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:10 +0x0048 PC 94000000          CALL 0(PC) [0:4]R_CALLARM64:runtime.morestack_noctxt
+  | stack-growth safepoint return=+0x4c lookup=+0x4b map[0] ArgsPointerMaps=1 LocalsPointerMaps=00
+  fixture.go:10 +0x004c PC f94007e0          MOVD 8(RSP), R0 | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:10 +0x0058 PC 00000000 00000000 padding(8)
+
+TEXT example.com/fixture.IndirectFixture(SB) fixture.go
+  size=80 args=16 locals=24
+  FUNCDATA_ArgsPointerMaps count=2 bits=2 map[0]=11 map[1]=00
+  FUNCDATA_LocalsPointerMaps count=2 bits=0 map[0]=- map[1]=-
+  entry safepoint map[0] ArgsPointerMaps=11 LocalsPointerMaps=-
+  FUNCDATA_ArgLiveInfo start=0 tracked=2 bitmap@1=00
+  fixture.go:23 +0x0000 PC f9400b90          MOVD 16(R28), R16 | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:23 +0x0004 PC eb3063ff          CMP R16, RSP      | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:23 +0x000c PC f81e0ffe          MOVD.W R30, -32(RSP) | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:23 +0x0010 PC f81f83fd          MOVD R29, -8(RSP)    | pcsp=32 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=-1(all)
+  fixture.go:24 +0x0018 PC f9400002          MOVD (R0), R2 | pcsp=32 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:24 +0x0024 PC d63f0040          CALL (R2) [0:0]R_CALLIND | pcsp=32 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=00 LocalsPointerMaps=-) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  | ordinary safepoint return=+0x28 lookup=+0x27 map[1] ArgsPointerMaps=00 LocalsPointerMaps=-
+  fixture.go:25 +0x0030 PC d65f03c0          RET                  | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=1(ArgsPointerMaps=00 LocalsPointerMaps=-) PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:23 +0x0034 PC a90087e0          STP (R0, R1), 8(RSP) | pcsp=0 PCDATA_UnsafePoint=-2 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:23 +0x003c PC 94000000          CALL 0(PC) [0:4]R_CALLARM64:runtime.morestack_noctxt
+  | stack-growth safepoint return=+0x40 lookup=+0x3f map[0] ArgsPointerMaps=11 LocalsPointerMaps=-
+  fixture.go:23 +0x0040 PC a94087e0          LDP 8(RSP), (R0, R1) | pcsp=0 PCDATA_UnsafePoint=-1 PCDATA_StackMapIndex=-1 PCDATA_InlTreeIndex=-1 PCDATA_ArgLiveIndex=1(00)
+  fixture.go:23 +0x0048 PC 00000000 00000000 padding(8)

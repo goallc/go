@@ -7,9 +7,6 @@ package main
 import (
 	"bytes"
 	"cmd/internal/archive"
-	"cmd/internal/disasm"
-	"cmd/internal/goobj"
-	"cmd/internal/objfile"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -259,45 +256,23 @@ func TestLLVMGoObject(t *testing.T) {
 		}
 	}
 
-	// Legacy human output is best-effort. Upstream objfile currently cannot
-	// line-map these non-package PC metadata symbols, so objview must recover
-	// and show raw code instead of changing objfile or panicking.
-	objectFile, err := objfile.Open(path)
-	if err != nil {
-		t.Fatal(err)
+	var raw bytes.Buffer
+	if err := writeRawFile(&raw, path); err != nil {
+		t.Fatalf("raw output: %v", err)
 	}
-	defer objectFile.Close()
-	d, err := disasm.DisasmForFile(objectFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	a, err := archive.Parse(f, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry := a.Entries[0]
-	objectData := make([]byte, entry.Obj.Size)
-	if _, err := f.ReadAt(objectData, entry.Obj.Offset); err != nil {
-		t.Fatal(err)
-	}
-	r := goobj.NewReaderFromBytes(objectData, false)
-	if r == nil {
-		t.Fatal("invalid Go object reader")
-	}
-	var header goobj.Header
-	if err := header.Read(r); err != nil {
-		t.Fatal(err)
-	}
-	sym := r.Sym(0)
-	text := extractSymData(r, 0, sym, "", d, header.Offsets[goobj.BlkData])
-	if !strings.Contains(text, "disassembly unavailable") ||
-		!strings.Contains(text, "code=") {
-		t.Fatalf("human output did not fall back to raw code:\n%s", text)
+	for _, want := range []string{
+		"GOOBJRAW 2 archive=false members=1",
+		"OFFSET    HEX BYTES",
+		"| INTERPRETATION",
+		"00000000  00 67 6f",
+		`name="different_pointer_sets_across_calls"`,
+		"-- block[16] data",
+		`function="different_pointer_sets_across_calls"`,
+		`name="runtime.morestack_noctxt"`,
+	} {
+		if !strings.Contains(raw.String(), want) {
+			t.Errorf("raw output is missing %q", want)
+		}
 	}
 }
 
