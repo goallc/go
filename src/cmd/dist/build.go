@@ -1434,9 +1434,11 @@ var (
 
 	// We could install all tools in "cmd", but is unnecessary because we will
 	// remove them in distpack, so instead install the tools that will actually
-	// be included in distpack, which is a superset of toolchain. Not installing
-	// the tools will help us test what happens when the tools aren't present.
-	toolsToInstall = slices.Concat(binExesIncludedInDistpack, toolsIncludedInDistpack)
+	// be included in distpack, which is a superset of toolchain. GoALLC also
+	// installs llvmtoolexec as a host tool even though it is not distributed by
+	// upstream Go's distpack. Not installing unrelated tools helps us test what
+	// happens when tools aren't present.
+	toolsToInstall = slices.Concat(binExesIncludedInDistpack, toolsIncludedInDistpack, []string{"cmd/llvmtoolexec"})
 )
 
 // The bootstrap command runs a build from scratch,
@@ -1751,14 +1753,11 @@ func configureGoallcLLVM() {
 	}
 	goallcLLVMDir = filepath.Clean(absDir)
 
-	pluginSuffix := ".so"
-	if gohostos == "darwin" {
-		pluginSuffix = ".dylib"
-	}
 	for _, required := range []string{
 		pathf("%s/include/llvm-c", goallcLLVMDir),
 		pathf("%s/lib", goallcLLVMDir),
-		pathf("%s/lib/GoALLCStatepoints%s", goallcLLVMDir, pluginSuffix),
+		pathf("%s/lib/cmake/llvm/LLVMConfig.cmake", goallcLLVMDir),
+		pathf("%s/bin/llc", goallcLLVMDir),
 		pathf("%s/bin/llvm-config", goallcLLVMDir),
 	} {
 		if _, err := os.Stat(required); err != nil {
@@ -1789,12 +1788,14 @@ func configureGoallcLLVM() {
 			fatalf("invalid LLVM library %q: %v", library, err)
 		}
 	}
+	ensureGoallcPassPlugin()
 
 	bindingDir := pathf("%s/src/cmd/vendor/github.com/goallc/go-llvm", goroot)
 	configureGoallcLLVMPayloadLink(bindingDir)
 	if goallcLLVMLink == "static" {
 		buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version)
 	}
+	writeGoallcLLVMPayloadConfig()
 }
 
 func configureGoallcLLVMPayloadLink(bindingDir string) {

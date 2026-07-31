@@ -2,21 +2,24 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// llvm-toolexec is a go build -toolexec wrapper that replaces a selected Go
-// package's native linker object with one produced by llc from compiler LLVM
-// IR. The compiler still writes __.PKGDEF, so dependents retain normal Go
+// llvm-toolexec is a go build -toolexec wrapper that replaces a Go compiler
+// action carrying -enablellvm with an object produced by llc from compiler
+// LLVM IR. The compiler still writes __.PKGDEF, so dependents retain normal Go
 // export-data handling; it intentionally writes no native machine code.
 package main
 
 import (
 	"cmd/internal/archive"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +27,6 @@ var (
 	llcPath        = flag.String("llc", os.Getenv("GOALLC_LLC"), "path to llc")
 	passPluginPath = flag.String("pass-plugin", os.Getenv("GOALLC_PASS_PLUGIN"), "path to the GoALLC LLVM pass plugin (default next to llc)")
 	keepIR         = flag.Bool("keep-ir", false, "keep the compiler-generated .ll sidecar")
-	packageOnly    = flag.String("package", os.Getenv("GOALLC_LLVM_PACKAGE"), "only replace this Go import path")
 )
 
 func main() {
@@ -34,14 +36,23 @@ func main() {
 	}
 
 	tool, args := flag.Arg(0), flag.Args()[1:]
-	if filepath.Base(tool) != "compile" || !selectedPackage(args, *packageOnly) {
+	if filepath.Base(tool) != "compile" || !boolToolFlag(args, "-enablellvm") {
 		run(tool, args...)
 		return
 	}
-	if *llcPath == "" {
-		fatalf("missing llc path: pass -llc or set GOALLC_LLC")
+	if isFullVersion(args) {
+		printToolIdentity(tool, args, *llcPath, *passPluginPath)
+		return
 	}
-	pluginPath, err := resolvePassPlugin(*llcPath, *passPluginPath)
+	if !isCompileAction(args) {
+		run(tool, args...)
+		return
+	}
+	llc, err := resolveLLC(*llcPath)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	pluginPath, err := resolvePassPlugin(llc, *passPluginPath)
 	if err != nil {
 		fatalf("%v", err)
 	}
@@ -50,8 +61,8 @@ func main() {
 	if !ok || output == "" {
 		fatalf("compile invocation has no -o output")
 	}
-	compileArgs := make([]string, 0, len(args)+2)
-	compileArgs = append(compileArgs, "-enablellvm", "-llvmironly")
+	compileArgs := make([]string, 0, len(args)+1)
+	compileArgs = append(compileArgs, "-llvmironly")
 	compileArgs = append(compileArgs, args...)
 	run(tool, compileArgs...)
 
@@ -66,7 +77,7 @@ func main() {
 		irPath,
 		"-o", objPath,
 	}
-	run(*llcPath, llcArgs...)
+	run(llc, llcArgs...)
 	// cmd/link identifies the package linker object by this archive member
 	// name. Unlike the mixed native/LLVM path, this is the sole linker member.
 	appendArchiveMember(output, "_go_.o", objPath)
@@ -121,6 +132,36 @@ func resolvePassPlugin(llc, configured string) (string, error) {
 	return "", fmt.Errorf("GoALLC pass plugin not found next to llc %q; pass -pass-plugin or set GOALLC_PASS_PLUGIN", llcPath)
 }
 
+func resolveLLC(configured string) (string, error) {
+	if configured != "" {
+		path, err := resolveExecutable(configured)
+		if err != nil {
+			return "", fmt.Errorf("invalid llc %q: %w", configured, err)
+		}
+		return path, nil
+	}
+	var candidates []string
+	if root := os.Getenv("GOALLC_LLVM_DIR"); root != "" {
+		candidates = append(candidates, filepath.Join(root, "bin", "llc"))
+	}
+	if executable, err := os.Executable(); err == nil {
+		toolDir := filepath.Dir(executable)
+		root := filepath.Dir(filepath.Dir(filepath.Dir(toolDir)))
+		if data, err := os.ReadFile(filepath.Join(root, "pkg", "goallc-llvm-payload")); err == nil {
+			if payload := strings.TrimSpace(string(data)); payload != "" {
+				candidates = append(candidates, filepath.Join(payload, "bin", "llc"))
+			}
+		}
+		candidates = append(candidates, filepath.Join(root, "llvm", "bin", "llc"))
+	}
+	for _, candidate := range candidates {
+		if path, err := resolveExecutable(candidate); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("missing llc for selected compile: pass -llc, set GOALLC_LLC or GOALLC_LLVM_DIR, or install the payload under GOROOT/llvm")
+}
+
 func passPluginFilename() (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
@@ -141,6 +182,129 @@ func requireRegularFile(path string) error {
 		return fmt.Errorf("not a regular file")
 	}
 	return nil
+}
+
+func isFullVersion(args []string) bool {
+	for _, arg := range args {
+		if arg == "-V=full" {
+			return true
+		}
+	}
+	return false
+}
+
+func isCompileAction(args []string) bool {
+	output, ok := toolFlag(args, "-o")
+	return ok && output != ""
+}
+
+// printToolIdentity implements the toolexec -V=full protocol for an
+// -enablellvm compile action. The native compiler identity alone is
+// insufficient because llc and the pass plugin also determine the archive
+// written by this wrapper.
+func printToolIdentity(tool string, args []string, llc, configuredPlugin string) {
+	llc, err := resolveLLC(llc)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	plugin, err := resolvePassPlugin(llc, configuredPlugin)
+	if err != nil {
+		fatalf("%v", err)
+	}
+
+	cmd := exec.Command(tool, args...)
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fatalf("run %s: %v", tool, err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 || fields[0] != "compile" || fields[1] != "version" {
+		fatalf("unexpected compile -V=full output: %q", strings.TrimSpace(string(out)))
+	}
+	if strings.HasPrefix(fields[len(fields)-1], "buildID=") {
+		fields = fields[:len(fields)-1]
+	}
+
+	wrapper, err := os.Executable()
+	if err != nil {
+		fatalf("resolving llvmtoolexec executable: %v", err)
+	}
+	backendFiles, err := backendIdentityFiles(llc, plugin)
+	if err != nil {
+		fatalf("resolving backend identity files: %v", err)
+	}
+	identity, err := backendIdentity(out, append([]string{wrapper}, backendFiles...)...)
+	if err != nil {
+		fatalf("computing backend identity: %v", err)
+	}
+	fmt.Printf("%s buildID=%s\n", strings.Join(fields, " "), identity)
+}
+
+func backendIdentityFiles(llc, plugin string) ([]string, error) {
+	paths := []string{llc, plugin}
+	root := filepath.Dir(filepath.Dir(llc))
+	var candidates []string
+	for _, pattern := range []string{"libLLVM*.dylib", "libLLVM*.so", "libLLVM*.so.*"} {
+		matches, err := filepath.Glob(filepath.Join(root, "lib", pattern))
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, matches...)
+	}
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		real := candidate
+		if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+			real = resolved
+		}
+		if !seen[real] {
+			seen[real] = true
+			paths = append(paths, real)
+		}
+	}
+	return paths, nil
+}
+
+func backendIdentity(toolOutput []byte, paths ...string) (string, error) {
+	h := sha256.New()
+	io.WriteString(h, "goallc llvmtoolexec identity v1\x00")
+	h.Write(toolOutput)
+	for i, path := range paths {
+		fmt.Fprintf(h, "\x00file%d\x00", i)
+		if err := hashFile(h, path); err != nil {
+			return "", fmt.Errorf("hashing %q: %w", path, err)
+		}
+	}
+	return fmt.Sprintf("goallc-%x", h.Sum(nil)), nil
+}
+
+func resolveExecutable(path string) (string, error) {
+	resolved, err := exec.LookPath(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	if err := requireRegularFile(resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func hashFile(w io.Writer, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(w, f)
+	return err
 }
 
 // appendArchiveMember uses the Go toolchain's archive writer. Unlike BSD ar,
@@ -176,12 +340,20 @@ func appendArchiveMember(archivePath, name, memberPath string) {
 	ar.AddEntry(archive.EntryGoObj, name, 0, 0, 0, 0o644, info.Size(), member)
 }
 
-func selectedPackage(args []string, want string) bool {
-	if want == "" {
-		return true
+func boolToolFlag(args []string, name string) bool {
+	enabled := false
+	for _, arg := range args {
+		switch {
+		case arg == name:
+			enabled = true
+		case strings.HasPrefix(arg, name+"="):
+			value, err := strconv.ParseBool(strings.TrimPrefix(arg, name+"="))
+			if err == nil {
+				enabled = value
+			}
+		}
 	}
-	pkg, ok := toolFlag(args, "-p")
-	return ok && pkg == want
+	return enabled
 }
 
 func toolFlag(args []string, name string) (string, bool) {

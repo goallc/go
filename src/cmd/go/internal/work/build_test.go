@@ -19,6 +19,28 @@ import (
 	"cmd/go/internal/load"
 )
 
+func TestBoolToolFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"absent", nil, false},
+		{"bare", []string{"-enablellvm"}, true},
+		{"true", []string{"-enablellvm=true"}, true},
+		{"false", []string{"-enablellvm=false"}, false},
+		{"last false", []string{"-enablellvm", "-enablellvm=false"}, false},
+		{"last true", []string{"-enablellvm=false", "-enablellvm"}, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := boolToolFlag(test.args, "-enablellvm"); got != test.want {
+				t.Fatalf("boolToolFlag(%q) = %v, want %v", test.args, got, test.want)
+			}
+		})
+	}
+}
+
 func TestRemoveDevNull(t *testing.T) {
 	fi, err := os.Lstat(os.DevNull)
 	if err != nil {

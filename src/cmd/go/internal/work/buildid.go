@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -144,7 +145,22 @@ func contentID(buildID string) string {
 // build setups agree on details like $GOROOT and file name paths, but at least the
 // tool IDs do not make it impossible.)
 func (b *Builder) toolID(name string) string {
-	return b.toolIDCache.Do(name, func() string {
+	return b.toolIDWithArgs(name, name, nil)
+}
+
+// compileToolID returns the compiler identity for gcflags. llvmtoolexec uses
+// -enablellvm as the single source of truth for selecting LLVM compilation,
+// so its version probe must carry that flag too. Other compiler invocations
+// retain the standard tool ID and do not depend on the external backend.
+func (b *Builder) compileToolID(gcflags []string) string {
+	if len(cfg.BuildToolexec) == 0 || !boolToolFlag(gcflags, "-enablellvm") {
+		return b.toolID("compile")
+	}
+	return b.toolIDWithArgs("compile", "compile\x00enablellvm", []string{"-enablellvm"})
+}
+
+func (b *Builder) toolIDWithArgs(name, key string, args []string) string {
+	return b.toolIDCache.Do(key, func() string {
 		path := base.Tool(name)
 		desc := "go tool " + name
 
@@ -156,7 +172,7 @@ func (b *Builder) toolID(name string) string {
 			desc = VetTool
 		}
 
-		cmdline := str.StringList(cfg.BuildToolexec, path, "-V=full")
+		cmdline := str.StringList(cfg.BuildToolexec, path, args, "-V=full")
 		cmd := exec.Command(cmdline[0], cmdline[1:]...)
 		var stdout, stderr strings.Builder
 		cmd.Stdout = &stdout
@@ -181,6 +197,22 @@ func (b *Builder) toolID(name string) string {
 		// Use the whole line.
 		return strings.TrimSpace(line)
 	})
+}
+
+func boolToolFlag(args []string, name string) bool {
+	enabled := false
+	for _, arg := range args {
+		switch {
+		case arg == name:
+			enabled = true
+		case strings.HasPrefix(arg, name+"="):
+			value, err := strconv.ParseBool(strings.TrimPrefix(arg, name+"="))
+			if err == nil {
+				enabled = value
+			}
+		}
+	}
+	return enabled
 }
 
 // gccToolID returns the unique ID to use for a tool that is invoked

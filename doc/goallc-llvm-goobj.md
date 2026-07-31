@@ -223,9 +223,10 @@ header。`llc` 在建立 code-generation pipeline 前读取并严格校验这些
 
 ## toolexec wrapper
 
-`cmd/llvmtoolexec` 只处理 `compile`，其余 Go tool 调用原样透传。它：
+`cmd/llvmtoolexec` 只处理实际参数中启用了 `-enablellvm` 的 `compile`，其余
+compile 和其他 Go tool 调用原样透传。它：
 
-1. 为选中的 compile 调用增加 `-enablellvm -llvmironly`；
+1. 保留调用方传入的 `-enablellvm`，并增加 `-llvmironly`；
 2. 调用
    `llc -load-pass-plugin=<GoALLCStatepoints> -filetype=obj`；GoObj 固定以
    CALL 起点记录 statepoint。插件的
@@ -239,18 +240,30 @@ wrapper 不解析 `__.PKGDEF`、不反向识别 Go textual header，也不自行
 header。使用 Go 自己的 archive writer 可保证 `__.PKGDEF` 保持第一个 member，
 避免 BSD `ar` 插入 `__.SYMDEF` 后破坏 `cmd/link` 的读取约定。
 
-可用 `-package` 或环境变量 `GOALLC_LLVM_PACKAGE` 限定 import path；未设置时
-所有 `compile` 调用都会走这条实验链路。`-llc` 或 `GOALLC_LLC` 必须指向带有
-GoObj metadata 支持的 GoALLC LLVM 构建。
+package 的选择完全由 cmd/go 已有的 `-gcflags` 规则完成。无 pattern 的
+`-gcflags=-enablellvm` 只作用于命令行 package；需要选择某个依赖时使用
+`-gcflags='example.com/project/internal/foo=-enablellvm'`。wrapper 不维护另一套
+package 匹配规则，也不根据 `TOOLEXEC_IMPORTPATH` 猜测选择结果。实际 compile
+没有 `-enablellvm` 时完全透传，并且其 action cache identity 不依赖 LLVM
+backend；只有启用 LLVM 的 compile，其 `-V=full` probe 才携带 `-enablellvm`
+并纳入 backend identity。
+
+`llc` 的选择顺序是 `-llc`/`GOALLC_LLC`、`GOALLC_LLVM_DIR/bin/llc`、构建
+toolchain 时记录的 LLVM payload、`$GOROOT/llvm/bin/llc`。正常安装后只需传
+`-toolexec`；开发者仍可用前两项覆盖 payload。
 
 pass plugin 默认从 `llc` 所属 LLVM payload 的
 `lib/GoALLCStatepoints.{dylib,so}` 查找。也可使用 `-pass-plugin` 或
 `GOALLC_PASS_PLUGIN` 指定精确路径。wrapper 对选中的 compile 强制加载插件；
 插件缺失时在运行 compiler 前 fail fast，不能静默绕过 pre-codegen pipeline。
 插件必须来自与 `llc` 相同的 LLVM checkout/payload，不能只按 LLVM major
-版本混用。`cmd/dist` 在配置 LLVM payload 时也会检查这个插件，避免生成一个
-能够构建 compiler、但运行 `llvmtoolexec` 时才发现缺少 pre-codegen pipeline
-的工具链。
+版本混用。`make.bash` 对 Go-owned plugin sources、实际 `llc`、`libLLVM`、
+`llvm-config` 和 LLVM CMake 配置做内容哈希；输入未变时跳过 CMake，输入变化时
+重建并用新 inode 原子刷新 payload 中的插件。时间戳本身不作为缓存身份。
+安装后的 enabled compile probe 把 wrapper、实际 `llc`、动态 `libLLVM` 和
+plugin 的内容纳入对应 package 的 Go action-cache tool ID；因此同一路径下替换
+backend/plugin 也会使启用了 `-enablellvm` 的 package 重新编译，而未启用的
+package 保持原生 compiler cache key。
 
 插件的功能性源码和测试位于 Go 仓库
 `src/cmd/llvmplugin`，不放入 LLVM 源码树。LLVM 只提供通用的
@@ -350,29 +363,49 @@ cmake --install "$PLUGIN_BUILD"
 
 ## 最小使用方式
 
-假定 `$GOROOT` 是本仓库构建出的 Go toolchain，`$LLC` 是对应 LLVM 分支构建
-的 `llc`：
+假定 `$GOROOT` 是本仓库构建出的 Go toolchain，并且 `make.bash -llvm-dir=...`
+已经记录对应 LLVM payload：
 
 ```sh
-cd "$GOROOT/src/cmd"
-go build -o /private/tmp/llvmtoolexec ./llvmtoolexec
-
 cd /path/to/simple-main-package
-GOALLC_LLVM_PACKAGE=main \
-  "$GOROOT/bin/go" build \
-  -toolexec="/private/tmp/llvmtoolexec -llc=$LLC -keep-ir" \
+TOOLDIR=$("$GOROOT/bin/go" env GOTOOLDIR)
+"$GOROOT/bin/go" build \
+  -toolexec="$TOOLDIR/llvmtoolexec" \
+  -gcflags=-enablellvm \
   -o app .
 ./app
 ```
 
-在 shell 中也可设置 `GOALLC_LLC="$LLC"`，这样 `-toolexec` 只需指定 wrapper
-路径。`-keep-ir` 留下的 IR 路径为 compile 输出 archive 路径加 `.ll` 后缀。
+也可以用 `"$GOROOT/bin/go" tool -n llvmtoolexec` 查看安装路径。需要覆盖 payload
+或保留 IR 时，把参数放进同一个 `-toolexec` 值：
+
+```sh
+"$GOROOT/bin/go" build \
+  -toolexec="'$GOROOT/pkg/tool/darwin_arm64/llvmtoolexec' '-llc=/path with spaces/llc' -keep-ir" \
+  -gcflags=-enablellvm \
+  .
+```
+
+这里使用 cmd/go 的 quoted command syntax，因此 wrapper flags 和带空格路径不会
+被 shell 或 cmd/go 二次拆错。`-keep-ir` 留下的 IR 路径为 compile 输出 archive
+路径加 `.ll` 后缀。启用了 `-enablellvm` 的真实 compile 缺少 `llc`/plugin 时
+仍然 fail closed；非 compile、没有 `-enablellvm` 的 package 和普通 probe
+透明透传。
+
+例如只让一个依赖走 LLVM，可使用：
+
+```sh
+"$GOROOT/bin/go" build \
+  -toolexec="$TOOLDIR/llvmtoolexec" \
+  -gcflags='example.com/project/internal/foo=-enablellvm' \
+  .
+```
 
 开发时至少运行：
 
 ```sh
-cd "$GOROOT/src/cmd"
-go test ./llvmtoolexec
+cd "$GOROOT/src"
+go test cmd/llvmtoolexec cmd/go/internal/work cmd/dist
 
 cd /path/to/llvm-project
 llvm/cmake-build-debug/bin/llvm-lit -sv \
@@ -426,12 +459,13 @@ FileCheck --check-prefix=LLVM test/codegen/example.go < package.a.ll
 ### LLVM runtime 检查
 
 runtime 白名单不增加新的 recipe，也不复制测试源码。runner 仍解析原文件的
-`// run` 参数、build constraint、超时和期望输出，但构建步骤改为通过
-`cmd/llvmtoolexec` 仅替换 `main` package：
+`// run` 参数、build constraint、超时和期望输出，但构建步骤改为用
+`-gcflags=-enablellvm` 选择命令行 `main` package，再通过 `cmd/llvmtoolexec`
+替换其对象：
 
 ```text
 原有 // run 用例
-  -> go build -toolexec="llvmtoolexec -package=main ..."
+  -> go build -gcflags=-enablellvm -toolexec="llvmtoolexec ..."
   -> compile -enablellvm -llvmironly
   -> llc 生成 _go_.o
   -> cmd/link

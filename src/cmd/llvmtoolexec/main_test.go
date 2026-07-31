@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestToolFlag(t *testing.T) {
@@ -25,6 +26,87 @@ func TestToolFlag(t *testing.T) {
 		got, ok := toolFlag(args, test.name)
 		if got != test.want || ok != test.ok {
 			t.Errorf("toolFlag(%q) = %q, %v; want %q, %v", test.name, got, ok, test.want, test.ok)
+		}
+	}
+}
+
+func TestCompileInvocationClassification(t *testing.T) {
+	if !isFullVersion([]string{"-enablellvm", "-V=full"}) {
+		t.Fatal("-V=full was not recognized")
+	}
+	if isCompileAction([]string{"-V=full"}) {
+		t.Fatal("version probe was classified as a compile action")
+	}
+	if !isCompileAction([]string{"-p=main", "-o", "out.a", "main.go"}) {
+		t.Fatal("compile with output was not recognized")
+	}
+}
+
+func TestBoolToolFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"absent", nil, false},
+		{"bare", []string{"-enablellvm"}, true},
+		{"true", []string{"-enablellvm=true"}, true},
+		{"false", []string{"-enablellvm=false"}, false},
+		{"last false", []string{"-enablellvm", "-enablellvm=false"}, false},
+		{"last true", []string{"-enablellvm=false", "-enablellvm"}, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := boolToolFlag(test.args, "-enablellvm"); got != test.want {
+				t.Fatalf("boolToolFlag(%q) = %v, want %v", test.args, got, test.want)
+			}
+		})
+	}
+}
+
+func TestBackendIdentityTracksContentsNotTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "wrapper")
+	llc := filepath.Join(dir, "llc")
+	plugin := filepath.Join(dir, "plugin")
+	library := filepath.Join(dir, "libLLVM")
+	for path, content := range map[string]string{
+		wrapper: "wrapper-v1",
+		llc:     "llc-v1",
+		plugin:  "plugin-v1",
+		library: "libLLVM-v1",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := backendIdentity([]byte("compile version devel buildID=native\n"), wrapper, llc, plugin, library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(plugin, time.Now().Add(-time.Hour), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := backendIdentity([]byte("compile version devel buildID=native\n"), wrapper, llc, plugin, library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("timestamp-only change altered identity: %q != %q", got, want)
+	}
+	for _, path := range []string{llc, plugin, library} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)+"-v2"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := backendIdentity([]byte("compile version devel buildID=native\n"), wrapper, llc, plugin, library)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed == want {
+			t.Fatalf("changing %s did not alter identity", filepath.Base(path))
+		}
+		if err := os.WriteFile(path, []byte(filepath.Base(path)+"-v1"), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -201,11 +283,11 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 		wrapper,
 		"-llc=" + llc,
 		"-pass-plugin=" + plugin,
-		"-package=cmd/llvmtoolexec/testdata/indirect",
 	}, " ")
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
+		"-gcflags=-enablellvm",
 		"-ldflags=-w -debugnosplit",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/indirect",

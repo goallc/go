@@ -352,7 +352,7 @@ func (t test) runLLVMCase(tempDir string, flags, args []string, runcmd runCmd) e
 	}
 	toolexec := llvmToolexec(t.T)
 	exe := filepath.Join(tempDir, "test.exe")
-	cmd := []string{goTool, "build", t.goGcflags(), "-toolexec=" + toolexec, "-o", exe}
+	cmd := []string{goTool, "build", t.goGcflags(), "-gcflags=-enablellvm", "-toolexec=" + toolexec, "-o", exe}
 	cmd = append(cmd, flags...)
 	cmd = append(cmd, t.goFileName())
 	if _, err := runcmd(cmd...); err != nil {
@@ -374,7 +374,7 @@ func llvmToolexec(t *testing.T) string {
 	wrapper := strings.TrimSpace(string(out))
 
 	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
-	value, err := quoted.Join([]string{wrapper, "-llc=" + llc, "-package=main"})
+	value, err := quoted.Join([]string{wrapper, "-llc=" + llc})
 	if err != nil {
 		t.Fatal(err)
 	}
