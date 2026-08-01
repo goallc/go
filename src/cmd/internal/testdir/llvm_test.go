@@ -68,6 +68,8 @@ func runLLVMTests(t *testing.T, common testCommon) {
 			runLLVMAllocaStatepointTest(t, common.gorootTestDir)
 		})
 
+		t.Run("writebarrier-helpers", runLLVMWriteBarrierHelperTest)
+
 		t.Run("runtime", func(t *testing.T) {
 			names := sortedLLVMWhitelist(policy.Runtime.Whitelist)
 			for _, name := range names {
@@ -87,7 +89,7 @@ func runLLVMTests(t *testing.T, common testCommon) {
 			}
 		})
 
-		t.Run("fail-closed", runLLVMMemoryOpFailClosedTests)
+		t.Run("writebarrier-ir", runLLVMWriteBarrierIRTests)
 	})
 }
 
@@ -298,21 +300,26 @@ func runLLVMCodegenTest(t *testing.T, gorootTestDir, name string) {
 	}
 }
 
-func runLLVMMemoryOpFailClosedTests(t *testing.T) {
+func runLLVMWriteBarrierIRTests(t *testing.T) {
 	tests := []struct {
 		name   string
 		source string
-		want   string
+		want   []string
 	}{
 		{
 			name:   "ZeroWithPointers",
 			source: "package p\nfunc zero(dst *[2]*int) { *dst = [2]*int{} }\n",
-			want:   "Zero of pointer-containing type [2]*int requires write-barrier lowering before LLVM",
+			want:   []string{"@runtime.wbZero", "ptrtoint ptr %dst", "@llvm.memset.inline", `"gc-leaf-function"`},
 		},
 		{
 			name:   "MoveWithPointers",
 			source: "package p\nfunc move(dst, src *[2]*int) { *dst = *src }\n",
-			want:   "Move of pointer-containing type [2]*int requires write-barrier lowering before LLVM",
+			want:   []string{"@runtime.wbMove", "ptrtoint ptr %dst", "ptrtoint ptr %src", "@llvm.memmove", `"gc-leaf-function"`},
+		},
+		{
+			name:   "DeletePointer",
+			source: "package p\nfunc delete(dst **int) { *dst = nil }\n",
+			want:   []string{"@llvm.go.gc.write.barrier"},
 		},
 	}
 	for _, tc := range tests {
@@ -322,7 +329,7 @@ func runLLVMMemoryOpFailClosedTests(t *testing.T) {
 			if err := os.WriteFile(source, []byte(tc.source), 0o666); err != nil {
 				t.Fatal(err)
 			}
-			archive := filepath.Join(dir, "fail.a")
+			archive := filepath.Join(dir, "writebarrier.a")
 			cmd := exec.Command(goTool, "tool", "compile",
 				"-p=p",
 				"-importcfg="+stdlibImportcfgFile(),
@@ -333,14 +340,21 @@ func runLLVMMemoryOpFailClosedTests(t *testing.T) {
 			)
 			cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
 			out, err := cmd.CombinedOutput()
-			if err == nil {
-				t.Fatalf("LLVM compilation unexpectedly succeeded")
+			if err != nil {
+				t.Fatalf("LLVM compilation failed: %v\n%s", err, out)
 			}
-			if !bytes.Contains(out, []byte(tc.want)) {
-				t.Fatalf("LLVM compilation error does not contain %q:\n%s", tc.want, out)
+			ir, err := os.ReadFile(archive + ".ll")
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := os.Stat(archive + ".ll"); !os.IsNotExist(err) {
-				t.Fatalf("failed LLVM compilation left IR output: %v", err)
+			want := append(tc.want,
+				"@llvm.go.gc.unsafe.point.start",
+				"@llvm.go.gc.unsafe.point.end",
+			)
+			for _, want := range want {
+				if !bytes.Contains(ir, []byte(want)) {
+					t.Fatalf("LLVM write-barrier IR does not contain %s\n%s", want, ir)
+				}
 			}
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"cmd/internal/obj"
 	"cmd/internal/src"
 	"internal/buildcfg"
+	"sort"
 
 	"github.com/goallc/go-llvm"
 )
@@ -25,6 +26,13 @@ type LLVMFuncContext struct {
 	b                llvm.Builder
 	ReturnType       llvm.Type
 	ResultCount      int
+	UnsafeRegions    map[ID][]llvmUnsafeRegion
+}
+
+type llvmUnsafeRegion struct {
+	Start              int
+	End                int
+	EndAfterTerminator bool
 }
 
 // SSA may clone an ir.Name while retaining the same logical source
@@ -51,6 +59,9 @@ const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
 const goNilCheckMetadata = "goallc.nilcheck"
+const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
+const goUnsafePointStartIntrinsic = "llvm.go.gc.unsafe.point.start"
+const goUnsafePointEndIntrinsic = "llvm.go.gc.unsafe.point.end"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 
@@ -200,15 +211,11 @@ func llvmMemoryOpInfo(v *Value) (int64, int) {
 	if !ok || t == nil {
 		v.Fatalf("%s has no memory type", v.Op)
 	}
-	// LLVM lowering runs before the native writebarrier pass. Mirror its
-	// canonical first safety gate: writes of pointer-containing Zero/Move
-	// values need no heap write barrier when their destination is provably a
-	// stack address. This deliberately covers derived stack addresses and
-	// repeated writes, while heap, global, and argument-derived destinations
-	// remain fail closed.
-	if t.HasPointers() && !IsStackAddr(v.Args[0]) {
-		v.Fatalf("%s of pointer-containing type %v requires write-barrier lowering before LLVM", v.Op, t)
-	}
+	// LLVM lowering runs after the complete writebarrier pass. At this point a
+	// pointer-containing heap Zero/Move is the raw memory operation that follows
+	// its wbZero/wbMove helper; stack destinations need no helper. The unexpanded
+	// OpZeroWB/OpMoveWB forms remain unsupported by GenLV and therefore fail
+	// closed rather than bypassing the write barrier.
 	size := auxIntToInt64(v.AuxInt)
 	if size < 0 {
 		v.Fatalf("%s has negative size %d", v.Op, size)
@@ -550,6 +557,51 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 	return result
 }
 
+// llvmRawWriteBarrierHelper reports whether aux describes one of the bulk
+// write-barrier helpers emitted by writebarrier's wbcall. Unlike ordinary Go
+// calls, wbcall intentionally describes every argument as a raw uintptr even
+// when the SSA value is pointer-shaped. The native backend relies on those
+// representations sharing the same Go ABI integer registers.
+func llvmRawWriteBarrierHelper(v *Value, aux *AuxCall) bool {
+	if aux == nil || aux.Fn == nil {
+		return false
+	}
+	wantArgs := int64(0)
+	switch aux.Fn {
+	case ir.Syms.WBZero:
+		wantArgs = 2
+	case ir.Syms.WBMove:
+		wantArgs = 3
+	default:
+		return false
+	}
+	if aux.ABI().Which() != obj.ABIInternal {
+		v.Fatalf("%s uses unsupported ABI %v", aux.Fn.Name, aux.ABI().Which())
+	}
+	if aux.NArgs() != wantArgs || aux.NResults() != 0 {
+		v.Fatalf("%s has unexpected helper signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
+	}
+	for i := int64(0); i < aux.NArgs(); i++ {
+		if typ := aux.TypeOfArg(i); typ == nil || !typ.IsUintptr() {
+			v.Fatalf("argument %d to %s is not raw uintptr", i, aux.Fn.Name)
+		}
+	}
+	return true
+}
+
+func (lfc *LLVMFuncContext) llvmRawWriteBarrierArg(v *Value, arg llvm.Value, want llvm.Type, index int64) llvm.Value {
+	if arg.Type() == want {
+		return arg
+	}
+	if arg.Type().TypeKind() == llvm.PointerTypeKind &&
+		want.TypeKind() == llvm.IntegerTypeKind &&
+		want.IntTypeWidth() == int(lfc.F.Config.PtrSize*8) {
+		return lfc.b.CreatePtrToInt(arg, want, v.String()+".rawarg")
+	}
+	v.Fatalf("argument %d to %s has incompatible LLVM type", index, auxToCall(v.Aux).Fn.Name)
+	return llvm.Value{}
+}
+
 func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	aux := auxToCall(v.Aux)
 	if aux == nil || aux.Fn == nil {
@@ -562,9 +614,13 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	sig := llvmSignature(aux)
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunction(aux.Fn.Name, sig, cc)
+	rawWriteBarrier := llvmRawWriteBarrierHelper(v, aux)
 	args := make([]llvm.Value, 0, aux.NArgs())
 	for i := int64(0); i < aux.NArgs(); i++ {
 		arg := lfc.GenLV(v.Args[i])
+		if rawWriteBarrier {
+			arg = lfc.llvmRawWriteBarrierArg(v, arg, sig.Type.ParamTypes()[i], i)
+		}
 		if got, want := arg.Type(), sig.Type.ParamTypes()[i]; got != want {
 			v.Fatalf("argument %d to %s has incompatible LLVM type", i, aux.Fn.Name)
 		}
@@ -576,6 +632,9 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	}
 	call := lfc.b.CreateCall(sig.Type, fn, args, name)
 	call.SetInstructionCallConv(cc)
+	if rawWriteBarrier {
+		markLLVMGCLeaf(fn, call)
+	}
 	return call
 }
 
@@ -702,6 +761,179 @@ func (lfc *LLVMFuncContext) panicBounds(v *Value) llvm.Value {
 	return call
 }
 
+func (lfc *LLVMFuncContext) llvmWriteBarrier(v *Value) llvm.Value {
+	entries := auxIntToInt64(v.AuxInt)
+	if entries < 1 || entries > 8 {
+		v.Fatalf("write barrier requests %d buffer entries", entries)
+	}
+	i32 := GlobalCtxt.Int32Type()
+	sig := llvm.FunctionType(GlobalCtxt.PointerType(0), []llvm.Type{i32}, false)
+	fn := getOrInsertLLVMIntrinsic(goWriteBarrierIntrinsic, sig)
+	return lfc.b.CreateCall(sig, fn, []llvm.Value{llvm.ConstInt(i32, uint64(entries), false)}, v.String())
+}
+
+func (lfc *LLVMFuncContext) llvmUnsafePointStart() {
+	sig := llvm.FunctionType(GlobalCtxt.VoidType(), nil, false)
+	fn := getOrInsertLLVMIntrinsic(goUnsafePointStartIntrinsic, sig)
+	lfc.b.CreateCall(sig, fn, nil, "")
+}
+
+func (lfc *LLVMFuncContext) llvmUnsafePointEnd(afterTerminator bool) {
+	i1 := GlobalCtxt.Int1Type()
+	sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{i1}, false)
+	fn := getOrInsertLLVMIntrinsic(goUnsafePointEndIntrinsic, sig)
+	value := uint64(0)
+	if afterTerminator {
+		value = 1
+	}
+	lfc.b.CreateCall(sig, fn, []llvm.Value{llvm.ConstInt(i1, value, false)}, "")
+}
+
+func llvmValueIndex(b *Block, target *Value) int {
+	for i, v := range b.Values {
+		if v == target {
+			return i
+		}
+	}
+	b.Func.Fatalf("write-barrier value %s is not in block %s", target, b)
+	return -1
+}
+
+func addLLVMUnsafeRegion(regions map[ID][]llvmUnsafeRegion, b *Block, start, end int, endAfterTerminator bool) {
+	if start < 0 || end < start || end > len(b.Values) {
+		b.Func.Fatalf("invalid LLVM unsafe region [%d,%d] in %s", start, end, b)
+	}
+	if start == end && !endAfterTerminator {
+		return
+	}
+	regions[b.ID] = append(regions[b.ID], llvmUnsafeRegion{
+		Start:              start,
+		End:                end,
+		EndAfterTerminator: endAfterTerminator,
+	})
+}
+
+func llvmWriteBarrierUnsafeRegions(f *Func) map[ID][]llvmUnsafeRegion {
+	regions := make(map[ID][]llvmUnsafeRegion)
+	for _, b := range f.Blocks {
+		if b.Kind == BlockInvalid {
+			continue
+		}
+		for _, end := range b.Values {
+			if end.Op != OpWBend {
+				continue
+			}
+
+			m := end
+			for {
+				m = m.MemoryArg()
+				if m == nil || m.Block != b {
+					f.Fatalf("can't find Phi before LLVM write-barrier end mark %v", end)
+				}
+				if m.Op == OpPhi {
+					break
+				}
+			}
+			if len(m.Args) != 2 {
+				f.Fatalf("phi before LLVM write-barrier end mark has %d args, want 2", len(m.Args))
+			}
+			c := b.Preds[0].Block()
+			d := b.Preds[1].Block()
+
+			var decision *Block
+			switch {
+			case len(c.Preds) == 1 && c.Preds[0].Block() == d:
+				decision = d
+			case len(d.Preds) == 1 && d.Preds[0].Block() == c:
+				decision = c
+			case len(c.Preds) == 1 && len(d.Preds) == 1 && c.Preds[0].Block() == d.Preds[0].Block():
+				decision = c.Preds[0].Block()
+			default:
+				f.Fatalf("can't find LLVM write-barrier decision block for %v", end)
+			}
+			if len(decision.Succs) != 2 {
+				f.Fatalf("LLVM write-barrier decision block has %d successors, want 2", len(decision.Succs))
+			}
+
+			var load *Value
+			control := decision.Controls[0]
+			for {
+				if control.MemoryArg() != nil {
+					if sym, ok := control.Aux.(*obj.LSym); ok && sym == ir.Syms.WriteBarrier {
+						load = control
+						break
+					}
+					if len(control.Args) != 0 {
+						if sym, ok := control.Args[0].Aux.(*obj.LSym); ok && sym == ir.Syms.WriteBarrier {
+							load = control
+							break
+						}
+					}
+					control.Fatalf("load of LLVM write-barrier flag is not from runtime.writeBarrier: %s", control.LongString())
+				}
+				if len(control.Args) == 1 || len(control.Args) == 2 && control.Args[0] == control.Args[1] {
+					control = control.Args[0]
+					continue
+				}
+				if control.Op == OpNeq32 && len(control.Args) == 2 {
+					if isConstZero(control.Args[1]) {
+						control = control.Args[0]
+						continue
+					}
+					if isConstZero(control.Args[0]) {
+						control = control.Args[1]
+						continue
+					}
+				}
+				control.Fatalf("LLVM write-barrier control has more than one distinct argument: %s", control.LongString())
+			}
+
+			// Native code marks the flag load restartable so an asynchronous
+			// preemption cannot resume with a stale write-barrier state. LLVM's
+			// first implementation has no restartable-PC encoding, so include the
+			// load itself in the unsafe range instead.
+			addLLVMUnsafeRegion(regions, decision, llvmValueIndex(decision, load), len(decision.Values), true)
+			for _, edge := range decision.Succs {
+				x := edge.Block()
+				if x != b {
+					addLLVMUnsafeRegion(regions, x, 0, len(x.Values), true)
+				}
+			}
+			addLLVMUnsafeRegion(regions, b, 0, llvmValueIndex(b, end), false)
+		}
+	}
+
+	for id, blockRegions := range regions {
+		sort.Slice(blockRegions, func(i, j int) bool {
+			if blockRegions[i].Start != blockRegions[j].Start {
+				return blockRegions[i].Start < blockRegions[j].Start
+			}
+			if blockRegions[i].End != blockRegions[j].End {
+				return blockRegions[i].End < blockRegions[j].End
+			}
+			return !blockRegions[i].EndAfterTerminator && blockRegions[j].EndAfterTerminator
+		})
+		merged := blockRegions[:0]
+		for _, next := range blockRegions {
+			if len(merged) == 0 {
+				merged = append(merged, next)
+				continue
+			}
+			last := &merged[len(merged)-1]
+			if last.EndAfterTerminator || next.Start <= last.End {
+				if next.End > last.End || next.End == last.End && next.EndAfterTerminator {
+					last.End = next.End
+					last.EndAfterTerminator = next.EndAfterTerminator
+				}
+				continue
+			}
+			merged = append(merged, next)
+		}
+		regions[id] = merged
+	}
+	return regions
+}
+
 func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	if lv, ok := lfc.Vs[v.ID]; ok {
 		return lv
@@ -719,7 +951,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }
 	arg1 := func() llvm.Value { return lfc.GenLV(v.Args[1]) }
 	switch v.Op {
-	case OpInitMem, OpSP, OpSB, OpInlMark:
+	case OpInitMem, OpSP, OpSB, OpInlMark, OpWBend:
 		// LLVM models memory ordering through instruction dependencies, not an
 		// explicit SSA memory value. SP/SB are only address-space tokens here.
 	case OpUnknown:
@@ -949,6 +1181,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.b.CreateGEP(getLLVMType(v.Type.Elem()), arg0(), []llvm.Value{arg1()}, v.String())
 	case OpStaticCall, OpStaticLECall:
 		lVal = lfc.staticCall(v)
+	case OpWB:
+		lVal = lfc.llvmWriteBarrier(v)
 	case OpClosureCall, OpClosureLECall:
 		// arg0 is the code pointer loaded from the funcval, arg1 is the
 		// funcval itself. The latter is a hidden REGCTXT input, not an
@@ -971,6 +1205,11 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			load := lfc.GenLV(src)
 			if sel == 0 {
 				lVal = load
+			}
+		case OpWB:
+			call := lfc.GenLV(src)
+			if sel == 0 {
+				lVal = call
 			}
 		default:
 			v.Fatalf("%s selects unsupported tuple source %s", v.Op, src.Op)
@@ -1094,10 +1333,44 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	return lVal
 }
 
+func llvmValueIsTombstone(v *Value) bool {
+	return v.Op == OpInvalid && v.Uses == 0 && len(v.Args) == 0 && v.Aux == nil && v.AuxInt == 0
+}
+
 func (lfc *LLVMFuncContext) CompileBlock(BB *Block) {
 	lfc.b.SetInsertPointAtEnd(lfc.BBs[BB.ID])
-	for _, v := range BB.Values {
+	regions := lfc.UnsafeRegions[BB.ID]
+	regionIndex := 0
+	active := false
+	emitEvents := func(position int) {
+		if active && !regions[regionIndex].EndAfterTerminator && regions[regionIndex].End == position {
+			lfc.llvmUnsafePointEnd(false)
+			active = false
+			regionIndex++
+		}
+		if !active && regionIndex < len(regions) && regions[regionIndex].Start == position {
+			lfc.llvmUnsafePointStart()
+			active = true
+		}
+	}
+	for i, v := range BB.Values {
+		emitEvents(i)
+		if llvmValueIsTombstone(v) {
+			continue
+		}
 		lfc.GenLV(v)
+	}
+	emitEvents(len(BB.Values))
+	if active {
+		region := regions[regionIndex]
+		if region.End != len(BB.Values) || !region.EndAfterTerminator {
+			BB.Func.Fatalf("unterminated LLVM unsafe region in %s", BB)
+		}
+		lfc.llvmUnsafePointEnd(true)
+		regionIndex++
+	}
+	if regionIndex != len(regions) {
+		BB.Func.Fatalf("unemitted LLVM unsafe region in %s", BB)
 	}
 	switch BB.Kind {
 	case BlockRet:
@@ -1109,6 +1382,11 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block) {
 	case BlockIf:
 		cond := lfc.llvmCondition(lfc.GenLV(BB.Controls[0]), BB.String()+".cond")
 		lfc.b.CreateCondBr(cond, lfc.BBs[BB.Succs[0].Block().ID], lfc.BBs[BB.Succs[1].Block().ID])
+	case BlockFirst:
+		// Keep both CFG edges so successor Phis retain their Go SSA
+		// predecessor shape, while the constant condition makes the second
+		// successor unreachable.
+		lfc.b.CreateCondBr(llvm.ConstInt(GlobalCtxt.Int1Type(), 1, false), lfc.BBs[BB.Succs[0].Block().ID], lfc.BBs[BB.Succs[1].Block().ID])
 	case BlockPlain:
 		lfc.b.CreateBr(lfc.BBs[BB.Succs[0].Block().ID])
 	case BlockExit:
@@ -1156,6 +1434,7 @@ func LLVMCompile(f *Func) {
 		b:                GlobalCtxt.NewBuilder(),
 		ReturnType:       sig.ReturnType,
 		ResultCount:      sig.ResultCount,
+		UnsafeRegions:    llvmWriteBarrierUnsafeRegions(f),
 	}
 	defer FCtxt.b.Dispose()
 
@@ -1175,6 +1454,9 @@ func LLVMCompile(f *Func) {
 		FCtxt.ClosureContext.SetName(".closureptr")
 	}
 	for _, BB := range f.Blocks {
+		if BB.Kind == BlockInvalid {
+			continue
+		}
 		FCtxt.BBs[BB.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, BB.String())
 		for _, v := range BB.Values {
 			if (v.Op == OpInterCall || v.Op == OpInterLECall) && len(v.Args) != 0 {
@@ -1210,6 +1492,9 @@ func LLVMCompile(f *Func) {
 	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
 	var parameterHomes []*Value
 	for _, BB := range f.Blocks {
+		if BB.Kind == BlockInvalid {
+			continue
+		}
 		for _, v := range BB.Values {
 			if v.Op != OpLocalAddr || v.Uses == 0 {
 				continue
@@ -1236,6 +1521,9 @@ func LLVMCompile(f *Func) {
 	// block. Predeclare them before recursive value emission can insert any
 	// other instruction into the block.
 	for _, BB := range f.Blocks {
+		if BB.Kind == BlockInvalid {
+			continue
+		}
 		FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[BB.ID])
 		for _, v := range BB.Values {
 			if v.Op == OpPhi && !v.Type.IsMemory() {
@@ -1267,6 +1555,9 @@ func LLVMCompile(f *Func) {
 		init.SetAlignment(int(slot.Type.Alignment()))
 	}
 	for _, BB := range f.Blocks {
+		if BB.Kind == BlockInvalid {
+			continue
+		}
 		FCtxt.CompileBlock(BB)
 	}
 	FCtxt.FinishPhi()
