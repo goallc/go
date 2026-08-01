@@ -15,6 +15,11 @@ type pointerLocal struct {
 	tail   [2]*int
 }
 
+type pointerPair struct {
+	first  *int
+	second *int
+}
+
 //go:noinline
 func newValue(value int) *int {
 	pointer := new(int)
@@ -37,6 +42,16 @@ func mutateLocal(value *pointerLocal, first, second *int, branch bool) {
 		value.tail[0] = second
 		value.tail[1] = oldFirst
 	}
+}
+
+//go:noinline
+func movePair(destination *pointerPair, source pointerPair) {
+	*destination = source
+}
+
+//go:noinline
+func zeroPair(destination *pointerPair) {
+	*destination = pointerPair{}
 }
 
 // grow keeps the caller's address-taken local live while recursion repeatedly
@@ -93,7 +108,32 @@ func exercise(branch bool) int {
 	return got + localSum(&value)
 }
 
+// exerciseWriteBarrierMutation covers the aggregate replacement and clearing
+// semantics used by wbMove/wbZero lowering in callees that receive the address
+// of the caller's pointer-containing local. A statepoint must not restore the
+// pre-call contents over either mutation.
+//
+//go:noinline
+func exerciseWriteBarrierMutation() {
+	first := newValue(29)
+	second := newValue(31)
+	var value pointerPair
+	movePair(&value, pointerPair{first: first, second: second})
+	first, second = nil, nil
+	runtime.GC()
+	if value.first == nil || value.second == nil ||
+		*value.first != 29 || *value.second != 31 {
+		panic("wbMove mutation of address-taken local was lost")
+	}
+	zeroPair(&value)
+	runtime.GC()
+	if value.first != nil || value.second != nil {
+		panic("wbZero mutation of address-taken local was overwritten")
+	}
+}
+
 func main() {
+	exerciseWriteBarrierMutation()
 	// The recursive helper adds one for every odd depth.
 	const recursiveAdjustment = 600
 	if got, want := exercise(true), 2*(13+23+17+13+17)+recursiveAdjustment; got != want {

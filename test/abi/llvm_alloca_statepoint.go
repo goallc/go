@@ -26,8 +26,8 @@ var (
 func safepoint()
 
 // mutateLocal is intentionally opaque to both compilers. A real callee may
-// update the pointer fields while the call is a safepoint, so GoALLC must use
-// the original alloca slots as the relocation homes.
+// update the pointer fields while the call is a safepoint, so GoALLC must scan
+// the original alloca memory rather than write back pre-call SSA values.
 //
 //go:noescape
 func mutateLocal(value *pointerLocal, branch bool)
@@ -35,7 +35,7 @@ func mutateLocal(value *pointerLocal, branch bool)
 // localAcrossSafepoints deliberately takes the address of a pointer-containing
 // local. Its pointer leaves must remain rooted in that original stack object
 // across both safepoint and mutateLocal. The latter may update the object, so a
-// relocated value from a separate spill slot must not be stored over its write.
+// relocated pre-call value must not be stored over its write.
 //
 //go:noinline
 func localAcrossSafepoints(branch bool, rounds int) uintptr {

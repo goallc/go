@@ -371,6 +371,41 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.MalformedAllocaPointerMapsFail
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-alloca-ptrmap-malformed.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.PointerAllocaSelectFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-select-unsupported.ll"
+      --contains
+      "require pointer-containing alloca PHI/select addresses to resolve to one zero-offset alloca"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.NonEntryPointerAllocaFails
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-nonentry-unsupported.ll"
+      --contains
+      "require a single fixed entry-block pointer-containing alloca"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.DynamicPointerAllocaFails
     COMMAND
       "${Python3_EXECUTABLE}"

@@ -67,20 +67,29 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		"-filetype=null", "-o", "-", goallcIR)
 	rewrittenFunction := llvmAllocaIRFunction(t, rewrittenIR, "p.localAcrossSafepoints")
 
-	// Four static ordinary call sites each keep all four pointer leaves live.
-	// The canonical loads are marked so SelectionDAG must use the corresponding
-	// alloca subslot rather than silently allocating a separate spill.
-	if got, want := bytes.Count(rewrittenFunction,
-		[]byte("!llvm.statepoint.fixed_stack_home")), 16; got != want {
-		t.Fatalf("fixed-stack-home loads=%d, want %d\n%s", got, want, rewrittenFunction)
+	// Four ordinary call sites describe the same 40-byte alloca as memory in a
+	// deopt suffix. Its four pointer leaves are bits 0, 2, 3, and 4 (0b11101).
+	// They must not become SSA roots or be written back after a mutating callee.
+	if bytes.Contains(rewrittenFunction, []byte("llvm.statepoint.fixed_stack_home")) {
+		t.Fatalf("obsolete fixed-stack-home metadata survived\n%s", rewrittenFunction)
 	}
 	if got, want := bytes.Count(rewrittenFunction,
 		[]byte("@llvm.experimental.gc.statepoint")), 4; got != want {
 		t.Fatalf("ordinary statepoints=%d, want %d\n%s", got, want, rewrittenFunction)
 	}
+	if got, want := bytes.Count(rewrittenFunction, []byte(`"deopt"(`)), 4; got != want {
+		t.Fatalf("alloca deopt records=%d, want %d\n%s", got, want, rewrittenFunction)
+	}
 	if got, want := bytes.Count(rewrittenFunction,
-		[]byte("@llvm.experimental.gc.relocate")), 16; got != want {
-		t.Fatalf("alloca relocates=%d, want %d\n%s", got, want, rewrittenFunction)
+		[]byte("i64 40, i64 8, i64 8, i64 5, i64 64, i64 1, i64 29")), 4; got != want {
+		t.Fatalf("alloca bitmap payloads=%d, want %d\n%s", got, want, rewrittenFunction)
+	}
+	if bytes.Contains(rewrittenFunction, []byte(`"gc-live"`)) ||
+		bytes.Contains(rewrittenFunction, []byte("@llvm.experimental.gc.relocate")) {
+		t.Fatalf("alloca leaves became SSA roots\n%s", rewrittenFunction)
+	}
+	if got, want := bytes.Count(rewrittenFunction, []byte("store ptr null")), 4; got != want {
+		t.Fatalf("alloca pointer initializers=%d, want %d\n%s", got, want, rewrittenFunction)
 	}
 	runLLVMABICommand(t, rewrittenIR, opt, "-load-pass-plugin="+plugin,
 		"-passes=verify", "-disable-output", "-")
@@ -99,6 +108,11 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 			got, want, machineFunction)
 	}
 	for _, statepoint := range ordinaryStatepoints {
+		for _, constant := range []string{"1195461697", "1347703373", "40", "29", "1095519299"} {
+			if !bytes.Contains(statepoint, []byte(constant)) {
+				t.Fatalf("STATEPOINT lost alloca contract constant %s: %s", constant, statepoint)
+			}
+		}
 		stackObject := regexp.MustCompile(`(%stack\.[^,\s]+)`).FindSubmatch(statepoint)
 		if len(stackObject) != 2 {
 			t.Fatalf("STATEPOINT has no alloca frame index: %s", statepoint)
@@ -109,12 +123,22 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 					object, stackObject[1], statepoint)
 			}
 		}
-		for _, offset := range []string{"0", "16", "24", "32"} {
-			pattern := regexp.QuoteMeta(string(stackObject[1])) + `,\s+` + offset + `(?:\D|$)`
-			if !regexp.MustCompile(pattern).Match(statepoint) {
-				t.Fatalf("STATEPOINT does not reuse alloca offset %s: %s", offset, statepoint)
-			}
+		pattern := `0,\s+` + regexp.QuoteMeta(string(stackObject[1])) + `,\s+0`
+		if !regexp.MustCompile(pattern).Match(statepoint) {
+			t.Fatalf("STATEPOINT does not carry the direct alloca frame base: %s", statepoint)
 		}
+	}
+
+	goallcAssembly := runLLVMABICommand(t, nil, llc,
+		"-load-pass-plugin="+plugin, "-verify-machineinstrs",
+		"-filetype=asm", "-o", "-", goallcIR)
+	betweenCalls := regexp.MustCompile(`(?s)\bbl\s+p\.mutateLocal\n(.*?)\bbl\s+p\.safepoint`).
+		FindSubmatch(goallcAssembly)
+	if len(betweenCalls) != 2 {
+		t.Fatalf("GoALLC assembly has no adjacent mutateLocal/safepoint calls\n%s", goallcAssembly)
+	}
+	if regexp.MustCompile(`(?m)^\s*(?:str|stp)\b`).Match(betweenCalls[1]) {
+		t.Fatalf("GoALLC restored an alloca field after mutateLocal:\n%s", betweenCalls[1])
 	}
 
 	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,

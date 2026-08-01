@@ -10,6 +10,9 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <limits>
+#include <optional>
+
 using namespace llvm;
 
 namespace {
@@ -82,17 +85,30 @@ bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
           getNonnegativeConstant(CSI.Locations[2], "deopt count");
       if (NumDeopts > CSI.Locations.size() - 3)
         report_fatal_error("malformed GoALLC statepoint deopt operands");
-      size_t FirstGCLocation = 3 + static_cast<size_t>(NumDeopts);
+      if (NumDeopts > std::numeric_limits<uint32_t>::max())
+        report_fatal_error("GoALLC statepoint has too many deopt operands");
 
       MCContext::GoObjStackMapEntry Entry{CSI.CSOffsetExpr,   CSI.ID,
                                           CSI.IsIndirectCall, Info.StackSize,
-                                          PointerSize,        {}};
-      Entry.Locations.reserve(CSI.Locations.size() - FirstGCLocation);
+                                          PointerSize,
+                                          static_cast<uint32_t>(NumDeopts),
+                                          {}};
+      Entry.Locations.reserve(CSI.Locations.size() - 3);
       for (const StackMaps::Location &Location :
-           ArrayRef(CSI.Locations).drop_front(FirstGCLocation)) {
-        Entry.Locations.push_back({convertLocationType(Location.Type),
-                                   Location.Size, Location.Reg,
-                                   Location.Offset});
+           ArrayRef(CSI.Locations).drop_front(3)) {
+        auto Type = convertLocationType(Location.Type);
+        int64_t Offset = Location.Offset;
+        if (Location.Type == StackMaps::Location::Constant ||
+            Location.Type == StackMaps::Location::ConstantIndex) {
+          std::optional<int64_t> Constant = SM.getConstantValue(Location);
+          if (!Constant)
+            report_fatal_error(
+                "GoALLC statepoint contains an invalid constant-pool index");
+          Type = MCContext::GoObjStackMapLocation::Constant;
+          Offset = *Constant;
+        }
+        Entry.Locations.push_back(
+            {Type, Location.Size, Location.Reg, Offset});
       }
       AP.OutContext.addGoObjSymbolStackMapEntry(Function, std::move(Entry));
     }
