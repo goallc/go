@@ -550,6 +550,28 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 	return result
 }
 
+// llvmNewprocSignature restores the semantic pointer type of newproc's
+// funcval argument. Native ssagen intentionally uses uintptr only to compute
+// the raw call's physical ABI assignment; the actual SSA operand is a pointer.
+func llvmNewprocSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvmFuncSignature {
+	if aux == nil || aux.Fn != ir.Syms.Newproc {
+		return sig
+	}
+	if aux.ABI().Which() != obj.ABIInternal {
+		v.Fatalf("runtime.newproc uses unsupported ABI %v", aux.ABI().Which())
+	}
+	if aux.NArgs() != 1 || aux.NResults() != 0 || !aux.TypeOfArg(0).IsUintptr() {
+		v.Fatalf("runtime.newproc has unexpected raw call signature")
+	}
+	if len(v.Args) != 2 || v.Args[0].Type == nil || !v.Args[0].Type.IsPtrShaped() {
+		v.Fatalf("runtime.newproc argument is not pointer-shaped")
+	}
+	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
+	params[0] = GlobalCtxt.PointerType(0)
+	sig.Type = llvm.FunctionType(sig.ReturnType, params, false)
+	return sig
+}
+
 func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	aux := auxToCall(v.Aux)
 	if aux == nil || aux.Fn == nil {
@@ -559,7 +581,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		v.Fatalf("static call to %s has %d LLVM arguments, want %d", aux.Fn.Name, got, want)
 	}
 
-	sig := llvmSignature(aux)
+	sig := llvmNewprocSignature(v, aux, llvmSignature(aux))
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunction(aux.Fn.Name, sig, cc)
 	args := make([]llvm.Value, 0, aux.NArgs())
