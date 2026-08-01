@@ -80,6 +80,7 @@ struct SafepointRecord {
   uint64_t ID;
   ValueSet Live;
   CallInst *Statepoint = nullptr;
+  CallInst *Result = nullptr;
   SmallVector<CallInst *, 8> Relocates;
 };
 
@@ -805,11 +806,21 @@ Error rewriteCall(SafepointRecord &Record,
     Record.Relocates.push_back(Relocate);
   }
 
-  if (Result)
-    Call->replaceAllUsesWith(Result);
-  Call->eraseFromParent();
-  Record.Call = nullptr;
+  Record.Result = Result;
   return Error::success();
+}
+
+void eraseOriginalCalls(ArrayRef<SafepointRecord> Records) {
+  // Keep every original call and its result alive until all precomputed
+  // liveness sets have been consumed. LLVM block layout need not follow CFG
+  // dominance, so a record encountered earlier can legitimately contain the
+  // result of a call encountered later. Replacing and erasing each call inside
+  // rewriteCall would leave that record with a dangling Value pointer.
+  for (const SafepointRecord &Record : Records) {
+    if (Record.Result)
+      Record.Call->replaceAllUsesWith(Record.Result);
+    Record.Call->eraseFromParent();
+  }
 }
 
 void repairRelocationSSA(Function &F, DominatorTree &DT,
@@ -944,6 +955,7 @@ Error rewriteFunction(Function &F) {
   for (SafepointRecord &Record : llvm::reverse(Records))
     if (Error Err = rewriteCall(Record, PointerAllocas))
       return Err;
+  eraseOriginalCalls(Records);
   repairRelocationSSA(F, DT, Records);
   return Error::success();
 }

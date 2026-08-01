@@ -50,6 +50,8 @@ const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
+const goAsyncUnsafeAttr = "go-async-unsafe"
+const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 
@@ -199,15 +201,11 @@ func llvmMemoryOpInfo(v *Value) (int64, int) {
 	if !ok || t == nil {
 		v.Fatalf("%s has no memory type", v.Op)
 	}
-	// LLVM lowering runs before the native writebarrier pass. Mirror its
-	// canonical first safety gate: writes of pointer-containing Zero/Move
-	// values need no heap write barrier when their destination is provably a
-	// stack address. This deliberately covers derived stack addresses and
-	// repeated writes, while heap, global, and argument-derived destinations
-	// remain fail closed.
-	if t.HasPointers() && !IsStackAddr(v.Args[0]) {
-		v.Fatalf("%s of pointer-containing type %v requires write-barrier lowering before LLVM", v.Op, t)
-	}
+	// LLVM lowering runs after the complete writebarrier pass. At this point a
+	// pointer-containing heap Zero/Move is the raw memory operation that follows
+	// its wbZero/wbMove helper; stack destinations need no helper. The unexpanded
+	// OpZeroWB/OpMoveWB forms remain unsupported by GenLV and therefore fail
+	// closed rather than bypassing the write barrier.
 	size := auxIntToInt64(v.AuxInt)
 	if size < 0 {
 		v.Fatalf("%s has negative size %d", v.Op, size)
@@ -549,24 +547,43 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 	return result
 }
 
-// llvmNewprocSignature restores the semantic pointer type of newproc's
-// funcval argument. Native ssagen intentionally uses uintptr only to compute
-// the raw call's physical ABI assignment; the actual SSA operand is a pointer.
-func llvmNewprocSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvmFuncSignature {
-	if aux == nil || aux.Fn != ir.Syms.Newproc {
+// llvmStaticCallSignature restores semantic pointer types for compiler-built
+// runtime calls whose AuxCall uses uintptr only to compute physical ABI
+// assignments. AuxCall remains the physical ABI authority; the LLVM operands
+// and runtime helper parameters are pointers.
+func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvmFuncSignature {
+	if aux == nil || aux.Fn == nil {
+		return sig
+	}
+	wantArgs := int64(0)
+	switch aux.Fn {
+	case ir.Syms.Newproc:
+		wantArgs = 1
+	case ir.Syms.WBZero:
+		wantArgs = 2
+	case ir.Syms.WBMove:
+		wantArgs = 3
+	default:
 		return sig
 	}
 	if aux.ABI().Which() != obj.ABIInternal {
-		v.Fatalf("runtime.newproc uses unsupported ABI %v", aux.ABI().Which())
+		v.Fatalf("%s uses unsupported ABI %v", aux.Fn.Name, aux.ABI().Which())
 	}
-	if aux.NArgs() != 1 || aux.NResults() != 0 || !aux.TypeOfArg(0).IsUintptr() {
-		v.Fatalf("runtime.newproc has unexpected raw call signature")
+	if aux.NArgs() != wantArgs || aux.NResults() != 0 {
+		v.Fatalf("%s has unexpected raw call signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
 	}
-	if len(v.Args) != 2 || v.Args[0].Type == nil || !v.Args[0].Type.IsPtrShaped() {
+	if aux.Fn == ir.Syms.Newproc && (len(v.Args) != 2 || v.Args[0].Type == nil || !v.Args[0].Type.IsPtrShaped()) {
 		v.Fatalf("runtime.newproc argument is not pointer-shaped")
 	}
+	for i := int64(0); i < aux.NArgs(); i++ {
+		if typ := aux.TypeOfArg(i); typ == nil || !typ.IsUintptr() {
+			v.Fatalf("argument %d to %s is not raw uintptr", i, aux.Fn.Name)
+		}
+	}
 	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
-	params[0] = GlobalCtxt.PointerType(0)
+	for i := range params {
+		params[i] = GlobalCtxt.PointerType(0)
+	}
 	sig.Type = llvm.FunctionType(sig.ReturnType, params, false)
 	return sig
 }
@@ -580,9 +597,10 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		v.Fatalf("static call to %s has %d LLVM arguments, want %d", aux.Fn.Name, got, want)
 	}
 
-	sig := llvmNewprocSignature(v, aux, llvmSignature(aux))
+	sig := llvmStaticCallSignature(v, aux, llvmSignature(aux))
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunction(aux.Fn.Name, sig, cc)
+	rawWriteBarrier := aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove
 	args := make([]llvm.Value, 0, aux.NArgs())
 	for i := int64(0); i < aux.NArgs(); i++ {
 		arg := lfc.GenLV(v.Args[i])
@@ -597,6 +615,9 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	}
 	call := lfc.b.CreateCall(sig.Type, fn, args, name)
 	call.SetInstructionCallConv(cc)
+	if rawWriteBarrier {
+		markLLVMGCLeaf(fn, call)
+	}
 	return call
 }
 
@@ -723,6 +744,17 @@ func (lfc *LLVMFuncContext) panicBounds(v *Value) llvm.Value {
 	return call
 }
 
+func (lfc *LLVMFuncContext) llvmWriteBarrier(v *Value) llvm.Value {
+	entries := auxIntToInt64(v.AuxInt)
+	if entries < 1 || entries > 8 {
+		v.Fatalf("write barrier requests %d buffer entries", entries)
+	}
+	i32 := GlobalCtxt.Int32Type()
+	sig := llvm.FunctionType(GlobalCtxt.PointerType(0), []llvm.Type{i32}, false)
+	fn := getOrInsertLLVMIntrinsic(goWriteBarrierIntrinsic, sig)
+	return lfc.b.CreateCall(sig, fn, []llvm.Value{llvm.ConstInt(i32, uint64(entries), false)}, v.String())
+}
+
 func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	if lv, ok := lfc.Vs[v.ID]; ok {
 		return lv
@@ -740,7 +772,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }
 	arg1 := func() llvm.Value { return lfc.GenLV(v.Args[1]) }
 	switch v.Op {
-	case OpInitMem, OpSP, OpSB, OpInlMark:
+	case OpInitMem, OpSP, OpSB, OpInlMark, OpWBend:
 		// LLVM models memory ordering through instruction dependencies, not an
 		// explicit SSA memory value. SP/SB are only address-space tokens here.
 	case OpUnknown:
@@ -970,6 +1002,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.b.CreateGEP(getLLVMType(v.Type.Elem()), arg0(), []llvm.Value{arg1()}, v.String())
 	case OpStaticCall, OpStaticLECall:
 		lVal = lfc.staticCall(v)
+	case OpWB:
+		lVal = lfc.llvmWriteBarrier(v)
 	case OpClosureCall, OpClosureLECall:
 		// arg0 is the code pointer loaded from the funcval, arg1 is the
 		// funcval itself. The latter is a hidden REGCTXT input, not an
@@ -992,6 +1026,11 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			load := lfc.GenLV(src)
 			if sel == 0 {
 				lVal = load
+			}
+		case OpWB:
+			call := lfc.GenLV(src)
+			if sel == 0 {
+				lVal = call
 			}
 		default:
 			v.Fatalf("%s selects unsupported tuple source %s", v.Op, src.Op)
@@ -1101,9 +1140,20 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	return lVal
 }
 
+// llvmValueIsWriteBarrierTombstone recognizes the dead OpNilCheck left in a
+// block when writebarrier duplicates that check and resets the original before
+// the normal early deadcode pass has run. Reject every other malformed
+// OpInvalid through GenLV instead of treating it as generic dead code.
+func llvmValueIsWriteBarrierTombstone(v *Value) bool {
+	return v.Op == OpInvalid && v.Uses == 0 && len(v.Args) == 0 && v.Aux == nil && v.AuxInt == 0
+}
+
 func (lfc *LLVMFuncContext) CompileBlock(BB *Block) {
 	lfc.b.SetInsertPointAtEnd(lfc.BBs[BB.ID])
 	for _, v := range BB.Values {
+		if llvmValueIsWriteBarrierTombstone(v) {
+			continue
+		}
 		lfc.GenLV(v)
 	}
 	switch BB.Kind {
@@ -1171,6 +1221,7 @@ func LLVMCompile(f *Func) {
 		f.fe.Fatalf(f.Entry.Pos, "duplicate LLVM definition for %s", f.OwnAux.Fn.Name)
 	}
 	FCtxt.LF.SetGC(goGCStrategy)
+	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, ""))
 	// TODO(goallc): Once LLVM lowering propagates the compiler's precise
 	// morestack policy, attach this only to functions whose prologue can grow
 	// the Go stack.

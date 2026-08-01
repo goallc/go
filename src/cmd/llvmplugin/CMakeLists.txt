@@ -670,6 +670,21 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.OutOfLayoutCallResultRewrite
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/statepoint.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.OutOfLayoutCallResultRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "define goabiinternal ptr @out_of_layout_call_result"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.LoopRelocationRewrite
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"

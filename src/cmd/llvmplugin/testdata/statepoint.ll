@@ -59,5 +59,21 @@ entry:
   ret ptr %pointer
 }
 
+; Function block layout is intentionally different from CFG dominance. The
+; safepoint in %use is visited before the pointer-producing call in %define,
+; but its liveness set contains that call result.
+define goabiinternal ptr @out_of_layout_call_result() #1 gc "goallc" {
+entry:
+  br label %define
+
+use:
+  call goabiinternal void @callee()
+  ret ptr %pointer
+
+define:
+  %pointer = call goabiinternal ptr @make_pointer()
+  br label %use
+}
+
 attributes #0 = { "gc-leaf-function" }
 attributes #1 = { "go-stack-growth-statepoint" }

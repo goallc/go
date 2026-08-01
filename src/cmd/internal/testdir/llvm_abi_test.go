@@ -71,6 +71,8 @@ type llvmABICase struct {
 	goallcArgsMaps  [][]int
 	nativeStackMaps []int32
 	goallcStackMaps []int32
+	nativeQueryMaps [][]int
+	goallcQueryMaps [][]int
 	checkFullMaps   bool
 	nativeLocals    uint32
 	goallcLocals    uint32
@@ -220,9 +222,10 @@ func runLLVMABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		{
 			name: "mixedABI", args: 152, pointerBits: []int{2, 4, 18},
 			nativeArgsMaps:  [][]int{{2, 4, 18}, nil},
-			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}},
+			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}, {2}, {2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 1, 2, 3, 0},
+			goallcQueryMaps: [][]int{{2}, {2}, {2}, {2}, {2, 4, 18}},
 		},
 		{
 			name: "liveScalarStackArgument", args: 136, pointerBits: []int{0},
@@ -352,6 +355,14 @@ func runLLVMABIDifferentialTest(t *testing.T, gorootTestDir string) {
 					tc.nativeArgsMaps, tc.nativeStackMaps)
 				checkLLVMABIStackMaps(t, "GoALLC", goallcSymbol,
 					tc.goallcArgsMaps, tc.goallcStackMaps)
+			}
+			if tc.nativeQueryMaps != nil {
+				checkLLVMABIStackMapQueryBitmaps(t, "native", nativeSymbol,
+					tc.nativeQueryMaps)
+			}
+			if tc.goallcQueryMaps != nil {
+				checkLLVMABIStackMapQueryBitmaps(t, "GoALLC", goallcSymbol,
+					tc.goallcQueryMaps)
 			}
 		})
 	}
@@ -896,6 +907,26 @@ func checkLLVMABIStackMaps(t *testing.T, backend string, symbol llvmABISymbol, w
 		t.Fatalf("%s PCDATA_StackMapIndex=%v, want %v", backend, pcdata, wantPCData)
 	}
 	t.Logf("%s ArgsPointerMaps=%v PCDATA=%v", backend, args, pcdata)
+}
+
+func checkLLVMABIStackMapQueryBitmaps(t *testing.T, backend string, symbol llvmABISymbol, want [][]int) {
+	t.Helper()
+	args := llvmABIArgsPointerBitmaps(t, symbol)
+	got := make([][]int, 0, len(symbol.Function.StackMapQueries))
+	for _, query := range symbol.Function.StackMapQueries {
+		if query.DecodeError != "" {
+			t.Fatalf("%s stack-map query failed: %s", backend, query.DecodeError)
+		}
+		if query.StackMapIndex < 0 || int(query.StackMapIndex) >= len(args) {
+			t.Fatalf("%s stack-map query index %d is outside %d ArgsPointerMaps",
+				backend, query.StackMapIndex, len(args))
+		}
+		got = append(got, args[query.StackMapIndex])
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s stack-map query bitmaps=%v, want %v", backend, got, want)
+	}
+	t.Logf("%s stack-map query bitmaps=%v", backend, got)
 }
 
 func checkLLVMABISourceStackMaps(t *testing.T, backend string, symbol llvmABISymbol, wantLocals uint32, wantArgs, wantMaps [][]int, wantPCData, wantQueries []int32) {

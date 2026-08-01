@@ -29,9 +29,6 @@ import (
 //   - the order of b.Values is the order to emit the Values in each Block
 //   - f has a non-nil regAlloc field
 func Compile(f *Func) {
-	if base.Flag.EnableLLVM {
-		LLVMCompile(f)
-	}
 	// TODO: debugging - set flags to control verbosity of compiler,
 	// which phases to dump IR before/after, etc.
 	if f.Log() {
@@ -166,6 +163,24 @@ func Compile(f *Func) {
 
 	// Squash error printing defer
 	phaseName = ""
+}
+
+func llvmWritebarrierPass(f *Func) {
+	if base.Flag.EnableLLVM {
+		writebarrier(f)
+	}
+}
+
+func llvmCompilePass(f *Func) {
+	if base.Flag.EnableLLVM {
+		LLVMCompile(f)
+	}
+}
+
+func nativeWritebarrierPass(f *Func) {
+	if !base.Flag.EnableLLVM {
+		writebarrier(f)
+	}
 }
 
 // DumpFileForPhase creates a file from the function name and phase name,
@@ -460,6 +475,10 @@ commas. For example:
 // list of passes for the compiler
 var passes = [...]pass{
 	{name: "number lines", fn: numberLines, required: true},
+	// LLVM expands Go write barriers while calls and logical aggregate values
+	// still retain their frontend ABI shape, then consumes that generic SSA.
+	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
+	{name: "llvm", fn: llvmCompilePass, required: true},
 	{name: "early phielim and copyelim", fn: copyelim},
 	{name: "early deadcode", fn: deadcode}, // remove generated dead code to avoid doing pointless work during opt
 	{name: "short circuit", fn: shortcircuit},
@@ -490,7 +509,7 @@ var passes = [...]pass{
 	{name: "check bce", fn: checkbce},
 	{name: "dse", fn: dse},
 	{name: "memcombine", fn: memcombine},
-	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
+	{name: "writebarrier", fn: nativeWritebarrierPass, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
 		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
 	{name: "cpufeatures", fn: cpufeatures, required: buildcfg.Experiment.SIMD, disabled: !buildcfg.Experiment.SIMD},
