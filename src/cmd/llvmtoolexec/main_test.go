@@ -338,3 +338,92 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 		t.Fatalf("go tool objdump omitted indirect-call metadata:\n%s", objdumpOutput)
 	}
 }
+
+func TestLLVMExplicitNilCheckRuntime(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	executable := filepath.Join(t.TempDir(), "nilcheck")
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+	}, " ")
+	buildFixture := testenv.Command(
+		t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags=cmd/llvmtoolexec/testdata/nilcheck/p=-enablellvm",
+		"-ldflags=-w",
+		"-o", executable,
+		"./src/cmd/llvmtoolexec/testdata/nilcheck",
+	)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "GOCACHE="+t.TempDir())
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building LLVM nil-check fixture: %v\n%s", err, out)
+	}
+
+	runFixture := testenv.Command(t, executable)
+	if out, err := runFixture.CombinedOutput(); err != nil {
+		t.Fatalf("running LLVM nil-check fixture: %v\n%s", err, out)
+	}
+}
+
+func TestLLVMExplicitNilCheckGoObj(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	archive := filepath.Join(t.TempDir(), "nilcheckobj.a")
+	source := filepath.Join(root, "src", "cmd", "llvmtoolexec", "testdata", "nilcheckobj", "p.go")
+	compileFixture := testenv.Command(
+		t, goTool, "tool", "compile",
+		"-p=cmd/llvmtoolexec/testdata/nilcheckobj",
+		"-enablellvm", "-llvmironly",
+		"-o", archive, source,
+	)
+	if out, err := compileFixture.CombinedOutput(); err != nil {
+		t.Fatalf("compiling LLVM nil-check GoObj fixture: %v\n%s", err, out)
+	}
+
+	object := filepath.Join(t.TempDir(), "nilcheckobj.o")
+	runLLC := testenv.Command(
+		t, llc,
+		"-load-pass-plugin="+plugin,
+		"-verify-machineinstrs",
+		"-filetype=obj",
+		"-o", object,
+		archive+".ll",
+	)
+	if out, err := runLLC.CombinedOutput(); err != nil {
+		t.Fatalf("writing nil-check GoObj: %v\n%s", err, out)
+	}
+
+	objview := testenv.Command(t, goTool, "tool", "objview", "-format=text", object)
+	output, err := objview.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go tool objview rejected nil-check GoObj: %v\n%s", err, output)
+	}
+	text := string(output)
+	if !regexp.MustCompile(`(?m)^  [^\n]*CALL [^\n]*runtime\.panicmem[^\n]*\| pcsp=[1-9][0-9]* [^\n]*PCDATA_StackMapIndex=1\([^\n]*\)\n[[:space:]]*\| ordinary safepoint [^\n]* map\[1\]`).MatchString(text) {
+		t.Fatalf("panicmem call is missing its frameful ordinary statepoint map:\n%s", output)
+	}
+}

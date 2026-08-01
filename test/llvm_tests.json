@@ -35,6 +35,7 @@
       "codegen/llvm_dereference.go": "address-taken named stack results loaded for return",
       "codegen/llvm_memops.go": "pointer-free zero and overlap-safe move intrinsics, runtime memequal, and native-int slice masks",
       "codegen/llvm_newproc.go": "pointer-typed funcval argument for the runtime.newproc raw ABI call",
+      "codegen/llvm_nilcheck.go": "explicit branch to recoverable runtime.panicmem with stable continuation and optimized IR checks",
       "codegen/memops.go": "typed indexed loads, stores, comparisons, bounds checks, and scalar memory operations",
       "codegen/memops_bigoffset.go": "typed loads and stores at offsets beyond signed 32-bit byte displacement",
       "codegen/multiply.go": "integer multiplication across positive, negative, and zero constants",
