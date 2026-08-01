@@ -692,13 +692,22 @@ Error validateSafepoint(const SafepointRecord &Record) {
         "GoALLC statepoints only support a single deopt call operand bundle");
   for (unsigned I = 0; I != Call.arg_size(); ++I) {
     for (Attribute Attr : Call.getAttributes().getParamAttrs(I)) {
+      // These non-ABI attributes remain valid after LLVM's generic
+      // RewriteStatepointsForGC pass and are natively accepted by both the
+      // statepoint verifier and SelectionDAG call lowering. O2 commonly
+      // infers them on otherwise ordinary runtime calls. Keep ABI-affecting
+      // attributes fail closed except for nest, whose Go closure ABI lowering
+      // is covered separately.
       if (!Attr.hasAttribute(Attribute::Nest) &&
           !Attr.hasAttribute(Attribute::Captures) &&
-          !Attr.hasAttribute(Attribute::ReadOnly))
+          !Attr.hasAttribute(Attribute::ReadOnly) &&
+          !Attr.hasAttribute(Attribute::NonNull) &&
+          !Attr.hasAttribute(Attribute::NoUndef) &&
+          !Attr.hasAttribute(Attribute::Alignment))
         return createStringError(
             std::errc::not_supported,
-            "GoALLC statepoints only support nest, captures, and readonly "
-            "call parameter attributes");
+            "GoALLC statepoints do not support call parameter attribute '%s'",
+            Attr.getAsString().c_str());
     }
   }
   for (Value *V : Record.Live) {

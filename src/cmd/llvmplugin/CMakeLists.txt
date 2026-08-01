@@ -130,6 +130,32 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.SupportedParamAttrsRewrite
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/supported-param-attrs.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.SupportedParamAttrsRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "ptr noundef nonnull align 8 %argument"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.SupportedParamAttrsCodegen
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=obj
+      -o "${CMAKE_CURRENT_BINARY_DIR}/supported-param-attrs.goobj"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/supported-param-attrs.ll"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.CallOnlyPointersNotLive
     COMMAND
       "${Python3_EXECUTABLE}"
