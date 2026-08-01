@@ -38,7 +38,7 @@ namespace {
 constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
-constexpr StringLiteral GoNilCheckMD = "goallc.nilcheck";
+constexpr StringLiteral GoNilCheckAnnotation = "goallc.nilcheck";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
 // statepoint insertion, so UseRS4GC deliberately remains false.
@@ -517,6 +517,24 @@ std::string allocaLeafName(AllocaInst &Alloca, const PointerAllocaLeaf &Leaf) {
   return Name;
 }
 
+bool hasAnnotation(const Instruction &I, StringRef Name) {
+  MDNode *Annotations = I.getMetadata(LLVMContext::MD_annotation);
+  if (!Annotations)
+    return false;
+  for (const MDOperand &Operand : Annotations->operands()) {
+    if (auto *String = dyn_cast_or_null<MDString>(Operand.get());
+        String && String->getString() == Name)
+      return true;
+    auto *Tuple = dyn_cast_or_null<MDTuple>(Operand.get());
+    if (Tuple && any_of(Tuple->operands(), [Name](const MDOperand &Nested) {
+          auto *String = dyn_cast_or_null<MDString>(Nested.get());
+          return String && String->getString() == Name;
+        }))
+      return true;
+  }
+  return false;
+}
+
 Error validatePointerAllocaAccesses(AllocaInst &Alloca, Function &F) {
   for (Instruction &I : instructions(F)) {
     if (auto *Intrinsic = dyn_cast<IntrinsicInst>(&I);
@@ -534,11 +552,9 @@ Error validatePointerAllocaAccesses(AllocaInst &Alloca, Function &F) {
     bool UnsupportedAccess = false;
     if (auto *Load = dyn_cast<LoadInst>(&I)) {
       Address = Load->getPointerOperand();
-      MDNode *NilCheck = Load->getMetadata(GoNilCheckMD);
       bool IsFrontendNilCheck =
-          NilCheck && NilCheck->getNumOperands() == 0 && Load->isVolatile() &&
-          !Load->isAtomic() && Load->getType()->isIntegerTy(8) &&
-          Load->getAlign() == Align(1);
+          hasAnnotation(*Load, GoNilCheckAnnotation) && Load->isVolatile() &&
+          !Load->isAtomic() && Load->getType()->isIntegerTy(8);
       UnsupportedAccess =
           Load->isAtomic() || (Load->isVolatile() && !IsFrontendNilCheck);
     } else if (auto *Store = dyn_cast<StoreInst>(&I)) {

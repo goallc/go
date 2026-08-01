@@ -136,9 +136,10 @@ and relocation. Constants are not roots in the general SSA model. Alloca
 records describe the memory layout even when a pointer slot currently contains
 null.
 Address passing to a callee is supported. A volatile byte load carrying the
-compiler-owned empty `!goallc.nilcheck` marker is recognized as an SSA
-`OpNilCheck` and remains in place for its faulting semantics; this does not
-represent a volatile read of the pointer storage. Dynamic, multiple-element,
+standard `!annotation !{!"goallc.nilcheck"}` marker is recognized as an SSA
+`OpNilCheck` and remains in place for its faulting semantics; SROA preserves
+this annotation when it rebuilds the load, and the load does not represent a
+volatile read of the pointer storage. Dynamic, multiple-element,
 scalable, or realigned allocas, pointer vectors, lifetime markers, every
 unmarked volatile access, and every atomic access fail closed until their
 frame-home and update semantics are explicit.

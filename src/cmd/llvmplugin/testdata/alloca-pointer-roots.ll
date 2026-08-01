@@ -16,7 +16,7 @@ define goabiinternal ptr @pointer_slot(ptr %pointer) "go-stack-growth-statepoint
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
-  %nilcheck = load volatile i8, ptr %slot, align 1, !goallc.nilcheck !0
+  %nilcheck = load volatile i8, ptr %slot, align 1, !annotation !0
   call goabiinternal void @safepoint() [ "deopt"(i64 7) ]
   %result = load ptr, ptr %slot, align 8
   ret ptr %result
@@ -196,4 +196,4 @@ entry:
   ptr @alloca_readonly_and_readnone
 ], section "llvm.metadata"
 
-!0 = !{}
+!0 = !{!"goallc.nilcheck"}

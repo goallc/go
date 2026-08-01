@@ -371,6 +371,18 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.AllocaNilCheckO2
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-alloca-nilcheck-o2.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --opt "${GOALLC_OPT_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-nilcheck-o2.ll"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.MalformedAllocaPointerMapsFail
     COMMAND
       "${Python3_EXECUTABLE}"
