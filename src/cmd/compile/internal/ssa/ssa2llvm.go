@@ -1125,7 +1125,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.aggregate(v, v.Args)
 	case OpSliceMake:
 		lVal = lfc.aggregate(v, v.Args)
-	case OpStringPtr, OpSlicePtr, OpComplexReal, OpITab:
+	case OpStringPtr, OpSlicePtr, OpSlicePtrUnchecked, OpComplexReal, OpITab:
 		lVal = lfc.b.CreateExtractValue(arg0(), 0, v.String())
 	case OpComplexImag, OpIData:
 		lVal = lfc.b.CreateExtractValue(arg0(), 1, v.String())
