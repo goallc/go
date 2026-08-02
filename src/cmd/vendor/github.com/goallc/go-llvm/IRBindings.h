@@ -43,6 +43,9 @@ void LLVMAddNamedMetadataOperand2(LLVMModuleRef M, const char *name,
                                   LLVMMetadataRef Val);
 void LLVMSetMetadata2(LLVMValueRef Inst, unsigned KindID, LLVMMetadataRef MD);
 
+void LLVMGoReplaceIncomingBlock(LLVMValueRef Phi, LLVMBasicBlockRef Old,
+                                LLVMBasicBlockRef New);
+
 void LLVMGoSetCurrentDebugLocation(LLVMBuilderRef Bref, unsigned Line,
                                   unsigned Col, LLVMMetadataRef Scope,
                                   LLVMMetadataRef InlinedAt);

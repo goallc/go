@@ -1260,6 +1260,9 @@ func (v Value) IncomingBlock(i int) (bb BasicBlock) {
 	bb.C = C.LLVMGetIncomingBlock(v.C, C.unsigned(i))
 	return
 }
+func (v Value) ReplaceIncomingBlock(old, new BasicBlock) {
+	C.LLVMGoReplaceIncomingBlock(v.C, old.C, new.C)
+}
 
 // Operations on inline assembly
 func InlineAsm(t Type, asmString, constraints string, hasSideEffects, isAlignStack bool, dialect InlineAsmDialect, canThrow bool) (rv Value) {

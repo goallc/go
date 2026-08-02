@@ -15,7 +15,6 @@ import (
 
 type LLVMFuncContext struct {
 	BBs              map[ID]llvm.BasicBlock
-	BlockEnds        map[ID]llvm.BasicBlock
 	Vs               map[ID]llvm.Value
 	Locals           map[llvmLocalKey]llvmStackSlot
 	ItabMethods      map[ID]bool
@@ -495,7 +494,7 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 			}
 			var predecessors []llvm.BasicBlock
 			for _, pred := range BB.Preds {
-				predecessors = append(predecessors, lfc.BlockEnds[pred.Block().ID])
+				predecessors = append(predecessors, lfc.BBs[pred.Block().ID])
 			}
 			lfc.Vs[v.ID].AddIncoming(incomingLVals, predecessors)
 		}
@@ -730,7 +729,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	}
 	savedBlock := lfc.b.GetInsertBlock()
 	if v.Block != nil {
-		lfc.b.SetInsertPointAtEnd(lfc.BlockEnds[v.Block.ID])
+		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
 	defer func() {
 		if !savedBlock.IsNil() {
@@ -1064,7 +1063,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.b.CreateLoad(GlobalCtxt.PointerType(0), arg0(), v.String())
 		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
 	case OpNilCheck:
-		lVal = lfc.explicitNilCheck(v)
+		lVal = lfc.emitNilCheckIntrinsic(v)
 	case OpStore:
 		lVal = lfc.b.CreateStore(arg1(), arg0())
 	case OpZero:
@@ -1103,13 +1102,10 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) CompileBlock(BB *Block) {
-	lfc.b.SetInsertPointAtEnd(lfc.BlockEnds[BB.ID])
+	lfc.b.SetInsertPointAtEnd(lfc.BBs[BB.ID])
 	for _, v := range BB.Values {
 		lfc.GenLV(v)
 	}
-	// A nil check splits the LLVM block while retaining the original Go SSA
-	// block identity. Emit the Go block terminator from its current tail.
-	lfc.b.SetInsertPointAtEnd(lfc.BlockEnds[BB.ID])
 	switch BB.Kind {
 	case BlockRet:
 		if lfc.ResultCount == 0 {
@@ -1159,7 +1155,6 @@ func LLVMCompile(f *Func) {
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
 	FCtxt := &LLVMFuncContext{
 		BBs:              map[ID]llvm.BasicBlock{},
-		BlockEnds:        map[ID]llvm.BasicBlock{},
 		Vs:               map[ID]llvm.Value{},
 		Locals:           map[llvmLocalKey]llvmStackSlot{},
 		ItabMethods:      map[ID]bool{},
@@ -1188,7 +1183,6 @@ func LLVMCompile(f *Func) {
 	}
 	for _, BB := range f.Blocks {
 		FCtxt.BBs[BB.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, BB.String())
-		FCtxt.BlockEnds[BB.ID] = FCtxt.BBs[BB.ID]
 		for _, v := range BB.Values {
 			if (v.Op == OpInterCall || v.Op == OpInterLECall) && len(v.Args) != 0 {
 				code := v.Args[0]
@@ -1283,6 +1277,7 @@ func LLVMCompile(f *Func) {
 		FCtxt.CompileBlock(BB)
 	}
 	FCtxt.FinishPhi()
+	FCtxt.expandNilCheckIntrinsics()
 	FCtxt.MappingName()
 
 	err := llvm.VerifyFunction(FCtxt.LF, llvm.PrintMessageAction)

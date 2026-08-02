@@ -16,6 +16,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
@@ -48,6 +49,11 @@ void LLVMAddNamedMetadataOperand2(LLVMModuleRef M, const char *name,
 void LLVMSetMetadata2(LLVMValueRef Inst, unsigned KindID, LLVMMetadataRef MD) {
   MDNode *N = MD ? unwrap<MDNode>(MD) : nullptr;
   unwrap<Instruction>(Inst)->setMetadata(KindID, N);
+}
+
+void LLVMGoReplaceIncomingBlock(LLVMValueRef Phi, LLVMBasicBlockRef Old,
+                                LLVMBasicBlockRef New) {
+  unwrap<PHINode>(Phi)->replaceIncomingBlockWith(unwrap(Old), unwrap(New));
 }
 
 void LLVMGoSetCurrentDebugLocation(LLVMBuilderRef Bref, unsigned Line,

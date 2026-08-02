@@ -11,24 +11,27 @@ package codegen
 // predecessor used by the join phi.
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckPhi(ptr %p, i8 %take)
+// LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: phi i64
 // LLVM: icmp eq ptr %p, null
 // LLVM: call goabiinternal void @runtime.panicmem()
 // LLVM: declare goabiinternal void @runtime.panicmem()
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckTwice(ptr %p, ptr %q)
+// LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: icmp eq ptr %p, null
 // LLVM: call goabiinternal void @runtime.panicmem()
-// LLVM: br label %[[FIRST_CONT:.*\.notnil]]
+// LLVM: br label %[[FIRST_CONT:nilcheck\.notnil[0-9]*]]
 // LLVM: [[FIRST_CONT]]:
 // LLVM: load i64, ptr %p
 // LLVM: icmp eq ptr %q, null
 // LLVM: call goabiinternal void @runtime.panicmem()
-// LLVM: br label %[[SECOND_CONT:.*\.notnil]]
+// LLVM: br label %[[SECOND_CONT:nilcheck\.notnil[0-9]*]]
 // LLVM: [[SECOND_CONT]]:
 // LLVM: load i64, ptr %q
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheck(ptr %p)
+// LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: [[ISNIL:%.*]] = icmp eq ptr %p, null
 // LLVM-NEXT: br i1 [[ISNIL]], label %[[NIL:.*\.nil]], label %[[CONT:.*\.notnil]]
 // LLVM: [[NIL]]:
@@ -40,8 +43,10 @@ package codegen
 // LLVM-NOT: !annotation
 // LLVM: load i64, ptr %p
 // LLVM-NOT: "gc-leaf-function"
+// LLVM-NOT: llvm.goallc.nilcheck
 //
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheck(
+// LLVM-OPT-NOT: llvm.goallc.nilcheck
 // LLVM-OPT: icmp eq ptr %p, null
 // LLVM-OPT: br i1 {{%.*}}, label %[[OPTNIL:.*]], label %[[OPTCONT:.*]]
 // LLVM-OPT: [[OPTNIL]]:
@@ -52,6 +57,7 @@ package codegen
 // LLVM-OPT-NOT: !goallc.nilcheck
 // LLVM-OPT-NOT: !annotation
 // LLVM-OPT: load i64, ptr %p
+// LLVM-OPT-NOT: llvm.goallc.nilcheck
 func llvmExplicitNilcheck(p *int) int {
 	return *p
 }
