@@ -1153,7 +1153,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		}
 		src := v.Args[0]
 		switch src.Op {
-		case OpAtomicLoadPtr:
+		case OpAtomicLoadPtr, OpAtomicLoad32, OpAtomicLoad64,
+			OpAtomicAdd32, OpAtomicAdd32Variant,
+			OpAtomicCompareAndSwap32, OpAtomicCompareAndSwap32Variant:
 			load := lfc.GenLV(src)
 			if sel == 0 {
 				lVal = load
@@ -1182,7 +1184,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			default:
 				lVal = lfc.b.CreateExtractValue(call, sel, v.String())
 			}
-		case OpAtomicLoadPtr:
+		case OpAtomicLoadPtr, OpAtomicLoad32, OpAtomicLoad64,
+			OpAtomicAdd32, OpAtomicAdd32Variant,
+			OpAtomicCompareAndSwap32, OpAtomicCompareAndSwap32Variant:
 			load := lfc.GenLV(src)
 			if sel == 0 {
 				lVal = load
@@ -1232,6 +1236,34 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpAtomicLoadPtr:
 		lVal = lfc.b.CreateLoad(GlobalCtxt.PointerType(0), arg0(), v.String())
 		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
+	case OpAtomicLoad32:
+		lVal = lfc.b.CreateLoad(getLLVMType(v.Type.FieldType(0)), arg0(), v.String())
+		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
+		lVal.SetAlignment(4)
+	case OpAtomicLoad64:
+		lVal = lfc.b.CreateLoad(getLLVMType(v.Type.FieldType(0)), arg0(), v.String())
+		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
+		lVal.SetAlignment(8)
+	case OpAtomicStore32:
+		lVal = lfc.b.CreateStore(arg1(), arg0())
+		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
+		lVal.SetAlignment(4)
+	case OpAtomicAdd32, OpAtomicAdd32Variant:
+		old := lfc.b.CreateAtomicRMW(
+			llvm.AtomicRMWBinOpAdd, arg0(), arg1(),
+			llvm.AtomicOrderingSequentiallyConsistent,
+			false,
+		)
+		lVal = lfc.b.CreateAdd(old, arg1(), v.String())
+	case OpAtomicCompareAndSwap32, OpAtomicCompareAndSwap32Variant:
+		pair := lfc.b.CreateAtomicCmpXchg(
+			arg0(), arg1(), lfc.GenLV(v.Args[2]),
+			llvm.AtomicOrderingSequentiallyConsistent,
+			llvm.AtomicOrderingSequentiallyConsistent,
+			false,
+		)
+		success := lfc.b.CreateExtractValue(pair, 1, v.String()+".success")
+		lVal = lfc.b.CreateZExt(success, getLLVMType(v.Type.FieldType(0)), v.String())
 	case OpNilCheck:
 		lVal = lfc.emitNilCheckIntrinsic(v)
 	case OpStore:
