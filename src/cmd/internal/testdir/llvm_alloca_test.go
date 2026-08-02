@@ -11,23 +11,21 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"strconv"
 	"testing"
 )
 
 type llvmAllocaArchitectureChecks struct {
-	machineAllocaPattern string
 	betweenCallsPattern  string
 	restoredStorePattern string
 }
 
 var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
 	"darwin/arm64": {
-		machineAllocaPattern: `(?s)stack:.*?size:\s+40,\s+alignment:\s+8`,
 		betweenCallsPattern:  `(?s)\bbl\s+p\.mutateLocal\n(.*?)\bbl\s+p\.safepoint`,
 		restoredStorePattern: `(?m)^\s*(?:str|stp)\b`,
 	},
 	"linux/amd64": {
-		machineAllocaPattern: `(?s)stack:.*?size:\s+40,\s+alignment:\s+8`,
 		betweenCallsPattern:  `(?s)\bcallq\s+p\.mutateLocal\n(.*?)\bcallq\s+p\.safepoint`,
 		restoredStorePattern: `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`,
 	},
@@ -118,9 +116,21 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		"-load-pass-plugin="+plugin, "-stop-after=finalize-isel",
 		"-o", "-", goallcIR)
 	machineFunction := llvmABIMachineFunction(t, machineIR, "p.localAcrossSafepoints")
-	if !regexp.MustCompile(checks.machineAllocaPattern).Match(machineFunction) {
-		t.Fatalf("MIR has no 40-byte pointer alloca\n%s", machineFunction)
+	// The IR requires 8-byte alignment. SelectionDAG may strengthen this when
+	// expanding the inline memset (for example, to 16 bytes on AArch64), so
+	// require at least the source alignment rather than one exact value.
+	machineAllocas := regexp.MustCompile(`(?m)^\s+- \{ id: ([0-9]+), name: ([^,\s]+), type: default, offset: -?[0-9]+, size: 40, alignment: ([0-9]+),`).
+		FindAllSubmatch(machineFunction, -1)
+	if len(machineAllocas) != 1 {
+		t.Fatalf("MIR 40-byte pointer alloca count=%d, want 1\n%s",
+			len(machineAllocas), machineFunction)
 	}
+	alignment, err := strconv.Atoi(string(machineAllocas[0][3]))
+	if err != nil || alignment < 8 || alignment&(alignment-1) != 0 {
+		t.Fatalf("MIR pointer alloca alignment=%q, want a power of two of at least 8\n%s",
+			machineAllocas[0][3], machineFunction)
+	}
+	stackObject := []byte("%stack." + string(machineAllocas[0][1]) + "." + string(machineAllocas[0][2]))
 	ordinaryStatepoints := regexp.MustCompile(`(?m)^.*STATEPOINT.*%stack\.[0-9]+.*$`).
 		FindAll(machineFunction, -1)
 	if got, want := len(ordinaryStatepoints), 4; got != want {
@@ -133,17 +143,17 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 				t.Fatalf("STATEPOINT lost alloca contract constant %s: %s", constant, statepoint)
 			}
 		}
-		stackObject := regexp.MustCompile(`(%stack\.[^,\s]+)`).FindSubmatch(statepoint)
-		if len(stackObject) != 2 {
-			t.Fatalf("STATEPOINT has no alloca frame index: %s", statepoint)
+		if !bytes.Contains(statepoint, stackObject) {
+			t.Fatalf("STATEPOINT does not reference pointer alloca %s: %s",
+				stackObject, statepoint)
 		}
 		for _, object := range regexp.MustCompile(`%stack\.[^,\s]+`).FindAll(statepoint, -1) {
-			if !bytes.Equal(object, stackObject[1]) {
+			if !bytes.Equal(object, stackObject) {
 				t.Fatalf("STATEPOINT allocated a separate root spill %s beside %s: %s",
-					object, stackObject[1], statepoint)
+					object, stackObject, statepoint)
 			}
 		}
-		pattern := `0,\s+` + regexp.QuoteMeta(string(stackObject[1])) + `,\s+0`
+		pattern := `0,\s+` + regexp.QuoteMeta(string(stackObject)) + `,\s+0`
 		if !regexp.MustCompile(pattern).Match(statepoint) {
 			t.Fatalf("STATEPOINT does not carry the direct alloca frame base: %s", statepoint)
 		}
