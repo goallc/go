@@ -90,14 +90,14 @@ func llvmMoveAligned(dst, src *[3]uint64) {
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveLarge(
 // LLVM-DAG: call goabiinternal void @runtime.memmove(ptr %dst, ptr {{%.*}}, i64 128) #{{[0-9]+}}
-// LLVM-DAG: declare goabiinternal void @runtime.memmove(ptr, ptr, i64) #{{[0-9]+}}
+// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal void @runtime.memmove(ptr, ptr, i64) #{{[0-9]+}}
 func llvmMoveLarge(dst *[128]byte, src [128]byte) {
 	*dst = src
 }
 
 // LLVM-DAG: define goabiinternal i8 @codegen.llvmMemEq(
 // LLVM-DAG: call goabiinternal i8 @runtime.memequal(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}}) #{{[0-9]+}}
-// LLVM-DAG: declare goabiinternal i8 @runtime.memequal(ptr, ptr, i64) #{{[0-9]+}}
+// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal i8 @runtime.memequal(ptr, ptr, i64) #{{[0-9]+}}
 func llvmMemEq(a, b string) bool {
 	return a == b
 }

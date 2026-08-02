@@ -26,7 +26,9 @@ func llvmPanicmem() (llvm.Value, llvmFuncSignature) {
 		Type:       llvm.FunctionType(GlobalCtxt.VoidType(), nil, false),
 		ReturnType: GlobalCtxt.VoidType(),
 	}
-	return getOrInsertLLVMFunction(sym.Name, sig, goABIInternalCallConv), sig
+	fn := getOrInsertLLVMFunction(sym.Name, sig, goABIInternalCallConv)
+	attachGoObjSymbolRef(fn, sym)
+	return fn, sig
 }
 
 // emitNilCheckIntrinsic preserves the Go nil-check side effect without

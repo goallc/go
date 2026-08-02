@@ -272,6 +272,7 @@ func (lfc *LLVMFuncContext) llvmRuntimeMemmove(dst, src, length llvm.Value) llvm
 		ClosureContextIndex: -1,
 	}
 	fn := getOrInsertLLVMFunction("runtime.memmove", sig, goABIInternalCallConv)
+	attachGoObjABISymbolRef(fn, "runtime.memmove", obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{dst, src, length}, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
 	markLLVMGCLeaf(fn, call)
@@ -327,6 +328,7 @@ func (lfc *LLVMFuncContext) llvmMemEq(v *Value) llvm.Value {
 		ClosureContextIndex: -1,
 	}
 	fn := getOrInsertLLVMFunction("runtime.memequal", sig, goABIInternalCallConv)
+	attachGoObjABISymbolRef(fn, "runtime.memequal", obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{left, right, size}, v.String())
 	call.SetInstructionCallConv(goABIInternalCallConv)
 	markLLVMGCLeaf(fn, call)
@@ -600,6 +602,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	sig := llvmStaticCallSignature(v, aux, llvmSignature(aux))
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunction(aux.Fn.Name, sig, cc)
+	attachGoObjSymbolRef(fn, aux.Fn)
 	// AMD64 rewrites some Move and Eq operations to static runtime calls before
 	// LLVM emission. Keep the same leaf contract as the dedicated LLVM lowering
 	// paths so RewriteStatepointsForGC does not turn these raw helpers into
@@ -744,6 +747,7 @@ func (lfc *LLVMFuncContext) panicBounds(v *Value) llvm.Value {
 		ReturnType: GlobalCtxt.VoidType(),
 	}
 	fn := getOrInsertLLVMFunction(llvmBoundsPanicNames[kind], sig, goABIInternalCallConv)
+	attachGoObjABISymbolRef(fn, llvmBoundsPanicNames[kind], obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{x, y}, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
 	return call
@@ -1345,6 +1349,7 @@ func LLVMCompile(f *Func) {
 var CurrentModule llvm.Module
 var type2lTypes = map[*types.Type]llvm.Type{}
 var goObjConfigWritten bool
+var goObjImportsWritten bool
 var currentLLVMDataLowerer *llvmDataLowerer
 var goObjCompilerUsed []llvm.Value
 var goObjCompilerUsedNames map[string]bool
@@ -1476,6 +1481,7 @@ func InitModule(pkg *types.Pkg) {
 	CurrentModule = GlobalCtxt.NewModule(pkg.Path)
 	CurrentModule.SetTarget(goObjTargetTriple())
 	goObjConfigWritten = false
+	goObjImportsWritten = false
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
 	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
@@ -1534,6 +1540,10 @@ func Output(fileName string) error {
 	if !goObjConfigWritten {
 		addGoObjConfigMetadata(types.LocalPkg)
 		goObjConfigWritten = true
+	}
+	if !goObjImportsWritten {
+		emitGoObjImportMetadata()
+		goObjImportsWritten = true
 	}
 	return llvm.LLVMPrintModuleToFile(CurrentModule, fileName)
 }
