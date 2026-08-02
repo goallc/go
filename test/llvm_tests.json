@@ -102,6 +102,7 @@
       "llvm_move.go": "overlap-safe, aligned, and runtime-helper memory moves",
       "llvm_newproc_gc.go": "pointer-typed runtime.newproc funcval across stack growth and repeated GC",
       "llvm_private_string.go": "frontend private string constant materialization, GoObj linking, and execution",
+      "llvm_zero_sized_symbols.go": "zero-value strings and zero-sized interface data through GoObj linking and execution",
       "llvm_slicemask.go": "slice start, middle, and zero-capacity end boundary semantics",
       "llvm_slice_ptr_unchecked.go": "unchecked slice data pointers preserve nil and non-nil data addresses",
       "llvm_zero.go": "small and aligned pointer-free zeroing",
