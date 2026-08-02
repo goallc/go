@@ -8,9 +8,9 @@ package codegen
 
 // LLVM-LABEL: define goabiinternal i64 @codegen.f(i64 %x)
 // LLVM: ashr i64 %x, 3
-// LLVM: add i64 {{%.*}}, 5
+// LLVM: add i64 5, {{%.*}}
 // LLVM: ashr i64 {{%.*}}, 3
-// LLVM: add i64 {{%.*}}, 6
+// LLVM: add i64 6, {{%.*}}
 // LLVM-LABEL: define goabiinternal i64 @codegen.g(i64 %x)
 // LLVM: ashr i64 %x, 3
 

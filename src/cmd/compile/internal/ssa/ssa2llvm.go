@@ -8,6 +8,7 @@ import (
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/src"
+	"fmt"
 	"internal/buildcfg"
 
 	"github.com/goallc/go-llvm"
@@ -441,21 +442,40 @@ func (lfc *LLVMFuncContext) shift(v *Value, kind llvmShiftKind) llvm.Value {
 	case llvmShiftRightUnsigned:
 		shifted = lfc.b.CreateLShr(x, normalized, v.String()+".shift")
 	}
-	if auxIntToBool(v.AuxInt) {
-		shifted.SetName(v.String())
-		return shifted
+	result := shifted
+	if !auxIntToBool(v.AuxInt) {
+		width := llvm.ConstInt(count.Type(), uint64(xBits), false)
+		inRange := lfc.b.CreateICmp(llvm.IntULT, count, width, v.String()+".inrange")
+		var outOfRange llvm.Value
+		if kind == llvmShiftRightSigned {
+			lastBit := llvm.ConstInt(x.Type(), uint64(xBits-1), false)
+			outOfRange = lfc.b.CreateAShr(x, lastBit, v.String()+".sign")
+		} else {
+			outOfRange = llvm.ConstNull(x.Type())
+		}
+		result = lfc.b.CreateSelect(inRange, shifted, outOfRange, v.String()+".selected")
 	}
+	want := getLLVMType(v.Type)
+	if result.Type() != want {
+		if result.Type().TypeKind() != llvm.IntegerTypeKind || want.TypeKind() != llvm.IntegerTypeKind ||
+			result.Type().IntTypeWidth() < want.IntTypeWidth() {
+			v.Fatalf("%s changes LLVM representation", v.Op)
+		}
+		return lfc.b.CreateTrunc(result, want, v.String())
+	}
+	result.SetName(v.String())
+	return result
+}
 
-	width := llvm.ConstInt(count.Type(), uint64(xBits), false)
-	inRange := lfc.b.CreateICmp(llvm.IntULT, count, width, v.String()+".inrange")
-	var outOfRange llvm.Value
-	if kind == llvmShiftRightSigned {
-		lastBit := llvm.ConstInt(x.Type(), uint64(xBits-1), false)
-		outOfRange = lfc.b.CreateAShr(x, lastBit, v.String()+".sign")
-	} else {
-		outOfRange = llvm.ConstNull(x.Type())
+func (lfc *LLVMFuncContext) rotateLeft(v *Value) llvm.Value {
+	x := lfc.GenLV(v.Args[0])
+	count := lfc.GenLV(v.Args[1])
+	if x.Type().TypeKind() != llvm.IntegerTypeKind || count.Type() != x.Type() || x.Type() != getLLVMType(v.Type) {
+		v.Fatalf("%s has incompatible LLVM operand types", v.Op)
 	}
-	return lfc.b.CreateSelect(inRange, shifted, outOfRange, v.String())
+	sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type(), x.Type(), x.Type()}, false)
+	fn := getOrInsertLLVMIntrinsic("llvm.fshl.i"+fmt.Sprint(x.Type().IntTypeWidth()), sig)
+	return lfc.b.CreateCall(sig, fn, []llvm.Value{x, x, count}, v.String())
 }
 
 func (lfc *LLVMFuncContext) integerDiv(v *Value, signed, remainder bool) llvm.Value {
@@ -484,6 +504,40 @@ func (lfc *LLVMFuncContext) integerDiv(v *Value, signed, remainder bool) llvm.Va
 	default:
 		return lfc.b.CreateUDiv(x, safeY, v.String())
 	}
+}
+
+func (lfc *LLVMFuncContext) highMultiply(v *Value, signed bool) llvm.Value {
+	x := lfc.GenLV(v.Args[0])
+	y := lfc.GenLV(v.Args[1])
+	if x.Type() != y.Type() || x.Type().TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("%s has incompatible LLVM operand types", v.Op)
+	}
+	bits := x.Type().IntTypeWidth()
+	if bits != 32 && bits != 64 {
+		v.Fatalf("%s has unsupported operand width %d", v.Op, bits)
+	}
+	wide := GlobalCtxt.IntType(bits * 2)
+	if signed {
+		x = lfc.b.CreateSExt(x, wide, v.String()+".x")
+		y = lfc.b.CreateSExt(y, wide, v.String()+".y")
+	} else {
+		x = lfc.b.CreateZExt(x, wide, v.String()+".x")
+		y = lfc.b.CreateZExt(y, wide, v.String()+".y")
+	}
+	product := lfc.b.CreateMul(x, y, v.String()+".wide")
+	high := lfc.b.CreateLShr(product, llvm.ConstInt(wide, uint64(bits), false), v.String()+".high")
+	return lfc.b.CreateTrunc(high, getLLVMType(v.Type), v.String())
+}
+
+func (lfc *LLVMFuncContext) unsignedAverage(v *Value) llvm.Value {
+	x := lfc.GenLV(v.Args[0])
+	y := lfc.GenLV(v.Args[1])
+	if x.Type() != y.Type() || x.Type().TypeKind() != llvm.IntegerTypeKind || x.Type() != getLLVMType(v.Type) {
+		v.Fatalf("%s has incompatible LLVM operand types", v.Op)
+	}
+	difference := lfc.b.CreateSub(x, y, v.String()+".difference")
+	half := lfc.b.CreateLShr(difference, llvm.ConstInt(x.Type(), 1, false), v.String()+".half")
+	return lfc.b.CreateAdd(half, y, v.String())
 }
 
 func (lfc *LLVMFuncContext) FinishPhi() {
@@ -905,6 +959,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.b.CreateFSub(arg0(), arg1(), v.String())
 	case OpMul64, OpMul32, OpMul16, OpMul8:
 		lVal = lfc.b.CreateMul(arg0(), arg1(), v.String())
+	case OpHmul32, OpHmul64:
+		lVal = lfc.highMultiply(v, true)
+	case OpHmul32u, OpHmul64u:
+		lVal = lfc.highMultiply(v, false)
+	case OpAvg32u, OpAvg64u:
+		lVal = lfc.unsignedAverage(v)
 	case OpMul32F, OpMul64F:
 		lVal = lfc.b.CreateFMul(arg0(), arg1(), v.String())
 	case OpDiv64, OpDiv32, OpDiv16, OpDiv8:
@@ -992,6 +1052,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		OpRsh16Ux64, OpRsh16Ux32, OpRsh16Ux16, OpRsh16Ux8,
 		OpRsh8Ux64, OpRsh8Ux32, OpRsh8Ux16, OpRsh8Ux8:
 		lVal = lfc.shift(v, llvmShiftRightUnsigned)
+	case OpRotateLeft64, OpRotateLeft32, OpRotateLeft16, OpRotateLeft8:
+		lVal = lfc.rotateLeft(v)
 	case OpSignExt8to16, OpSignExt8to32, OpSignExt8to64,
 		OpSignExt16to32, OpSignExt16to64, OpSignExt32to64:
 		lVal = lfc.b.CreateSExt(arg0(), getLLVMType(v.Type), v.String())
@@ -1209,20 +1271,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	return lVal
 }
 
-// llvmValueIsWriteBarrierTombstone recognizes the dead OpNilCheck left in a
-// block when writebarrier duplicates that check and resets the original before
-// the normal early deadcode pass has run. Reject every other malformed
-// OpInvalid through GenLV instead of treating it as generic dead code.
-func llvmValueIsWriteBarrierTombstone(v *Value) bool {
-	return v.Op == OpInvalid && v.Uses == 0 && len(v.Args) == 0 && v.Aux == nil && v.AuxInt == 0
-}
-
-func (lfc *LLVMFuncContext) CompileBlock(BB *Block) {
+func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 	lfc.b.SetInsertPointAtEnd(lfc.BBs[BB.ID])
-	for _, v := range BB.Values {
-		if llvmValueIsWriteBarrierTombstone(v) {
-			continue
-		}
+	for _, v := range values {
 		lfc.GenLV(v)
 	}
 	switch BB.Kind {
@@ -1310,8 +1361,17 @@ func LLVMCompile(f *Func) {
 		FCtxt.ClosureContext = FCtxt.LF.Param(sig.ClosureContextIndex)
 		FCtxt.ClosureContext.SetName(".closureptr")
 	}
+	// LLVM defines the first block in a function as its entry. Go passes may
+	// reorder f.Blocks without changing f.Entry, so create the real entry first
+	// and retain the relative order of every remaining block.
+	FCtxt.BBs[f.Entry.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, f.Entry.String())
 	for _, BB := range f.Blocks {
+		if BB == f.Entry {
+			continue
+		}
 		FCtxt.BBs[BB.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, BB.String())
+	}
+	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
 			if (v.Op == OpInterCall || v.Op == OpInterLECall) && len(v.Args) != 0 {
 				code := v.Args[0]
@@ -1321,13 +1381,22 @@ func LLVMCompile(f *Func) {
 			}
 			if (v.Op == OpClosureCall || v.Op == OpClosureLECall) && len(v.Args) >= 2 {
 				code := v.Args[0]
-				if code.Op != OpLoad || !code.Type.IsUintptr() || code.Uses != 1 {
-					v.Fatalf("closure call code pointer is not a single-use uintptr load")
+				switch code.Op {
+				case OpLoad:
+					if !code.Type.IsUintptr() || code.Uses != 1 {
+						v.Fatalf("closure call code pointer is not a single-use uintptr load")
+					}
+					if len(code.Args) == 0 || code.Args[0] != v.Args[1] {
+						v.Fatalf("closure call code pointer was not loaded from its funcval context")
+					}
+					FCtxt.ClosureCodeLoads[code.ID] = true
+				case OpAddr:
+					if !code.Type.IsUintptr() {
+						v.Fatalf("direct closure call code address has type %v", code.Type)
+					}
+				default:
+					v.Fatalf("closure call code pointer has unsupported form %s", code.Op)
 				}
-				if len(code.Args) == 0 || code.Args[0] != v.Args[1] {
-					v.Fatalf("closure call code pointer was not loaded from its funcval context")
-				}
-				FCtxt.ClosureCodeLoads[code.ID] = true
 			} else if v.Op == OpClosureCall || v.Op == OpClosureLECall {
 				v.Fatalf("closure call has %d SSA arguments, want at least code, context, and memory", len(v.Args))
 			}
@@ -1402,8 +1471,21 @@ func LLVMCompile(f *Func) {
 		init := FCtxt.b.CreateStore(param, slot.Value)
 		init.SetAlignment(int(slot.Type.Alignment()))
 	}
-	for _, BB := range f.Blocks {
-		FCtxt.CompileBlock(BB)
+	// Emit dominators before their uses in successor blocks. GenLV may
+	// recursively request a value from another block, and inserting that value
+	// into an as-yet empty defining block would otherwise move it ahead of the
+	// defining block's memory operations. Go SSA represents memory state as a
+	// token, but loads do not produce a new token. Order each block against its
+	// store chain so reads of a token are emitted before the following memory
+	// operation, without applying the full native instruction scheduler.
+	sset := f.newSparseSet(f.NumValues())
+	defer f.retSparseSet(sset)
+	storeNumber := f.Cache.allocInt32Slice(f.NumValues())
+	defer f.Cache.freeInt32Slice(storeNumber)
+	postorder := f.Postorder()
+	for i := len(postorder) - 1; i >= 0; i-- {
+		BB := postorder[i]
+		FCtxt.CompileBlock(BB, storeOrder(BB.Values, sset, storeNumber))
 	}
 	FCtxt.FinishPhi()
 	FCtxt.expandNilCheckIntrinsics()

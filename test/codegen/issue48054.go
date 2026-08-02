@@ -8,10 +8,10 @@ package codegen
 
 // LLVM-DAG: define goabiinternal i8 @codegen.a3({ ptr, i64, i64 } %n)
 // LLVM-DAG: extractvalue { ptr, i64, i64 } %n, 1
-// LLVM-DAG: icmp slt i64 {{%.*}}, 1
+// LLVM-DAG: icmp eq i64 0, {{%.*}}
 // LLVM-DAG: define goabiinternal i8 @codegen.a({ ptr, i64 } %n)
 // LLVM-DAG: extractvalue { ptr, i64 } %n, 1
-// LLVM-DAG: icmp slt i64 0, {{%.*}}
+// LLVM-DAG: icmp ne i64 0, {{%.*}}
 
 func a(n string) bool {
 	// arm64:"CBZ"

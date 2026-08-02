@@ -36,7 +36,7 @@ type llvmWriteBarrierPair struct {
 // checks in emitted IR order rather than beside the two source declarations.
 // LLVM-LABEL: define goabiinternal void @codegen.llvmWriteBarrierZero(
 // LLVM-SAME: #[[WBATTR]] gc "goallc" {
-// LLVM: call ptr @llvm.go.gc.write.barrier(i32 4)
+// LLVM: call ptr @llvm.go.gc.write.barrier(i32 2)
 // LLVM: store ptr null
 // LLVM: store ptr null
 // LLVM-LABEL: define goabiinternal void @codegen.llvmWriteBarrierMove(

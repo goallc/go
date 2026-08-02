@@ -7,13 +7,13 @@
 package codegen
 
 // LLVM-DAG: define goabiinternal i8 @codegen.modUint8(i8 %b)
-// LLVM-DAG: urem i8 %b, -128
+// LLVM-DAG: and i8 %b, 127
 // LLVM-DAG: define goabiinternal i64 @codegen.modUint64(i64 %b)
-// LLVM-DAG: urem i64 %b, -9223372036854775808
+// LLVM-DAG: and i64 %b, 9223372036854775807
 // LLVM-DAG: define goabiinternal i8 @codegen.divUint8(i8 %b)
-// LLVM-DAG: udiv i8 %b, -128
+// LLVM-DAG: lshr i8 %b, 7
 // LLVM-DAG: define goabiinternal i64 @codegen.divUint64(i64 %b)
-// LLVM-DAG: udiv i64 %b, -9223372036854775808
+// LLVM-DAG: lshr i64 %b, 63
 
 func divUint64(b uint64) uint64 {
 	// amd64:"SHRQ [$]63, AX"

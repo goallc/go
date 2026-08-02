@@ -8,7 +8,7 @@ package codegen
 
 // LLVM-DAG: define goabiinternal void @codegen.init()
 // LLVM-DAG: store i64 1, ptr {{%.*}}, align 4
-// LLVM-DAG: store i64 {{%.*}}, ptr @codegen.x, align 4
+// LLVM-DAG: store i64 1, ptr @codegen.x, align 4
 // LLVM-DAG: define goabiinternal void @codegen.f(ptr %p)
 // LLVM-DAG: icmp eq ptr %p, null
 // LLVM-DAG: call goabiinternal void @runtime.panicmem()

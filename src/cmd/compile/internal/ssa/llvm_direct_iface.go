@@ -22,6 +22,14 @@ func llvmDirectIfacePass(f *Func) {
 			if v.Op != OpIMake || len(v.Args) != 2 {
 				continue
 			}
+			// Optimization may fold the itab word of a nil interface to a
+			// uintptr-typed ConstNil. LLVM represents that physical interface
+			// word as a pointer, so keep its Go SSA representation pointer-shaped
+			// before aggregate construction.
+			itab := v.Args[0]
+			if itab.Op == OpConstNil && !itab.Type.IsPtrShaped() {
+				v.SetArg(0, b.NewValue0(v.Pos.WithNotStmt(), OpConstNil, f.Config.Types.BytePtr))
+			}
 			data := v.Args[1]
 			if data.Type.IsPtrShaped() {
 				continue

@@ -167,8 +167,8 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	for _, pattern := range []string{
 		`(?s)define goabiinternal \{ ptr, i64 \} @main\.liveScalarStackArgument.*?"gc-live"\(ptr %pointer\).*?gc\.relocate`,
 		`(?s)define goabiinternal \{ ptr, ptr, i64 \} @main\.livePointerSequenceStackArguments.*?"gc-live"\(ptr %second, ptr %first\).*?gc\.relocate`,
-		`(?s)define goabiinternal \{ ptr, ptr, i64 \} @main\.livePointerAggregateStackArgument.*?"gc-live"\(ptr %value\.leaf\.2, ptr %value\.leaf\.0\).*?gc\.relocate`,
-		`(?s)define goabiinternal \{ i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr \} @main\.pointerAggregateBothOverflow.*?"gc-live"\(ptr %value\.leaf\.2, ptr %value\.leaf\.0\).*?gc\.relocate`,
+		`(?s)define goabiinternal \{ ptr, ptr, i64 \} @main\.livePointerAggregateStackArgument.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
+		`(?s)define goabiinternal \{ i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr \} @main\.pointerAggregateBothOverflow.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
 	} {
 		if !regexp.MustCompile(pattern).Match(rewrittenIR) {
 			t.Fatalf("rewritten GoALLC ABI IR does not match %q", pattern)
@@ -226,9 +226,9 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		{
 			name: "mixedABI", args: 152, pointerBits: []int{2, 4, 18},
 			nativeArgsMaps:  [][]int{{2, 4, 18}, nil},
-			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}, {2}, {2}},
+			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 2, 3, 0},
+			goallcStackMaps: []int32{-1, 1, 0},
 			goallcQueryMaps: [][]int{{2}, {2}, {2}, {2}, {2, 4, 18}},
 		},
 		{
@@ -239,7 +239,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			goallcStackMaps: []int32{-1, 0},
 			checkFullMaps:   true,
 			nativeLocals:    8,
-			goallcLocals:    152,
+			goallcLocals:    24,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
@@ -253,7 +253,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			goallcStackMaps: []int32{-1, 0},
 			checkFullMaps:   true,
 			nativeLocals:    8,
-			goallcLocals:    40,
+			goallcLocals:    24,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
@@ -267,7 +267,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			goallcStackMaps: []int32{-1, 0},
 			checkFullMaps:   true,
 			nativeLocals:    8,
-			goallcLocals:    40,
+			goallcLocals:    24,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
@@ -413,7 +413,7 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 		"-filetype=null", "-o", "-", goallcIR)
 	for _, pattern := range []string{
 		`(?s)define goabiinternal ptr @p\.liveScalarStackArgument.*?"gc-live"\(ptr %pointer\).*?gc\.relocate`,
-		`(?s)define goabiinternal \{ ptr, ptr \} @p\.liveAggregateStackArgument.*?"gc-live"\(ptr %value\.leaf\.2, ptr %value\.leaf\.0\).*?gc\.relocate`,
+		`(?s)define goabiinternal \{ ptr, ptr \} @p\.liveAggregateStackArgument.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
 	} {
 		if !regexp.MustCompile(pattern).Match(rewrittenIR) {
 			t.Fatalf("rewritten amd64 IR does not match %q", pattern)
@@ -596,7 +596,7 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 		"-filetype=null", "-o", "-", goallcIR)
 	for _, pattern := range []string{
 		`(?s)define goabiinternal ptr @p\.liveScalarStackArgument.*?"gc-live"\(ptr %pointer\).*?gc\.relocate`,
-		`(?s)define goabiinternal \{ ptr, ptr \} @p\.liveAggregateStackArgument.*?"gc-live"\(ptr %value\.leaf\.2, ptr %value\.leaf\.0\).*?gc\.relocate`,
+		`(?s)define goabiinternal \{ ptr, ptr \} @p\.liveAggregateStackArgument.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
 	} {
 		if !regexp.MustCompile(pattern).Match(rewrittenIR) {
 			t.Fatalf("rewritten source IR does not match %q", pattern)

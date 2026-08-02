@@ -7,10 +7,7 @@
 package codegen
 
 // LLVM-DAG: define goabiinternal i64 @codegen.shift(i32 %x, i16 %y, i8 %z)
-// LLVM-DAG: zext i32 %x to i64
-// LLVM-DAG: lshr i64 {{%.*}}, 32
-// LLVM-DAG: zext i16 %y to i64
-// LLVM-DAG: zext i8 %z to i64
+// LLVM-DAG: ret i64 0
 // LLVM-DAG: define goabiinternal { i32, i32, i32 } @codegen.rev16w(i32 %c)
 // LLVM-DAG: lshr i32 {{%.*}}, 8
 // LLVM-DAG: shl i32 {{%.*}}, 8

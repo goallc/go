@@ -23,11 +23,11 @@ package codegen
 // LLVM: call goabiinternal void @runtime.panicmem()
 // LLVM: br label %[[FIRST_CONT:nilcheck\.notnil[0-9]*]]
 // LLVM: [[FIRST_CONT]]:
-// LLVM: load i64, ptr %p
 // LLVM: icmp eq ptr %q, null
 // LLVM: call goabiinternal void @runtime.panicmem()
 // LLVM: br label %[[SECOND_CONT:nilcheck\.notnil[0-9]*]]
 // LLVM: [[SECOND_CONT]]:
+// LLVM: load i64, ptr %p
 // LLVM: load i64, ptr %q
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheck(ptr %p)

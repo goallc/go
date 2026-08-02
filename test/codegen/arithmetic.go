@@ -9,7 +9,7 @@ package codegen
 // LLVM-DAG: define goabiinternal { i64, i64, i64, i64, i64, i64 } @codegen.SubAddSimplify2
 // LLVM-DAG: define goabiinternal i64 @codegen.SubMem({ ptr, i64, i64 } %arr
 // LLVM-DAG: extractvalue { ptr, i64, i64 } %arr, 1
-// LLVM-DAG: getelementptr i64, ptr {{%.*}}, i64 0
+// LLVM-DAG: getelementptr i8, ptr {{%.*}}, i64 16
 // LLVM-DAG: sub i64
 // LLVM-DAG: store i64
 // LLVM-DAG: call goabiinternal void @runtime.goPanicIndex

@@ -9,7 +9,7 @@ package codegen
 // LLVM-DAG: define goabiinternal i64 @codegen.compMem1()
 // LLVM-DAG: load i8, ptr getelementptr (i8, ptr @codegen.x8, i64 1)
 // LLVM-DAG: icmp eq i8 {{%.*}}, 7
-// LLVM-DAG: load i64, ptr getelementptr (i64, ptr @codegen.x64, i64 1)
+// LLVM-DAG: load i64, ptr getelementptr (i8, ptr @codegen.x64, i64 8)
 // LLVM-DAG: icmp eq i64 {{%.*}}, 7
 // LLVM-DAG: define goabiinternal void @codegen.idxInt8({ ptr, i64, i64 } %x
 // LLVM-DAG: icmp ult i64

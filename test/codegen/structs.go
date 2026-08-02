@@ -9,11 +9,12 @@
 package codegen
 
 // LLVM-DAG: define goabiinternal void @codegen.Zero1(ptr
-// LLVM-DAG: store %codegen.Z1 zeroinitializer, ptr
+// LLVM-DAG: store i64 0, ptr
 // LLVM-DAG: define goabiinternal void @codegen.Zero2(ptr
 // LLVM-DAG: store ptr null, ptr
 // LLVM-DAG: define goabiinternal void @codegen.Init1(ptr
-// LLVM-DAG: store %codegen.I1 { i64 1, i64 2, i64 3, i64 4 }, ptr
+// LLVM-DAG: store i64 1, ptr
+// LLVM-DAG: store i64 4, ptr
 
 // This file contains code generation tests related to the handling of
 // struct types.

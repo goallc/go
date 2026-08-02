@@ -7,10 +7,8 @@
 package codegen
 
 // LLVM-DAG: define goabiinternal { i32, i64 } @codegen.loadLargeOffset(ptr %sw, ptr %sd)
-// LLVM-DAG: getelementptr i32, ptr {{%.*}}, i64 268435456
-// LLVM-DAG: getelementptr i32, ptr {{%.*}}, i64 536870912
-// LLVM-DAG: getelementptr i64, ptr {{%.*}}, i64 134217728
-// LLVM-DAG: getelementptr i64, ptr {{%.*}}, i64 268435456
+// LLVM-DAG: getelementptr i8, ptr {{%.*}}, i64 1073741824
+// LLVM-DAG: getelementptr i8, ptr {{%.*}}, i64 2147483648
 // LLVM-DAG: define goabiinternal void @codegen.storeLargeOffset(ptr %sw, ptr %sd)
 // LLVM-DAG: store i32 30, ptr
 // LLVM-DAG: store i64 70, ptr

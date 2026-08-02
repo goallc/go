@@ -13,7 +13,7 @@ func privateStringFirst(s string) byte {
 
 //go:noinline
 func PrivateString() byte {
-	// LLVM: @[[FORMAT:[.]str[^ ]*]] = private unnamed_addr constant [10 x i8] c"private=%d"
+	// LLVM: @[[FORMAT:"go:string[^ ]*"]] = internal constant <{ [10 x i8] }> <{ [10 x i8] c"private=%d" }>
 	// LLVM: call goabiinternal i8 @codegen.privateStringFirst({ ptr, i64 } { ptr @[[FORMAT]], i64 10 })
 	return privateStringFirst("private=%d")
 }

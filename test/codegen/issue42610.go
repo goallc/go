@@ -11,9 +11,9 @@ package codegen
 
 // LLVM-DAG: define goabiinternal void @codegen.f({ ptr, i64, i64 } %a, i64 %i)
 // LLVM-DAG: extractvalue { ptr, i64, i64 } %a, 1
-// LLVM-DAG: getelementptr i64, ptr {{%.*}}, i64 0
+// LLVM-DAG: store i64 0, ptr
 // LLVM-DAG: define goabiinternal void @codegen.f32({ ptr, i64, i64 } %a, i32 %i)
-// LLVM-DAG: getelementptr i32, ptr {{%.*}}, i64 0
+// LLVM-DAG: store i32 0, ptr
 
 func f32(a []int32, i uint32) {
 	g := func(p int32) int32 {

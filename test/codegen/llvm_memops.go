@@ -7,7 +7,7 @@
 package codegen
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmZeroByte(
-// LLVM-DAG: store [1 x i8] zeroinitializer, ptr %dst, align 1
+// LLVM-DAG: store i8 0, ptr %dst, align 1
 func llvmZeroByte(dst *[1]byte) {
 	*dst = [1]byte{}
 }
