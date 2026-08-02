@@ -385,7 +385,7 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	base.Timer.Start("be", "dumpobj")
 	if base.Flag.LLVMIROnly {
 		dumpdata()
-		ssa.LowerGoObjTypeData()
+		ssa.LowerGoObjData()
 		dumpobj()
 	} else {
 		dumpdata()

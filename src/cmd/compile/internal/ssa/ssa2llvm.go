@@ -1227,7 +1227,7 @@ func LLVMCompile(f *Func) {
 	// the Go stack.
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goStackGrowthStatepointAttr, ""))
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(llvmFramePointerAttr, llvmFramePointerNonLeaf))
-	setGoObjFunctionRelocMetadata(FCtxt.LF, f.OwnAux.Fn)
+	setGoObjMarkerRelocMetadata(FCtxt.LF, f.OwnAux.Fn)
 	if sig.HasClosureContext {
 		FCtxt.ClosureContext = FCtxt.LF.Param(sig.ClosureContextIndex)
 		FCtxt.ClosureContext.SetName(".closureptr")

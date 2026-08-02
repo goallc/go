@@ -11,15 +11,15 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
-// LowerGoObjTypeData lowers the complete linker-data closure rooted at runtime
-// type descriptors into LLVM globals. The Go front end remains responsible for
-// laying out the descriptors: this code only preserves the already-finalized
-// LSym bytes, relocations, and GoObj symbol attributes in LLVM IR.
+// LowerGoObjData lowers compiler-emitted linker data into LLVM globals. The
+// Go front end remains responsible for laying out the data: this code only
+// preserves the already-finalized LSym bytes, relocations, and GoObj symbol
+// attributes in LLVM IR.
 //
 // Keeping this boundary at LSym is intentional. reflectdata is the source of
 // truth for runtime layouts and is also used by the native backend; duplicating
 // it here would make LLVM and native type descriptors drift independently.
-func LowerGoObjTypeData() {
+func LowerGoObjData() {
 	data := make(map[*obj.LSym]bool, len(base.Ctxt.Data))
 	for _, s := range base.Ctxt.Data {
 		data[s] = true
@@ -38,7 +38,7 @@ func LowerGoObjTypeData() {
 		}
 	}
 	for _, s := range base.Ctxt.Data {
-		if s.TypeInfo() != nil || s.ItabInfo() != nil {
+		if llvmDataSymbolKindSupported(s.Type) {
 			visit(s)
 		}
 	}
@@ -100,6 +100,7 @@ func LowerGoObjTypeData() {
 		setGoObjOffsetRelocMetadata(g, s)
 		setGoObjWeakRelocMetadata(g, s)
 		setGoObjKeepMetadata(g, s)
+		setGoObjMarkerRelocMetadata(g, s)
 		setGoObjGotypeMetadata(g, s)
 	}
 	emitGoObjCompilerUsed()
@@ -389,7 +390,8 @@ func setGoObjWeakRelocMetadata(g llvm.Value, s *obj.LSym) {
 			// LLVM constants carry the offset, size, target, and addend.
 			// Offset relocation types are recorded separately in
 			// !goobj.relocs.
-		case objabi.R_KEEP:
+		case objabi.R_KEEP, objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD,
+			objabi.R_USENAMEDMETHOD, objabi.R_INITORDER:
 			continue
 		default:
 			base.Fatalf("unsupported Go data relocation %s in %s", r.Type, s.Name)
@@ -397,6 +399,28 @@ func setGoObjWeakRelocMetadata(g llvm.Value, s *obj.LSym) {
 	}
 	if len(entries) != 0 {
 		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.weak_relocs"), GlobalCtxt.MDNode(entries))
+	}
+}
+
+// GoObj marker relocations describe linker relationships and occupy no storage.
+// Keep their source and target as ordinary LLVM values, with the relocation
+// kind and addend in a module relationship table shared by functions and data.
+func setGoObjMarkerRelocMetadata(source llvm.Value, s *obj.LSym) {
+	for _, r := range s.R {
+		switch r.Type {
+		case objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD:
+		case objabi.R_INITORDER:
+			if r.Off != 0 || r.Siz != 0 || r.Add != 0 {
+				base.Fatalf("invalid R_INITORDER relocation in %s", s.Name)
+			}
+		default:
+			continue
+		}
+		if r.Sym == nil {
+			base.Fatalf("nil GoObj marker target in %s", s.Name)
+		}
+		target := llvmGoDataRef(r.Sym)
+		addGoObjMarkerReloc(source, target, r.Type, r.Add)
 	}
 }
 
@@ -435,32 +459,18 @@ func setGoObjGotypeMetadata(g llvm.Value, s *obj.LSym) {
 	}))
 }
 
-// Interface dead-method elimination uses zero-width marker relocations on the
-// containing function. LLVM calls and globals cannot encode those records, so
-// carry the exact source, target, Go relocation type, and addend in a module
-// relationship table. Direct value references let LLVM keep the relationships
-// synchronized across renaming and RAUW.
-func setGoObjFunctionRelocMetadata(fn llvm.Value, s *obj.LSym) {
-	entries := make([]llvm.Metadata, 0)
-	for _, r := range s.R {
-		switch r.Type {
-		case objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD:
-			if r.Sym == nil {
-				base.Fatalf("nil interface marker target in %s", s.Name)
-			}
-			target := llvmGoDataRef(r.Sym)
-			preserveGoObjMetadataValues(fn, target)
-			entries = append(entries, GlobalCtxt.MDNode([]llvm.Metadata{
-				fn.ConstantAsMetadata(),
-				target.ConstantAsMetadata(),
-				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint16(r.Type)), false).ConstantAsMetadata(),
-				llvm.ConstInt(GlobalCtxt.Int64Type(), uint64(r.Add), true).ConstantAsMetadata(),
-			}))
-		}
-	}
-	for _, entry := range entries {
-		CurrentModule.AddNamedMetadataOperand("goobj.marker_relocs", entry)
-	}
+func addGoObjMarkerReloc(source, target llvm.Value, typ objabi.RelocType, addend int64) {
+	preserveGoObjMetadataValues(source, target)
+	CurrentModule.AddNamedMetadataOperand("goobj.marker_relocs", goObjMarkerRelocMetadata(source, target, typ, addend))
+}
+
+func goObjMarkerRelocMetadata(source, target llvm.Value, typ objabi.RelocType, addend int64) llvm.Metadata {
+	return GlobalCtxt.MDNode([]llvm.Metadata{
+		source.ConstantAsMetadata(),
+		target.ConstantAsMetadata(),
+		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint16(typ)), false).ConstantAsMetadata(),
+		llvm.ConstInt(GlobalCtxt.Int64Type(), uint64(addend), true).ConstantAsMetadata(),
+	})
 }
 
 // Named metadata references participate in RAUW, but GlobalDCE is allowed to
@@ -508,9 +518,12 @@ func emitGoObjCompilerUsed() {
 func llvmDataStorageRelocs(s *obj.LSym) []obj.Reloc {
 	relocs := make([]obj.Reloc, 0, len(s.R))
 	for _, r := range s.R {
-		if r.Type != objabi.R_KEEP {
-			relocs = append(relocs, r)
+		switch r.Type {
+		case objabi.R_KEEP, objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD,
+			objabi.R_USENAMEDMETHOD, objabi.R_INITORDER:
+			continue
 		}
+		relocs = append(relocs, r)
 	}
 	return relocs
 }

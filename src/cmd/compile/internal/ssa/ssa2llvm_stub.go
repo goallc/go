@@ -9,7 +9,7 @@ func LLVMCompile(f *Func) {}
 func InitModule(pkg *types.Pkg) {
 }
 
-func LowerGoObjTypeData() {
+func LowerGoObjData() {
 }
 
 func Output(fileName string) error {

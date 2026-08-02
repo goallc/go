@@ -339,6 +339,48 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 	}
 }
 
+func TestLLVMInitTaskOrder(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	executable := filepath.Join(t.TempDir(), "inittask")
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+	}, " ")
+	buildFixture := testenv.Command(
+		t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags=cmd/llvmtoolexec/testdata/inittask=-enablellvm",
+		"-o", executable,
+		"./src/cmd/llvmtoolexec/testdata/inittask",
+	)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "GOCACHE="+t.TempDir())
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building LLVM inittask fixture: %v\n%s", err, out)
+	}
+
+	runFixture := testenv.Command(t, executable)
+	if out, err := runFixture.CombinedOutput(); err != nil {
+		t.Fatalf("running LLVM inittask fixture: %v\n%s", err, out)
+	}
+}
+
 func TestLLVMExplicitNilCheckRuntime(t *testing.T) {
 	llc := os.Getenv("GOALLC_LLC")
 	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
