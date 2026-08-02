@@ -190,6 +190,17 @@ func getOrInsertLLVMIntrinsic(name string, typ llvm.Type) llvm.Value {
 	return fn
 }
 
+func (lfc *LLVMFuncContext) llvmUnaryFloat64Intrinsic(v *Value, name string) llvm.Value {
+	x := lfc.GenLV(v.Args[0])
+	f64 := GlobalCtxt.DoubleType()
+	if got, want := x.Type(), f64; got != want || getLLVMType(v.Type) != want {
+		v.Fatalf("%s requires a float64 operand and result", v.Op)
+	}
+	sig := llvm.FunctionType(f64, []llvm.Type{f64}, false)
+	fn := getOrInsertLLVMIntrinsic(name, sig)
+	return lfc.b.CreateCall(sig, fn, []llvm.Value{x}, v.String())
+}
+
 func markLLVMGCLeaf(fn, call llvm.Value) {
 	attr := GlobalCtxt.CreateStringAttribute(goGCLeafFunctionAttr, "")
 	fn.AddFunctionAttr(attr)
@@ -921,6 +932,10 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.b.CreateNeg(arg0(), v.String())
 	case OpNeg32F, OpNeg64F:
 		lVal = lfc.b.CreateFNeg(arg0(), v.String())
+	case OpSqrt:
+		lVal = lfc.llvmUnaryFloat64Intrinsic(v, "llvm.sqrt.f64")
+	case OpAbs:
+		lVal = lfc.llvmUnaryFloat64Intrinsic(v, "llvm.fabs.f64")
 	case OpEq64, OpEq32, OpEq16, OpEq8, OpEqB:
 		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpEqPtr:
@@ -996,6 +1011,20 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.b.CreateFPToUI(arg0(), getLLVMType(v.Type), v.String())
 	case OpCvt32Fto64F, OpCvt64Fto32F:
 		lVal = lfc.b.CreateFPCast(arg0(), getLLVMType(v.Type), v.String())
+	case OpRound32F, OpRound64F:
+		// LLVM float and double operations on the configured arm64 and amd64
+		// targets already produce IEEE binary32 and binary64 values. The
+		// frontend does not attach fast-math or contract flags, so preserving
+		// the value also preserves Go's explicit rounding boundary against FMA
+		// contraction.
+		lVal = arg0()
+		want := GlobalCtxt.FloatType()
+		if v.Op == OpRound64F {
+			want = GlobalCtxt.DoubleType()
+		}
+		if lVal.Type() != want || getLLVMType(v.Type) != want {
+			v.Fatalf("%s has an unexpected LLVM operand or result type", v.Op)
+		}
 	case OpCopy:
 		lVal = arg0()
 		if v.Type.IsMemory() || v.Type.IsVoid() {

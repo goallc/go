@@ -35,6 +35,10 @@
       "codegen/llvm_argument_memory_home.go": "direct register arguments and local homes for memory-backed register aggregates",
       "codegen/llvm_data_sections.go": "preserve data, bss, noptrdata, and noptrbss identities in LLVM IR",
       "codegen/llvm_dereference.go": "address-taken named stack results loaded for return",
+      "codegen/llvm_abs.go": "float64 absolute value through the LLVM fabs intrinsic",
+      "codegen/llvm_round32.go": "non-contracting Round32F identity on strict LLVM float values",
+      "codegen/llvm_round64.go": "non-contracting Round64F identity on strict LLVM double values",
+      "codegen/llvm_sqrt.go": "float64 square root through the LLVM sqrt intrinsic",
       "codegen/llvm_memops.go": "pointer-free zero and overlap-safe move intrinsics, runtime memequal, and native-int slice masks",
       "codegen/llvm_memory_order.go": "preserve Go SSA Memory-token order when LLVM emission precedes native scheduling",
       "codegen/llvm_newproc.go": "pointer-typed funcval argument for the runtime.newproc raw ABI call",
@@ -58,6 +62,11 @@
     },
     "blacklist": {
       "codegen/*": "LLVM lowering support has not reached this complete source file yet"
+    },
+    "platform_blacklist": {
+      "linux/amd64": {
+        "codegen/llvm_abs.go": "the native AMD64 frontend does not form OpAbs for math.Abs"
+      }
     }
   },
   "runtime": {
@@ -107,6 +116,7 @@
       "llvm_zero.go": "small and aligned pointer-free zeroing",
       "llvm_closure.go": "escaping funcval allocation, hidden closure context, indirect call, capture access, and tuple return",
       "llvm_dereference.go": "address-taken named stack result return semantics",
+      "llvm_float_intrinsics.go": "sqrt, abs, special values, and float32/float64 explicit rounding boundary semantics",
       "llvm_statepoint_branch_gc.go": "pointer relocation across either arm of a two-safepoint branch",
       "llvm_statepoint_conditional_gc.go": "pointer relocation merged with the original value when a path skips runtime.GC",
       "llvm_statepoint_gc.go": "heap pointer liveness across runtime.GC",
