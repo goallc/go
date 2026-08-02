@@ -558,6 +558,7 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 				if incomingLVal.IsNil() {
 					v.Fatalf("phi input %s produced no LLVM value", incoming.LongString())
 				}
+				incomingLVal = lfc.reshapeLLVMValue(v, incomingLVal, incoming.Type, v.Type, v.String()+".incoming")
 				if got, want := incomingLVal.Type(), lfc.Vs[v.ID].Type(); got != want {
 					v.Fatalf("phi input %s has LLVM kind %s, want %s", incoming.LongString(), got.TypeKind(), want.TypeKind())
 				}
@@ -573,18 +574,19 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 }
 
 func (lfc *LLVMFuncContext) paramForArg(v *Value) llvm.Value {
-	return lfc.paramForArgName(v, v.Aux.(*ir.Name))
+	param, typ := lfc.paramForArgNameAndType(v, v.Aux.(*ir.Name))
+	return lfc.reshapeLLVMValue(v, param, typ, v.Type, v.String()+".arg")
 }
 
-func (lfc *LLVMFuncContext) paramForArgName(v *Value, name *ir.Name) llvm.Value {
+func (lfc *LLVMFuncContext) paramForArgNameAndType(v *Value, name *ir.Name) (llvm.Value, *types.Type) {
 	key := llvmLocalKeyForName(name)
 	for i, param := range lfc.F.OwnAux.ABIInfo().InParams() {
 		if param.Name != nil && llvmLocalKeyForName(param.Name) == key {
-			return lfc.LF.Param(i)
+			return lfc.LF.Param(i), lfc.F.OwnAux.TypeOfArg(int64(i))
 		}
 	}
 	v.Fatalf("could not find LLVM parameter for %v", name)
-	return llvm.Value{}
+	return llvm.Value{}, nil
 }
 
 func (lfc *LLVMFuncContext) registerArgument(v *Value) llvm.Value {
@@ -633,6 +635,18 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 		if value.IsNil() {
 			v.Fatalf("aggregate field %d from %s produced no LLVM value", i, arg.LongString())
 		}
+		if value.Type() != elementTypes[i] {
+			var elementType *types.Type
+			switch v.Type.Kind() {
+			case types.TSTRUCT:
+				elementType = v.Type.FieldType(i)
+			case types.TARRAY:
+				elementType = v.Type.Elem()
+			default:
+				v.Fatalf("aggregate field %d changes LLVM representation for Go type %v", i, v.Type)
+			}
+			value = lfc.reshapeLLVMValue(v, value, arg.Type, elementType, fmt.Sprintf("%s.field%d", v, i))
+		}
 		if got, want := value.Type(), elementTypes[i]; got != want {
 			v.Fatalf("aggregate field %d from %s has LLVM kind %s for Go type %v, want %s in Go aggregate %v", i, arg.LongString(), got.TypeKind(), arg.Type, want.TypeKind(), v.Type)
 		}
@@ -640,6 +654,64 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 	}
 	result.SetName(v.String())
 	return result
+}
+
+// reshapeLLVMValue converts between the distinct nominal LLVM aggregate types
+// used for a generic shape and one of its concrete instantiations. Go's type
+// system already records these as identical for shape-aware operations; keep
+// that decision as the authority and rebuild only the affected first-class
+// struct or array value. Scalar leaves and memory keep their normal lowering.
+func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, to *types.Type, name string) llvm.Value {
+	if value.IsNil() {
+		v.Fatalf("cannot reshape an empty LLVM value")
+	}
+	want := getLLVMType(to)
+	if value.Type() == want {
+		return value
+	}
+	if from == nil || to == nil || !types.Identical(from, to) || types.IdenticalStrict(from, to) || (!from.HasShape() && !to.HasShape()) {
+		v.Fatalf("cannot reshape LLVM value from Go type %v to %v", from, to)
+	}
+
+	switch from.Kind() {
+	case types.TSTRUCT:
+		if to.Kind() != types.TSTRUCT || value.Type().TypeKind() != llvm.StructTypeKind || want.TypeKind() != llvm.StructTypeKind {
+			v.Fatalf("shape-identical structs have incompatible LLVM aggregate kinds")
+		}
+		fromElements := value.Type().StructElementTypes()
+		toElements := want.StructElementTypes()
+		if from.NumFields() != to.NumFields() || len(fromElements) != from.NumFields() || len(toElements) != to.NumFields() {
+			v.Fatalf("shape-identical structs have incompatible field counts")
+		}
+		result := llvm.Undef(want)
+		for i := 0; i < from.NumFields(); i++ {
+			fieldName := fmt.Sprintf("%s.field%d", name, i)
+			field := lfc.b.CreateExtractValue(value, i, fieldName+".extract")
+			field = lfc.reshapeLLVMValue(v, field, from.FieldType(i), to.FieldType(i), fieldName)
+			if field.Type() != toElements[i] {
+				v.Fatalf("reshaped struct field %d has incompatible LLVM type", i)
+			}
+			result = lfc.b.CreateInsertValue(result, field, i, fieldName+".insert")
+		}
+		return result
+
+	case types.TARRAY:
+		if to.Kind() != types.TARRAY || from.NumElem() != to.NumElem() || value.Type().TypeKind() != llvm.ArrayTypeKind || want.TypeKind() != llvm.ArrayTypeKind {
+			v.Fatalf("shape-identical arrays have incompatible LLVM aggregate layouts")
+		}
+		result := llvm.Undef(want)
+		for i := int64(0); i < from.NumElem(); i++ {
+			elementName := fmt.Sprintf("%s.element%d", name, i)
+			element := lfc.b.CreateExtractValue(value, int(i), elementName+".extract")
+			element = lfc.reshapeLLVMValue(v, element, from.Elem(), to.Elem(), elementName)
+			result = lfc.b.CreateInsertValue(result, element, int(i), elementName+".insert")
+		}
+		return result
+
+	default:
+		v.Fatalf("shape-identical Go types %v and %v require unsupported LLVM reshaping", from, to)
+		return llvm.Value{}
+	}
 }
 
 // llvmStaticCallSignature restores semantic pointer types for compiler-built
@@ -705,6 +777,9 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	args := make([]llvm.Value, 0, aux.NArgs())
 	for i := int64(0); i < aux.NArgs(); i++ {
 		arg := lfc.GenLV(v.Args[i])
+		if arg.Type() != sig.Type.ParamTypes()[i] {
+			arg = lfc.reshapeLLVMValue(v, arg, v.Args[i].Type, aux.TypeOfArg(i), fmt.Sprintf("%s.arg%d", v, i))
+		}
 		if got, want := arg.Type(), sig.Type.ParamTypes()[i]; got != want {
 			v.Fatalf("argument %d to %s has incompatible LLVM type", i, aux.Fn.Name)
 		}
@@ -752,6 +827,9 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 	args := make([]llvm.Value, 0, aux.NArgs())
 	for i := int64(0); i < aux.NArgs(); i++ {
 		arg := lfc.GenLV(v.Args[argStart+int(i)])
+		if arg.Type() != sig.Type.ParamTypes()[i] {
+			arg = lfc.reshapeLLVMValue(v, arg, v.Args[argStart+int(i)].Type, aux.TypeOfArg(i), fmt.Sprintf("%s.arg%d", v, i))
+		}
 		if got, want := arg.Type(), sig.Type.ParamTypes()[i]; got != want {
 			v.Fatalf("argument %d to indirect call has incompatible LLVM type", i)
 		}
@@ -1092,6 +1170,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		if v.Type.IsMemory() || v.Type.IsVoid() {
 			break
 		}
+		lVal = lfc.reshapeLLVMValue(v, lVal, v.Args[0].Type, v.Type, v.String()+".reshape")
 		if got, want := lVal.Type(), getLLVMType(v.Type); got != want {
 			v.Fatalf("%s changes LLVM representation", v.Op)
 		}
@@ -1184,6 +1263,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			default:
 				lVal = lfc.b.CreateExtractValue(call, sel, v.String())
 			}
+			if sel < int(aux.NResults()) {
+				lVal = lfc.reshapeLLVMValue(v, lVal, aux.TypeOfResult(int64(sel)), v.Type, v.String()+".reshape")
+			}
 		case OpAtomicLoadPtr, OpAtomicLoad32, OpAtomicLoad64,
 			OpAtomicAdd32, OpAtomicAdd32Variant,
 			OpAtomicCompareAndSwap32, OpAtomicCompareAndSwap32Variant:
@@ -1198,11 +1280,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		switch lfc.ResultCount {
 		case 0:
 		case 1:
-			lVal = lfc.GenLV(v.Args[0])
+			lVal = lfc.reshapeLLVMValue(v, lfc.GenLV(v.Args[0]), v.Args[0].Type, lfc.F.OwnAux.TypeOfResult(0), v.String()+".result0")
 		default:
 			lVal = llvm.Undef(lfc.ReturnType)
 			for i := 0; i < lfc.ResultCount; i++ {
-				lVal = lfc.b.CreateInsertValue(lVal, lfc.GenLV(v.Args[i]), i, "")
+				result := lfc.reshapeLLVMValue(v, lfc.GenLV(v.Args[i]), v.Args[i].Type, lfc.F.OwnAux.TypeOfResult(int64(i)), fmt.Sprintf("%s.result%d", v, i))
+				lVal = lfc.b.CreateInsertValue(lVal, result, i, "")
 			}
 			lVal.SetName(v.String())
 		}
@@ -1277,13 +1360,16 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpSlicemask:
 		lVal = lfc.llvmSlicemask(v)
 	case OpStructSelect:
-		lVal = lfc.b.CreateExtractValue(arg0(), int(auxIntToInt32(v.AuxInt)), v.String())
+		field := int(auxIntToInt32(v.AuxInt))
+		lVal = lfc.b.CreateExtractValue(arg0(), field, v.String())
+		lVal = lfc.reshapeLLVMValue(v, lVal, v.Args[0].Type.FieldType(field), v.Type, v.String()+".reshape")
 	case OpStructMake:
 		lVal = lfc.aggregate(v, v.Args)
 	case OpArrayMake1:
 		lVal = lfc.aggregate(v, v.Args)
 	case OpArraySelect:
 		lVal = lfc.b.CreateExtractValue(arg0(), int(auxIntToInt64(v.AuxInt)), v.String())
+		lVal = lfc.reshapeLLVMValue(v, lVal, v.Args[0].Type.Elem(), v.Type, v.String()+".reshape")
 	case OpStringMake, OpComplexMake, OpIMake:
 		lVal = lfc.aggregate(v, v.Args)
 	case OpSliceMake:
@@ -1496,7 +1582,8 @@ func LLVMCompile(f *Func) {
 	for _, v := range parameterHomes {
 		name, key := llvmLocalName(v)
 		slot := FCtxt.Locals[key]
-		param := FCtxt.paramForArgName(v, name)
+		param, paramType := FCtxt.paramForArgNameAndType(v, name)
+		param = FCtxt.reshapeLLVMValue(v, param, paramType, slot.Type, v.String()+".home")
 		if param.Type() != getLLVMType(slot.Type) {
 			v.Fatalf("parameter home changes LLVM representation")
 		}
@@ -1657,7 +1744,6 @@ func InitModule(pkg *types.Pkg) {
 		type2lTypes[types.Types[types.TUINT]] = GlobalCtxt.Int32Type()
 		type2lTypes[types.Types[types.TUINTPTR]] = GlobalCtxt.Int32Type()
 	}
-
 	type2lTypes[types.ByteType] = GlobalCtxt.Int8Type()
 	type2lTypes[types.RuneType] = GlobalCtxt.Int32Type()
 
