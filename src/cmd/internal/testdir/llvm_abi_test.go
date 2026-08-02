@@ -424,7 +424,7 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 	machinePatterns := map[string][]string{
 		"p.initializedPointerResult": {
 			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 72,`,
-			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 8,`,
+			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 0,`,
 		},
 		"p.partiallyInitializedAggregateResult": {
 			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 80,[^\n]*\$rsp, 88,`,
@@ -483,11 +483,11 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 	cases := []amd64Case{
 		{
 			name: "initializedPointerResult", args: 72, entryBits: []int{8},
-			goallcLocals: 24, goallcArgs: [][]int{{8}, nil},
-			goallcMaps:   [][]int{nil, {2}},
+			goallcLocals: 16, goallcArgs: [][]int{{8}, nil},
+			goallcMaps:   [][]int{nil, {1}},
 			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
 			nativeQueries: []int32{0, -1}, goallcQueries: []int32{1, 0},
-			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 24, 8, 0},
+			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 16, 8, 0},
 		},
 		{
 			name: "partiallyInitializedAggregateResult", args: 88,

@@ -1924,6 +1924,7 @@ func isGoallcLLVMSystemLibrary(library string) bool {
 	allowed := map[string]bool{
 		"-lm":       true,
 		"-lz":       true,
+		"-lzstd":    true,
 		"-lxml2":    true,
 		"-ldl":      true,
 		"-lpthread": true,

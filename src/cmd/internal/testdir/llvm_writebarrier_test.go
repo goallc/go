@@ -14,8 +14,9 @@ import (
 
 func runLLVMWriteBarrierHelperTest(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("write-barrier helper IR and RS4GC expectations are qualified on darwin/arm64")
+	if runtime.GOOS+"/"+runtime.GOARCH != "darwin/arm64" &&
+		runtime.GOOS+"/"+runtime.GOARCH != "linux/amd64" {
+		t.Skip("write-barrier helper IR and RS4GC expectations are qualified on darwin/arm64 and linux/amd64")
 	}
 
 	dir := t.TempDir()
@@ -23,7 +24,7 @@ func runLLVMWriteBarrierHelperTest(t *testing.T) {
 	const program = `package p
 
 type Big [32]*int
-type Move8 [8]*int
+type Move2 [2]*int
 
 func ordinary(*int)
 
@@ -37,7 +38,7 @@ func heapZero(dst *Big, live *int) {
 }
 
 //go:noinline
-func heapMove(dst, src *Move8) {
+func heapMove(dst, src *Move2) {
 	*dst = *src
 }
 `
@@ -70,7 +71,7 @@ func heapMove(dst, src *Move8) {
 			name: "wbMove",
 			body: llvmAllocaIRFunction(t, ir, "p.heapMove"),
 			want: [][]byte{
-				[]byte("call goabiinternal void @runtime.wbMove(ptr @\"type:p.Move8\", ptr %dst, ptr %src)"),
+				[]byte("call goabiinternal void @runtime.wbMove(ptr @\"type:p.Move2\", ptr %dst, ptr %src)"),
 			},
 		},
 	} {

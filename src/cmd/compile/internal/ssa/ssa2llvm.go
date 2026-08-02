@@ -600,7 +600,12 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	sig := llvmStaticCallSignature(v, aux, llvmSignature(aux))
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunction(aux.Fn.Name, sig, cc)
-	rawWriteBarrier := aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove
+	// AMD64 rewrites some Move and Eq operations to static runtime calls before
+	// LLVM emission. Keep the same leaf contract as the dedicated LLVM lowering
+	// paths so RewriteStatepointsForGC does not turn these raw helpers into
+	// statepoints.
+	llvmGCLeaf := aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove ||
+		aux.Fn == ir.Syms.Memmove || aux.Fn == ir.Syms.Memequal
 	args := make([]llvm.Value, 0, aux.NArgs())
 	for i := int64(0); i < aux.NArgs(); i++ {
 		arg := lfc.GenLV(v.Args[i])
@@ -615,7 +620,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	}
 	call := lfc.b.CreateCall(sig.Type, fn, args, name)
 	call.SetInstructionCallConv(cc)
-	if rawWriteBarrier {
+	if llvmGCLeaf {
 		markLLVMGCLeaf(fn, call)
 	}
 	return call

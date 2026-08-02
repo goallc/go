@@ -4,7 +4,7 @@ package llvm
 
 /*
 #cgo darwin LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lxml2
-#cgo linux LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lxml2 -ldl -lpthread -lrt
+#cgo linux LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lzstd -lxml2 -ldl -lpthread -lrt
 */
 import "C"
 

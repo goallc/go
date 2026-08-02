@@ -4,7 +4,7 @@ declare goabiinternal void @safepoint()
 
 define goabiinternal void @pointer_vector_alloca() "go-stack-growth-statepoint" gc "goallc" {
 entry:
-  %slot = alloca <2 x ptr>, align 16
+  %slot = alloca <2 x ptr>, align 8
   call goabiinternal void @safepoint()
   ret void
 }
