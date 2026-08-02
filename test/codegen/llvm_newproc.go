@@ -10,7 +10,7 @@ package codegen
 // LLVM: call goabiinternal void @runtime.newproc(ptr
 // LLVM-NOT: call goabiinternal void @runtime.newproc(i64
 // LLVM: ret void
-// LLVM: declare goabiinternal void @runtime.newproc(ptr)
+// LLVM: declare !goobj.builtin !{{[0-9]+}} goabiinternal void @runtime.newproc(ptr)
 var llvmNewprocSink int
 
 func llvmNewproc(value int) {

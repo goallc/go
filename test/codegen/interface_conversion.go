@@ -11,7 +11,7 @@ package codegen
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
 // LLVM: ptrtoint ptr
 // LLVM: call goabiinternal ptr @runtime.typeAssert(ptr @codegen..typeAssert.0, ptr
-// LLVM-DAG: declare goabiinternal ptr @runtime.typeAssert(ptr, ptr)
+// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal ptr @runtime.typeAssert(ptr, ptr)
 // LLVM: !goobj.gotype = !{
 // LLVM-DAG: !{ptr @codegen..typeAssert.0, ptr @
 
