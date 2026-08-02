@@ -54,6 +54,9 @@ func runLLVMTests(t *testing.T, common testCommon) {
 		}
 		codegenCandidates := llvmTestCandidates(t, common.gorootTestDir, []string{"codegen"}, "asmcheck")
 		runtimeCandidates := llvmTestCandidates(t, common.gorootTestDir, dirs, "run")
+		for name := range llvmTestCandidates(t, common.gorootTestDir, dirs, "runoutput") {
+			runtimeCandidates[name] = true
+		}
 		validateLLVMTestSet(t, common.gorootTestDir, "codegen", codegenCandidates, policy.Codegen, true)
 		validateLLVMTestSet(t, common.gorootTestDir, "runtime", runtimeCandidates, policy.Runtime, false)
 
