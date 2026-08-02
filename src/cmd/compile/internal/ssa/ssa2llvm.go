@@ -721,7 +721,10 @@ func llvmFunctionUsesClosureContext(f *Func) bool {
 		}
 	}
 	needContext := f.OwnAux.Fn.NeedCtxt()
-	if usesContext != needContext {
+	// NeedCtxt is the authoritative ABI property. Early deadcode may remove an
+	// unused OpGetClosurePtr while the hidden closure-context parameter must
+	// remain in the function signature.
+	if usesContext && !needContext {
 		f.fe.Fatalf(f.Entry.Pos, "closure context mismatch for %s: NEEDCTXT=%t, OpGetClosurePtr=%t", f.Name, needContext, usesContext)
 	}
 	if needContext && f.OwnAux.ABI().Which() != obj.ABIInternal {

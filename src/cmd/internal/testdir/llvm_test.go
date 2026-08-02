@@ -80,7 +80,14 @@ func runLLVMTests(t *testing.T, common testCommon) {
 		t.Run("writebarrier-helpers", runLLVMWriteBarrierHelperTest)
 
 		t.Run("compile-only-regressions", func(t *testing.T) {
-			runLLVMCompileOnlyRegression(t, common.gorootTestDir, "cmp.go")
+			for _, name := range []string{
+				"cmp.go",
+				"typeparam/issue47684c.go",
+			} {
+				t.Run(name, func(t *testing.T) {
+					runLLVMCompileOnlyRegression(t, common.gorootTestDir, name)
+				})
+			}
 		})
 
 		t.Run("runtime", func(t *testing.T) {
