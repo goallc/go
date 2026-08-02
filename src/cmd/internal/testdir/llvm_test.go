@@ -273,7 +273,7 @@ func runLLVMCodegenTest(t *testing.T, gorootTestDir, name string) {
 		t.Fatalf("LLVM verifier failed: %v\n%s", err, out)
 	}
 	fileCheck := llvmToolPath(t, "FileCheck", "GOALLC_FILECHECK")
-	cmd = exec.Command(fileCheck, "--check-prefix=LLVM", source)
+	cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM", src), source)
 	cmd.Stdin = bytes.NewReader(irBytes)
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -292,12 +292,29 @@ func runLLVMCodegenTest(t *testing.T, gorootTestDir, name string) {
 	if err != nil {
 		t.Fatalf("LLVM optimization failed: %v\n%s", err, stderr.Bytes())
 	}
-	cmd = exec.Command(fileCheck, "--check-prefix=LLVM-OPT", source)
+	cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-OPT", src), source)
 	cmd.Stdin = bytes.NewReader(optimizedIR)
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("optimized LLVM FileCheck failed: %v\n%s", err, out)
 	}
+}
+
+func llvmFileCheckPrefixes(base string, source []byte) string {
+	prefixes := []string{base}
+	var architecturePrefix string
+	switch runtime.GOARCH {
+	case "amd64":
+		architecturePrefix = base + "-AMD64"
+	case "arm64":
+		architecturePrefix = base + "-ARM64"
+	}
+	if architecturePrefix != "" &&
+		(bytes.Contains(source, []byte(architecturePrefix+":")) ||
+			bytes.Contains(source, []byte(architecturePrefix+"-"))) {
+		prefixes = append(prefixes, architecturePrefix)
+	}
+	return strings.Join(prefixes, ",")
 }
 
 func runLLVMWriteBarrierIRTests(t *testing.T) {

@@ -84,14 +84,18 @@ type llvmABICase struct {
 
 func runLLVMABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	t.Helper()
-	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "darwin/arm64":
+		runLLVMAArch64ABIDifferentialTest(t, gorootTestDir)
+	case "linux/amd64":
 		runLLVMAMD64ArgsPointerMapDifferentialTest(t, gorootTestDir)
-		return
+	default:
+		t.Skip("exact ABI differential expectations are currently qualified on darwin/arm64 and linux/amd64")
 	}
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("exact ABI differential expectations are currently qualified on darwin/arm64")
-	}
+}
 
+func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
+	t.Helper()
 	dir := t.TempDir()
 	source := filepath.Join(gorootTestDir, "abi", "llvm_args_results.go")
 	nativeObject := filepath.Join(dir, "native.o")

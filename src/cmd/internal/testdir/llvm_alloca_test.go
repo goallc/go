@@ -14,10 +14,29 @@ import (
 	"testing"
 )
 
+type llvmAllocaArchitectureChecks struct {
+	machineAllocaPattern string
+	betweenCallsPattern  string
+	restoredStorePattern string
+}
+
+var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
+	"darwin/arm64": {
+		machineAllocaPattern: `(?s)stack:.*?size:\s+40,\s+alignment:\s+8`,
+		betweenCallsPattern:  `(?s)\bbl\s+p\.mutateLocal\n(.*?)\bbl\s+p\.safepoint`,
+		restoredStorePattern: `(?m)^\s*(?:str|stp)\b`,
+	},
+	"linux/amd64": {
+		machineAllocaPattern: `(?s)stack:.*?size:\s+40,\s+alignment:\s+8`,
+		betweenCallsPattern:  `(?s)\bcallq\s+p\.mutateLocal\n(.*?)\bcallq\s+p\.safepoint`,
+		restoredStorePattern: `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`,
+	},
+}
+
 func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 	t.Helper()
-	if runtime.GOOS+"/"+runtime.GOARCH != "darwin/arm64" &&
-		runtime.GOOS+"/"+runtime.GOARCH != "linux/amd64" {
+	checks, ok := llvmAllocaChecks[runtime.GOOS+"/"+runtime.GOARCH]
+	if !ok {
 		t.Skip("exact alloca statepoint frame and stack-map expectations are qualified on darwin/arm64 and linux/amd64")
 	}
 
@@ -99,7 +118,7 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		"-load-pass-plugin="+plugin, "-stop-after=finalize-isel",
 		"-o", "-", goallcIR)
 	machineFunction := llvmABIMachineFunction(t, machineIR, "p.localAcrossSafepoints")
-	if !regexp.MustCompile(`(?s)stack:.*?size:\s+40,\s+alignment:\s+8`).Match(machineFunction) {
+	if !regexp.MustCompile(checks.machineAllocaPattern).Match(machineFunction) {
 		t.Fatalf("MIR has no 40-byte pointer alloca\n%s", machineFunction)
 	}
 	ordinaryStatepoints := regexp.MustCompile(`(?m)^.*STATEPOINT.*%stack\.[0-9]+.*$`).
@@ -133,17 +152,11 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 	goallcAssembly := runLLVMABICommand(t, nil, llc,
 		"-load-pass-plugin="+plugin, "-verify-machineinstrs",
 		"-filetype=asm", "-o", "-", goallcIR)
-	betweenCallsPattern := `(?s)\bbl\s+p\.mutateLocal\n(.*?)\bbl\s+p\.safepoint`
-	storePattern := `(?m)^\s*(?:str|stp)\b`
-	if runtime.GOARCH == "amd64" {
-		betweenCallsPattern = `(?s)\bcallq\s+p\.mutateLocal\n(.*?)\bcallq\s+p\.safepoint`
-		storePattern = `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`
-	}
-	betweenCalls := regexp.MustCompile(betweenCallsPattern).FindSubmatch(goallcAssembly)
+	betweenCalls := regexp.MustCompile(checks.betweenCallsPattern).FindSubmatch(goallcAssembly)
 	if len(betweenCalls) != 2 {
 		t.Fatalf("GoALLC assembly has no adjacent mutateLocal/safepoint calls\n%s", goallcAssembly)
 	}
-	if regexp.MustCompile(storePattern).Match(betweenCalls[1]) {
+	if regexp.MustCompile(checks.restoredStorePattern).Match(betweenCalls[1]) {
 		t.Fatalf("GoALLC restored an alloca field after mutateLocal:\n%s", betweenCalls[1])
 	}
 

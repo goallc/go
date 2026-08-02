@@ -6,25 +6,36 @@ package testdir_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
 
+type llvmWriteBarrierArchitectureChecks struct {
+	moveType     string
+	moveElements int
+}
+
+var llvmWriteBarrierChecks = map[string]llvmWriteBarrierArchitectureChecks{
+	"darwin/arm64": {moveType: "Move8", moveElements: 8},
+	"linux/amd64":  {moveType: "Move2", moveElements: 2},
+}
+
 func runLLVMWriteBarrierHelperTest(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS+"/"+runtime.GOARCH != "darwin/arm64" &&
-		runtime.GOOS+"/"+runtime.GOARCH != "linux/amd64" {
+	checks, ok := llvmWriteBarrierChecks[runtime.GOOS+"/"+runtime.GOARCH]
+	if !ok {
 		t.Skip("write-barrier helper IR and RS4GC expectations are qualified on darwin/arm64 and linux/amd64")
 	}
 
 	dir := t.TempDir()
 	source := filepath.Join(dir, "writebarrier.go")
-	const program = `package p
+	program := fmt.Sprintf(`package p
 
 type Big [32]*int
-type Move2 [2]*int
+type %[1]s [%[2]d]*int
 
 func ordinary(*int)
 
@@ -38,10 +49,10 @@ func heapZero(dst *Big, live *int) {
 }
 
 //go:noinline
-func heapMove(dst, src *Move2) {
+func heapMove(dst, src *%[1]s) {
 	*dst = *src
 }
-`
+`, checks.moveType, checks.moveElements)
 	if err := os.WriteFile(source, []byte(program), 0o666); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +82,7 @@ func heapMove(dst, src *Move2) {
 			name: "wbMove",
 			body: llvmAllocaIRFunction(t, ir, "p.heapMove"),
 			want: [][]byte{
-				[]byte("call goabiinternal void @runtime.wbMove(ptr @\"type:p.Move2\", ptr %dst, ptr %src)"),
+				[]byte(fmt.Sprintf("call goabiinternal void @runtime.wbMove(ptr @\"type:p.%s\", ptr %%dst, ptr %%src)", checks.moveType)),
 			},
 		},
 	} {
