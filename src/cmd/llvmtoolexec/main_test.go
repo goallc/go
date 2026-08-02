@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"cmd/internal/archive"
+	"encoding/json"
 	"internal/testenv"
 	"os"
 	"path/filepath"
@@ -11,6 +12,226 @@ import (
 	"testing"
 	"time"
 )
+
+type importObjviewTarget struct {
+	Package  string `json:"package"`
+	Name     string `json:"name"`
+	Kind     string `json:"pkg_kind"`
+	SymIndex uint32 `json:"sym_index"`
+}
+
+type importObjviewObject struct {
+	Autolib []struct {
+		Package     string `json:"package"`
+		Fingerprint string `json:"fingerprint"`
+	} `json:"autolib"`
+	Packages []string `json:"packages"`
+	Symbols  []struct {
+		Relocations []struct {
+			Size   uint8               `json:"size"`
+			Type   string              `json:"type"`
+			Target importObjviewTarget `json:"target"`
+		} `json:"relocations"`
+	} `json:"symbols"`
+}
+
+func readImportObjview(t *testing.T, goTool, archivePath string) *importObjviewObject {
+	t.Helper()
+	objview := testenv.Command(t, goTool, "tool", "objview", "-format=json", archivePath)
+	output, err := objview.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go tool objview rejected %s: %v\n%s", archivePath, err, output)
+	}
+	var view struct {
+		Members []struct {
+			GoObject *importObjviewObject `json:"go_object"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(output, &view); err != nil {
+		t.Fatalf("decoding objview JSON for %s: %v\n%s", archivePath, err, output)
+	}
+	for _, member := range view.Members {
+		if member.GoObject != nil {
+			return member.GoObject
+		}
+	}
+	t.Fatalf("objview JSON for %s has no Go object member", archivePath)
+	return nil
+}
+
+func importObjviewRefs(object *importObjviewObject, names map[string]string) map[string]importObjviewTarget {
+	refs := make(map[string]importObjviewTarget)
+	for _, symbol := range object.Symbols {
+		for _, reloc := range symbol.Relocations {
+			if _, ok := names[reloc.Target.Name]; ok {
+				refs[reloc.Target.Name] = reloc.Target
+			}
+		}
+	}
+	return refs
+}
+
+func TestLLVMImportedPackageReferences(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+	}, " ")
+	cache := t.TempDir()
+	packagePath := "cmd/llvmtoolexec/testdata/importrefs"
+	packageArg := "./src/" + packagePath
+	executable := filepath.Join(t.TempDir(), "importrefs")
+	buildFixture := testenv.Command(
+		t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		"-o", executable,
+		packageArg,
+	)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "GOCACHE="+cache)
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building LLVM import fixture: %v\n%s", err, out)
+	}
+
+	runFixture := testenv.Command(t, executable)
+	runFixture.Env = append(os.Environ(), "GOALLC_IMPORT_VALUE=ok")
+	if out, err := runFixture.CombinedOutput(); err != nil {
+		t.Fatalf("running LLVM import fixture: %v\n%s", err, out)
+	}
+
+	listFixture := testenv.Command(
+		t, goTool, "list", "-export", "-f={{.Export}}",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		packageArg,
+	)
+	listFixture.Dir = root
+	listFixture.Env = append(os.Environ(), "GOCACHE="+cache)
+	archiveOutput, err := listFixture.CombinedOutput()
+	if err != nil {
+		t.Fatalf("locating LLVM import archive: %v\n%s", err, archiveOutput)
+	}
+	archivePath := strings.TrimSpace(string(archiveOutput))
+	if archivePath == "" {
+		t.Fatal("go list returned an empty LLVM import archive path")
+	}
+
+	object := readImportObjview(t, goTool, archivePath)
+
+	nativeList := testenv.Command(
+		t, goTool, "list", "-export", "-f={{.Export}}", packageArg,
+	)
+	nativeList.Dir = root
+	nativeList.Env = append(os.Environ(), "GOCACHE="+t.TempDir())
+	nativeArchiveOutput, err := nativeList.CombinedOutput()
+	if err != nil {
+		t.Fatalf("locating native import archive: %v\n%s", err, nativeArchiveOutput)
+	}
+	nativeArchivePath := strings.TrimSpace(string(nativeArchiveOutput))
+	if nativeArchivePath == "" {
+		t.Fatal("go list returned an empty native import archive path")
+	}
+	nativeObject := readImportObjview(t, goTool, nativeArchivePath)
+
+	imports := make(map[string]string)
+	for _, imp := range object.Autolib {
+		imports[imp.Package] = imp.Fingerprint
+	}
+	nativeImports := make(map[string]string)
+	for _, imp := range nativeObject.Autolib {
+		nativeImports[imp.Package] = imp.Fingerprint
+	}
+	for _, want := range []string{"encoding/hex", "fmt", "os", "reflect", packagePath + "/dep"} {
+		if imports[want] == "" {
+			t.Errorf("Autolib does not contain %q: %v", want, imports)
+		} else if imports[want] != nativeImports[want] {
+			t.Errorf("Autolib fingerprint for %q = %s, native %s",
+				want, imports[want], nativeImports[want])
+		}
+	}
+	if len(object.Packages) == 0 || object.Packages[0] != "" {
+		t.Errorf("PkgIdx has no dummy index 0: %v", object.Packages)
+	}
+
+	wantRefs := map[string]string{
+		"fmt.Sprintf": "fmt",
+		"os.Getenv":   "os",
+		"cmd/llvmtoolexec/testdata/importrefs/dep.Value": packagePath + "/dep",
+	}
+	refs := importObjviewRefs(object, wantRefs)
+	nativeRefs := importObjviewRefs(nativeObject, wantRefs)
+	for name, wantPackage := range wantRefs {
+		ref, ok := refs[name]
+		if !ok {
+			t.Errorf("no package-indexed relocation for %s", name)
+			continue
+		}
+		if ref.Kind != "imported" || ref.Package != wantPackage {
+			t.Errorf("%s target = kind %q package %q, want imported package %q",
+				name, ref.Kind, ref.Package, wantPackage)
+		}
+		nativeRef, ok := nativeRefs[name]
+		if !ok {
+			t.Errorf("native object has no relocation for %s", name)
+		} else if ref.SymIndex != nativeRef.SymIndex {
+			t.Errorf("%s SymIdx = %d, native %d", name, ref.SymIndex, nativeRef.SymIndex)
+		}
+	}
+
+	markerTypes := map[string]bool{
+		"R_USEIFACE":       true,
+		"R_USEIFACEMETHOD": true,
+		"R_USENAMEDMETHOD": true,
+	}
+	markerCounts := make(map[string]int)
+	nativeMarkerCounts := make(map[string]int)
+	for _, symbol := range object.Symbols {
+		for _, reloc := range symbol.Relocations {
+			if !markerTypes[reloc.Type] {
+				continue
+			}
+			markerCounts[reloc.Type]++
+			if reloc.Size != 0 {
+				t.Errorf("%s marker has storage size %d", reloc.Type, reloc.Size)
+			}
+			if reloc.Type == "R_USENAMEDMETHOD" && reloc.Target.Kind != "self" {
+				t.Errorf("R_USENAMEDMETHOD target kind = %q, want self", reloc.Target.Kind)
+			}
+		}
+	}
+	for _, symbol := range nativeObject.Symbols {
+		for _, reloc := range symbol.Relocations {
+			if markerTypes[reloc.Type] {
+				nativeMarkerCounts[reloc.Type]++
+			}
+		}
+	}
+	for markerType, nativeCount := range nativeMarkerCounts {
+		if markerCounts[markerType] != nativeCount {
+			t.Errorf("%s count = %d, native %d", markerType, markerCounts[markerType], nativeCount)
+		}
+	}
+	if markerCounts["R_USENAMEDMETHOD"] == 0 {
+		t.Error("generic/reflect fixture produced no R_USENAMEDMETHOD marker")
+	}
+}
 
 func TestToolFlag(t *testing.T) {
 	args := []string{"-p=example.com/p", "-o", "out.a", "-shared"}

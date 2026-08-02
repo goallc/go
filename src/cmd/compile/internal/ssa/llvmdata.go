@@ -4,12 +4,75 @@ package ssa
 
 import (
 	"cmd/compile/internal/base"
+	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
+	"encoding/hex"
+	"fmt"
 	"sort"
 
 	"github.com/goallc/go-llvm"
 )
+
+// emitGoObjImportMetadata carries the exact package path and linker
+// fingerprint already decoded by the Go importer. LLVM must not rediscover
+// either value from an importcfg file or a symbol-name prefix.
+func emitGoObjImportMetadata() {
+	for _, imp := range base.Ctxt.Imports {
+		CurrentModule.AddNamedMetadataOperand("goobj.imports", GlobalCtxt.MDNode([]llvm.Metadata{
+			GlobalCtxt.MDString(imp.Pkg),
+			GlobalCtxt.MDString(objabi.PathToPrefix(imp.Pkg)),
+			GlobalCtxt.MDString(hex.EncodeToString(imp.Fingerprint[:])),
+		}))
+	}
+}
+
+// attachGoObjSymbolRef attaches the part of an undefined Go symbol's identity
+// that cannot be recovered from an LLVM relocation. The optimized relocation
+// stream still decides which declarations become GoObj references; the
+// attachment only supplies the imported package's symbol index or the builtin
+// index when such a relocation survives.
+func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
+	if value.IsNil() || s == nil {
+		base.Fatalf("invalid LLVM value in GoObj symbol reference")
+	}
+
+	if !base.Ctxt.Flag_linkshared && !s.IsLinkname() {
+		if idx := goobj.BuiltinIdx(s.Name, int(s.ABI())); idx >= 0 {
+			value.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.builtin"), GlobalCtxt.MDNode([]llvm.Metadata{
+				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(idx), false).ConstantAsMetadata(),
+			}))
+			return
+		}
+	}
+	localPkg := objabi.PathToPrefix(base.Ctxt.Pkgpath)
+	if s.Pkg == "" || s.Pkg == `""` || s.Pkg == "_" || s.Pkg == localPkg || !s.Indexed() {
+		return
+	}
+	if s.SymIdx < 0 {
+		base.Fatalf("negative indexed Go symbol reference %s", s.Name)
+	}
+	var flags2 uint64
+	if s.UsedInIface() {
+		flags2 = goobj.SymFlagUsedInIface
+	}
+	value.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.import"), GlobalCtxt.MDNode([]llvm.Metadata{
+		GlobalCtxt.MDString(s.Pkg),
+		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(s.SymIdx), false).ConstantAsMetadata(),
+		llvm.ConstInt(GlobalCtxt.Int32Type(), flags2, false).ConstantAsMetadata(),
+	}))
+}
+
+// attachGoObjABISymbolRef is for LLVM-generated runtime calls that do not
+// carry an SSA AuxCall. Use the compiler's ABI-aware symbol table so their
+// builtin/non-package classification stays identical to the native writer.
+func attachGoObjABISymbolRef(value llvm.Value, name string, abi obj.ABI) {
+	s := base.Ctxt.LookupABI(name, abi)
+	if s == nil || s.Name != name || s.ABI() != abi {
+		base.Fatalf("invalid LLVM GoObj symbol model for %s", name)
+	}
+	attachGoObjSymbolRef(value, s)
+}
 
 // LowerGoObjData lowers compiler-emitted linker data into LLVM globals. The
 // Go front end remains responsible for laying out the data: this code only
@@ -66,22 +129,26 @@ func LowerGoObjData() {
 		lowerer.data = data
 	}
 
-	globals := make(map[*obj.LSym]llvm.Value, len(syms))
+	globals := lowerer.values
 	for _, s := range syms {
 		t := lowerer.dataType(s)
-		g := CurrentModule.NamedGlobal(s.Name)
+		g := globals[s]
+		if g.IsNil() && s.Name != "" {
+			g = CurrentModule.NamedGlobal(s.Name)
+		}
 		if g.IsNil() {
-			g = llvm.AddGlobal(CurrentModule, t, s.Name)
+			g = llvm.AddGlobal(CurrentModule, t, lowerer.globalName(s))
 		} else if g.GlobalValueType() != t {
 			// Some compiler-generated symbols are referenced by SSA before
 			// dumpdata has attached their final TypeInfo and relocation
 			// layout. LLVM opaque pointers make those early references
 			// independent of the global's pointee type, so replace the
 			// provisional declaration once the LSym is finalized.
-			replacement := llvm.AddGlobal(CurrentModule, t, s.Name+".goallc.final")
+			name := g.Name()
+			replacement := llvm.AddGlobal(CurrentModule, t, name+".goallc.final")
 			g.ReplaceAllUsesWith(replacement)
 			g.EraseFromParentAsGlobal()
-			replacement.SetName(s.Name)
+			replacement.SetName(name)
 			g = replacement
 		}
 		g.SetSection(llvmDataSection(s))
@@ -100,8 +167,8 @@ func LowerGoObjData() {
 		setGoObjOffsetRelocMetadata(g, s)
 		setGoObjWeakRelocMetadata(g, s)
 		setGoObjKeepMetadata(g, s)
-		setGoObjMarkerRelocMetadata(g, s)
 		setGoObjGotypeMetadata(g, s)
+		setGoObjMarkerRelocMetadata(g, s)
 	}
 	emitGoObjCompilerUsed()
 }
@@ -120,8 +187,17 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 		}
 		return llvmExternalDataRef(s, data)
 	}
-	if g := CurrentModule.NamedGlobal(s.Name); !g.IsNil() {
-		return g
+	if currentLLVMDataLowerer != nil {
+		if g := currentLLVMDataLowerer.values[s]; !g.IsNil() {
+			attachGoObjSymbolRef(g, s)
+			return g
+		}
+	}
+	if s.Name != "" {
+		if g := CurrentModule.NamedGlobal(s.Name); !g.IsNil() {
+			attachGoObjSymbolRef(g, s)
+			return g
+		}
 	}
 	if currentLLVMDataLowerer == nil {
 		currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
@@ -135,10 +211,31 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 		}
 	}
 	if !local && !llvmDataSymbolKindSupported(s.Type) {
-		return llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), s.Name)
+		g := llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), currentLLVMDataLowerer.globalName(s))
+		currentLLVMDataLowerer.values[s] = g
+		attachGoObjSymbolRef(g, s)
+		return g
 	}
 	currentLLVMDataLowerer.data[s] = true
-	return llvm.AddGlobal(CurrentModule, currentLLVMDataLowerer.dataType(s), s.Name)
+	g := llvm.AddGlobal(CurrentModule, currentLLVMDataLowerer.dataType(s), currentLLVMDataLowerer.globalName(s))
+	currentLLVMDataLowerer.values[s] = g
+	if s.Name == "" {
+		// R_USENAMEDMETHOD deliberately uses an anonymous SRODATA symbol whose
+		// payload is the method name. LLVM globals need a stable identity, but
+		// the GoObj relocation remains a Self reference and the artificial name
+		// has no linker semantics.
+		g.SetLinkage(llvm.InternalLinkage)
+	}
+	attachGoObjSymbolRef(g, s)
+	return g
+}
+
+func (l *llvmDataLowerer) globalName(s *obj.LSym) string {
+	if s.Name != "" {
+		return s.Name
+	}
+	l.anonymousCount++
+	return fmt.Sprintf(".goallc.anon.%d", l.anonymousCount)
 }
 
 func llvmDataSymbolKindSupported(kind objabi.SymKind) bool {
@@ -269,16 +366,21 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 	// STEXT alone here.
 	if s.Type == objabi.STEXT || s.Type == objabi.STEXTFIPS || s.ABI() == obj.ABIInternal {
 		if f := CurrentModule.NamedFunction(s.Name); !f.IsNil() {
+			attachGoObjSymbolRef(f, s)
 			return f
 		}
 		f := llvm.AddFunction(CurrentModule, s.Name, llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
 		f.SetFunctionCallConv(llvmCallConv(s.ABI()))
+		attachGoObjSymbolRef(f, s)
 		return f
 	}
 	if g := CurrentModule.NamedGlobal(s.Name); !g.IsNil() {
+		attachGoObjSymbolRef(g, s)
 		return g
 	}
-	return llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), s.Name)
+	g := llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), s.Name)
+	attachGoObjSymbolRef(g, s)
+	return g
 }
 
 func llvmDataSection(s *obj.LSym) string {
