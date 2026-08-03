@@ -42,6 +42,7 @@
       "codegen/llvm_round64.go": "non-contracting Round64F identity on strict LLVM double values",
       "codegen/llvm_selectnaddr.go": "caller-owned aligned memory home for address-selected stack call results",
       "codegen/llvm_sqrt.go": "float64 square root through the LLVM sqrt intrinsic",
+      "codegen/llvm_trunc.go": "SSA-verified float64 truncation toward zero through the LLVM trunc intrinsic",
       "codegen/llvm_memops.go": "pointer-free zero and overlap-safe move intrinsics, runtime memequal, and native-int slice masks",
       "codegen/llvm_memory_order.go": "preserve Go SSA Memory-token order when LLVM emission precedes native scheduling",
       "codegen/llvm_newproc.go": "pointer-typed funcval argument for the runtime.newproc raw ABI call",
@@ -69,7 +70,8 @@
     },
     "platform_blacklist": {
       "linux/amd64": {
-        "codegen/llvm_abs.go": "the native AMD64 frontend does not form OpAbs for math.Abs"
+        "codegen/llvm_abs.go": "the native AMD64 frontend does not form OpAbs for math.Abs",
+        "codegen/llvm_trunc.go": "GOAMD64=v1 guards OpTrunc with unsupported HasCPUFeature lowering"
       }
     }
   },
@@ -258,6 +260,7 @@
       "fixedbugs/issue57309.go": "upstream regression repeatedly qualified through LLVM compile, link, and execution",
       "fixedbugs/issue64565.go": "upstream regression repeatedly qualified through LLVM compile, link, and execution",
       "fixedbugs/issue66585.go": "upstream regression repeatedly qualified through LLVM compile, link, and execution",
+      "fixedbugs/issue68322.go": "large float64 truncation above the signed integer range through LLVM compile, link, and execution",
       "fixedbugs/issue68415.go": "upstream regression repeatedly qualified through LLVM compile, link, and execution",
       "fixedbugs/issue68525.go": "upstream regression repeatedly qualified through LLVM compile, link, and execution",
       "fixedbugs/issue68809.go": "upstream regression repeatedly qualified through LLVM compile, link, and execution",
@@ -422,6 +425,10 @@
     "blacklist": {
       "*": "LLVM lowering or runtime ABI support has not reached this test yet"
     },
-    "platform_blacklist": {}
+    "platform_blacklist": {
+      "linux/amd64": {
+        "fixedbugs/issue68322.go": "GOAMD64=v1 guards OpTrunc with unsupported HasCPUFeature lowering"
+      }
+    }
   }
 }

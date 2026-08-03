@@ -1107,6 +1107,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.llvmUnaryFloat64Intrinsic(v, "llvm.sqrt.f64")
 	case OpAbs:
 		lVal = lfc.llvmUnaryFloat64Intrinsic(v, "llvm.fabs.f64")
+	case OpTrunc:
+		lVal = lfc.llvmUnaryFloat64Intrinsic(v, "llvm.trunc.f64")
 	case OpEq64, OpEq32, OpEq16, OpEq8, OpEqB:
 		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpEqPtr:

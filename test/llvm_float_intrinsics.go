@@ -19,6 +19,11 @@ func abs64(x float64) float64 {
 }
 
 //go:noinline
+func trunc64(x float64) float64 {
+	return math.Trunc(x)
+}
+
+//go:noinline
 func round64(x float64) float64 {
 	return float64(x)
 }
@@ -53,6 +58,27 @@ func main() {
 	nanBits := uint64(0xfff8000000001234)
 	if got := math.Float64bits(abs64(math.Float64frombits(nanBits))); got != nanBits&^(1<<63) {
 		panic("abs NaN payload")
+	}
+
+	for _, tc := range []struct {
+		in, want uint64
+	}{
+		{0x0000000000000000, 0x0000000000000000}, // +0
+		{0x8000000000000000, 0x8000000000000000}, // -0
+		{0x400e000000000000, 0x4008000000000000}, // 3.75 -> 3
+		{0xc00e000000000000, 0xc008000000000000}, // -3.75 -> -3
+		{0x0000000000000001, 0x0000000000000000}, // smallest subnormal -> +0
+		{0x8000000000000001, 0x8000000000000000}, // negative subnormal -> -0
+		{0x43efffffffffffff, 0x43efffffffffffff}, // largest finite value below 2^64
+		{0x7ff0000000000000, 0x7ff0000000000000}, // +Inf
+		{0xfff0000000000000, 0xfff0000000000000}, // -Inf
+	} {
+		if got := math.Float64bits(trunc64(math.Float64frombits(tc.in))); got != tc.want {
+			panic("trunc semantics")
+		}
+	}
+	if !math.IsNaN(trunc64(math.Float64frombits(nanBits))) {
+		panic("trunc NaN")
 	}
 
 	for _, bits := range []uint64{0, 1 << 63, 0x3ff0000000000000, nanBits} {
