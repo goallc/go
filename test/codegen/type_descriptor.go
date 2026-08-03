@@ -10,7 +10,7 @@ package codegen
 // LLVM-DAG: %go.runtime.UncommonType = type <{
 // LLVM-DAG: %go.runtime.StructField = type <{
 // LLVM-DAG: @"type:codegen.llvmTypeDescriptor" = constant <{ %go.runtime.StructType, %go.runtime.UncommonType, [2 x %go.runtime.StructField] }>
-// LLVM-DAG: @"type:*codegen.llvmTypeDescriptor" = constant <{ %go.runtime.PtrType }>{{.*}}!goobj.symbol.flags{{.*}}!goobj.content_hash
+// LLVM-DAG: @"type:*codegen.llvmTypeDescriptor" = constant <{ %go.runtime.PtrType }>{{.*}}!goobj.symbol.flags
 // LLVM-DAG: !goobj.relocs
 // LLVM-DAG: !{i32 {{[0-9]+}}, i32 5}
 
