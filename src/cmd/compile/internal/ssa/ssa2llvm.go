@@ -1460,6 +1460,7 @@ func LLVMCompile(f *Func) {
 		f.fe.Fatalf(f.Entry.Pos, "duplicate LLVM definition for %s", f.OwnAux.Fn.Name)
 	}
 	FCtxt.LF.SetGC(goGCStrategy)
+	setGoObjFunctionFlags(FCtxt.LF, f.OwnAux.Fn)
 	inParams := f.OwnAux.ABIInfo().InParams()
 	if got, want := len(inParams), int(f.OwnAux.NArgs()); got != want {
 		f.fe.Fatalf(f.Entry.Pos, "LLVM parameter metadata count %d does not match signature count %d for %s", got, want, f.Name)

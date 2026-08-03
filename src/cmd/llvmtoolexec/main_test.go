@@ -27,12 +27,84 @@ type importObjviewObject struct {
 	} `json:"autolib"`
 	Packages []string `json:"packages"`
 	Symbols  []struct {
+		Name        string   `json:"name"`
+		FlagNames   []string `json:"flag_names"`
 		Relocations []struct {
 			Size   uint8               `json:"size"`
 			Type   string              `json:"type"`
 			Target importObjviewTarget `json:"target"`
 		} `json:"relocations"`
 	} `json:"symbols"`
+}
+
+func TestLLVMReflectMethodReachability(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+	}, " ")
+	cache := t.TempDir()
+	packagePath := "cmd/llvmtoolexec/testdata/reflectmethod"
+	packageArg := "./src/" + packagePath
+	executable := filepath.Join(t.TempDir(), "reflectmethod")
+	buildFixture := testenv.Command(
+		t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		"-ldflags=-w",
+		"-o", executable,
+		packageArg,
+	)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "GOCACHE="+cache)
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building LLVM reflect-method fixture: %v\n%s", err, out)
+	}
+	if out, err := testenv.Command(t, executable).CombinedOutput(); err != nil {
+		t.Fatalf("running LLVM reflect-method fixture: %v\n%s", err, out)
+	}
+
+	listFixture := testenv.Command(
+		t, goTool, "list", "-export", "-f={{.Export}}",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		packageArg,
+	)
+	listFixture.Dir = root
+	listFixture.Env = append(os.Environ(), "GOCACHE="+cache)
+	archiveOutput, err := listFixture.CombinedOutput()
+	if err != nil {
+		t.Fatalf("locating LLVM reflect-method archive: %v\n%s", err, archiveOutput)
+	}
+	object := readImportObjview(t, goTool, strings.TrimSpace(string(archiveOutput)))
+	for _, symbol := range object.Symbols {
+		if symbol.Name != "main.main" && symbol.Name != packagePath+".main" {
+			continue
+		}
+		for _, flag := range symbol.FlagNames {
+			if flag == "reflect_method" {
+				return
+			}
+		}
+		t.Fatalf("main symbol flags = %v, want reflect_method", symbol.FlagNames)
+	}
+	t.Fatal("LLVM reflect-method object has no main function symbol")
 }
 
 func readImportObjview(t *testing.T, goTool, archivePath string) *importObjviewObject {

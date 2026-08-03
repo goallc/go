@@ -456,6 +456,30 @@ func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 	}))
 }
 
+// Functions carry linker-visible semantic flags in the same GoObj symbol
+// record as native compiler output. Keep this separate from LLVM function
+// attributes: ReflectMethod drives Go linker method reachability rather than
+// code generation, and Linkname/ABIWrapper are likewise object properties.
+func setGoObjFunctionFlags(fn llvm.Value, s *obj.LSym) {
+	var flag, flag2 uint64
+	if s.ReflectMethod() {
+		flag |= goobj.SymFlagReflectMethod
+	}
+	if s.IsLinkname() || s.Name == "main.main" {
+		flag2 |= goobj.SymFlagLinkname
+	}
+	if s.ABIWrapper() {
+		flag2 |= goobj.SymFlagABIWrapper
+	}
+	if flag == 0 && flag2 == 0 {
+		return
+	}
+	fn.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.symbol.flags"), GlobalCtxt.MDNode([]llvm.Metadata{
+		llvm.ConstInt(GlobalCtxt.Int32Type(), flag, false).ConstantAsMetadata(),
+		llvm.ConstInt(GlobalCtxt.Int32Type(), flag2, false).ConstantAsMetadata(),
+	}))
+}
+
 // LLVM can express the address relationship but not GoObj's 32-bit section
 // offsets. Record the object-format-specific relocation type explicitly;
 // weakness remains orthogonal in !goobj.weak_relocs.
