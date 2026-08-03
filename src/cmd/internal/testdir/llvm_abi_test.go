@@ -55,6 +55,15 @@ type llvmABISymbol struct {
 					SetBits []int `json:"set_bits"`
 				} `json:"bitmaps"`
 			} `json:"stack_map"`
+			StackObjects []struct {
+				Offset   int32 `json:"offset"`
+				Size     int32 `json:"size"`
+				PtrBytes int32 `json:"ptr_bytes"`
+				GCData   *struct {
+					Name string `json:"name"`
+					ABI  uint16 `json:"abi"`
+				} `json:"gcdata"`
+			} `json:"stack_objects"`
 		} `json:"funcdata"`
 		StackMapQueries []struct {
 			StackMapIndex int32  `json:"stack_map_index"`
@@ -225,7 +234,9 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		},
 		{
 			name: "mixedABI", args: 152, pointerBits: []int{2, 4, 18},
-			nativeArgsMaps:  [][]int{{2, 4, 18}, nil},
+			nativeArgsMaps: [][]int{{2, 4, 18}, nil},
+			// The explicit panicmem paths keep the still-needed parameter
+			// homes in LocalsPointerMaps through locals-only alloca records.
 			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}},
 			nativeStackMaps: []int32{-1, 0, -1},
 			goallcStackMaps: []int32{-1, 1, 0},

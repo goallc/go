@@ -132,14 +132,16 @@ def main():
         lambda item: item["kind"] == "locals_pointer_maps",
         "FUNCDATA_LocalsPointerMaps tables",
     )["stack_map"]
-    if locals_maps["count"] != 3 or locals_maps["num_bits"] != 5:
+    if locals_maps["count"] != 3 or locals_maps["num_bits"] != 4:
         fail(f"unexpected locals-map dimensions: {locals_maps}")
     locals_bits = [
         set(item["set_bits"] or []) for item in locals_maps["bitmaps"]
     ]
     # Map 1 covers make_pair before it produces a result. Map 2 then keeps
     # the aggregate result's pointer field live through both later calls.
-    if locals_bits != [set(), set(), {3}]:
+    # The root uses the normal statepoint spill slot; there is no longer an
+    # extra fixed-home frame slot ahead of it.
+    if locals_bits != [set(), set(), {2}]:
         fail(f"unexpected local roots: {locals_bits}")
 
     print(

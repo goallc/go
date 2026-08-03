@@ -138,7 +138,7 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 			got, want, machineFunction)
 	}
 	for _, statepoint := range ordinaryStatepoints {
-		for _, constant := range []string{"1195461697", "1347703373", "40", "29", "1095519299"} {
+		for _, constant := range []string{"1195461697", "1398033231", "40", "29", "1095519299"} {
 			if !bytes.Contains(statepoint, []byte(constant)) {
 				t.Fatalf("STATEPOINT lost alloca contract constant %s: %s", constant, statepoint)
 			}
@@ -184,15 +184,50 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		[]int32{-1, 1, 0},
 		[]int32{1, 1, 1, 1, 0})
 
-	// Native Go may additionally describe this address-taken value as a
-	// StackObject. The GoALLC qualification above intentionally requires the
-	// conservative LocalsPointerMaps representation first; StackObjects can be
-	// added later as a lifetime-precision optimization.
+	goallcStackObjects := llvmABIStackObjects(t, symbol)
+	if got, want := len(goallcStackObjects), 1; got != want {
+		t.Fatalf("GoALLC StackObjects=%v, want one object", goallcStackObjects)
+	}
+	if object := goallcStackObjects[0]; object.Offset >= 0 || object.Size != 40 ||
+		object.PtrBytes != 40 || object.GCData == nil ||
+		object.GCData.Name != "runtime.gcbits.1d00000000000000" || object.GCData.ABI != 0 {
+		t.Fatalf("GoALLC StackObject=%+v, want negative offset, size=40, ptrbytes=40, and ABI0 runtime.gcbits.1d00000000000000", object)
+	}
+
+	// StackObjects describe address-taken object identity and layout. They are
+	// not themselves roots, so the initial implementation also keeps the
+	// conservative per-safepoint LocalsPointerMaps bits until precise static
+	// object liveness is implemented.
 	nativeSymbol := findLLVMABISymbol(t, readLLVMABIObject(t, nativeObject),
 		"p.localAcrossSafepoints")
 	if got := llvmABIStackMapBitmaps(t, nativeSymbol, "locals_pointer_maps"); !reflect.DeepEqual(got, [][]int{nil, {0, 2, 3, 4}}) {
 		t.Fatalf("native LocalsPointerMaps=%v, want [[ ] [0 2 3 4]]", got)
 	}
+	nativeStackObjects := llvmABIStackObjects(t, nativeSymbol)
+	if got, want := len(nativeStackObjects), 1; got != want {
+		t.Fatalf("native StackObjects=%v, want one object", nativeStackObjects)
+	}
+}
+
+func llvmABIStackObjects(t *testing.T, symbol llvmABISymbol) []struct {
+	Offset   int32 `json:"offset"`
+	Size     int32 `json:"size"`
+	PtrBytes int32 `json:"ptr_bytes"`
+	GCData   *struct {
+		Name string `json:"name"`
+		ABI  uint16 `json:"abi"`
+	} `json:"gcdata"`
+} {
+	t.Helper()
+	if symbol.Function == nil {
+		t.Fatalf("symbol %s has no function metadata", symbol.Name)
+	}
+	for _, data := range symbol.Function.FuncData {
+		if data.Kind == "stack_objects" {
+			return data.StackObjects
+		}
+	}
+	return nil
 }
 
 func llvmAllocaIRFunction(t *testing.T, ir []byte, name string) []byte {

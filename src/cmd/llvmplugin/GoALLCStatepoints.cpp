@@ -38,7 +38,7 @@ namespace {
 constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
-constexpr StringLiteral GoNilCheckMD = "goallc.nilcheck";
+constexpr StringLiteral GoSourceAddressTakenMD = "goallc.source_addrtaken";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
 // statepoint insertion, so UseRS4GC deliberately remains false.
@@ -95,7 +95,13 @@ struct PointerAllocaLeaf {
 };
 
 struct PointerAllocaRecord {
+  enum class Kind {
+    LocalsOnly,
+    StackObject,
+  };
+
   AllocaInst *Alloca;
+  Kind RecordKind;
   uint64_t ByteSize;
   uint64_t Alignment;
   uint64_t BitCount;
@@ -125,6 +131,11 @@ bool containsPointer(Type *Ty) {
 
 bool isStaticAllocaAddress(const Value *V) {
   if (!V->getType()->isPointerTy())
+    return false;
+  // A merged stack address cannot be rematerialized as one FrameIndex. Keep
+  // PHI/select values in ordinary gc-live so stack growth relocates the
+  // selected address just like any other live pointer.
+  if (isa<PHINode>(V) || isa<SelectInst>(V))
     return false;
   // findAllocaForValue understands PHI/select cycles and proves that every
   // path is the same zero-offset alloca. Keep the ordinary underlying-object
@@ -518,52 +529,81 @@ std::string allocaLeafName(AllocaInst &Alloca, const PointerAllocaLeaf &Leaf) {
   return Name;
 }
 
-Error validatePointerAllocaAccesses(AllocaInst &Alloca, Function &F) {
-  for (Instruction &I : instructions(F)) {
-    if (auto *Intrinsic = dyn_cast<IntrinsicInst>(&I);
-        Intrinsic && Intrinsic->isLifetimeStartOrEnd() &&
-        Intrinsic->arg_size() != 0 &&
-        findAllocaForValue(
-            Intrinsic->getArgOperand(Intrinsic->arg_size() - 1),
-            /*OffsetZero=*/false) == &Alloca)
-      return createStringError(
-          std::errc::not_supported,
-          "GoALLC statepoints do not support lifetime markers on "
-          "pointer-containing allocas");
-
-    Value *Address = nullptr;
-    bool UnsupportedAccess = false;
-    if (auto *Load = dyn_cast<LoadInst>(&I)) {
-      Address = Load->getPointerOperand();
-      MDNode *NilCheck = Load->getMetadata(GoNilCheckMD);
-      bool IsFrontendNilCheck =
-          NilCheck && NilCheck->getNumOperands() == 0 && Load->isVolatile() &&
-          !Load->isAtomic() && Load->getType()->isIntegerTy(8) &&
-          Load->getAlign() == Align(1);
-      UnsupportedAccess =
-          Load->isAtomic() || (Load->isVolatile() && !IsFrontendNilCheck);
-    } else if (auto *Store = dyn_cast<StoreInst>(&I)) {
-      Address = Store->getPointerOperand();
-      UnsupportedAccess = Store->isVolatile() || Store->isAtomic();
-    } else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I)) {
-      Address = RMW->getPointerOperand();
-      UnsupportedAccess = true;
-    } else if (auto *CmpXchg = dyn_cast<AtomicCmpXchgInst>(&I)) {
-      Address = CmpXchg->getPointerOperand();
-      UnsupportedAccess = true;
-    }
-    if (Address && UnsupportedAccess &&
-        findAllocaForValue(Address, /*OffsetZero=*/false) == &Alloca)
-      return createStringError(
-          std::errc::not_supported,
-          "GoALLC statepoints do not support volatile or atomic access to "
-          "pointer-containing allocas");
-  }
-  return Error::success();
+Expected<bool> sourceMarkedAddressTaken(AllocaInst &Alloca) {
+  MDNode *MD = Alloca.getMetadata(GoSourceAddressTakenMD);
+  if (!MD)
+    return false;
+  if (MD->getNumOperands() != 1)
+    return createStringError(
+        std::errc::invalid_argument,
+        "GoALLC source address-taken metadata has invalid arity");
+  auto *CAM = dyn_cast<ConstantAsMetadata>(MD->getOperand(0));
+  auto *CI = CAM ? dyn_cast<ConstantInt>(CAM->getValue()) : nullptr;
+  if (!CI || !CI->getType()->isIntegerTy(1))
+    return createStringError(
+        std::errc::invalid_argument,
+        "GoALLC source address-taken metadata is not an i1 constant");
+  return CI->isOne();
 }
 
-Error collectPointerAllocas(Function &F,
-                            SmallVectorImpl<PointerAllocaRecord> &Records) {
+// Return true when the optimized IR can make the address observable outside
+// compiler-controlled direct accesses. This is deliberately a structural
+// post-optimization decision: the frontend Addrtaken bit is provenance, not a
+// promise that prevents SROA or forces a surviving alloca to remain a stack
+// object.
+bool allocaNeedsStackObject(AllocaInst &Alloca) {
+  SmallVector<Value *, 16> Worklist{&Alloca};
+  SmallPtrSet<Value *, 16> Seen;
+  while (!Worklist.empty()) {
+    Value *Address = Worklist.pop_back_val();
+    if (!Seen.insert(Address).second)
+      continue;
+    for (User *U : Address->users()) {
+      auto *I = dyn_cast<Instruction>(U);
+      if (!I)
+        return true;
+
+      if (isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
+          isa<AddrSpaceCastInst>(I) || isa<PHINode>(I) || isa<SelectInst>(I) ||
+          isa<FreezeInst>(I)) {
+        if (!I->getType()->isPointerTy())
+          return true;
+        Worklist.push_back(I);
+        continue;
+      }
+      if (auto *Load = dyn_cast<LoadInst>(I)) {
+        if (Load->getPointerOperand() != Address || Load->isAtomic() ||
+            Load->isVolatile())
+          return true;
+        continue;
+      }
+      if (auto *Store = dyn_cast<StoreInst>(I)) {
+        if (Store->getPointerOperand() != Address ||
+            Store->getValueOperand() == Address || Store->isAtomic() ||
+            Store->isVolatile())
+          return true;
+        continue;
+      }
+      if (isa<ICmpInst>(I))
+        continue;
+      if (auto *Intrinsic = dyn_cast<IntrinsicInst>(I)) {
+        if (Intrinsic->isLifetimeStartOrEnd() ||
+            isa<DbgInfoIntrinsic>(Intrinsic) || isa<MemIntrinsic>(Intrinsic))
+          continue;
+        return true;
+      }
+      // Passing the address to even a captures(none), readonly, or GC-leaf
+      // call makes memory observable during the call. Storing/returning it,
+      // ptrtoint, inline asm, and every unknown use are likewise stack-object
+      // cases.
+      return true;
+    }
+  }
+  return false;
+}
+
+Error collectPointerAllocas(
+    Function &F, SmallVectorImpl<PointerAllocaRecord> &PointerAllocas) {
   bool HasSafepoint = llvm::any_of(instructions(F), [](Instruction &I) {
     auto *Call = dyn_cast<CallBase>(&I);
     return Call && !isa<GCStatepointInst>(Call) && !isLeafCall(*Call);
@@ -573,7 +613,7 @@ Error collectPointerAllocas(Function &F,
 
   const DataLayout &DL = F.getDataLayout();
   SmallVector<std::pair<AllocaInst *, SmallVector<PointerAllocaLeaf, 8>>, 8>
-      PointerAllocas;
+      AllocaLeaves;
   for (Instruction &I : instructions(F)) {
     auto *Alloca = dyn_cast<AllocaInst>(&I);
     if (!Alloca || !containsPointer(Alloca->getAllocatedType()))
@@ -598,9 +638,6 @@ Error collectPointerAllocas(Function &F,
           std::errc::not_supported,
           "GoALLC statepoints do not support realigned pointer-containing "
           "allocas");
-    if (Error Err = validatePointerAllocaAccesses(*Alloca, F))
-      return std::move(Err);
-
     SmallVector<PointerAllocaLeaf, 8> Leaves;
     SmallVector<unsigned, 4> Path;
     if (Error Err = enumeratePointerAllocaLeaves(Alloca->getAllocatedType(), DL,
@@ -628,39 +665,26 @@ Error collectPointerAllocas(Function &F,
             "GoALLC statepoint alloca pointer slots overlap");
       BitmapWords[Bit / 64] |= Mask;
     }
-    Records.push_back({Alloca, ByteSize, Alloca->getAlign().value(), BitCount,
-                       std::move(BitmapWords)});
-    PointerAllocas.push_back({Alloca, std::move(Leaves)});
+    Expected<bool> SourceAddressTaken = sourceMarkedAddressTaken(*Alloca);
+    if (!SourceAddressTaken)
+      return SourceAddressTaken.takeError();
+    // Consume the marker after the optimized use graph has been classified.
+    // In particular, a source Addrtaken alloca can be downgraded when all
+    // observable address uses disappeared during optimization.
+    Alloca->setMetadata(GoSourceAddressTakenMD, nullptr);
+    PointerAllocaRecord::Kind Kind =
+        allocaNeedsStackObject(*Alloca) ? PointerAllocaRecord::Kind::StackObject
+                                        : PointerAllocaRecord::Kind::LocalsOnly;
+    PointerAllocas.push_back({Alloca, Kind, ByteSize,
+                              Alloca->getAlign().value(), BitCount,
+                              std::move(BitmapWords)});
+    AllocaLeaves.push_back({Alloca, std::move(Leaves)});
   }
 
-  auto IsEligiblePointerAlloca = [&](const AllocaInst *Candidate) {
-    return llvm::any_of(PointerAllocas, [&](const auto &Entry) {
-      return Entry.first == Candidate;
-    });
-  };
-  for (Instruction &I : instructions(F)) {
-    if (!I.getType()->isPointerTy() ||
-        (!isa<PHINode>(I) && !isa<SelectInst>(I)))
-      continue;
-    bool TouchesPointerAlloca = llvm::any_of(I.operands(), [&](Value *Input) {
-      const AllocaInst *Alloca =
-          findAllocaForValue(Input, /*OffsetZero=*/false);
-      return Alloca && IsEligiblePointerAlloca(Alloca);
-    });
-    if (!TouchesPointerAlloca)
-      continue;
-    const AllocaInst *Alloca = findAllocaForValue(&I, /*OffsetZero=*/true);
-    if (!Alloca || !IsEligiblePointerAlloca(Alloca))
-      return createStringError(
-          std::errc::not_supported,
-          "GoALLC statepoints require pointer-containing alloca PHI/select "
-          "addresses to resolve to one zero-offset alloca");
-  }
-
-  // Pointer-containing Go stack objects must start with zero pointer words.
+  // Pointer-containing Go stack slots must start with zero pointer words.
   // This is object initialization, not statepoint root spilling: there is no
   // per-call load, relocation, or write-back in the alloca ptrmap model.
-  for (auto &[Alloca, Leaves] : PointerAllocas) {
+  for (auto &[Alloca, Leaves] : AllocaLeaves) {
     IRBuilder<> InitBuilder(Alloca->getNextNode());
     InitBuilder.SetCurrentDebugLocation(Alloca->getDebugLoc());
     for (const PointerAllocaLeaf &Leaf : Leaves) {
@@ -720,9 +744,9 @@ Error validateSafepoint(const SafepointRecord &Record) {
   return Error::success();
 }
 
-void appendAllocaPtrMapDeoptOperands(
-    IRBuilder<> &Builder, ArrayRef<PointerAllocaRecord> Allocas,
-    SmallVectorImpl<Value *> &Deopt) {
+void appendAllocaPtrMapDeoptOperands(IRBuilder<> &Builder,
+                                     ArrayRef<PointerAllocaRecord> Allocas,
+                                     SmallVectorImpl<Value *> &Deopt) {
   if (Allocas.empty())
     return;
   // ProtocolLength covers BEGIN through END, but not the trailing duplicate
@@ -739,7 +763,9 @@ void appendAllocaPtrMapDeoptOperands(
   AppendConstant(ProtocolLength);
   AppendConstant(Allocas.size());
   for (const PointerAllocaRecord &Alloca : Allocas) {
-    AppendConstant(GoObj::AllocaPtrMapRecordTag);
+    AppendConstant(Alloca.RecordKind == PointerAllocaRecord::Kind::StackObject
+                       ? GoObj::AllocaPtrMapStackObjectRecordTag
+                       : GoObj::AllocaPtrMapLocalsRecordTag);
     AppendConstant(10 + Alloca.BitmapWords.size());
     Deopt.push_back(Alloca.Alloca);
     AppendConstant(0); // First contract version describes the whole alloca.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -8,7 +9,8 @@ import tempfile
 
 
 BEGIN = 1195461697
-TAG = 1347703373
+LOCALS_TAG = 1280262988
+STACK_OBJECT_TAG = 1398033231
 END = 1095519299
 WORD_BITS = 64
 
@@ -73,7 +75,12 @@ def parse_protocol(bundle):
     for record_index in range(record_count):
         if cursor + 10 > len(tokens) - 1:
             fail(f"truncated record {record_index}: {bundle}")
-        if parse_i64(tokens[cursor], "record tag") != TAG:
+        tag = parse_i64(tokens[cursor], "record tag")
+        if tag == LOCALS_TAG:
+            kind = "locals"
+        elif tag == STACK_OBJECT_TAG:
+            kind = "stack_object"
+        else:
             fail(f"wrong record tag {record_index}: {bundle}")
         record_length = parse_i64(tokens[cursor + 1], "record length")
         base = tokens[cursor + 2]
@@ -97,6 +104,7 @@ def parse_protocol(bundle):
         ]
         records.append(
             (
+                kind,
                 base.removeprefix("ptr %"),
                 byte_offset,
                 byte_size,
@@ -140,53 +148,70 @@ def expect_records(ir, function_name, expected, expected_prefixes=None):
     return function
 
 
-def record(base, size, bits, words):
-    return (base, 0, size, 8, 8, bits, WORD_BITS, tuple(words))
+def record(kind, base, size, bits, words):
+    return (kind, base, 0, size, 8, 8, bits, WORD_BITS, tuple(words))
 
 
 def check_rewritten_ir(ir):
-    if "llvm.statepoint.fixed_stack_home" in ir:
-        fail("obsolete fixed-stack-home metadata survived")
-    if re.search(r"\.gc\.leaf(?:\.[0-9]+)*\.root", ir):
-        fail("alloca pointer leaf was preloaded as an SSA root")
-
     statepoints = re.findall(r"@llvm\.experimental\.gc\.statepoint", ir)
     # Seventeen calls plus the intrinsic declaration.
     if len(statepoints) != 18:
         fail(f"found {len(statepoints) - 1} statepoints, want 17")
     if len(re.findall(r'"deopt"\(', ir)) != 17:
-        fail("not every ordinary safepoint carries an alloca record")
+        fail("pointer allocas do not have seventeen deopt records")
+    if "llvm.statepoint.fixed_stack_home" in ir:
+        fail("obsolete fixed-home metadata remains in rewritten IR")
 
     null_initializers = re.findall(r"^\s*store ptr null, ptr ", ir, re.MULTILINE)
     if len(null_initializers) != 17:
         fail(f"found {len(null_initializers)} null initializers, want 17")
 
-    one = [record("slot", 8, 1, [1])]
-    expect_records(ir, "pointer_slot", [one], [["i64 7"]])
-    expect_records(ir, "nested_whole_aggregate", [
-        [record("slot", 48, 6, [0b101001])]
-    ])
-    expect_records(ir, "alloca_call_skip", [one])
-    expect_records(ir, "alloca_multiple_calls", [one, one])
-    expect_records(ir, "alloca_loop", [one])
-    expect_records(ir, "alloca_gep_address_across_call", [
-        [record("slot", 16, 2, [0b10])]
-    ])
-    escaped = expect_records(ir, "alloca_address_passed_to_callee", [one])
-    expect_records(ir, "alloca_uninitialized_at_safepoint", [one])
-    expect_records(ir, "alloca_high_bitmap_word", [[
-        record("slot", 512, 64, [1 << 63])
-    ]])
-    expect_records(ir, "alloca_multiple_records", [[
-        record("left", 8, 1, [1]),
-        record("right", 8, 1, [1]),
-    ]])
-    selected = expect_records(ir, "alloca_select_same_base", [one])
-    if '"gc-live"(ptr %selected)' in selected or "%selected.relocated" in selected:
-        fail("proven same-base alloca select was treated as a heap root")
-    expect_records(ir, "alloca_nocapture_writable", [one])
-    expect_records(ir, "alloca_escaped_before_unknown_write", [one, one])
-    expect_records(ir, "alloca_readonly_and_readnone", [one, one])
+    locals_one = [record("locals", "slot", 8, 1, [1])]
+    stack_one = [record("stack_object", "slot", 8, 1, [1])]
+    expect_records(ir, "pointer_slot", [stack_one], [["i64 7"]])
+    expect_records(
+        ir,
+        "nested_whole_aggregate",
+        [[record("locals", "slot", 48, 6, [0x29])]],
+    )
+    expect_records(ir, "alloca_call_skip", [locals_one])
+    expect_records(ir, "alloca_multiple_calls", [locals_one, locals_one])
+    expect_records(ir, "alloca_loop", [locals_one])
+    expect_records(
+        ir,
+        "alloca_gep_address_across_call",
+        [[record("locals", "slot", 16, 2, [0x2])]],
+    )
+    expect_records(ir, "alloca_uninitialized_at_safepoint", [locals_one])
+    expect_records(
+        ir,
+        "alloca_high_bitmap_word",
+        [[record("locals", "slot", 512, 64, [1 << 63])]],
+    )
+    expect_records(
+        ir,
+        "alloca_multiple_records",
+        [[
+            record("locals", "left", 8, 1, [1]),
+            record("locals", "right", 8, 1, [1]),
+        ]],
+    )
+    expect_records(ir, "alloca_select_same_base", [locals_one])
+
+    escaped = expect_records(
+        ir, "alloca_address_passed_to_callee", [stack_one]
+    )
+    expect_records(ir, "alloca_nocapture_writable", [stack_one])
+    expect_records(
+        ir, "alloca_escaped_before_unknown_write", [stack_one, stack_one]
+    )
+    expect_records(
+        ir, "alloca_readonly_and_readnone", [stack_one, stack_one]
+    )
+
+    selected = function_body(ir, "alloca_select_same_base")
+    if '"gc-live"(ptr %selected' not in selected or "%selected.relocated" not in selected:
+        fail("alloca-address select is not represented as an ordinary live pointer")
 
     if "gc.relocate" in escaped or ".relocated" in escaped:
         fail("callee-writable alloca received a relocated write-back")
@@ -197,13 +222,36 @@ def check_rewritten_ir(ir):
     relocates = re.findall(
         r"= call coldcc ptr @llvm\.experimental\.gc\.relocate", ir
     )
-    if len(relocates) != 1:
-        fail(f"found {len(relocates)} scalar relocates, want 1")
+    if len(relocates) != 2:
+        fail(f"found {len(relocates)} scalar relocates, want 2")
     uninitialized = function_body(ir, "alloca_uninitialized_at_safepoint")
-    if '"gc-live"(ptr %pointer)' not in uninitialized:
+    if '"gc-live"(ptr %pointer' not in uninitialized:
         fail("ordinary scalar SSA pointer is missing from gc-live")
     if "%pointer.relocated" not in uninitialized:
         fail("ordinary scalar SSA pointer was not relocated")
+
+
+def check_objview(objview, object_path):
+    document = json.loads(run([objview, "-format=json", object_path]))
+    symbols = document["members"][0]["go_object"]["symbols"]
+
+    def funcdata_kinds(name):
+        matches = [symbol for symbol in symbols if symbol.get("name") == name]
+        if len(matches) != 1 or not matches[0].get("function"):
+            fail(f"objview did not find one function symbol {name}")
+        return [entry["kind"] for entry in matches[0]["function"]["funcdata"]]
+
+    locals_kinds = funcdata_kinds("alloca_multiple_calls")
+    if "locals_pointer_maps" not in locals_kinds:
+        fail("locals-only alloca has no LocalsPointerMaps")
+    if "stack_objects" in locals_kinds:
+        fail("locals-only alloca unexpectedly emitted StackObjects")
+
+    stack_object_kinds = funcdata_kinds("alloca_address_passed_to_callee")
+    if "locals_pointer_maps" not in stack_object_kinds:
+        fail("address-observable alloca has no LocalsPointerMaps")
+    if "stack_objects" not in stack_object_kinds:
+        fail("address-observable alloca has no StackObjects")
 
 
 def main():
@@ -212,6 +260,7 @@ def main():
     parser.add_argument("--opt", required=True)
     parser.add_argument("--plugin", required=True)
     parser.add_argument("--input", required=True)
+    parser.add_argument("--objview")
     args = parser.parse_args()
 
     rewritten = run(
@@ -241,19 +290,33 @@ def main():
         optimized = run(
             [
                 args.opt,
-                f"-load-pass-plugin={args.plugin}",
                 "-passes=default<O2>,verify",
                 "-S",
                 "-o",
                 "-",
+                args.input,
+            ]
+        )
+        optimized_rewritten = run(
+            [
+                args.llc,
+                f"-load-pass-plugin={args.plugin}",
+                "-goallc-pass-plugin-emit-ir",
+                "-filetype=null",
+                "-o",
+                "-",
                 "-",
             ],
-            input_text=rewritten,
+            input_text=optimized,
         )
-        if len(re.findall(r'"deopt"\(', optimized)) != 17:
-            fail("default<O2> did not preserve all alloca records")
-        if "i64 -9223372036854775808" not in optimized:
-            fail("default<O2> did not preserve the high bitmap word")
+        if len(re.findall(r'"deopt"\(', optimized_rewritten)) != 7:
+            fail("default<O2> did not preserve stack-object records")
+        if "goallc.source_addrtaken" in optimized_rewritten:
+            fail("source address-taken provenance escaped final classification")
+        if "alloca %nested" in function_body(
+            optimized_rewritten, "nested_whole_aggregate"
+        ):
+            fail("source address-taken provenance prevented SROA")
 
         machine_ir = run(
             [
@@ -269,11 +332,17 @@ def main():
         statepoint_lines = re.findall(r"(?m)^.*STATEPOINT.*$", machine_ir)
         if len(statepoint_lines) != 17:
             fail(f"MIR has {len(statepoint_lines)} statepoints, want 17")
-        for statepoint in statepoint_lines:
-            if str(BEGIN) not in statepoint or str(TAG) not in statepoint:
-                fail(f"MIR statepoint lost the alloca record: {statepoint}")
-            if "%stack." not in statepoint:
-                fail(f"MIR record has no direct frame index: {statepoint}")
+        alloca_statepoints = [
+            line for line in statepoint_lines if str(BEGIN) in line
+        ]
+        if len(alloca_statepoints) != 17:
+            fail("MIR does not contain seventeen alloca statepoints")
+        for statepoint in alloca_statepoints:
+            if (
+                str(LOCALS_TAG) not in statepoint
+                and str(STACK_OBJECT_TAG) not in statepoint
+            ) or "%stack." not in statepoint:
+                fail(f"MIR alloca record is malformed: {statepoint}")
 
         output = f"{directory}/alloca-pointer-roots.goobj"
         run(
@@ -287,6 +356,8 @@ def main():
                 args.input,
             ]
         )
+        if args.objview:
+            check_objview(args.objview, output)
         optimized_output = f"{directory}/alloca-pointer-roots-o2.goobj"
         run(
             [

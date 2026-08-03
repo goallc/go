@@ -495,9 +495,11 @@ cmake --install "$PLUGIN_BUILD"
 
 插件 core 在 Go 仓库中实现 Go ABI 函数的 pointer liveness、稳定 safepoint
 ID、`gc.statepoint` / `gc.relocate` 和 GC leaf 识别。当前 pointer 分类保守
-且不依赖 addrspace；活跃的 `alloca` 地址和 alloca-derived pointer 都加入
-`gc-live`，由最终 Machine StackMaps 位置决定是否形成 Go pointer bit。live
-aggregate、EH invoke、musttail 等未覆盖形态会 fail closed。未来
+且不依赖 addrspace。合并后的 `alloca` 地址通过普通 `gc-live` 搬迁；固定
+pointer-containing alloca 则在 LLVM 优化后按实际 use graph 分为两类，并统一
+通过带 kind 的 deopt 布局协议进入 `LocalsPointerMaps`，只有地址可观察对象额外
+生成 `FUNCDATA_StackObjects`。live aggregate、EH invoke、
+musttail 等未覆盖形态会 fail closed。未来
 `cmd/compile` 通过 API 进程内集成 LLVM 时复用同一 core，而不依赖 `llc`
 plugin adapter。
 
@@ -512,9 +514,13 @@ PCDATA_StackMapIndex 区间与 Go 的 call-site 约定一致；`runtime.morestac
 `PCDATA_UnsafePoint`/restart-at-entry 实现覆盖。当前
 `Indirect [SP+offset]` 生成
 locals pointer bit，`Direct SP+offset` 只表示可重建的栈地址、不置位；追踪
-alloca 地址不等于已经描述 alloca 对象内部的指针字段。第一阶段 ArgsPointerMaps
-仍是与 locals map 索引数对齐的空表，StackObjects 尚未实现；两者作为后续 P0，
-不能把当前输出解释为完整 Go ABI 参数图。
+alloca 地址不等于已经描述 alloca 对象内部的指针字段。两类对象的 deopt 记录都
+由 GoObj writer 严格解析并加入对应 `LocalsPointerMaps`；`StackObject` kind 还
+生成原生布局的 `FUNCDATA_StackObjects` 和 GC bitmap。StackObjects 本身不决定
+对象在某个 PC 是否存活，因此初始实现对两类对象都采用保守的 frame-lifetime
+locals bits。协议不合成 call 前 load、`gc.relocate` 或 call 后 write-back，也不
+新增 spill。
+精确 static-object liveness 和 `PCDATA_ArgLiveIndex` 仍待实现。
 
 验证 standalone binding：
 

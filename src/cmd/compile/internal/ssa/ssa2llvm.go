@@ -53,6 +53,7 @@ const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
 const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
+const goSourceAddressTakenMD = "goallc.source_addrtaken"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 
@@ -1549,6 +1550,19 @@ func LLVMCompile(f *Func) {
 			}
 			slot := FCtxt.b.CreateAlloca(getLLVMType(name.Type()), v.String())
 			slot.SetAlignment(int(name.Type().Alignment()))
+			if name.Type().HasPointers() {
+				// Preserve the frontend address-taken decision as provenance only.
+				// The pre-codegen statepoint pass reclassifies the surviving alloca
+				// from its optimized LLVM use graph, so this metadata neither keeps
+				// the alloca alive nor irrevocably makes it a Go stack object.
+				sourceAddressTaken := llvm.ConstInt(GlobalCtxt.Int1Type(), 0, false)
+				if name.Addrtaken() {
+					sourceAddressTaken = llvm.ConstInt(GlobalCtxt.Int1Type(), 1, false)
+				}
+				slot.SetMetadata(GlobalCtxt.MDKindID(goSourceAddressTakenMD), GlobalCtxt.MDNode([]llvm.Metadata{
+					sourceAddressTaken.ConstantAsMetadata(),
+				}))
+			}
 			FCtxt.Locals[key] = llvmStackSlot{Value: slot, Type: name.Type()}
 			if name.Class == ir.PPARAM {
 				parameterHomes = append(parameterHomes, v)

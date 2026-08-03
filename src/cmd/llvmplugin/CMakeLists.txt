@@ -384,6 +384,11 @@ if(BUILD_TESTING)
       "do not support vectors inside live pointer aggregates"
   )
 
+  set(GOALLC_ALLOCA_POINTER_ROOTS_EXTRA_ARGS)
+  if(GOALLC_OBJVIEW_EXECUTABLE)
+    list(APPEND GOALLC_ALLOCA_POINTER_ROOTS_EXTRA_ARGS
+      --objview "${GOALLC_OBJVIEW_EXECUTABLE}")
+  endif()
   add_test(
     NAME GoALLCStatepoints.AllocaPointerRoots
     COMMAND
@@ -394,6 +399,7 @@ if(BUILD_TESTING)
       --plugin "$<TARGET_FILE:GoALLCStatepoints>"
       --input
         "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-roots.ll"
+      ${GOALLC_ALLOCA_POINTER_ROOTS_EXTRA_ARGS}
   )
 
   add_test(
@@ -406,16 +412,13 @@ if(BUILD_TESTING)
   )
 
   add_test(
-    NAME GoALLCStatepoints.PointerAllocaSelectFails
+    NAME GoALLCStatepoints.PointerAllocaSelectSupported
     COMMAND
-      "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
-      --llc "${GOALLC_LLC_EXECUTABLE}"
-      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
-      --input
-        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-select-unsupported.ll"
-      --contains
-      "require pointer-containing alloca PHI/select addresses to resolve to one zero-offset alloca"
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=null
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-select-unsupported.ll"
   )
 
   add_test(
@@ -471,29 +474,23 @@ if(BUILD_TESTING)
   )
 
   add_test(
-    NAME GoALLCStatepoints.PointerAllocaLifetimeFails
+    NAME GoALLCStatepoints.PointerAllocaLifetimeSupported
     COMMAND
-      "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
-      --llc "${GOALLC_LLC_EXECUTABLE}"
-      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
-      --input
-        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-lifetime-unsupported.ll"
-      --contains
-      "do not support lifetime markers on pointer-containing allocas"
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=null
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-lifetime-unsupported.ll"
   )
 
   add_test(
-    NAME GoALLCStatepoints.VolatilePointerAllocaFails
+    NAME GoALLCStatepoints.VolatilePointerAllocaSupported
     COMMAND
-      "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-statepoint-failure.py"
-      --llc "${GOALLC_LLC_EXECUTABLE}"
-      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
-      --input
-        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-volatile-unsupported.ll"
-      --contains
-      "do not support volatile or atomic access to pointer-containing allocas"
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=null
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-volatile-unsupported.ll"
   )
 
   add_test(
