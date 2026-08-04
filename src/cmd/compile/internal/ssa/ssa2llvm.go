@@ -1227,7 +1227,18 @@ func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvm
 		v.Fatalf("%s has unexpected raw call signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
 	}
 	for i := int64(0); i < pointerArgs; i++ {
-		if int(i) >= len(v.Args)-1 || v.Args[i].Type == nil || !v.Args[i].Type.IsPtrShaped() {
+		if int(i) >= len(v.Args)-1 || v.Args[i].Type == nil {
+			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
+		}
+		pointerShaped := v.Args[i].Type.IsPtrShaped()
+		// Write-barrier calls carry the type descriptor as Addr<uintptr> in
+		// Go SSA because AuxCall uses uintptr for its physical ABI assignment.
+		// OpAddr still lowers directly to an LLVM pointer, just like the
+		// pointer-shaped destination and source operands.
+		writeBarrierTypeAddr := i == 0 &&
+			(aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove) &&
+			v.Args[i].Op == OpAddr && v.Args[i].Type.IsUintptr()
+		if !pointerShaped && !writeBarrierTypeAddr {
 			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
 		}
 		if typ := aux.TypeOfArg(i); typ == nil || !typ.IsUintptr() {
