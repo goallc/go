@@ -118,6 +118,24 @@ func llvmValueRefs(values []Value) (*C.LLVMValueRef, C.unsigned) {
 	return pt, ptlen
 }
 
+func llvmTypeRefs(types []Type) (*C.LLVMTypeRef, C.size_t) {
+	var pt *C.LLVMTypeRef
+	ptlen := C.size_t(len(types))
+	if ptlen > 0 {
+		pt = llvmTypeRefPtr(&types[0])
+	}
+	return pt, ptlen
+}
+
+func llvmBasicBlockRefs(blocks []BasicBlock) (*C.LLVMBasicBlockRef, C.unsigned) {
+	var pt *C.LLVMBasicBlockRef
+	ptlen := C.unsigned(len(blocks))
+	if ptlen > 0 {
+		pt = llvmBasicBlockRefPtr(&blocks[0])
+	}
+	return pt, ptlen
+}
+
 func llvmMetadataRefs(mds []Metadata) (*C.LLVMMetadataRef, C.unsigned) {
 	var pt *C.LLVMMetadataRef
 	ptlen := C.unsigned(len(mds))
@@ -1075,6 +1093,19 @@ func NextFunction(v Value) (rv Value)      { rv.C = C.LLVMGetNextFunction(v.C); 
 func PrevFunction(v Value) (rv Value)      { rv.C = C.LLVMGetPreviousFunction(v.C); return }
 func (v Value) EraseFromParentAsFunction() { C.LLVMDeleteFunction(v.C) }
 func (v Value) IntrinsicID() int           { return int(C.LLVMGetIntrinsicID(v.C)) }
+
+func LookupIntrinsicID(name string) uint {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	return uint(C.LLVMLookupIntrinsicID(cname, C.size_t(len(name))))
+}
+
+func GetIntrinsicDeclaration(m Module, id uint, overloadTypes []Type) (v Value) {
+	types, ntypes := llvmTypeRefs(overloadTypes)
+	v.C = C.LLVMGetIntrinsicDeclaration(m.C, C.unsigned(id), types, ntypes)
+	return
+}
+
 func (v Value) FunctionCallConv() CallConv {
 	return CallConv(C.LLVMCallConv(C.LLVMGetFunctionCallConv(v.C)))
 }
@@ -1369,6 +1400,15 @@ func (b Builder) CreateSwitch(v Value, elseb BasicBlock, numCases int) (rv Value
 }
 func (b Builder) CreateIndirectBr(addr Value, numDests int) (rv Value) {
 	rv.C = C.LLVMBuildIndirectBr(b.C, addr.C, C.unsigned(numDests))
+	return
+}
+func (b Builder) CreateCallBr(t Type, fn Value, args []Value, defaultDest BasicBlock, indirectDests []BasicBlock, name string) (rv Value) {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	dests, ndests := llvmBasicBlockRefs(indirectDests)
+	callArgs, nargs := llvmValueRefs(args)
+	rv.C = C.LLVMBuildCallBr(b.C, t.C, fn.C, defaultDest.C, dests, ndests,
+		callArgs, nargs, nil, 0, cname)
 	return
 }
 func (b Builder) CreateInvoke(t Type, fn Value, args []Value, then, catch BasicBlock, name string) (rv Value) {

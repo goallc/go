@@ -395,6 +395,11 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 
 	s.hasOpenDefers = base.Flag.N == 0 && s.hasdefer && !s.curfn.OpenCodedDeferDisallowed()
 	switch {
+	case base.Flag.EnableLLVM:
+		// The first LLVM defer implementation models the runtime registration
+		// calls and their recovery edges directly. Open-coded defers additionally
+		// require bitmap and FUNCDATA lowering, so keep them on the classic path.
+		s.hasOpenDefers = false
 	case base.Debug.NoOpenDefer != 0:
 		s.hasOpenDefers = false
 	case s.hasOpenDefers && (base.Ctxt.Flag_shared || base.Ctxt.Flag_dynlink) && base.Ctxt.Arch.Name == "386":

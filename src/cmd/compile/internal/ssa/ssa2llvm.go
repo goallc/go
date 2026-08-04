@@ -61,6 +61,7 @@ const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
 const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
+const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
 const goSourceAddressTakenMD = "goallc.source_addrtaken"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
@@ -260,6 +261,14 @@ func getOrInsertLLVMIntrinsic(name string, typ llvm.Type) llvm.Value {
 		base.Fatalf("conflicting LLVM intrinsic type for %s", name)
 	}
 	return fn
+}
+
+func getLLVMIntrinsicDeclaration(name string) llvm.Value {
+	id := llvm.LookupIntrinsicID(name)
+	if id == 0 {
+		base.Fatalf("unknown LLVM intrinsic %s", name)
+	}
+	return llvm.GetIntrinsicDeclaration(CurrentModule, id, nil)
 }
 
 func (lfc *LLVMFuncContext) llvmLifetimeStart(slot llvmStackSlot) {
@@ -1194,13 +1203,20 @@ func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvm
 		return sig
 	}
 	wantArgs := int64(0)
+	pointerArgs := int64(0)
 	switch aux.Fn {
-	case ir.Syms.Newproc:
+	case ir.Syms.Newproc, ir.Syms.Deferproc, ir.Syms.DeferprocStack:
 		wantArgs = 1
+		pointerArgs = 1
+	case ir.Syms.Deferprocat:
+		wantArgs = 2
+		pointerArgs = 1
 	case ir.Syms.WBZero:
 		wantArgs = 2
+		pointerArgs = wantArgs
 	case ir.Syms.WBMove:
 		wantArgs = 3
+		pointerArgs = wantArgs
 	default:
 		return sig
 	}
@@ -1210,16 +1226,16 @@ func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvm
 	if aux.NArgs() != wantArgs || aux.NResults() != 0 {
 		v.Fatalf("%s has unexpected raw call signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
 	}
-	if aux.Fn == ir.Syms.Newproc && (len(v.Args) != 2 || v.Args[0].Type == nil || !v.Args[0].Type.IsPtrShaped()) {
-		v.Fatalf("runtime.newproc argument is not pointer-shaped")
-	}
-	for i := int64(0); i < aux.NArgs(); i++ {
+	for i := int64(0); i < pointerArgs; i++ {
+		if int(i) >= len(v.Args)-1 || v.Args[i].Type == nil || !v.Args[i].Type.IsPtrShaped() {
+			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
+		}
 		if typ := aux.TypeOfArg(i); typ == nil || !typ.IsUintptr() {
 			v.Fatalf("argument %d to %s is not raw uintptr", i, aux.Fn.Name)
 		}
 	}
 	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
-	for i := range params {
+	for i := int64(0); i < pointerArgs; i++ {
 		params[i] = GlobalCtxt.PointerType(0)
 	}
 	sig.Type = llvm.FunctionType(sig.ReturnType, params, false)
@@ -2027,6 +2043,17 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 	case BlockIf:
 		cond := lfc.llvmCondition(lfc.GenLV(BB.Controls[0]), BB.String()+".cond")
 		lfc.b.CreateCondBr(cond, lfc.BBs[BB.Succs[0].Block().ID], lfc.BBs[BB.Succs[1].Block().ID])
+	case BlockDefer:
+		if len(BB.Succs) != 2 || BB.NumControls() != 1 || !BB.Controls[0].Type.IsMemory() {
+			BB.Func.fe.Fatalf(BB.Pos, "invalid LLVM defer block %s", BB)
+		}
+		deferEdge := getLLVMIntrinsicDeclaration(goDeferEdgeIntrinsic)
+		lfc.b.CreateCallBr(
+			deferEdge.GlobalValueType(), deferEdge, nil,
+			lfc.BBs[BB.Succs[0].Block().ID],
+			[]llvm.BasicBlock{lfc.BBs[BB.Succs[1].Block().ID]},
+			"",
+		)
 	case BlockPlain:
 		lfc.b.CreateBr(lfc.BBs[BB.Succs[0].Block().ID])
 	case BlockExit:
@@ -2132,6 +2159,7 @@ func LLVMCompile(f *Func) {
 	}
 	FCtxt.LF.SetGC(goGCStrategy)
 	setGoObjFunctionFlags(FCtxt.LF, f.OwnAux.Fn)
+	setGoObjFunctionInfo(FCtxt.LF, f.OwnAux.Fn)
 	inParams := f.OwnAux.ABIInfo().InParams()
 	if got, want := len(inParams), int(f.OwnAux.NArgs()); got != want {
 		f.fe.Fatalf(f.Entry.Pos, "LLVM parameter metadata count %d does not match signature count %d for %s", got, want, f.Name)

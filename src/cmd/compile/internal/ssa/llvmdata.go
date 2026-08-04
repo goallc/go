@@ -520,6 +520,24 @@ func setGoObjFunctionFlags(fn llvm.Value, s *obj.LSym) {
 	}))
 }
 
+// FuncIDWrapper is part of recover's semantic stack walk: a deferred-call
+// wrapper must not count as an extra frame between gopanic and recover. Carry
+// both FuncID and FuncFlag into LLVM so the GoObj writer can reproduce the
+// native compiler's FuncInfo record.
+func setGoObjFunctionInfo(fn llvm.Value, s *obj.LSym) {
+	info := s.Func()
+	if info == nil {
+		base.Fatalf("missing Go function info for %s", s.Name)
+	}
+	if info.FuncID == 0 && info.FuncFlag == 0 {
+		return
+	}
+	fn.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.func.info"), GlobalCtxt.MDNode([]llvm.Metadata{
+		llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(info.FuncID), false).ConstantAsMetadata(),
+		llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(info.FuncFlag), false).ConstantAsMetadata(),
+	}))
+}
+
 // LLVM can express the address relationship but not GoObj's 32-bit section
 // offsets. Record the object-format-specific relocation type explicitly;
 // weakness remains orthogonal in !goobj.weak_relocs.

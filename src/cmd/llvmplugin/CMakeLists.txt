@@ -83,6 +83,34 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.DeferEdge
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/defer-edge.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.DeferEdge PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "callbr void @llvm.go.defer.edge"
+    FAIL_REGULAR_EXPRESSION
+      "GoALLC statepoints do not yet support invoke or callbr;call goabiinternal void @runtime.deferproc"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.DeferEdgeGoObj
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=obj
+      -o "${CMAKE_CURRENT_BINARY_DIR}/defer-edge.goobj"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/defer-edge.ll"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.FrontendMarkersPreserved
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"
@@ -282,6 +310,18 @@ if(BUILD_TESTING)
         "GOALLC_OBJVIEW_EXECUTABLE does not exist: "
         "${GOALLC_OBJVIEW_EXECUTABLE}")
     endif()
+    add_test(
+      NAME GoALLCStatepoints.DeferEdgeObjView
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-defer-edge.py"
+        --objview "${GOALLC_OBJVIEW_EXECUTABLE}"
+        --object "${CMAKE_CURRENT_BINARY_DIR}/defer-edge.goobj"
+    )
+    set_tests_properties(GoALLCStatepoints.DeferEdgeObjView PROPERTIES
+      DEPENDS GoALLCStatepoints.DeferEdgeGoObj
+    )
+
     add_test(
       NAME GoALLCStatepoints.MultipleCallsObjView
       COMMAND
