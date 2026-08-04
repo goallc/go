@@ -71,7 +71,8 @@
       "codegen/structs.go": "typed struct initialization and zeroing",
       "codegen/type_descriptor.go": "compiler-owned runtime type descriptor data and GoObj metadata",
       "codegen/type_descriptor_kinds.go": "all runtime type descriptor layouts and variable descriptor data",
-      "codegen/type_descriptor_methods.go": "uncommon type data, concrete method tables, wrappers, and R_METHODOFF"
+      "codegen/type_descriptor_methods.go": "uncommon type data, concrete method tables, wrappers, and R_METHODOFF",
+      "codegen/mathbits.go": "trailing-zero and population-count intrinsics plus complete integer bit-operation lowering"
     },
     "blacklist": {
       "codegen/*": "LLVM lowering support has not reached this complete source file yet"

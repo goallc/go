@@ -6,6 +6,9 @@
 
 package codegen
 
+// LLVM-DAG: call i64 @llvm.cttz.i64(i64 %{{.*}}, i1 false)
+// LLVM-DAG: call i16 @llvm.ctpop.i16(i16 %{{.*}})
+
 import (
 	"math/bits"
 	"unsafe"

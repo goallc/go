@@ -445,6 +445,73 @@ func (lfc *LLVMFuncContext) bitLen(v *Value) llvm.Value {
 	}
 }
 
+func (lfc *LLVMFuncContext) trailingZeros(v *Value) llvm.Value {
+	x := lfc.GenLV(v.Args[0])
+	if x.Type().TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("%s has a non-integer LLVM operand", v.Op)
+	}
+	bits := x.Type().IntTypeWidth()
+	if bits != 8 && bits != 16 && bits != 32 && bits != 64 {
+		v.Fatalf("%s has unsupported operand width %d", v.Op, bits)
+	}
+
+	i1 := GlobalCtxt.Int1Type()
+	sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type(), i1}, false)
+	fn := getOrInsertLLVMIntrinsic("llvm.cttz.i"+fmt.Sprint(bits), sig)
+	isZeroPoison := v.Op == OpCtz8NonZero || v.Op == OpCtz16NonZero ||
+		v.Op == OpCtz32NonZero || v.Op == OpCtz64NonZero
+	zeroPoisonFlag := uint64(0)
+	if isZeroPoison {
+		zeroPoisonFlag = 1
+	}
+	trailing := lfc.b.CreateCall(sig, fn, []llvm.Value{
+		x,
+		llvm.ConstInt(i1, zeroPoisonFlag, false),
+	}, v.String()+".trailing")
+
+	want := getLLVMType(v.Type)
+	if want.TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("%s has a non-integer LLVM result", v.Op)
+	}
+	switch {
+	case bits < want.IntTypeWidth():
+		return lfc.b.CreateZExt(trailing, want, v.String())
+	case bits > want.IntTypeWidth():
+		return lfc.b.CreateTrunc(trailing, want, v.String())
+	default:
+		trailing.SetName(v.String())
+		return trailing
+	}
+}
+
+func (lfc *LLVMFuncContext) populationCount(v *Value) llvm.Value {
+	x := lfc.GenLV(v.Args[0])
+	if x.Type().TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("%s has a non-integer LLVM operand", v.Op)
+	}
+	bits := x.Type().IntTypeWidth()
+	if bits != 8 && bits != 16 && bits != 32 && bits != 64 {
+		v.Fatalf("%s has unsupported operand width %d", v.Op, bits)
+	}
+
+	sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type()}, false)
+	fn := getOrInsertLLVMIntrinsic("llvm.ctpop.i"+fmt.Sprint(bits), sig)
+	count := lfc.b.CreateCall(sig, fn, []llvm.Value{x}, v.String()+".count")
+	want := getLLVMType(v.Type)
+	if want.TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("%s has a non-integer LLVM result", v.Op)
+	}
+	switch {
+	case bits < want.IntTypeWidth():
+		return lfc.b.CreateZExt(count, want, v.String())
+	case bits > want.IntTypeWidth():
+		return lfc.b.CreateTrunc(count, want, v.String())
+	default:
+		count.SetName(v.String())
+		return count
+	}
+}
+
 func (lfc *LLVMFuncContext) byteSwap(v *Value) llvm.Value {
 	x := lfc.GenLV(v.Args[0])
 	if x.Type().TypeKind() != llvm.IntegerTypeKind {
@@ -1722,6 +1789,11 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.bitreverse.i"+fmt.Sprint(resultType.IntTypeWidth()))
 	case OpBitLen64, OpBitLen32, OpBitLen16, OpBitLen8:
 		lVal = lfc.bitLen(v)
+	case OpCtz64, OpCtz32, OpCtz16, OpCtz8,
+		OpCtz64NonZero, OpCtz32NonZero, OpCtz16NonZero, OpCtz8NonZero:
+		lVal = lfc.trailingZeros(v)
+	case OpPopCount64, OpPopCount32, OpPopCount16, OpPopCount8:
+		lVal = lfc.populationCount(v)
 	case OpCondSelect:
 		x, y := arg0(), arg1()
 		if x.Type() != y.Type() || x.Type() != getLLVMType(v.Type) {

@@ -39,6 +39,55 @@ func llvmBitLen32(x uint32) int {
 	return bits.Len32(x)
 }
 
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmTrailingZeros64(i64 %x)
+// LLVM-DAG: call i64 @llvm.cttz.i64(i64 %x, i1 false)
+func llvmTrailingZeros64(x uint64) int {
+	return bits.TrailingZeros64(x)
+}
+
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmTrailingZeros32(i32 %x)
+// LLVM-DAG: call i32 @llvm.cttz.i32(i32 %x, i1 false)
+// LLVM-DAG: zext i32 %{{.*}} to i64
+func llvmTrailingZeros32(x uint32) int {
+	return bits.TrailingZeros32(x)
+}
+
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmTrailingZeros16(i16 %x)
+// LLVM-DAG: call i16 @llvm.cttz.i16(i16 %x, i1 false)
+// LLVM-DAG: zext i16 %{{.*}} to i64
+func llvmTrailingZeros16(x uint16) int {
+	return bits.TrailingZeros16(x)
+}
+
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmTrailingZeros8(i8 %x)
+// LLVM-DAG: call i8 @llvm.cttz.i8(i8 %x, i1 false)
+// LLVM-DAG: zext i8 %{{.*}} to i64
+func llvmTrailingZeros8(x uint8) int {
+	return bits.TrailingZeros8(x)
+}
+
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmTrailingZeros64NonZero(i64 %x)
+// LLVM-DAG: call i64 @llvm.cttz.i64(i64 %x, i1 true)
+func llvmTrailingZeros64NonZero(x uint64) int {
+	if x == 0 {
+		return -1
+	}
+	return bits.TrailingZeros64(x)
+}
+
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmPopulationCount64(i64 %x)
+// LLVM-DAG: call i64 @llvm.ctpop.i64(i64 %x)
+func llvmPopulationCount64(x uint64) int {
+	return bits.OnesCount64(x)
+}
+
+// LLVM-DAG: define goabiinternal i64 @codegen.llvmPopulationCount16(i16 %x)
+// LLVM-DAG: call i16 @llvm.ctpop.i16(i16 %x)
+// LLVM-DAG: zext i16 %{{.*}} to i64
+func llvmPopulationCount16(x uint16) int {
+	return bits.OnesCount16(x)
+}
+
 // LLVM-DAG: define goabiinternal i64 @codegen.llvmCondSelect(i64 %{{.*}}, i64 %{{.*}}, i64 %{{.*}})
 // LLVM-DAG: select i1 %{{.*}}, i64 %{{.*}}, i64 %{{.*}}
 func llvmCondSelect(cond, x, y int) int {

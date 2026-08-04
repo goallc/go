@@ -84,6 +84,46 @@ func bitLen32(x uint32) int {
 }
 
 //go:noinline
+func trailingZeros64(x uint64) int {
+	return bits.TrailingZeros64(x)
+}
+
+//go:noinline
+func trailingZeros32(x uint32) int {
+	return bits.TrailingZeros32(x)
+}
+
+//go:noinline
+func trailingZeros16(x uint16) int {
+	return bits.TrailingZeros16(x)
+}
+
+//go:noinline
+func trailingZeros8(x uint8) int {
+	return bits.TrailingZeros8(x)
+}
+
+//go:noinline
+func populationCount64(x uint64) int {
+	return bits.OnesCount64(x)
+}
+
+//go:noinline
+func populationCount32(x uint32) int {
+	return bits.OnesCount32(x)
+}
+
+//go:noinline
+func populationCount16(x uint16) int {
+	return bits.OnesCount16(x)
+}
+
+//go:noinline
+func populationCount8(x uint8) int {
+	return bits.OnesCount8(x)
+}
+
+//go:noinline
 func add64Carry(x, y, carry uint64) (uint64, uint64) {
 	return bits.Add64(x, y, carry)
 }
@@ -196,6 +236,16 @@ func main() {
 	}
 	if bitLen64(0) != 0 || bitLen64(1<<63) != 64 || bitLen32(1<<31) != 32 {
 		panic("bit length semantics")
+	}
+	if trailingZeros64(0) != 64 || trailingZeros64(1<<63) != 63 ||
+		trailingZeros32(0) != 32 || trailingZeros32(1<<31) != 31 ||
+		trailingZeros16(0) != 16 || trailingZeros16(1<<15) != 15 ||
+		trailingZeros8(0) != 8 || trailingZeros8(1<<7) != 7 {
+		panic("trailing zero semantics")
+	}
+	if populationCount64(^uint64(0)) != 64 || populationCount32(0xf0f0) != 8 ||
+		populationCount16(0xaaaa) != 8 || populationCount8(0xf3) != 6 {
+		panic("population count semantics")
 	}
 	if sum, carry := add64Carry(^uint64(0), 0, 1); sum != 0 || carry != 1 {
 		panic("add carry semantics")
