@@ -126,6 +126,23 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.ZeroLengthPointerArray
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-zero-pointer-array.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.ZeroLengthPointerArray PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "llvm.experimental.gc.statepoint"
+    FAIL_REGULAR_EXPRESSION
+      "pointer-aligned fixed alloca layouts"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.GCLeafMarkers
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"

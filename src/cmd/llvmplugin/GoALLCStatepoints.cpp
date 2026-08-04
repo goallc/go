@@ -132,7 +132,7 @@ bool containsPointer(Type *Ty) {
   if (auto *ST = dyn_cast<StructType>(Ty))
     return llvm::any_of(ST->elements(), containsPointer);
   if (auto *AT = dyn_cast<ArrayType>(Ty))
-    return containsPointer(AT->getElementType());
+    return AT->getNumElements() != 0 && containsPointer(AT->getElementType());
   if (auto *VT = dyn_cast<VectorType>(Ty))
     return containsPointer(VT->getElementType());
   return false;
