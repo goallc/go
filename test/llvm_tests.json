@@ -1153,6 +1153,13 @@
       "typeparam/mdempsky/16.go": "Darwin/arm64 blacklist probe qualified through LLVM compile, GoObj link, and execution",
       "typeparam/settable.go": "Darwin/arm64 blacklist probe qualified through LLVM compile, GoObj link, and execution",
       "unsafebuiltins.go": "Darwin/arm64 blacklist probe qualified through LLVM compile, GoObj link, and execution",
+      "cmp.go": "current statepoint payload qualified through LLVM compile, GoObj link, and execution",
+      "convert4.go": "current statepoint payload qualified through LLVM compile, GoObj link, and execution",
+      "ddd.go": "zero-length pointer-array stack layout qualified through LLVM compile, GoObj link, and execution",
+      "fixedbugs/issue16095.go": "current statepoint payload qualified through LLVM compile, GoObj link, and execution",
+      "fixedbugs/issue32288.go": "current statepoint payload qualified through LLVM compile, GoObj link, and execution",
+      "nilptr2.go": "current statepoint payload qualified through LLVM compile, GoObj link, and execution",
+      "typeparam/list2.go": "zero-length pointer-array stack layout qualified through LLVM compile, GoObj link, and execution",
       "zerodivide.go": "Darwin/arm64 blacklist probe qualified through LLVM compile, GoObj link, and execution"
     },
     "blacklist": {
@@ -1273,6 +1280,13 @@
         "typeparam/mdempsky/16.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "typeparam/settable.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "unsafebuiltins.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "cmp.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "convert4.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "ddd.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "fixedbugs/issue16095.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "fixedbugs/issue32288.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "nilptr2.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
+        "typeparam/list2.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "zerodivide.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified"
       }
     }
