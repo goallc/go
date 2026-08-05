@@ -9,6 +9,25 @@ package main
 import "runtime"
 
 var deferTrace int
+var sharedDeferCount int
+
+//go:noinline
+func sharedDeferStep() {
+	sharedDeferCount++
+}
+
+//go:noinline
+func sharedSuccessorDefers() {
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+	defer sharedDeferStep()
+}
 
 //go:noinline
 func normalDefers() (result int) {
@@ -74,6 +93,10 @@ func pointerDefer() (result int) {
 }
 
 func main() {
+	sharedSuccessorDefers()
+	if sharedDeferCount != 9 {
+		panic("shared-successor defers did not all run")
+	}
 	if got := normalDefers(); got != 17 || deferTrace != 21 {
 		panic("normal defer order or named result is incorrect")
 	}
