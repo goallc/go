@@ -22,6 +22,7 @@ type LLVMFuncContext struct {
 	ResultSlots      map[ID]llvm.Value
 	ItabMethods      map[ID]bool
 	ClosureCodeLoads map[ID]bool
+	DeferRecovery    map[ID]bool
 	F                *Func
 	LF               llvm.Value
 	ClosureContext   llvm.Value
@@ -63,6 +64,7 @@ const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
 const goSourceAddressTakenMD = "goallc.source_addrtaken"
+const goDeferResultMD = "goallc.defer_result"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolNameMD = "goobj.symbol.name"
 const llvmFramePointerAttr = "frame-pointer"
@@ -2028,6 +2030,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			v.Fatalf("%s address has non-pointer LLVM type", v.Op)
 		}
 		lVal = lfc.b.CreateLoad(typ, addr, v.String())
+		if v.Block != nil && lfc.DeferRecovery[v.Block.ID] {
+			lVal.SetVolatile(true)
+		}
 		if v.Op == OpDereference {
 			align := v.Type.Alignment()
 			if align <= 0 || align&(align-1) != 0 {
@@ -2257,6 +2262,7 @@ func LLVMCompile(f *Func) {
 		ResultSlots:      map[ID]llvm.Value{},
 		ItabMethods:      map[ID]bool{},
 		ClosureCodeLoads: map[ID]bool{},
+		DeferRecovery:    map[ID]bool{},
 		F:                f,
 		b:                GlobalCtxt.NewBuilder(),
 		ReturnType:       sig.ReturnType,
@@ -2306,6 +2312,11 @@ func LLVMCompile(f *Func) {
 			continue
 		}
 		FCtxt.BBs[BB.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, BB.String())
+	}
+	for _, BB := range f.Blocks {
+		if BB.Kind == BlockDefer && len(BB.Succs) == 2 {
+			FCtxt.DeferRecovery[BB.Succs[1].Block().ID] = true
+		}
 	}
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
@@ -2381,6 +2392,13 @@ func LLVMCompile(f *Func) {
 				slot.SetMetadata(GlobalCtxt.MDKindID(goSourceAddressTakenMD), GlobalCtxt.MDNode([]llvm.Metadata{
 					sourceAddressTaken.ConstantAsMetadata(),
 				}))
+				if frontendFunc != nil && frontendFunc.HasDefer() && name.Class == ir.PPARAMOUT {
+					// Panic recovery resumes at a deferreturn path that is not a
+					// successor of the suspended call in LLVM's CFG. Keep pointer
+					// results in every caller stack map; the recovery block's
+					// volatile reload keeps this alloca as its stable memory home.
+					slot.SetMetadata(GlobalCtxt.MDKindID(goDeferResultMD), GlobalCtxt.MDNode(nil))
+				}
 			}
 			FCtxt.Locals[key] = llvmStackSlot{Value: slot, Type: name.Type()}
 			if name.Class == ir.PPARAM {

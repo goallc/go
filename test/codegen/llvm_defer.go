@@ -8,21 +8,35 @@ package codegen
 
 var llvmDeferSink int
 
+// LLVM-LABEL: define goabiinternal ptr @codegen.llvmDeferPointerResult(ptr{{.*}} %pointer)
+// LLVM: [[RESULT:%.*]] = alloca ptr, {{.*}}!goallc.defer_result
+// LLVM: callbr void @llvm.go.defer.edge()
+// LLVM-NEXT: to label %{{.*}} [label %[[RECOVER:[A-Za-z0-9_.]+]]]
+// LLVM: [[RECOVER]]:
+// LLVM-NEXT: call goabiinternal void @runtime.deferreturn()
+// LLVM-NEXT: {{.*}} = load volatile ptr, ptr [[RESULT]]
+// LLVM-OPT-LABEL: define goabiinternal ptr @codegen.llvmDeferPointerResult(ptr{{.*}} %pointer)
+// LLVM-OPT: [[RESULT_OPT:%.*]] = alloca ptr, {{.*}}!goallc.defer_result
+// LLVM-OPT: callbr void @llvm.go.defer.edge()
+// LLVM-OPT-NEXT: to label %{{.*}} [label %[[RECOVER_OPT:[A-Za-z0-9_.]+]]]
+// LLVM-OPT: [[RECOVER_OPT]]:
+// LLVM-OPT-NEXT: call goabiinternal void @runtime.deferreturn()
+// LLVM-OPT-NEXT: {{.*}} = load volatile ptr, ptr [[RESULT_OPT]]
+
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmDeferStack(i64 %value)
 // LLVM: call goabiinternal void @runtime.deferprocStack
 // LLVM: callbr void @llvm.go.defer.edge()
 // LLVM-NEXT: to label %[[STACK_NORMAL:.*]] [label %[[STACK_RECOVER:.*]]]
 // LLVM: [[STACK_RECOVER]]:
 // LLVM: call goabiinternal void @runtime.deferreturn()
-// LLVM-NOT: load volatile
+// LLVM: load volatile i64
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmDeferStack(i64 %value)
 // LLVM-OPT: call goabiinternal void @runtime.deferprocStack
 // LLVM-OPT: callbr void @llvm.go.defer.edge()
 // LLVM-OPT-NEXT: to label %{{.*}} [label %[[STACK_OPT_RECOVER:.*]]]
 // LLVM-OPT: [[STACK_OPT_RECOVER]]:
 // LLVM-OPT: call goabiinternal void @runtime.deferreturn()
-// LLVM-OPT: load i64
-// LLVM-OPT-NOT: load volatile
+// LLVM-OPT: load volatile i64
 
 // LLVM-LABEL: define goabiinternal void @codegen.llvmDeferHeap(i64 %count)
 // LLVM: [[HEAP_NORMAL_RETURN:[A-Za-z0-9_.]+]]:
@@ -61,4 +75,10 @@ func llvmDeferStack(value int) (result int) {
 	}()
 	result = 7
 	return
+}
+
+func llvmDeferPointerResult(pointer *int) (result *int) {
+	defer func() {}()
+	result = pointer
+	panic(llvmDeferSink)
 }

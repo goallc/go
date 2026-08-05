@@ -40,6 +40,7 @@ constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoSourceAddressTakenMD = "goallc.source_addrtaken";
+constexpr StringLiteral GoDeferResultMD = "goallc.defer_result";
 constexpr StringLiteral GoObjMarkerRelocMD = "goobj.marker_reloc";
 constexpr StringLiteral StackColoringNoMergeMD = "llvm.stackcoloring.no_merge";
 
@@ -101,6 +102,7 @@ struct PointerAllocaLeaf {
 struct PointerAllocaRecord {
   AllocaInst *Alloca;
   bool NeedsStackObject;
+  bool DeferResult;
   uint64_t ByteSize;
   uint64_t Alignment;
   uint64_t BitCount;
@@ -665,6 +667,16 @@ Expected<bool> sourceMarkedAddressTaken(AllocaInst &Alloca) {
   return CI->isOne();
 }
 
+Expected<bool> deferResultAlloca(AllocaInst &Alloca) {
+  MDNode *MD = Alloca.getMetadata(GoDeferResultMD);
+  if (!MD)
+    return false;
+  if (MD->getNumOperands() != 0)
+    return createStringError(std::errc::invalid_argument,
+                             "GoALLC defer-result metadata must be empty");
+  return true;
+}
+
 // Return true when the optimized IR can make the address observable outside
 // compiler-controlled direct accesses. This is deliberately a structural
 // post-optimization decision: the frontend Addrtaken bit is provenance, not a
@@ -870,12 +882,11 @@ Error computePointerAllocaActivity(
 void protectStackObjectsFromColoring(
     MutableArrayRef<PointerAllocaRecord> PointerAllocas) {
   for (PointerAllocaRecord &Record : PointerAllocas) {
-    if (!Record.NeedsStackObject)
+    if (!Record.NeedsStackObject && !Record.DeferResult)
       continue;
-    // A Go StackObject has function-wide identity and layout metadata.  It
-    // cannot share storage with another lifetime-disjoint alloca because both
-    // object records must remain independently addressable at every
-    // statepoint, including calls outside this object's active lifetime.
+    // A Go StackObject has function-wide identity and layout metadata. A defer
+    // result likewise remains a root at every statepoint. Neither can share
+    // storage with another lifetime-disjoint alloca.
     Record.Alloca->setMetadata(
         StackColoringNoMergeMD,
         MDNode::get(Record.Alloca->getContext(), ArrayRef<Metadata *>()));
@@ -1000,12 +1011,16 @@ Error collectPointerAllocas(
     Expected<bool> SourceAddressTaken = sourceMarkedAddressTaken(*Alloca);
     if (!SourceAddressTaken)
       return SourceAddressTaken.takeError();
+    Expected<bool> DeferResult = deferResultAlloca(*Alloca);
+    if (!DeferResult)
+      return DeferResult.takeError();
     // Consume the marker after the optimized use graph has been classified.
     // In particular, a source Addrtaken alloca can be downgraded when all
     // observable address uses disappeared during optimization.
     Alloca->setMetadata(GoSourceAddressTakenMD, nullptr);
+    Alloca->setMetadata(GoDeferResultMD, nullptr);
     bool NeedsStackObject = allocaNeedsStackObject(*Alloca);
-    PointerAllocas.push_back({Alloca, NeedsStackObject, ByteSize,
+    PointerAllocas.push_back({Alloca, NeedsStackObject, *DeferResult, ByteSize,
                               Alloca->getAlign().value(), BitCount,
                               std::move(BitmapWords), std::move(Leaves)});
   }
@@ -1381,7 +1396,11 @@ Error rewriteFunction(Function &F) {
   for (SafepointRecord &Record : llvm::reverse(Records)) {
     SmallVector<const PointerAllocaRecord *, 8> AllocaRecords;
     for (const PointerAllocaRecord &Alloca : PointerAllocas) {
-      bool IsActive = Record.Live.contains(Alloca.Alloca) ||
+      // A recovered panic resumes outside LLVM's explicit CFG. The frontend
+      // marks named result homes whose contents must therefore remain visible
+      // to Go's stack scanner at every possible suspension call.
+      bool IsActive = Alloca.DeferResult ||
+                      Record.Live.contains(Alloca.Alloca) ||
                       isPointerAllocaActiveAt(Alloca, *Record.Call);
       if (IsActive)
         Record.Live.insert(Alloca.Alloca);

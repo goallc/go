@@ -7,6 +7,7 @@ import sys
 
 
 FUNCTION = "defer_edge"
+RESULT = "defer_result"
 WRAPPER = "defer_wrapper"
 
 
@@ -49,6 +50,15 @@ def main():
     if metadata is None:
         fail(f"{FUNCTION} has no function metadata")
 
+    result = only(
+        obj["symbols"],
+        lambda item: item["name"] == RESULT,
+        f"{RESULT} symbols",
+    )
+    result_metadata = result.get("function")
+    if result_metadata is None:
+        fail(f"{RESULT} has no function metadata")
+
     wrapper = only(
         obj["symbols"],
         lambda item: item["name"] == WRAPPER,
@@ -85,9 +95,41 @@ def main():
     if query["stack_map_index"] < 0:
         fail(f"deferreturn has no valid GC stack map: {query}")
 
+    funcdata = {
+        item["kind"]: item for item in result_metadata["funcdata"]
+    }
+    if "stack_objects" in funcdata:
+        fail(f"{RESULT} emitted StackObjects instead of alloca deopt roots")
+    locals_maps = funcdata["locals_pointer_maps"]["stack_map"]["bitmaps"]
+
+    def bitmap_has_pointer(index):
+        return bool(locals_maps[index].get("set_bits"))
+
+    result_calls = {
+        target_name(relocation): relocation
+        for relocation in result["relocations"]
+        if relocation["type"] == "R_CALL"
+    }
+    for name in (
+        "runtime.deferproc",
+        "runtime.panicmem",
+        "runtime.deferreturn",
+    ):
+        relocation = result_calls.get(name)
+        if relocation is None:
+            fail(f"{RESULT} has no direct {name} relocation")
+        call_query = only(
+            result_metadata["stack_map_queries"],
+            lambda item: item["call_offset"] == relocation["offset"],
+            f"{name} stack-map queries",
+        )
+        if not bitmap_has_pointer(call_query["stack_map_index"]):
+            fail(f"{name} does not keep the defer result in locals ptrmap")
+
     print(
         f"{FUNCTION}: runtime.deferreturn R_CALL at {deferreturn['offset']}, "
-        f"stack map {query['stack_map_index']}; {WRAPPER}: FuncID 23, flags 0"
+        f"stack map {query['stack_map_index']}; {RESULT}: result live at all "
+        f"calls with no StackObjects; {WRAPPER}: FuncID 23, flags 0"
     )
 
 

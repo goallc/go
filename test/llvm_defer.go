@@ -9,6 +9,11 @@ package main
 import "runtime"
 
 var deferTrace int
+var deferResultFinalized = make(chan struct{}, 1)
+
+type deferResultObject struct {
+	value int
+}
 
 //go:noinline
 func normalDefers() (result int) {
@@ -73,6 +78,26 @@ func pointerDefer() (result int) {
 	return
 }
 
+//go:noinline
+func namedPointerResultSurvivesPanic() (result *deferResultObject) {
+	result = &deferResultObject{value: 91}
+	runtime.SetFinalizer(result, func(*deferResultObject) {
+		deferResultFinalized <- struct{}{}
+	})
+	defer func() {
+		runtime.GC()
+		runtime.GC()
+		runtime.GC()
+		select {
+		case <-deferResultFinalized:
+			panic("named result was finalized during panic unwinding")
+		default:
+		}
+		recover()
+	}()
+	panic("named result liveness")
+}
+
 func main() {
 	if got := normalDefers(); got != 17 || deferTrace != 21 {
 		panic("normal defer order or named result is incorrect")
@@ -89,4 +114,9 @@ func main() {
 	if pointerDefer() != 73 {
 		panic("defer lost a captured pointer across GC")
 	}
+	result := namedPointerResultSurvivesPanic()
+	if result == nil || result.value != 91 {
+		panic("defer lost a named pointer result during panic unwinding")
+	}
+	runtime.KeepAlive(result)
 }

@@ -96,7 +96,7 @@ if(BUILD_TESTING)
     PASS_REGULAR_EXPRESSION
       "callbr void @llvm.go.defer.edge"
     FAIL_REGULAR_EXPRESSION
-      "GoALLC statepoints do not yet support invoke or callbr;call goabiinternal void @runtime.deferproc"
+      "GoALLC statepoints do not yet support invoke or callbr;call goabiinternal void @runtime.deferproc;goallc.defer_result"
   )
 
   add_test(
