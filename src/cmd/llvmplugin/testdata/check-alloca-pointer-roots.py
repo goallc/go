@@ -197,8 +197,14 @@ def check_rewritten_ir(ir):
     )
     if (
         '"deopt"(' in pointer_free_address
-        or pointer_free_address.count('"gc-live"(ptr %slot)') != 2
-        or "ptr %slot.address.remat" not in pointer_free_address
+        or '"gc-live"(' in pointer_free_address
+        or len(
+            re.findall(
+                r"%slot\.address[0-9]* = getelementptr inbounds i8, ptr %slot, i64 0",
+                pointer_free_address,
+            )
+        )
+        != 2
     ):
         fail("pointer-free alloca address changed the content-ptrmap protocol")
     expect_records(ir, "alloca_marker_free_at_safepoint", [locals_one])
@@ -237,15 +243,34 @@ def check_rewritten_ir(ir):
         not in direct_address
         or '"gc-live"(ptr %slot)' not in direct_address
         or '"gc-live"(ptr %slot.address' in direct_address
-        or "ptr %slot.address.remat" not in direct_address
+        or len(
+            re.findall(
+                r"%slot\.address[0-9]* = getelementptr inbounds i8, ptr %slot, i64 0",
+                direct_address,
+            )
+        )
+        != 2
     ):
-        fail("direct alloca address is not rematerialized from its base relocate")
+        fail("direct alloca address is not rebuilt at each first-class use")
     if (
         '"gc-live"(ptr %slot)' not in gep_address
         or '"gc-live"(ptr %field' in gep_address
-        or "ptr %field.remat" not in gep_address
+        or len(
+            re.findall(
+                r"%field\.remat[0-9]* = getelementptr inbounds %pointer_field, ptr %slot",
+                gep_address,
+            )
+        )
+        != 2
     ):
-        fail("derived alloca address is not rematerialized from its base relocate")
+        fail("derived alloca address is not rebuilt at each first-class use")
+    for name, function in (
+        ("direct", direct_address),
+        ("derived", gep_address),
+        ("pointer-free", pointer_free_address),
+    ):
+        if ".address.relocated.merge" in function or ".remat.relocated.merge" in function:
+            fail(f"{name} alloca address is merged across safepoints")
 
     if '"gc-live"(ptr %slot)' not in escaped or "%slot.relocated" not in escaped:
         fail("callee-writable alloca is not an explicit rematerialized root")
@@ -263,12 +288,12 @@ def check_rewritten_ir(ir):
     relocates = re.findall(
         r"= call coldcc ptr @llvm\.experimental\.gc\.relocate", ir
     )
-    # Twenty-four active pointer-containing alloca roots and two pointer-free
-    # address roots retain their storage identity. Two ordinary scalar roots
-    # are relocated separately; derived stack addresses are rebuilt from the
-    # alloca relocates instead of becoming ptrmap roots.
-    if len(relocates) != 28:
-        fail(f"found {len(relocates)} relocates, want 28")
+    # Twenty-four active pointer-containing alloca roots retain their storage
+    # identity and two ordinary scalar roots are relocated separately.
+    # Pointer-free and derived stack addresses are rebuilt at their uses, so
+    # they need neither an alloca relocate nor their own ptrmap root.
+    if len(relocates) != 26:
+        fail(f"found {len(relocates)} relocates, want 26")
     marker_free = function_body(ir, "alloca_marker_free_at_safepoint")
     if '"gc-live"(ptr %pointer' not in marker_free:
         fail("ordinary scalar SSA pointer is missing from gc-live")
@@ -304,7 +329,7 @@ def check_objview(objview, object_path):
     }
     stack_object_maps = stack_object_data["locals_pointer_maps"]["stack_map"]
     if any(bitmap.get("set_bits") for bitmap in stack_object_maps["bitmaps"]):
-        fail("StackObject deopt record polluted LocalsPointerMaps")
+        fail("StackObject root polluted LocalsPointerMaps")
 
     pointer_free = function("alloca_pointer_free_address_across_calls")
     pointer_free_data = {

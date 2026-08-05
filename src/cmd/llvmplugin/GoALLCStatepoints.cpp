@@ -193,65 +193,65 @@ bool isDirectFrameAddressUse(const Use &U) {
   return false;
 }
 
-Error canonicalizeDirectAllocaAddresses(Function &F, DominatorTree &DT) {
-  SmallVector<AllocaInst *, 16> Allocas;
-  for (Instruction &I : instructions(F))
-    if (auto *Alloca = dyn_cast<AllocaInst>(&I);
-        Alloca && Alloca->isStaticAlloca())
-      Allocas.push_back(Alloca);
+Value *rematerializeAllocaAddress(Value *Address, Value *RelocatedBase,
+                                  Instruction *InsertBefore);
 
-  for (AllocaInst *Alloca : Allocas) {
+Error canonicalizeDirectAllocaAddresses(Function &F, DominatorTree &DT) {
+  SmallVector<Value *, 32> Addresses;
+  for (Instruction &I : instructions(F))
+    if (isStaticAllocaAddress(&I))
+      Addresses.push_back(&I);
+
+  for (Value *Address : Addresses) {
+    AllocaInst *Alloca = rematerializableAllocaBase(Address);
+    assert(Alloca && "canonical alloca address has no static base");
     SmallVector<Use *, 8> FirstClassUses;
     SmallVector<IntrinsicInst *, 4> LifetimeStarts;
-    for (Use &U : Alloca->uses())
-      if (auto *II = dyn_cast<IntrinsicInst>(U.getUser());
-          II && II->getIntrinsicID() == Intrinsic::lifetime_start)
-        LifetimeStarts.push_back(II);
-      else if (!isDirectFrameAddressUse(U))
+    for (Use &U : Address->uses())
+      if (!isDirectFrameAddressUse(U))
         FirstClassUses.push_back(&U);
     if (FirstClassUses.empty())
       continue;
 
-    DenseMap<Instruction *, Value *> Addresses;
-    Value *EntryAddress = nullptr;
+    for (Use &U : Alloca->uses())
+      if (auto *II = dyn_cast<IntrinsicInst>(U.getUser());
+          II && II->getIntrinsicID() == Intrinsic::lifetime_start)
+        LifetimeStarts.push_back(II);
+
+    // A Go stack can move at every ordinary call. Do not share one derived
+    // frame address across calls: even though each gc.relocate is lowered back
+    // to a FrameIndex, the whole-function SSA merge can be spilled by register
+    // allocation and that ordinary spill slot is not a Go pointer root.
+    // Rebuild the address immediately before each first-class use instead.
+    DenseMap<Instruction *, Value *> UseAddresses;
     for (Use *U : FirstClassUses) {
       auto *UsePoint = cast<Instruction>(U->getUser());
 
-      IntrinsicInst *BestStart = nullptr;
-      for (IntrinsicInst *Start : LifetimeStarts) {
-        if (!DT.dominates(Start, UsePoint))
-          continue;
-        if (!BestStart || DT.dominates(BestStart, Start))
-          BestStart = Start;
-      }
-
-      Value *Address = nullptr;
-      if (BestStart) {
-        Address = Addresses.lookup(BestStart);
-        if (!Address) {
-          IRBuilder<> Builder(BestStart->getNextNode());
-          Address = Builder.CreateInBoundsGEP(
-              Builder.getInt8Ty(), Alloca, Builder.getInt64(0),
-              Alloca->hasName() ? Alloca->getName() + ".address"
-                                : "alloca.address");
-          Addresses[BestStart] = Address;
-        }
-      } else if (LifetimeStarts.empty()) {
-        if (!EntryAddress) {
-          IRBuilder<> Builder(Alloca->getNextNode());
-          EntryAddress = Builder.CreateInBoundsGEP(
-              Builder.getInt8Ty(), Alloca, Builder.getInt64(0),
-              Alloca->hasName() ? Alloca->getName() + ".address"
-                                : "alloca.address");
-        }
-        Address = EntryAddress;
-      } else {
+      if (!LifetimeStarts.empty() &&
+          !llvm::any_of(LifetimeStarts, [&](IntrinsicInst *Start) {
+            return DT.dominates(Start, UsePoint);
+          })) {
         return createStringError(
             std::errc::not_supported,
             "GoALLC first-class alloca address use is not dominated by "
             "lifetime.start");
       }
-      U->set(Address);
+
+      Value *UseAddress = UseAddresses.lookup(UsePoint);
+      if (!UseAddress) {
+        if (Address == Alloca) {
+          IRBuilder<> Builder(UsePoint);
+          UseAddress = Builder.CreateInBoundsGEP(
+              Builder.getInt8Ty(), Alloca, Builder.getInt64(0),
+              Alloca->hasName() ? Alloca->getName() + ".address"
+                                : "alloca.address");
+        } else {
+          UseAddress =
+              rematerializeAllocaAddress(Address, Alloca, UsePoint);
+        }
+        UseAddresses[UsePoint] = UseAddress;
+      }
+      U->set(UseAddress);
     }
   }
   return Error::success();

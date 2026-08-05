@@ -18,16 +18,22 @@ import (
 type llvmAllocaArchitectureChecks struct {
 	betweenCallsPattern  string
 	restoredStorePattern string
+	goallcLocals         uint32
+	goallcStackObject    int32
 }
 
 var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
 	"darwin/arm64": {
 		betweenCallsPattern:  `(?s)\bbl\s+p\.mutateLocal\n(.*?)\bbl\s+p\.safepoint`,
 		restoredStorePattern: `(?m)^\s*(?:str|stp)\b`,
+		goallcLocals:         88,
+		goallcStackObject:    -40,
 	},
 	"linux/amd64": {
 		betweenCallsPattern:  `(?s)\bcallq\s+p\.mutateLocal\n(.*?)\bcallq\s+p\.safepoint`,
 		restoredStorePattern: `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`,
+		goallcLocals:         96,
+		goallcStackObject:    -48,
 	},
 }
 
@@ -219,7 +225,7 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		name: "localAcrossSafepoints", args: 16,
 	})
 	checkLLVMABISourceStackMaps(t, "GoALLC", symbol,
-		88,
+		checks.goallcLocals,
 		[][]int{nil},
 		[][]int{nil},
 		[]int32{-1, 0},
@@ -229,10 +235,10 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 	if got, want := len(goallcStackObjects), 1; got != want {
 		t.Fatalf("GoALLC StackObjects=%v, want one object", goallcStackObjects)
 	}
-	if object := goallcStackObjects[0]; object.Offset >= 0 || object.Size != 40 ||
+	if object := goallcStackObjects[0]; object.Offset != checks.goallcStackObject || object.Size != 40 ||
 		object.PtrBytes != 40 || object.GCData == nil ||
 		object.GCData.Name != "runtime.gcbits.1d00000000000000" || object.GCData.ABI != 0 {
-		t.Fatalf("GoALLC StackObject=%+v, want negative offset, size=40, ptrbytes=40, and ABI0 runtime.gcbits.1d00000000000000", object)
+		t.Fatalf("GoALLC StackObject=%+v, want offset=%d, size=40, ptrbytes=40, and ABI0 runtime.gcbits.1d00000000000000", object, checks.goallcStackObject)
 	}
 
 	// StackObjects describe the function-wide identity and layout of the

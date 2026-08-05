@@ -9,7 +9,10 @@
 // silently drift apart.
 package main
 
-import "runtime"
+import (
+	"runtime"
+	"unsafe"
+)
 
 type stackAggregate struct {
 	left, right int
@@ -98,6 +101,32 @@ func growPointer(pointer *int, depth int) int {
 		return *pointer
 	}
 	return growPointer(pointer, depth-1) + *pointer
+}
+
+//go:noinline
+func stackAddress(pointer *byte) uintptr {
+	return uintptr(unsafe.Pointer(pointer))
+}
+
+// stackResultsAfterGrowth keeps caller-owned result slots live while a nested
+// call grows the Go stack. A caller must reload its current stack pointer after
+// this call; retaining the pre-call SP would read results from the retired
+// stack segment.
+//
+//go:noinline
+func stackResultsAfterGrowth(pointer *int) (
+	r0, r1, r2, r3, r4, r5, r6, r7 int,
+	r8, r9, r10, r11, r12, r13, r14, r15 int,
+	result *int,
+) {
+	var marker byte
+	oldStackAddress := stackAddress(&marker)
+	checksum := growPointer(pointer, 2000)
+	if stackAddress(&marker) == oldStackAddress {
+		panic("stackResultsAfterGrowth did not grow the stack")
+	}
+	return 0, 1, 2, 3, 4, 5, 6, 7,
+		8, 9, 10, 11, 12, 13, 14, checksum, pointer
 }
 
 // overflowResults uses all sixteen arm64 integer result registers and two
@@ -263,6 +292,22 @@ func main() {
 	if got, want := growPointer(&values[0], depth), values[0]*(depth+1); got != want {
 		panic("pointer lost across stack growth or GC")
 	}
+
+	// Use a fresh goroutine so stackResultsAfterGrowth necessarily starts on a
+	// small stack and grows it while its caller-owned result area is active.
+	done := make(chan struct{})
+	go func() {
+		_, _, _, _, _, _, _, _,
+			_, _, _, _, _, _, _, checksum,
+			pointer := stackResultsAfterGrowth(&values[1])
+		if want := values[1] * 2001; checksum != want {
+			panic("stack result lost across stack growth")
+		}
+		runtime.GC()
+		requirePointer(pointer, &values[1])
+		close(done)
+	}()
+	<-done
 
 	r0,
 		_, _, _, _, _, _, _,

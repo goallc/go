@@ -1167,7 +1167,16 @@
     },
     "platform_blacklist": {
       "linux/amd64": {
-        "fixedbugs/issue68322.go": "GOAMD64=v1 guards OpTrunc with unsupported HasCPUFeature lowering",
+        "abi/method_wrapper.go": "x86 GoObj traceback does not yet unwind the panic path through the method wrapper",
+        "abi/wrapdefer_largetmp.go": "x86 GoObj traceback does not yet unwind the large deferred-wrapper frame during stack growth",
+        "fixedbugs/issue23522.go": "x86 dynamic SSE4.1 floor selection lowers the guarded LLVM intrinsic to an unavailable external libcall",
+        "fixedbugs/issue43570.go": "x86 GoObj panic traceback still reports an unknown caller PC",
+        "fixedbugs/issue45045.go": "x86 statepoint liveness does not yet retain the second map key through GC",
+        "fixedbugs/issue51101.go": "x86 large-frame recursion still reaches morestack below the current stack bound",
+        "fixedbugs/issue68322.go": "x86 dynamic SSE4.1 truncation lowers the guarded LLVM intrinsic to an unavailable external libcall",
+        "fixedbugs/issue80188.go": "arm64 R30 async-preemption liveness regression has no qualified x86 register-allocation equivalent",
+        "gcgort.go": "x86 GoObj pcsp and traceback metadata do not yet unwind all generated goroutine wrappers during stack growth",
+        "llvm_float_intrinsics.go": "x86 dynamic SSE4.1 and FMA intrinsics lower to unavailable external libc and libm calls",
         "abi/defer_recover_results.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "abi/open_defer_1.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "chan/select3.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",

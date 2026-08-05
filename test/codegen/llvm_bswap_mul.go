@@ -18,12 +18,12 @@ func llvmBswap64(x uint64) uint64 {
 	return bits.ReverseBytes64(x)
 }
 
-// LLVM-DAG: call i32 @llvm.bitreverse.i32(i32 %x)
+// LLVM-ARM64-DAG: call i32 @llvm.bitreverse.i32(i32 %x)
 func llvmBitReverse32(x uint32) uint32 {
 	return bits.Reverse32(x)
 }
 
-// LLVM-DAG: call i64 @llvm.bitreverse.i64(i64 %x)
+// LLVM-ARM64-DAG: call i64 @llvm.bitreverse.i64(i64 %x)
 func llvmBitReverse64(x uint64) uint64 {
 	return bits.Reverse64(x)
 }

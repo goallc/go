@@ -1607,6 +1607,19 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			v.Fatalf("global address has non-LSym auxiliary %T", v.Aux)
 		}
 		lVal = llvmGoDataRef(sym)
+	case OpHasCPUFeature:
+		// The generic op is deliberately emitted before architecture lowering.
+		// Match AMD64LoweredHasCPUFeature by loading the runtime's byte flag and
+		// normalizing it to a Go bool. Keeping this generic also lets LLVM choose
+		// the surrounding feature and fallback control flow.
+		sym, ok := v.Aux.(*obj.LSym)
+		if !ok {
+			v.Fatalf("CPU feature has non-LSym auxiliary %T", v.Aux)
+		}
+		flag := lfc.b.CreateLoad(GlobalCtxt.Int8Type(), llvmGoDataRef(sym), v.String()+".flag")
+		flag.SetAlignment(1)
+		cond := lfc.b.CreateICmp(llvm.IntNE, flag, llvm.ConstInt(flag.Type(), 0, false), v.String()+".i1")
+		lVal = lfc.goBool(cond, v.String())
 	case OpArg:
 		lVal = lfc.paramForArg(v)
 		lVal.SetName(v.Aux.(*ir.Name).Sym().Name)
