@@ -8,6 +8,10 @@ package codegen
 
 var llvmDeferSink int
 
+// LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmDeferSharedSuccessor()
+// LLVM-OPT-COUNT-9: callbr void @llvm.go.defer.edge()
+// LLVM-OPT-NEXT: to label %[[SHARED_RETURN:[A-Za-z0-9_.]+]] [label %[[SHARED_RETURN]]]
+
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmDeferStack(i64 %value)
 // LLVM: call goabiinternal void @runtime.deferprocStack
 // LLVM: callbr void @llvm.go.defer.edge()
@@ -61,4 +65,20 @@ func llvmDeferStack(value int) (result int) {
 	}()
 	result = 7
 	return
+}
+
+func llvmDeferSharedSuccessor() {
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+	defer llvmDeferredStep()
+}
+
+//go:noinline
+func llvmDeferredStep() {
 }
