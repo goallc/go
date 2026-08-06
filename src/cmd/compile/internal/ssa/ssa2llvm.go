@@ -2276,10 +2276,15 @@ func LLVMCompile(f *Func) {
 	}
 	FCtxt.LF.SetGC(goGCStrategy)
 	// Go has already made its source-level inlining decision before LLVM
-	// lowering. Preserve an explicit //go:noinline boundary through LLVM's
-	// interprocedural optimization pipeline as well.
+	// lowering. Preserve both explicit //go:noinline boundaries and the
+	// frontend's implicit no-inline rule for functions containing defer.
+	//
+	// Inlining a classic-defer function would merge its recovery block into the
+	// caller, but Go FuncInfo records only one deferreturn PC per function. It
+	// would also make runtime.deferprocStack observe the caller's frame instead
+	// of the frame selected by the Go frontend.
 	frontendFunc := f.Frontend().Func()
-	if frontendFunc != nil && frontendFunc.Pragma&ir.Noinline != 0 {
+	if frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer()) {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
 	setGoObjFunctionFlags(FCtxt.LF, f.OwnAux.Fn)

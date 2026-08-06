@@ -8,14 +8,16 @@ package codegen
 
 var llvmDeferSink int
 
-// LLVM-LABEL: define goabiinternal ptr @codegen.llvmDeferPointerResult(ptr{{.*}} %pointer)
+// LLVM-LABEL: define goabiinternal ptr @codegen.llvmDeferPointerResult(
+// LLVM-SAME: ptr{{.*}} %pointer){{.*}} #[[DEFER_NOINLINE:[0-9]+]] gc "goallc"
 // LLVM: [[RESULT:%.*]] = alloca ptr, {{.*}}!goallc.defer_result
 // LLVM: callbr void @llvm.go.defer.edge()
 // LLVM-NEXT: to label %{{.*}} [label %[[RECOVER:[A-Za-z0-9_.]+]]]
 // LLVM: [[RECOVER]]:
 // LLVM-NEXT: call goabiinternal void @runtime.deferreturn()
 // LLVM-NEXT: {{.*}} = load volatile ptr, ptr [[RESULT]]
-// LLVM-OPT-LABEL: define goabiinternal ptr @codegen.llvmDeferPointerResult(ptr{{.*}} %pointer)
+// LLVM-OPT-LABEL: define goabiinternal ptr @codegen.llvmDeferPointerResult(
+// LLVM-OPT-SAME: ptr{{.*}} %pointer){{.*}} #[[DEFER_NOINLINE:[0-9]+]] gc "goallc"
 // LLVM-OPT: [[RESULT_OPT:%.*]] = alloca ptr, {{.*}}!goallc.defer_result
 // LLVM-OPT: callbr void @llvm.go.defer.edge()
 // LLVM-OPT-NEXT: to label %{{.*}} [label %[[RECOVER_OPT:[A-Za-z0-9_.]+]]]
@@ -48,6 +50,7 @@ var llvmDeferSink int
 // LLVM: callbr void @llvm.go.defer.edge()
 // LLVM-NEXT: to label %{{.*}} [label %[[HEAP_RECOVER]]]
 // LLVM: define goabiinternal void @codegen.llvmDeferHeap.deferwrap1({{.*}}) {{.*}}!goobj.func.info ![[WRAPPER_INFO:[0-9]+]]
+// LLVM: attributes #[[DEFER_NOINLINE]] = { {{.*}}noinline
 // LLVM: ![[WRAPPER_INFO]] = !{i8 23, i8 0}
 // LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmDeferHeap(i64 %count)
 // LLVM-OPT: [[HEAP_OPT_RECOVER:common.ret]]:
@@ -56,6 +59,7 @@ var llvmDeferSink int
 // LLVM-OPT: callbr void @llvm.go.defer.edge()
 // LLVM-OPT-NEXT: to label %{{.*}} [label %[[HEAP_OPT_RECOVER]]]
 // LLVM-OPT: define goabiinternal void @codegen.llvmDeferHeap.deferwrap1({{.*}}) {{.*}}!goobj.func.info ![[WRAPPER_OPT_INFO:[0-9]+]]
+// LLVM-OPT: attributes #[[DEFER_NOINLINE]] = { {{.*}}noinline
 // LLVM-OPT: ![[WRAPPER_OPT_INFO]] = !{i8 23, i8 0}
 
 // A defer in a loop uses runtime.deferproc rather than deferprocStack. Keep this

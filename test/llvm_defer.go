@@ -15,7 +15,6 @@ type deferResultObject struct {
 	value int
 }
 
-//go:noinline
 func normalDefers() (result int) {
 	defer func() {
 		deferTrace = deferTrace*10 + 1
@@ -29,7 +28,6 @@ func normalDefers() (result int) {
 	return
 }
 
-//go:noinline
 func recoveredDefer() (result int) {
 	defer func() {
 		if recover() != nil {
@@ -46,7 +44,6 @@ func recoverWithArguments(value int, result *int) {
 	}
 }
 
-//go:noinline
 func wrapperRecoveredDefer() (result int) {
 	// Passing arguments requires a generated defer wrapper. Its GoObj FuncID
 	// must be FuncIDWrapper so gorecover ignores that synthetic frame.
@@ -54,7 +51,6 @@ func wrapperRecoveredDefer() (result int) {
 	panic("wrapper defer recovery")
 }
 
-//go:noinline
 func heapDefers(count int) (result int) {
 	for i := 0; i < count; i++ {
 		defer func(value int) {
@@ -64,7 +60,6 @@ func heapDefers(count int) (result int) {
 	return
 }
 
-//go:noinline
 func pointerDefer() (result int) {
 	pointer := new(int)
 	*pointer = 73
@@ -78,7 +73,6 @@ func pointerDefer() (result int) {
 	return
 }
 
-//go:noinline
 func namedPointerResultSurvivesPanic() (result *deferResultObject) {
 	result = &deferResultObject{value: 91}
 	runtime.SetFinalizer(result, func(*deferResultObject) {
