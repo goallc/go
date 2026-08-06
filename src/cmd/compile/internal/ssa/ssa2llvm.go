@@ -2245,6 +2245,18 @@ func (lfc *LLVMFuncContext) MappingName() {
 	}
 }
 
+func llvmFuncCalls(f *Func, target string) bool {
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			aux, ok := v.Aux.(*AuxCall)
+			if ok && aux.Fn != nil && aux.Fn.Name == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func LLVMCompile(f *Func) {
 	if f.OwnAux == nil || f.OwnAux.Fn == nil || f.OwnAux.ABIInfo() == nil {
 		f.fe.Fatalf(f.Entry.Pos, "missing function ABI information in LLVM lowering for %s", f.Name)
@@ -2277,14 +2289,17 @@ func LLVMCompile(f *Func) {
 	FCtxt.LF.SetGC(goGCStrategy)
 	// Go has already made its source-level inlining decision before LLVM
 	// lowering. Preserve both explicit //go:noinline boundaries and the
-	// frontend's implicit no-inline rule for functions containing defer.
+	// frontend's implicit no-inline rules for functions containing defer or
+	// recover.
 	//
 	// Inlining a classic-defer function would merge its recovery block into the
 	// caller, but Go FuncInfo records only one deferreturn PC per function. It
 	// would also make runtime.deferprocStack observe the caller's frame instead
-	// of the frame selected by the Go frontend.
+	// of the frame selected by the Go frontend. Likewise, inlining a function
+	// containing recover would change the frame checked by runtime.gorecover.
 	frontendFunc := f.Frontend().Func()
-	if frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer()) {
+	frontendNoInline := frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer())
+	if frontendNoInline || llvmFuncCalls(f, "runtime.gorecover") {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
 	setGoObjFunctionFlags(FCtxt.LF, f.OwnAux.Fn)

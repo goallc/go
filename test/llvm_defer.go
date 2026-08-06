@@ -37,7 +37,6 @@ func recoveredDefer() (result int) {
 	panic("defer recovery")
 }
 
-//go:noinline
 func recoverWithArguments(value int, result *int) {
 	if recover() != nil {
 		*result = value
