@@ -1199,13 +1199,20 @@
       "linux/amd64": {
         "abi/method_wrapper.go": "x86 GoObj traceback does not yet unwind the panic path through the method wrapper",
         "fixedbugs/issue23522.go": "x86 dynamic SSE4.1 floor selection lowers the guarded LLVM intrinsic to an unavailable external libcall",
+        "fixedbugs/issue2615.go": "Linux/amd64 link fails because the generated memset relocation has no definition",
+        "fixedbugs/issue34968.go": "Linux/amd64 GoObj generation reports an unexpected file-local symbol index",
         "fixedbugs/issue43570.go": "x86 GoObj panic traceback still reports an unknown caller PC",
         "fixedbugs/issue45045.go": "x86 statepoint liveness does not yet retain the second map key through GC",
         "fixedbugs/issue51101.go": "x86 large-frame recursion still reaches morestack below the current stack bound",
         "fixedbugs/issue68322.go": "x86 dynamic SSE4.1 truncation lowers the guarded LLVM intrinsic to an unavailable external libcall",
         "fixedbugs/issue80188.go": "arm64 R30 async-preemption liveness regression has no qualified x86 register-allocation equivalent",
+        "fixedbugs/issue9604b.go": "Linux/amd64 runoutput generation emits duplicate declarations",
         "gcgort.go": "x86 GoObj pcsp and traceback metadata do not yet unwind all generated goroutine wrappers during stack growth",
+        "inline_callers.go": "Linux/amd64 runtime.Callers output is missing expected inline frames",
         "llvm_float_intrinsics.go": "x86 dynamic SSE4.1 and FMA intrinsics lower to unavailable external libc and libm calls",
+        "maymorestack.go": "Linux/amd64 execution does not invoke the configured mayMoreStack hook",
+        "reflectmethod2.go": "Linux/amd64 stack growth reports an invalid pointer in the reflected-method frame",
+        "reflectmethod6.go": "Linux/amd64 stack growth reports an invalid pointer in the reflected-method frame",
         "fixedbugs/issue15281.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "fixedbugs/issue24488.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "fixedbugs/issue24491b.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
@@ -1213,8 +1220,27 @@
         "fixedbugs/issue46725.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "ddd.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified",
         "typeparam/list2.go": "qualified on Darwin/arm64 only; Linux/amd64 runtime not yet verified"
+      },
+      "linux/arm64": {
+        "append.go": "Linux/arm64 statepoint lowering rejects vectors inside live pointer aggregates",
+        "chan/select2.go": "Linux/arm64 channel-select execution deadlocks",
+        "convert5.go": "Linux/arm64 float-to-integer overflow results differ from the test expectations",
+        "fixedbugs/issue15281.go": "Linux/arm64 allocation placement differs from the test expectations",
+        "fixedbugs/issue2615.go": "Linux/arm64 llc rejects the generated GoObj frame prologue and epilogue",
+        "fixedbugs/issue34968.go": "Linux/arm64 GoObj generation reports an unexpected file-local symbol index",
+        "fixedbugs/issue45045.go": "Linux/arm64 map-key liveness execution deadlocks",
+        "fixedbugs/issue5373.go": "Linux/arm64 llc rejects the generated GoObj frame prologue and epilogue",
+        "fixedbugs/issue56990.go": "Linux/arm64 stack growth reports an invalid pointer in the frame",
+        "genmeth1.go": "Linux/arm64 statepoint lowering rejects vectors inside live pointer aggregates",
+        "inline_caller.go": "Linux/arm64 inline caller line information reports llvm-ir:1",
+        "inline_callers.go": "Linux/arm64 runtime.Callers output is missing expected inline frames",
+        "maymorestack.go": "Linux/arm64 execution does not invoke the configured mayMoreStack hook"
       }
     },
-    "platform_blacklist": null
+    "platform_blacklist": {
+      "linux/amd64": {
+        "fixedbugs/issue20780b.go": "timeout: exceeds the one-minute LLVM CI per-case budget on Linux/amd64"
+      }
+    }
   }
 }
