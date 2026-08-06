@@ -654,6 +654,13 @@ func (t test) run() error {
 		}
 		args = args[1:]
 	}
+	if t.llvm != nil && tim == 0 {
+		// LLVM lowering and optimization are substantially heavier than the
+		// native compile path. Bound each recipe command independently so one
+		// non-terminating program cannot prevent the remaining matrix from
+		// running; recipes with an explicit -t keep their own timeout.
+		tim = llvmDefaultCaseTimeoutSeconds
+	}
 	if action == "errorcheck" {
 		found := false
 		for i, f := range flags {

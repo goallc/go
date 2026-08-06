@@ -22,7 +22,7 @@ jobs:
   linux:
     name: linux-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -161,7 +161,8 @@ jobs:
           ./bin/go test cmd/internal/testdir \
             -run '^TestLLVM$' \
             -count=1 \
-            -timeout=40m \
+            -parallel=1 \
+            -timeout=100m \
             -json \
             2>&1 | tee "$RUNNER_TEMP/goallc-test-results.json" \
               | jq --unbuffered -rj 'select(.Output != null) | .Output'

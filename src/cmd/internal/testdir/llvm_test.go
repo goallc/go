@@ -24,6 +24,8 @@ import (
 
 const llvmTestToolexecEnv = "GOALLC_TEST_TOOLEXEC"
 
+const llvmDefaultCaseTimeoutSeconds = 10 * 60
+
 type llvmTestSet struct {
 	Whitelist         map[string]string            `json:"whitelist"`
 	Graylist          map[string]string            `json:"graylist"`
@@ -740,6 +742,21 @@ func (t test) appendLLVMGoFlags(cmd []string) []string {
 		"-ldflags=-w",
 		"-gcflags=command-line-arguments="+gcflags,
 		"-toolexec="+t.llvm.toolexec)
+}
+
+func TestAppendLLVMGoFlags(t *testing.T) {
+	t.Setenv("GO_GCFLAGS", "-N")
+	test := test{llvm: &llvmTestMode{toolexec: "llvm-wrapper"}}
+	got := test.appendLLVMGoFlags([]string{"go", "run", "-gcflags=all=-N"})
+	want := []string{
+		"go", "run", "-gcflags=all=-N",
+		"-ldflags=-w",
+		"-gcflags=command-line-arguments=-N -enablellvm -llvmironly",
+		"-toolexec=llvm-wrapper",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("LLVM go command = %q, want %q", got, want)
+	}
 }
 
 func llvmToolexec(t *testing.T, optPasses string) string {
