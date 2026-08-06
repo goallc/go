@@ -44,6 +44,7 @@
       "codegen/llvm_bitops_select.go": "rotate, bit length, and conditional selection through LLVM intrinsics and select",
       "codegen/llvm_bswap_mul.go": "byte and bit reversal intrinsics plus unsigned 64-bit high-low multiplication through i128",
       "codegen/llvm_carry_borrow.go": "64-bit addition carry and subtraction borrow through LLVM overflow intrinsics",
+      "codegen/_cgo_llvm_unsafe_args.go": "physical contiguous ABI0 argument and result homes for cgo unsafe argument frames",
       "codegen/llvm_math_intrinsics.go": "fused multiply-add, minimum, and maximum through matching LLVM intrinsics",
       "codegen/llvm_round32.go": "non-contracting Round32F identity on strict LLVM float values",
       "codegen/llvm_round64.go": "non-contracting Round64F identity on strict LLVM double values",

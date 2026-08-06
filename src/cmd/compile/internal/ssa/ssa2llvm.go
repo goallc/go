@@ -42,8 +42,9 @@ type llvmLocalKey struct {
 }
 
 type llvmStackSlot struct {
-	Value llvm.Value
-	Type  *types.Type
+	Value      llvm.Value
+	Type       *types.Type
+	NoLifetime bool
 }
 
 type llvmAddressedResult struct {
@@ -285,6 +286,9 @@ func getLLVMIntrinsicDeclaration(name string) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) llvmLifetimeStart(slot llvmStackSlot) {
+	if slot.NoLifetime {
+		return
+	}
 	sig := llvm.FunctionType(
 		GlobalCtxt.VoidType(),
 		[]llvm.Type{GlobalCtxt.PointerType(0)},
@@ -698,6 +702,41 @@ func (lfc *LLVMFuncContext) stackAddress(v *Value) llvm.Value {
 		v.Fatalf("SP has incompatible LLVM result type")
 	}
 	return lfc.b.CreatePtrToInt(sp, want, v.String())
+}
+
+func (lfc *LLVMFuncContext) cgoUnsafeArgAddress(v *Value, name *ir.Name) llvm.Value {
+	if lfc.F.OwnAux.ABI().Which() != obj.ABI0 {
+		v.Fatalf("cgo unsafe argument frame requires ABI0")
+	}
+
+	ptr := GlobalCtxt.PointerType(0)
+	sig := llvm.FunctionType(ptr, nil, false)
+	offset := name.FrameOffset()
+	var base llvm.Value
+	switch lfc.F.Config.arch {
+	case "amd64", "386":
+		// The x86 return address precedes the ABI0 argument frame but is not
+		// included in cmd/internal/sys.Arch.FixedFrameSize.
+		fn := getOrInsertLLVMIntrinsic("llvm.addressofreturnaddress", sig)
+		base = lfc.b.CreateCall(sig, fn, nil, v.String()+".returnslot")
+		offset += lfc.F.Config.PtrSize
+	case "arm64":
+		// AArch64's ABI0 frame reserves its fixed LR slot before the first
+		// argument. llvm.sponentry remains stable across the function frame.
+		fn := getOrInsertLLVMIntrinsic("llvm.sponentry", sig)
+		base = lfc.b.CreateCall(sig, fn, nil, v.String()+".sponentry")
+		offset += lfc.F.Config.ctxt.Arch.FixedFrameSize
+	default:
+		v.Fatalf("cgo unsafe argument frame is unsupported for LLVM target %s", lfc.F.Config.arch)
+	}
+	if offset < 0 {
+		v.Fatalf("cgo unsafe argument %v has negative frame offset %d", name, offset)
+	}
+	if offset == 0 {
+		return base
+	}
+	index := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(offset), false)
+	return lfc.b.CreateGEP(GlobalCtxt.Int8Type(), base, []llvm.Value{index}, v.String()+".frame")
 }
 
 func markLLVMGCLeaf(fn, call llvm.Value) {
@@ -2454,7 +2493,8 @@ func LLVMCompile(f *Func) {
 			}
 		}
 	}
-	frontendNoInline := frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer())
+	cgoUnsafeArgs := frontendFunc != nil && frontendFunc.Pragma&ir.CgoUnsafeArgs != 0
+	frontendNoInline := frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
 	if frontendNoInline || llvmFuncCalls(f, "runtime.gorecover") {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
@@ -2536,7 +2576,7 @@ func LLVMCompile(f *Func) {
 		return frontendFunc != nil && frontendFunc.HasDefer() &&
 			(name.Class == ir.PPARAMOUT || name.IsOutputParamHeapAddr())
 	}
-	preallocateLocal := func(name *ir.Name, llvmName string) (llvmStackSlot, bool) {
+	preallocateLocal := func(name *ir.Name, llvmName string, source *Value) (llvmStackSlot, bool) {
 		key := llvmLocalKeyForName(name)
 		if slot, ok := FCtxt.Locals[key]; ok {
 			if !types.Identical(slot.Type, name.Type()) {
@@ -2547,20 +2587,30 @@ func LLVMCompile(f *Func) {
 		if name.Type().Alignment() <= 0 {
 			f.fe.Fatalf(name.Pos(), "invalid alignment %d for local stack slot %v", name.Type().Alignment(), name)
 		}
-		value := FCtxt.b.CreateAlloca(getLLVMType(name.Type()), llvmName)
-		value.SetAlignment(int(name.Type().Alignment()))
+		cgoFrameSlot := cgoUnsafeArgs && (name.Class == ir.PPARAM || name.Class == ir.PPARAMOUT)
+		var value llvm.Value
+		if cgoFrameSlot {
+			// CgoUnsafeArgs code passes the address of one ABI0 argument to C,
+			// which may then access the entire contiguous argument/result frame.
+			// Bind parameter homes to that physical incoming frame instead of
+			// independent allocas so C writes are visible to the Go result loads.
+			value = FCtxt.cgoUnsafeArgAddress(source, name)
+		} else {
+			value = FCtxt.b.CreateAlloca(getLLVMType(name.Type()), llvmName)
+			value.SetAlignment(int(name.Type().Alignment()))
+		}
 		isDeferResult := isDeferResultLocal(name)
 		if isDeferResult {
 			// Defer recovery can resume without following the suspended call's
 			// ordinary LLVM edge, so the result slot is live for the whole function.
 			FCtxt.DeferResults[key] = true
 		}
-		if name.Type().HasPointers() {
+		if name.Type().HasPointers() && !cgoFrameSlot {
 			if isDeferResult {
 				value.SetMetadata(GlobalCtxt.MDKindID(goDeferResultMD), GlobalCtxt.MDNode(nil))
 			}
 		}
-		slot := llvmStackSlot{Value: value, Type: name.Type()}
+		slot := llvmStackSlot{Value: value, Type: name.Type(), NoLifetime: cgoFrameSlot}
 		FCtxt.Locals[key] = slot
 		return slot, true
 	}
@@ -2586,7 +2636,7 @@ func LLVMCompile(f *Func) {
 		if !name.Type().IsPtr() {
 			f.fe.Fatalf(name.Pos(), "heap output parameter address %v has non-pointer type %v", name, name.Type())
 		}
-		home, created := preallocateLocal(name, name.Sym().Name+".defer.home")
+		home, created := preallocateLocal(name, name.Sym().Name+".defer.home", nil)
 		if !created {
 			continue
 		}
@@ -2603,15 +2653,15 @@ func LLVMCompile(f *Func) {
 			if v.Op != OpLocalAddr || v.Uses == 0 {
 				continue
 			}
-			name, key := llvmLocalName(v)
-			_, created := preallocateLocal(name, v.String())
+			name, _ := llvmLocalName(v)
+			slot, created := preallocateLocal(name, v.String(), v)
 			if !created {
 				continue
 			}
 			if name.Class == ir.PPARAM {
 				parameterHomes = append(parameterHomes, v)
-				if name.Type().HasPointers() {
-					parameterLifetimeSlots = append(parameterLifetimeSlots, FCtxt.Locals[key])
+				if name.Type().HasPointers() && !slot.NoLifetime {
+					parameterLifetimeSlots = append(parameterLifetimeSlots, slot)
 				}
 			}
 		}
