@@ -8,7 +8,8 @@ package codegen
 
 import "math"
 
-// LLVM-DAG: call double @llvm.fma.f64(double %x, double %y, double %z)
+// LLVM-ARM64-DAG: call double @llvm.fma.f64(double %x, double %y, double %z)
+// LLVM-AMD64-DAG: call double @llvm.x86.go.fma.f64(double %x, double %y, double %z)
 func llvmFMA64(x, y, z float64) float64 {
 	return math.FMA(x, y, z)
 }
