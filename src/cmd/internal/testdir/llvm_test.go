@@ -24,7 +24,32 @@ import (
 
 const llvmTestToolexecEnv = "GOALLC_TEST_TOOLEXEC"
 
-const llvmDefaultCaseTimeoutSeconds = 10 * 60
+const llvmDefaultCaseTimeoutSeconds = 60
+
+const llvmBlacklistReasonRequirement = "timeout, OOM, unsupported defer/recover, or slow CI case"
+
+func llvmCaseTimeoutSeconds(recipeTimeout int) int {
+	if recipeTimeout == 0 || recipeTimeout > llvmDefaultCaseTimeoutSeconds {
+		return llvmDefaultCaseTimeoutSeconds
+	}
+	return recipeTimeout
+}
+
+func TestLLVMCaseTimeoutSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		recipeTimeout int
+		want          int
+	}{
+		{0, 60},
+		{30, 30},
+		{60, 60},
+		{600, 60},
+	} {
+		if got := llvmCaseTimeoutSeconds(tc.recipeTimeout); got != tc.want {
+			t.Errorf("llvmCaseTimeoutSeconds(%d) = %d, want %d", tc.recipeTimeout, got, tc.want)
+		}
+	}
+}
 
 type llvmTestSet struct {
 	Whitelist         map[string]string            `json:"whitelist"`
@@ -276,7 +301,7 @@ func applyLLVMPlatformPolicy(name, platform string, set *llvmTestSet) error {
 				return fmt.Errorf("LLVM %s platform blacklist entry %q for %s has no reason", name, filename, target)
 			}
 			if !validLLVMBlacklistReason(reason) {
-				return fmt.Errorf("LLVM %s platform blacklist entry %q for %s is not a timeout or OOM", name, filename, target)
+				return fmt.Errorf("LLVM %s platform blacklist entry %q for %s is not a %s", name, filename, target, llvmBlacklistReasonRequirement)
 			}
 		}
 	}
@@ -361,7 +386,7 @@ func TestApplyLLVMPlatformPolicy(t *testing.T) {
 				Whitelist:         map[string]string{"test.go": "test"},
 				PlatformBlacklist: map[string]map[string]string{"linux/amd64": {"test.go": "ordinary failure"}},
 			},
-			want: "is not a timeout or OOM",
+			want: "is not a timeout, OOM, unsupported defer/recover, or slow CI case",
 		},
 	}
 	for _, tc := range tests {
@@ -479,7 +504,7 @@ func validateLLVMTestSet(t *testing.T, gorootTestDir, name string, candidates ma
 				failed = true
 			}
 			if entries.class == "blacklist" && !validLLVMBlacklistReason(reason) {
-				t.Errorf("LLVM %s blacklist pattern %q is not a timeout or OOM", name, pattern)
+				t.Errorf("LLVM %s blacklist pattern %q is not a %s", name, pattern, llvmBlacklistReasonRequirement)
 				failed = true
 			}
 			matched := false
@@ -511,7 +536,27 @@ func validLLVMBlacklistReason(reason string) bool {
 	reason = strings.ToLower(reason)
 	return strings.Contains(reason, "timeout") ||
 		strings.Contains(reason, "out of memory") ||
-		strings.Contains(reason, "oom")
+		strings.Contains(reason, "oom") ||
+		strings.Contains(reason, "slow") ||
+		strings.Contains(reason, "defer") ||
+		strings.Contains(reason, "recover")
+}
+
+func TestValidLLVMBlacklistReason(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		want   bool
+	}{
+		{"timeout: does not terminate", true},
+		{"OOM during LLVM code generation", true},
+		{"slow: exceeds the one-minute CI budget", true},
+		{"unsupported defer/recover execution", true},
+		{"ordinary lowering failure", false},
+	} {
+		if got := validLLVMBlacklistReason(tc.reason); got != tc.want {
+			t.Errorf("validLLVMBlacklistReason(%q) = %v, want %v", tc.reason, got, tc.want)
+		}
+	}
 }
 
 func classifyLLVMTest(t *testing.T, set llvmTestSet, filename string) llvmTestClass {

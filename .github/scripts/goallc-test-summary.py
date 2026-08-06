@@ -49,6 +49,7 @@ def main():
         return
 
     actions = {}
+    elapsed = {}
     package_action = None
     gray_results = {}
     policies = {}
@@ -66,6 +67,9 @@ def main():
             test = event.get("Test")
             if test and action in {"pass", "fail", "skip"}:
                 actions[test] = action
+                duration = event.get("Elapsed")
+                if isinstance(duration, (int, float)):
+                    elapsed[test] = max(elapsed.get(test, 0), duration)
             elif not test and action in {"pass", "fail"}:
                 package_action = action
 
@@ -149,6 +153,33 @@ def main():
         for suite, test, reason in sorted(set(black_results)):
             lines.append(f"| {markdown(suite)} | `{markdown(test)}` | {markdown(reason)} |")
         lines.extend(["", "</details>", ""])
+
+    leaf_names = {name for name, _ in leaf_results(actions)}
+    slow_cases = sorted(
+        (
+            (duration, name, actions[name])
+            for name, duration in elapsed.items()
+            if name in leaf_names
+            and name.startswith("TestLLVM/")
+            and duration >= 10
+        ),
+        reverse=True,
+    )
+    if slow_cases:
+        lines.extend([
+            "### Slowest executed cases",
+            "",
+            "Cases taking at least 10 seconds. Move cases over the one-minute CI budget to the blacklist.",
+            "",
+            "| Test | Result | Elapsed |",
+            "| --- | --- | ---: |",
+        ])
+        for duration, name, action in slow_cases:
+            test_name = name.removeprefix("TestLLVM/")
+            lines.append(
+                f"| `{markdown(test_name)}` | {markdown(action)} | {duration:.2f}s |"
+            )
+        lines.append("")
 
     summary_path.write_text("\n".join(lines), encoding="utf-8")
 
