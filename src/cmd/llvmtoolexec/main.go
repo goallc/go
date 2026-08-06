@@ -4,8 +4,8 @@
 
 // llvm-toolexec is a go build -toolexec wrapper that replaces selected Go
 // compiler actions with objects produced by llc from compiler LLVM IR. An
-// action is selected either by -enablellvm in its compiler flags or by matching
-// -llvm-package. The compiler still writes __.PKGDEF, so dependents retain
+// action is selected when both -enablellvm and -llvmironly are present in its
+// compiler flags. The compiler still writes __.PKGDEF, so dependents retain
 // normal Go export-data handling; it intentionally writes no native machine
 // code.
 package main
@@ -30,7 +30,6 @@ var (
 	optPath        = flag.String("opt", os.Getenv("GOALLC_OPT"), "path to opt")
 	optPasses      = flag.String("opt-passes", "", "optional LLVM optimization pipeline to run before llc")
 	passPluginPath = flag.String("pass-plugin", os.Getenv("GOALLC_PASS_PLUGIN"), "path to the GoALLC LLVM pass plugin (default next to llc)")
-	llvmPackage    = flag.String("llvm-package", "", "compile import path to lower through LLVM regardless of package gcflags")
 	keepIR         = flag.Bool("keep-ir", false, "keep the compiler-generated .ll sidecar")
 )
 
@@ -45,20 +44,14 @@ func main() {
 		run(tool, args...)
 		return
 	}
-	useLLVM := boolToolFlag(args, "-enablellvm") || compilePackageMatches(args, *llvmPackage)
 	if isFullVersion(args) {
-		// A version probe has no package import path. If this wrapper can select
-		// a package itself, conservatively include the LLVM backend in the tool
-		// identity for every compiler action. Native actions may rebuild when the
-		// backend changes, but an LLVM action can never reuse a native cache entry.
-		if *llvmPackage != "" || useLLVM {
-			printToolIdentity(tool, args, *llcPath, *optPath, *optPasses, *passPluginPath, *llvmPackage)
-		} else {
-			run(tool, args...)
-		}
+		// Version probes do not carry per-package gcflags. Conservatively include
+		// the LLVM backend in the wrapper identity so an LLVM action can never
+		// reuse an object cached for a different payload.
+		printToolIdentity(tool, args, *llcPath, *optPath, *optPasses, *passPluginPath)
 		return
 	}
-	if !useLLVM {
+	if !hasLLVMCompileFlags(args) {
 		run(tool, args...)
 		return
 	}
@@ -79,13 +72,7 @@ func main() {
 	if !ok || output == "" {
 		fatalf("compile invocation has no -o output")
 	}
-	compileArgs := make([]string, 0, len(args)+2)
-	compileArgs = append(compileArgs, "-llvmironly")
-	compileArgs = append(compileArgs, args...)
-	if !boolToolFlag(args, "-enablellvm") {
-		compileArgs = append(compileArgs, "-enablellvm")
-	}
-	run(tool, compileArgs...)
+	run(tool, args...)
 
 	irPath := output + ".ll"
 	if _, err := os.Stat(irPath); err != nil {
@@ -250,19 +237,15 @@ func isCompileAction(args []string) bool {
 	return ok && output != ""
 }
 
-func compilePackageMatches(args []string, packagePath string) bool {
-	if packagePath == "" {
-		return false
-	}
-	got, ok := toolFlag(args, "-p")
-	return ok && got == packagePath
+func hasLLVMCompileFlags(args []string) bool {
+	return boolToolFlag(args, "-enablellvm") && boolToolFlag(args, "-llvmironly")
 }
 
 // printToolIdentity implements the toolexec -V=full protocol when this wrapper
 // may select an LLVM compile action. The native compiler identity alone is
 // insufficient because llc and the pass plugin also determine the archive
 // written by this wrapper.
-func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses, configuredPlugin, llvmPackage string) {
+func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses, configuredPlugin string) {
 	llc, err := resolveLLC(llc)
 	if err != nil {
 		fatalf("%v", err)
@@ -307,8 +290,6 @@ func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses
 	identityInput := append([]byte(nil), out...)
 	identityInput = append(identityInput, "\x00opt-passes="...)
 	identityInput = append(identityInput, optPasses...)
-	identityInput = append(identityInput, "\x00llvm-package="...)
-	identityInput = append(identityInput, llvmPackage...)
 	identity, err := backendIdentity(identityInput, append([]string{wrapper}, backendFiles...)...)
 	if err != nil {
 		fatalf("computing backend identity: %v", err)

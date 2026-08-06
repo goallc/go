@@ -178,7 +178,7 @@ func runLLVMCompileOnlyRegression(t *testing.T, gorootTestDir, name string) {
 	exe := filepath.Join(t.TempDir(), "test.exe")
 	cmd := exec.Command(goTool, "build",
 		"-gcflags=all="+os.Getenv("GO_GCFLAGS"),
-		"-gcflags=-enablellvm",
+		"-gcflags=-enablellvm -llvmironly",
 		"-ldflags=-w",
 		"-toolexec="+toolexec,
 		"-o", exe,
@@ -729,8 +729,17 @@ func (t test) appendLLVMGoFlags(cmd []string) []string {
 		return cmd
 	}
 	// GoObj DWARF emission is not implemented by the LLVM backend yet. Keep the
-	// original testdir go run command and add only the backend selection flags.
-	return append(cmd, "-ldflags=-w", "-toolexec="+t.llvm.toolexec)
+	// original testdir go run command and select its entry package through the
+	// same package-pattern mechanism as ordinary gcflags.
+	gcflags := strings.TrimSpace(os.Getenv("GO_GCFLAGS"))
+	if gcflags != "" {
+		gcflags += " "
+	}
+	gcflags += "-enablellvm -llvmironly"
+	return append(cmd,
+		"-ldflags=-w",
+		"-gcflags=command-line-arguments="+gcflags,
+		"-toolexec="+t.llvm.toolexec)
 }
 
 func llvmToolexec(t *testing.T, optPasses string) string {
@@ -743,7 +752,6 @@ func llvmToolexec(t *testing.T, optPasses string) string {
 		wrapper,
 		"-llc=" + llc,
 		"-pass-plugin=" + plugin,
-		"-llvm-package=command-line-arguments",
 	}
 	if optPasses != "" {
 		opt := llvmToolPath(t, "opt", "GOALLC_OPT")

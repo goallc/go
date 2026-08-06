@@ -66,7 +66,7 @@ func TestLLVMReflectMethodReachability(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm",
+		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
 		"-ldflags=-w",
 		"-o", executable,
 		packageArg,
@@ -83,7 +83,7 @@ func TestLLVMReflectMethodReachability(t *testing.T) {
 	listFixture := testenv.Command(
 		t, goTool, "list", "-export", "-f={{.Export}}",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm",
+		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
 		packageArg,
 	)
 	listFixture.Dir = root
@@ -172,7 +172,7 @@ func TestLLVMImportedPackageReferences(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm",
+		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
 		"-o", executable,
 		packageArg,
 	)
@@ -191,7 +191,7 @@ func TestLLVMImportedPackageReferences(t *testing.T) {
 	listFixture := testenv.Command(
 		t, goTool, "list", "-export", "-f={{.Export}}",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm",
+		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
 		packageArg,
 	)
 	listFixture.Dir = root
@@ -333,14 +333,18 @@ func TestCompileInvocationClassification(t *testing.T) {
 	if !isCompileAction([]string{"-p=main", "-o", "out.a", "main.go"}) {
 		t.Fatal("compile with output was not recognized")
 	}
-	if !compilePackageMatches([]string{"-p=command-line-arguments", "-o", "out.a"}, "command-line-arguments") {
-		t.Fatal("selected compile package was not recognized")
+	if !hasLLVMCompileFlags([]string{"-enablellvm", "-llvmironly"}) {
+		t.Fatal("complete LLVM compiler flags were not recognized")
 	}
-	if compilePackageMatches([]string{"-p=runtime", "-o", "out.a"}, "command-line-arguments") {
-		t.Fatal("unselected compile package was recognized")
-	}
-	if compilePackageMatches([]string{"-p=command-line-arguments", "-o", "out.a"}, "") {
-		t.Fatal("empty package selector matched a compile action")
+	for _, args := range [][]string{
+		{"-enablellvm"},
+		{"-llvmironly"},
+		{"-enablellvm", "-llvmironly=false"},
+		{"-enablellvm=false", "-llvmironly"},
+	} {
+		if hasLLVMCompileFlags(args) {
+			t.Fatalf("incomplete LLVM compiler flags %q were recognized", args)
+		}
 	}
 }
 
@@ -620,7 +624,7 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags=-enablellvm",
+		"-gcflags=-enablellvm -llvmironly",
 		"-ldflags=-w -debugnosplit",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/indirect",
@@ -698,7 +702,7 @@ func TestLLVMInitTaskOrder(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags=cmd/llvmtoolexec/testdata/inittask=-enablellvm",
+		"-gcflags=cmd/llvmtoolexec/testdata/inittask=-enablellvm -llvmironly",
 		"-ldflags=-w",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/inittask",
@@ -741,7 +745,7 @@ func TestLLVMExplicitNilCheckRuntime(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags=cmd/llvmtoolexec/testdata/nilcheck/p=-enablellvm",
+		"-gcflags=cmd/llvmtoolexec/testdata/nilcheck/p=-enablellvm -llvmironly",
 		"-ldflags=-w",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/nilcheck",
