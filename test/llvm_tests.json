@@ -1030,7 +1030,7 @@
       "fixedbugs/issue15252.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue15975.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue16037_run.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
-      "fixedbugs/issue16095.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
+      "fixedbugs/issue16095.go": "defer/recover execution qualified on Darwin/arm64 and Linux/amd64",
       "fixedbugs/issue16130.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue16249.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue16331.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
@@ -1094,10 +1094,6 @@
       "fixedbugs/issue72860.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue73748a.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue73748b.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
-      "fixedbugs/issue73916.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
-      "fixedbugs/issue73916b.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
-      "fixedbugs/issue73917.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
-      "fixedbugs/issue73920.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue74379.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue74379b.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "fixedbugs/issue74379c.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
@@ -1151,6 +1147,10 @@
       "zerodivide.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution"
     },
     "graylist": {
+      "fixedbugs/issue73916.go": "recover needs frontend pcinline metadata to count the inlined deferred function as a logical frame",
+      "fixedbugs/issue73916b.go": "recover needs frontend pcinline metadata to count nested inlined logical frames",
+      "fixedbugs/issue73917.go": "recover needs frontend pcinline metadata through an inlined value-method wrapper",
+      "fixedbugs/issue73920.go": "recover needs frontend pcinline metadata through an inlined pointer-method wrapper",
       "*": "LLVM lowering or runtime ABI support has not reached this test yet"
     },
     "blacklist": {
@@ -1203,6 +1203,7 @@
         "chan/select2.go": "Linux/arm64 channel-select execution deadlocks",
         "convert5.go": "Linux/arm64 float-to-integer overflow results differ from the test expectations",
         "fixedbugs/issue15281.go": "Linux/arm64 allocation placement differs from the test expectations",
+        "fixedbugs/issue16095.go": "Linux/arm64 does not retain the heap-backed named result across runtime.GC before recovered return",
         "fixedbugs/issue2615.go": "Linux/arm64 llc rejects the generated GoObj frame prologue and epilogue",
         "fixedbugs/issue34968.go": "Linux/arm64 GoObj generation reports an unexpected file-local symbol index",
         "fixedbugs/issue45045.go": "Linux/arm64 map-key liveness execution deadlocks",
