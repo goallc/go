@@ -5,13 +5,22 @@ on:
     branches:
       - go1.27.master
   pull_request:
+  # GitHub may leave pull_request workflows from forks waiting for approval.
+  # Run trusted project members' fork PRs from the base branch workflow, with
+  # read-only permissions and without publishing their build cache.
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: goallc-${{ github.workflow }}-${{ github.ref }}
+  group: goallc-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -20,6 +29,15 @@ env:
 
 jobs:
   linux:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name == github.repository ||
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) == false)) ||
+      (github.event_name == 'pull_request_target' &&
+       github.event.pull_request.head.repo.full_name != github.repository &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))
     name: linux-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -42,6 +60,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
 
       - name: Install bootstrap Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -61,6 +80,7 @@ jobs:
             zlib1g-dev
 
       - name: Restore ccache
+        if: github.event_name != 'pull_request_target'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
