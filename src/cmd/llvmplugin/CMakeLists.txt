@@ -111,6 +111,27 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.OpenDefer
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-open-defer.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input "${CMAKE_CURRENT_SOURCE_DIR}/testdata/open-defer.ll"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.OpenDeferGoObj
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=obj
+      -o "${CMAKE_CURRENT_BINARY_DIR}/open-defer.goobj"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/open-defer.ll"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.FunctionMarkerInline
     COMMAND
       "${Python3_EXECUTABLE}"
@@ -349,6 +370,20 @@ if(BUILD_TESTING)
     )
     set_tests_properties(GoALLCStatepoints.DeferEdgeObjView PROPERTIES
       DEPENDS GoALLCStatepoints.DeferEdgeGoObj
+    )
+
+    add_test(
+      NAME GoALLCStatepoints.OpenDeferObjView
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-open-defer.py"
+        --llc "${GOALLC_LLC_EXECUTABLE}"
+        --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+        --input "${CMAKE_CURRENT_SOURCE_DIR}/testdata/open-defer.ll"
+        --objview "${GOALLC_OBJVIEW_EXECUTABLE}"
+    )
+    set_tests_properties(GoALLCStatepoints.OpenDeferObjView PROPERTIES
+      DEPENDS GoALLCStatepoints.OpenDeferGoObj
     )
 
     add_test(

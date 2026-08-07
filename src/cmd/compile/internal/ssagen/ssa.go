@@ -395,11 +395,6 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 
 	s.hasOpenDefers = base.Flag.N == 0 && s.hasdefer && !s.curfn.OpenCodedDeferDisallowed()
 	switch {
-	case base.Flag.EnableLLVM:
-		// The first LLVM defer implementation models the runtime registration
-		// calls and their recovery edges directly. Open-coded defers additionally
-		// require bitmap and FUNCDATA lowering, so keep them on the classic path.
-		s.hasOpenDefers = false
 	case base.Debug.NoOpenDefer != 0:
 		s.hasOpenDefers = false
 	case s.hasOpenDefers && (base.Ctxt.Flag_shared || base.Ctxt.Flag_dynlink) && base.Ctxt.Arch.Name == "386":
@@ -448,6 +443,7 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 		deferBitsTemp := typecheck.TempAt(src.NoXPos, s.curfn, types.Types[types.TUINT8])
 		deferBitsTemp.SetAddrtaken(true)
 		s.deferBitsTemp = deferBitsTemp
+		s.f.OpenDeferBits = deferBitsTemp
 		// For this value, AuxInt is initialized to zero by default
 		startDeferBits := s.entryNewValue0(ssa.OpConst8, types.Types[types.TUINT8])
 		s.vars[deferBitsVar] = startDeferBits
@@ -599,7 +595,7 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 
 	fe.AllocFrame(s.f)
 
-	if len(s.openDefers) != 0 {
+	if len(s.openDefers) != 0 && !base.Flag.EnableLLVM {
 		s.emitOpenDeferInfo()
 	}
 
@@ -4850,6 +4846,7 @@ func (s *state) openDeferSave(t *types.Type, val *ssa.Value) *ssa.Value {
 	temp := typecheck.TempAt(pos.WithNotStmt(), s.curfn, t)
 	temp.SetOpenDeferSlot(true)
 	temp.SetFrameOffset(int64(len(s.openDefers))) // so cmpstackvarlt can order them
+	s.f.OpenDeferSlots = append(s.f.OpenDeferSlots, temp)
 	var addrTemp *ssa.Value
 	// Use OpVarLive to make sure stack slot for the closure is not removed by
 	// dead-store elimination

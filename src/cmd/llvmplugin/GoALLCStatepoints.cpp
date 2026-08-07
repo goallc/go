@@ -40,6 +40,9 @@ constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoDeferResultMD = "goallc.defer_result";
+constexpr StringLiteral GoOpenDeferBitsMD = "goallc.open_defer_bits";
+constexpr StringLiteral GoOpenDeferSlotsMD = "goallc.open_defer_slots";
+constexpr StringLiteral GoOpenCodedDeferAttr = "go-open-coded-defer";
 constexpr StringLiteral GoObjMarkerRelocMD = "goobj.marker_reloc";
 constexpr StringLiteral StackColoringNoMergeMD = "llvm.stackcoloring.no_merge";
 
@@ -102,6 +105,7 @@ struct PointerAllocaRecord {
   AllocaInst *Alloca;
   bool NeedsStackObject;
   bool DeferResult;
+  bool OpenDeferSlot;
   uint64_t ByteSize;
   uint64_t Alignment;
   uint64_t BitCount;
@@ -111,6 +115,12 @@ struct PointerAllocaRecord {
   SmallVector<Instruction *, 16> AddressUses;
   SmallVector<CallInst *, 8> ActiveCalls;
   bool ActivityUnclear = false;
+};
+
+struct OpenDeferInfo {
+  AllocaInst *Bits = nullptr;
+  AllocaInst *Slots = nullptr;
+  uint64_t SlotCount = 0;
 };
 
 enum class LivenessKind {
@@ -668,6 +678,68 @@ Expected<bool> deferResultAlloca(AllocaInst &Alloca) {
   return true;
 }
 
+Expected<std::optional<OpenDeferInfo>> collectOpenDeferInfo(Function &F) {
+  const DataLayout &DL = F.getDataLayout();
+  bool HasAttribute = F.hasFnAttribute(GoOpenCodedDeferAttr);
+  OpenDeferInfo Info;
+
+  for (Instruction &I : instructions(F)) {
+    auto *Alloca = dyn_cast<AllocaInst>(&I);
+    if (!Alloca)
+      continue;
+    MDNode *BitsMD = Alloca->getMetadata(GoOpenDeferBitsMD);
+    MDNode *SlotsMD = Alloca->getMetadata(GoOpenDeferSlotsMD);
+    if (!BitsMD && !SlotsMD)
+      continue;
+    if (!HasAttribute)
+      return createStringError(
+          std::errc::invalid_argument,
+          "GoALLC open-defer alloca metadata requires the function attribute");
+    if (!Alloca->isStaticAlloca() || Alloca->getParent() != &F.getEntryBlock())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC open-defer state requires fixed entry-block allocas");
+    if (BitsMD) {
+      if (BitsMD->getNumOperands() != 0 || Info.Bits || SlotsMD ||
+          !Alloca->getAllocatedType()->isIntegerTy(8))
+        return createStringError(std::errc::invalid_argument,
+                                 "GoALLC open-defer bits metadata is invalid");
+      Info.Bits = Alloca;
+    } else {
+      auto *SlotsType = dyn_cast<ArrayType>(Alloca->getAllocatedType());
+      auto *CountMD = SlotsMD && SlotsMD->getNumOperands() == 1
+                          ? dyn_cast<ConstantAsMetadata>(SlotsMD->getOperand(0))
+                          : nullptr;
+      auto *Count =
+          CountMD ? dyn_cast<ConstantInt>(CountMD->getValue()) : nullptr;
+      if (Info.Slots || !SlotsType ||
+          !SlotsType->getElementType()->isPointerTy() || !Count ||
+          Count->getValue().getActiveBits() > 64 || Count->isZero() ||
+          Count->getZExtValue() != SlotsType->getNumElements() ||
+          Alloca->getAlign() < DL.getPointerABIAlignment(0))
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC open-defer slots must be one aligned pointer array");
+      Info.Slots = Alloca;
+      Info.SlotCount = Count->getZExtValue();
+    }
+  }
+
+  if (!HasAttribute) {
+    if (Info.Bits || Info.Slots)
+      llvm_unreachable("metadata without open-defer attribute was accepted");
+    return std::optional<OpenDeferInfo>();
+  }
+  if (!Info.Bits || !Info.Slots)
+    return createStringError(
+        std::errc::invalid_argument,
+        "GoALLC open-coded defer function is missing frame state metadata");
+
+  Info.Bits->setMetadata(GoOpenDeferBitsMD, nullptr);
+  Info.Slots->setMetadata(GoOpenDeferSlotsMD, nullptr);
+  return std::optional<OpenDeferInfo>(std::move(Info));
+}
+
 // Return true when the optimized IR can make the address observable outside
 // compiler-controlled direct accesses. This is deliberately a structural
 // post-optimization decision: the frontend Addrtaken bit is provenance, not a
@@ -873,7 +945,8 @@ Error computePointerAllocaActivity(
 void protectStackObjectsFromColoring(
     MutableArrayRef<PointerAllocaRecord> PointerAllocas) {
   for (PointerAllocaRecord &Record : PointerAllocas) {
-    if (!Record.NeedsStackObject && !Record.DeferResult)
+    if (!Record.NeedsStackObject && !Record.DeferResult &&
+        !Record.OpenDeferSlot)
       continue;
     // A Go StackObject has function-wide identity and layout metadata. A defer
     // result likewise remains a root at every statepoint. Neither can share
@@ -939,7 +1012,8 @@ bool isPointerAllocaActiveAt(const PointerAllocaRecord &Record,
 }
 
 Error collectPointerAllocas(
-    Function &F, SmallVectorImpl<PointerAllocaRecord> &PointerAllocas) {
+    Function &F, const std::optional<OpenDeferInfo> &OpenDefer,
+    SmallVectorImpl<PointerAllocaRecord> &PointerAllocas) {
   bool HasSafepoint = llvm::any_of(instructions(F), [](Instruction &I) {
     auto *Call = dyn_cast<CallBase>(&I);
     return Call && !isa<GCStatepointInst>(Call) && !isLeafCall(*Call);
@@ -1003,8 +1077,14 @@ Error collectPointerAllocas(
     if (!DeferResult)
       return DeferResult.takeError();
     Alloca->setMetadata(GoDeferResultMD, nullptr);
+    bool IsOpenDeferSlot = OpenDefer && OpenDefer->Slots == Alloca;
+    // Do not override the ordinary structural StackObject classification for
+    // open-defer state. A matching gc-live base still makes GoObj expand this
+    // layout into LocalsPointerMaps; an unmatched callsite follows the same
+    // StackObject rule as every other address-observable alloca.
     bool NeedsStackObject = allocaNeedsStackObject(*Alloca);
-    PointerAllocas.push_back({Alloca, NeedsStackObject, *DeferResult, ByteSize,
+    PointerAllocas.push_back({Alloca, NeedsStackObject, *DeferResult,
+                              IsOpenDeferSlot, ByteSize,
                               Alloca->getAlign().value(), BitCount,
                               std::move(BitmapWords), std::move(Leaves)});
   }
@@ -1095,8 +1175,27 @@ void appendAllocaPtrMapDeoptOperands(
   AppendConstant(ProtocolLength);
 }
 
+void appendOpenDeferDeoptOperands(IRBuilder<> &Builder,
+                                  const std::optional<OpenDeferInfo> &OpenDefer,
+                                  SmallVectorImpl<Value *> &Deopt) {
+  if (!OpenDefer)
+    return;
+  constexpr uint64_t ProtocolLength = 6;
+  auto AppendConstant = [&](uint64_t Value) {
+    Deopt.push_back(ConstantInt::get(Builder.getInt64Ty(), Value));
+  };
+  AppendConstant(GoObj::OpenDeferBeginMagic);
+  AppendConstant(ProtocolLength);
+  AppendConstant(OpenDefer->SlotCount);
+  Deopt.push_back(OpenDefer->Bits);
+  Deopt.push_back(OpenDefer->Slots);
+  AppendConstant(GoObj::OpenDeferEndMagic);
+  AppendConstant(ProtocolLength);
+}
+
 Error rewriteCall(SafepointRecord &Record,
-                  ArrayRef<const PointerAllocaRecord *> PointerAllocas) {
+                  ArrayRef<const PointerAllocaRecord *> PointerAllocas,
+                  const std::optional<OpenDeferInfo> &OpenDefer) {
   CallInst *Call = Record.Call;
 
   SmallVector<Value *, 8> CallArgs(Call->args());
@@ -1109,6 +1208,9 @@ Error rewriteCall(SafepointRecord &Record,
 
   IRBuilder<> Builder(Call);
   Builder.SetCurrentDebugLocation(Call->getDebugLoc());
+  // Keep the open-defer envelope before the alloca ptrmap envelope. The latter
+  // deliberately remains the final self-describing suffix for compatibility.
+  appendOpenDeferDeoptOperands(Builder, OpenDefer, Deopt);
   appendAllocaPtrMapDeoptOperands(Builder, PointerAllocas, Deopt);
   Record.Statepoint = Builder.CreateGCStatepointCall(
       Record.ID, 0, Callee, CallArgs,
@@ -1311,8 +1413,18 @@ Error rewriteFunction(Function &F) {
   if (Error Err =
           canonicalizeDirectAllocaAddresses(F, DT, WholeLifetimeAllocas))
     return Err;
+  Expected<std::optional<OpenDeferInfo>> OpenDeferOrErr =
+      collectOpenDeferInfo(F);
+  if (!OpenDeferOrErr)
+    return OpenDeferOrErr.takeError();
+  std::optional<OpenDeferInfo> OpenDefer = std::move(*OpenDeferOrErr);
+  if (OpenDefer) {
+    OpenDefer->Bits->setMetadata(
+        StackColoringNoMergeMD,
+        MDNode::get(F.getContext(), ArrayRef<Metadata *>()));
+  }
   SmallVector<PointerAllocaRecord, 8> PointerAllocas;
-  if (Error Err = collectPointerAllocas(F, PointerAllocas))
+  if (Error Err = collectPointerAllocas(F, OpenDefer, PointerAllocas))
     return Err;
   if (Error Err = scalarizeLivePointerAggregates(F))
     return Err;
@@ -1383,7 +1495,7 @@ Error rewriteFunction(Function &F) {
       // A recovered panic resumes outside LLVM's explicit CFG. The frontend
       // marks named result homes whose contents must therefore remain visible
       // to Go's stack scanner at every possible suspension call.
-      bool IsActive = Alloca.DeferResult ||
+      bool IsActive = Alloca.DeferResult || Alloca.OpenDeferSlot ||
                       Record.Live.contains(Alloca.Alloca) ||
                       isPointerAllocaActiveAt(Alloca, *Record.Call);
       if (IsActive)
@@ -1395,7 +1507,7 @@ Error rewriteFunction(Function &F) {
       if (IsActive || Alloca.NeedsStackObject)
         AllocaRecords.push_back(&Alloca);
     }
-    if (Error Err = rewriteCall(Record, AllocaRecords))
+    if (Error Err = rewriteCall(Record, AllocaRecords, OpenDefer))
       return Err;
   }
   eraseOriginalCalls(Records);

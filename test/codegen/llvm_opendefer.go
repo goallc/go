@@ -1,0 +1,41 @@
+// asmcheck
+
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package codegen
+
+// LLVM-LABEL: define goabiinternal i64 @codegen.llvmOpenDeferTwo(i64 %value)
+// LLVM: [[SLOTS:%.*]] = alloca [2 x ptr], align 8, !goallc.open_defer_slots ![[SLOTS_MD:[0-9]+]]
+// LLVM: [[BITS:%.*]] = alloca i8, {{.*}}!goallc.open_defer_bits
+// LLVM: [[SLOT0:%.*]] = getelementptr i8, ptr [[SLOTS]], i64 0
+// LLVM: [[SLOT1:%.*]] = getelementptr i8, ptr [[SLOTS]], i64 8
+// LLVM: callbr void @llvm.go.defer.edge()
+// LLVM-NEXT: to label %{{.*}} [label %[[RECOVERY:[A-Za-z0-9_.]+]]]
+// LLVM: store volatile ptr {{.*}}, ptr [[SLOT0]]
+// LLVM: store volatile ptr {{.*}}, ptr [[SLOT1]]
+// LLVM: [[RECOVERY]]:
+// LLVM-NEXT: call goabiinternal void @runtime.deferreturn()
+// LLVM: ![[SLOTS_MD]] = !{i32 2}
+// LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmOpenDeferTwo(i64 %value)
+// LLVM-OPT: [[SLOTS_OPT:%.*]] = alloca [2 x ptr], align 8, !goallc.open_defer_slots ![[SLOTS_OPT_MD:[0-9]+]]
+// LLVM-OPT: [[BITS_OPT:%.*]] = alloca i8, {{.*}}!goallc.open_defer_bits
+// LLVM-OPT: [[SLOT1_OPT:%.*]] = getelementptr {{.*}}i8, ptr [[SLOTS_OPT]], i64 8
+// LLVM-OPT: callbr void @llvm.go.defer.edge()
+// LLVM-OPT-NEXT: to label %{{.*}} [label %[[RECOVERY_OPT:[A-Za-z0-9_.]+]]]
+// LLVM-OPT: store volatile ptr {{.*}}, ptr [[SLOTS_OPT]]
+// LLVM-OPT: store volatile ptr {{.*}}, ptr [[SLOT1_OPT]]
+// LLVM-OPT: [[RECOVERY_OPT]]:
+// LLVM-OPT: call goabiinternal void @runtime.deferreturn()
+// LLVM-OPT: ![[SLOTS_OPT_MD]] = !{i32 2}
+
+func llvmOpenDeferTwo(value int) (result int) {
+	defer func() {
+		result++
+	}()
+	defer func() {
+		result += value
+	}()
+	return 3
+}

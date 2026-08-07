@@ -15,21 +15,25 @@ import (
 )
 
 type LLVMFuncContext struct {
-	BBs              map[ID]llvm.BasicBlock
-	Vs               map[ID]llvm.Value
-	Locals           map[llvmLocalKey]llvmStackSlot
-	AddressedResults map[ID][]llvmAddressedResult
-	ResultSlots      map[ID]llvm.Value
-	ItabMethods      map[ID]bool
-	ClosureCodeLoads map[ID]bool
-	DeferResults     map[llvmLocalKey]bool
-	DeferResultKeys  map[ID]llvmLocalKey
-	F                *Func
-	LF               llvm.Value
-	ClosureContext   llvm.Value
-	b                llvm.Builder
-	ReturnType       llvm.Type
-	ResultCount      int
+	BBs               map[ID]llvm.BasicBlock
+	Vs                map[ID]llvm.Value
+	Locals            map[llvmLocalKey]llvmStackSlot
+	AddressedResults  map[ID][]llvmAddressedResult
+	ResultSlots       map[ID]llvm.Value
+	ItabMethods       map[ID]bool
+	ClosureCodeLoads  map[ID]bool
+	DeferResults      map[llvmLocalKey]bool
+	DeferResultKeys   map[ID]llvmLocalKey
+	OpenDeferBits     map[llvmLocalKey]bool
+	OpenDeferSlots    map[llvmLocalKey]int
+	F                 *Func
+	LF                llvm.Value
+	Prologue          llvm.BasicBlock
+	OpenDeferRecovery llvm.BasicBlock
+	ClosureContext    llvm.Value
+	b                 llvm.Builder
+	ReturnType        llvm.Type
+	ResultCount       int
 }
 
 // SSA may clone an ir.Name while retaining the same logical source
@@ -66,6 +70,9 @@ const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
 const goDeferResultMD = "goallc.defer_result"
+const goOpenDeferBitsMD = "goallc.open_defer_bits"
+const goOpenDeferSlotsMD = "goallc.open_defer_slots"
+const goOpenCodedDeferAttr = "go-open-coded-defer"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolNameMD = "goobj.symbol.name"
 const llvmFramePointerAttr = "frame-pointer"
@@ -804,12 +811,30 @@ func (lfc *LLVMFuncContext) isDeferResultAddress(v *Value) bool {
 	return false
 }
 
+func (lfc *LLVMFuncContext) isOpenDeferAddress(v *Value) bool {
+	for v != nil {
+		switch v.Op {
+		case OpLocalAddr:
+			_, key := llvmLocalName(v)
+			return lfc.OpenDeferBits[key] || lfc.OpenDeferSlots[key] != 0
+		case OpOffPtr, OpAddPtr, OpPtrIndex, OpCopy:
+			if len(v.Args) == 0 {
+				return false
+			}
+			v = v.Args[0]
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func (lfc *LLVMFuncContext) llvmZero(v *Value) llvm.Value {
 	size, align := llvmMemoryOpInfo(v)
 	dst := lfc.llvmMemoryPointer(v, 0)
 	length := lfc.llvmMemoryLength(v, size)
 	volatile := uint64(0)
-	if lfc.isDeferResultAddress(v.Args[0]) {
+	if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 		volatile = 1
 	}
 	sig := llvm.FunctionType(
@@ -870,7 +895,7 @@ func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
 	}
 	fn := getOrInsertLLVMIntrinsic(name, sig)
 	volatile := uint64(0)
-	if lfc.isDeferResultAddress(v.Args[0]) {
+	if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 		volatile = 1
 	}
 	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
@@ -1733,7 +1758,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		if name, ok := v.Aux.(*ir.Name); ok {
 			key := llvmLocalKeyForName(name)
 			if slot, ok := lfc.Locals[key]; ok {
-				if slot.Type.HasPointers() && !lfc.DeferResults[key] {
+				if slot.Type.HasPointers() && !lfc.DeferResults[key] && lfc.OpenDeferSlots[key] == 0 {
 					lfc.llvmLifetimeStart(slot)
 				}
 			}
@@ -2199,7 +2224,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		// successor. Reload named results from their stack homes at every such
 		// exit so LLVM cannot replace the recovered value with its normal-path
 		// SSA value.
-		if lfc.isDeferResultAddress(v.Args[0]) {
+		if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 			lVal.SetVolatile(true)
 		}
 		if v.Op == OpDereference {
@@ -2271,7 +2296,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.emitNilCheckIntrinsic(v)
 	case OpStore:
 		lVal = lfc.b.CreateStore(arg1(), arg0())
-		if lfc.isDeferResultAddress(v.Args[0]) {
+		if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 			lVal.SetVolatile(true)
 		}
 	case OpZero:
@@ -2354,6 +2379,69 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		}
 	default:
 		BB.Func.fe.Fatalf(BB.Pos, "unsupported SSA block kind in LLVM lowering: %s", BB.Kind)
+	}
+}
+
+func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
+	if lfc.OpenDeferRecovery.IsNil() {
+		return
+	}
+
+	deferReturnSig := llvmFuncSignature{
+		Type:                llvm.FunctionType(GlobalCtxt.VoidType(), nil, false),
+		ReturnType:          GlobalCtxt.VoidType(),
+		ClosureContextIndex: -1,
+	}
+	deferReturn := getOrInsertLLVMFunction("runtime.deferreturn", deferReturnSig, goABIInternalCallConv)
+	attachGoObjABISymbolRef(deferReturn, "runtime.deferreturn", obj.ABIInternal)
+
+	lfc.b.SetInsertPointAtEnd(lfc.OpenDeferRecovery)
+	call := lfc.b.CreateCall(deferReturnSig.Type, deferReturn, nil, "")
+	call.SetInstructionCallConv(goABIInternalCallConv)
+
+	outParams := lfc.F.OwnAux.ABIInfo().OutParams()
+	if len(outParams) != lfc.ResultCount {
+		lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result count %d does not match LLVM signature result count %d", len(outParams), lfc.ResultCount)
+	}
+	results := make([]llvm.Value, len(outParams))
+	for i, result := range outParams {
+		var abiType llvm.Type
+		if lfc.ResultCount == 1 {
+			abiType = lfc.ReturnType
+		} else {
+			abiType = lfc.ReturnType.StructElementTypes()[i]
+		}
+		if result.Type.Size() == 0 {
+			results[i] = llvm.Undef(abiType)
+			continue
+		}
+		if result.Name == nil {
+			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result %d has no stack name", i)
+		}
+		slot, ok := lfc.Locals[llvmLocalKeyForName(result.Name)]
+		if !ok {
+			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result %d has no stack home", i)
+		}
+		value := lfc.b.CreateLoad(getLLVMType(result.Type), slot.Value, fmt.Sprintf("open.defer.result%d", i))
+		value.SetAlignment(int(result.Type.Alignment()))
+		value.SetVolatile(true)
+		if value.Type() != abiType {
+			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result %d has incompatible LLVM ABI type", i)
+		}
+		results[i] = value
+	}
+
+	switch len(results) {
+	case 0:
+		lfc.b.CreateRetVoid()
+	case 1:
+		lfc.b.CreateRet(results[0])
+	default:
+		ret := llvm.Undef(lfc.ReturnType)
+		for i, result := range results {
+			ret = lfc.b.CreateInsertValue(ret, result, i, fmt.Sprintf("open.defer.return%d", i))
+		}
+		lfc.b.CreateRet(ret)
 	}
 }
 
@@ -2448,6 +2536,8 @@ func LLVMCompile(f *Func) {
 		ClosureCodeLoads: map[ID]bool{},
 		DeferResults:     map[llvmLocalKey]bool{},
 		DeferResultKeys:  map[ID]llvmLocalKey{},
+		OpenDeferBits:    map[llvmLocalKey]bool{},
+		OpenDeferSlots:   map[llvmLocalKey]int{},
 		F:                f,
 		b:                GlobalCtxt.NewBuilder(),
 		ReturnType:       sig.ReturnType,
@@ -2498,6 +2588,17 @@ func LLVMCompile(f *Func) {
 	if frontendNoInline || llvmFuncCalls(f, "runtime.gorecover") {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
+	if f.OpenDeferBits != nil {
+		if len(f.OpenDeferSlots) == 0 {
+			f.fe.Fatalf(f.Entry.Pos, "open-coded defer has no function slots")
+		}
+		FCtxt.OpenDeferBits[llvmLocalKeyForName(f.OpenDeferBits)] = true
+		for i, slot := range f.OpenDeferSlots {
+			// Store index+1 so map lookup also distinguishes slot zero from absence.
+			FCtxt.OpenDeferSlots[llvmLocalKeyForName(slot)] = i + 1
+		}
+		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goOpenCodedDeferAttr, ""))
+	}
 	setGoObjFunctionFlags(FCtxt.LF, f.OwnAux.Fn)
 	setGoObjFunctionInfo(FCtxt.LF, f.OwnAux.Fn)
 	inParams := f.OwnAux.ABIInfo().InParams()
@@ -2519,15 +2620,24 @@ func LLVMCompile(f *Func) {
 		FCtxt.ClosureContext = FCtxt.LF.Param(sig.ClosureContextIndex)
 		FCtxt.ClosureContext.SetName(".closureptr")
 	}
-	// LLVM defines the first block in a function as its entry. Go passes may
-	// reorder f.Blocks without changing f.Entry, so create the real entry first
-	// and retain the relative order of every remaining block.
+	// Open-coded defer needs a real CFG edge to its runtime recovery entry. Use
+	// a zero-instruction callbr in a synthetic prologue, leaving the Go SSA entry
+	// and all of its normal optimization semantics unchanged.
+	if f.OpenDeferBits != nil {
+		FCtxt.Prologue = GlobalCtxt.AddBasicBlock(FCtxt.LF, "open.defer.prologue")
+	}
 	FCtxt.BBs[f.Entry.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, f.Entry.String())
+	if FCtxt.Prologue.IsNil() {
+		FCtxt.Prologue = FCtxt.BBs[f.Entry.ID]
+	}
 	for _, BB := range f.Blocks {
 		if BB == f.Entry {
 			continue
 		}
 		FCtxt.BBs[BB.ID] = GlobalCtxt.AddBasicBlock(FCtxt.LF, BB.String())
+	}
+	if f.OpenDeferBits != nil {
+		FCtxt.OpenDeferRecovery = GlobalCtxt.AddBasicBlock(FCtxt.LF, "open.defer.recovery")
 	}
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
@@ -2570,8 +2680,17 @@ func LLVMCompile(f *Func) {
 	// it is in the entry block. Preallocate every Go stack slot before phi or
 	// ordinary instruction emission so LocalAddr values in loops and branches
 	// cannot become dynamic allocas (which Go stack growth cannot support).
-	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
+	FCtxt.b.SetInsertPointAtEnd(FCtxt.Prologue)
 	emitGoObjFunctionMarkerRelocs(FCtxt.b, f.OwnAux.Fn)
+	var openDeferSlots llvm.Value
+	if len(f.OpenDeferSlots) != 0 {
+		openDeferSlotsType := llvm.ArrayType(GlobalCtxt.PointerType(0), len(f.OpenDeferSlots))
+		openDeferSlots = FCtxt.b.CreateAlloca(openDeferSlotsType, "open.defer.slots")
+		openDeferSlots.SetAlignment(types.PtrSize)
+		openDeferSlots.SetMetadata(GlobalCtxt.MDKindID(goOpenDeferSlotsMD), GlobalCtxt.MDNode([]llvm.Metadata{
+			llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(len(f.OpenDeferSlots)), false).ConstantAsMetadata(),
+		}))
+	}
 	isDeferResultLocal := func(name *ir.Name) bool {
 		return frontendFunc != nil && frontendFunc.HasDefer() &&
 			(name.Class == ir.PPARAMOUT || name.IsOutputParamHeapAddr())
@@ -2595,9 +2714,18 @@ func LLVMCompile(f *Func) {
 			// Bind parameter homes to that physical incoming frame instead of
 			// independent allocas so C writes are visible to the Go result loads.
 			value = FCtxt.cgoUnsafeArgAddress(source, name)
+		} else if index := FCtxt.OpenDeferSlots[key]; index != 0 {
+			if openDeferSlots.IsNil() || name.Type().Size() != int64(types.PtrSize) {
+				f.fe.Fatalf(name.Pos(), "invalid open-coded defer stack slot %v", name)
+			}
+			offset := llvm.ConstInt(GlobalCtxt.Int64Type(), uint64(index-1)*uint64(types.PtrSize), false)
+			value = FCtxt.b.CreateGEP(GlobalCtxt.Int8Type(), openDeferSlots, []llvm.Value{offset}, llvmName)
 		} else {
 			value = FCtxt.b.CreateAlloca(getLLVMType(name.Type()), llvmName)
 			value.SetAlignment(int(name.Type().Alignment()))
+		}
+		if FCtxt.OpenDeferBits[key] {
+			value.SetMetadata(GlobalCtxt.MDKindID(goOpenDeferBitsMD), GlobalCtxt.MDNode(nil))
 		}
 		isDeferResult := isDeferResultLocal(name)
 		if isDeferResult {
@@ -2605,7 +2733,7 @@ func LLVMCompile(f *Func) {
 			// ordinary LLVM edge, so the result slot is live for the whole function.
 			FCtxt.DeferResults[key] = true
 		}
-		if name.Type().HasPointers() && !cgoFrameSlot {
+		if name.Type().HasPointers() && !cgoFrameSlot && FCtxt.OpenDeferSlots[key] == 0 {
 			if isDeferResult {
 				value.SetMetadata(GlobalCtxt.MDKindID(goDeferResultMD), GlobalCtxt.MDNode(nil))
 			}
@@ -2715,6 +2843,30 @@ func LLVMCompile(f *Func) {
 	for _, slot := range parameterLifetimeSlots {
 		FCtxt.llvmLifetimeStart(slot)
 	}
+	if f.OpenDeferBits != nil {
+		zeroSlot := func(name *ir.Name, volatile bool) {
+			slot, ok := FCtxt.Locals[llvmLocalKeyForName(name)]
+			if !ok {
+				f.fe.Fatalf(f.Entry.Pos, "open-coded defer stack slot %v was not allocated", name)
+			}
+			store := FCtxt.b.CreateStore(llvm.ConstNull(getLLVMType(slot.Type)), slot.Value)
+			store.SetAlignment(int(slot.Type.Alignment()))
+			store.SetVolatile(volatile)
+		}
+		zeroSlot(f.OpenDeferBits, true)
+		for _, slot := range f.OpenDeferSlots {
+			zeroSlot(slot, true)
+		}
+		for _, result := range frontendFunc.Type().Results() {
+			if result.Nname == nil || result.Type.Size() == 0 {
+				continue
+			}
+			name := result.Nname.(*ir.Name)
+			if _, ok := FCtxt.Locals[llvmLocalKeyForName(name)]; ok {
+				zeroSlot(name, true)
+			}
+		}
+	}
 	// LLVM requires all phi nodes to precede non-phi instructions in a
 	// block. Predeclare them before recursive value emission can insert any
 	// other instruction into the block.
@@ -2767,6 +2919,17 @@ func LLVMCompile(f *Func) {
 		FCtxt.CompileBlock(BB, storeOrder(BB.Values, sset, storeNumber))
 	}
 	FCtxt.emitDeferResultHomeStores()
+	if f.OpenDeferBits != nil {
+		FCtxt.b.SetInsertPointAtEnd(FCtxt.Prologue)
+		deferEdge := getLLVMIntrinsicDeclaration(goDeferEdgeIntrinsic)
+		FCtxt.b.CreateCallBr(
+			deferEdge.GlobalValueType(), deferEdge, nil,
+			FCtxt.BBs[f.Entry.ID],
+			[]llvm.BasicBlock{FCtxt.OpenDeferRecovery},
+			"",
+		)
+		FCtxt.emitOpenDeferRecovery()
+	}
 	FCtxt.FinishPhi()
 	FCtxt.expandNilCheckIntrinsics()
 	FCtxt.MappingName()

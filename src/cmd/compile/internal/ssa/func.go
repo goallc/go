@@ -49,6 +49,11 @@ type Func struct {
 	dumpFileSeq uint8 // the sequence numbers of dump file. (%s_%02d__%s.dump", funcname, dumpFileSeq, phaseName)
 	IsPgoHot    bool
 	DeferReturn *Block // avoid creating more than one deferreturn if there's multiple calls to deferproc-etc.
+	// OpenDeferBits and OpenDeferSlots identify the stack state interpreted by
+	// runtime's open-coded defer unwinder. LLVM lowering consumes these names
+	// before its independent frame layout replaces the native FrameOffset order.
+	OpenDeferBits  *ir.Name
+	OpenDeferSlots []*ir.Name
 
 	// when register allocation is done, maps value ids to locations
 	RegAlloc []Location

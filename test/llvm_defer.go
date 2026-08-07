@@ -59,6 +59,20 @@ func heapDefers(count int) (result int) {
 	return
 }
 
+func recoveredHeapDefers(count int) (result int) {
+	defer func() {
+		if recover() != nil {
+			result = result*10 + 9
+		}
+	}()
+	for i := 0; i < count; i++ {
+		defer func(value int) {
+			result = result*10 + value
+		}(i)
+	}
+	panic("classic defer recovery")
+}
+
 func pointerDefer() (result int) {
 	pointer := new(int)
 	*pointer = 73
@@ -103,6 +117,9 @@ func main() {
 	}
 	if heapDefers(3) != 210 {
 		panic("heap defer order is incorrect")
+	}
+	if recoveredHeapDefers(3) != 2109 {
+		panic("classic heap defer recovery is incorrect")
 	}
 	if pointerDefer() != 73 {
 		panic("defer lost a captured pointer across GC")
