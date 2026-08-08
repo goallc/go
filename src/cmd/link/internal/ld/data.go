@@ -752,6 +752,7 @@ func ExtrelocSimple(ldr *loader.Loader, r loader.Reloc) loader.ExtReloc {
 	rr.Xadd = r.Add()
 	rr.Type = r.Type()
 	rr.Size = r.Siz()
+	rr.Off = r.Off()
 	return rr
 }
 
@@ -770,6 +771,7 @@ func ExtrelocViaOuterSym(ldr *loader.Loader, r loader.Reloc, s loader.Sym) loade
 	rr.Xsym = rs
 	rr.Type = r.Type()
 	rr.Size = r.Siz()
+	rr.Off = r.Off()
 	return rr
 }
 

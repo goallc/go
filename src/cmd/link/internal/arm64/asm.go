@@ -646,6 +646,24 @@ func machoreloc1(arch *sys.Arch, out *ld.OutBuf, ldr *loader.Loader, s loader.Sy
 		}
 		v |= 1 << 24 // pc-relative bit
 		v |= ld.MACHO_ARM64_RELOC_BRANCH26 << 28
+	case objabi.R_ARM64_PCREL:
+		if siz != 4 || r.Off < 0 || int64(r.Off)+4 > int64(len(ldr.Data(s))) {
+			return false
+		}
+		inst := arch.ByteOrder.Uint32(ldr.Data(s)[r.Off:])
+		machoType, pcrel, ok := machoPCRelRelocType(inst)
+		if !ok {
+			ldr.Errorf(s, "unsupported instruction for %x R_ARM64_PCREL", inst)
+			return false
+		}
+		if xadd != 0 {
+			out.Write32(uint32(sectoff))
+			out.Write32((ld.MACHO_ARM64_RELOC_ADDEND << 28) | (2 << 25) | uint32(xadd&0xffffff))
+		}
+		if pcrel {
+			v |= 1 << 24
+		}
+		v |= machoType << 28
 	case objabi.R_ADDRARM64,
 		objabi.R_ARM64_PCREL_LDST8,
 		objabi.R_ARM64_PCREL_LDST16,
@@ -700,6 +718,19 @@ func machoreloc1(arch *sys.Arch, out *ld.OutBuf, ldr *loader.Loader, s loader.Sy
 	out.Write32(uint32(sectoff))
 	out.Write32(v)
 	return true
+}
+
+func machoPCRelRelocType(inst uint32) (machoType uint32, pcrel bool, ok bool) {
+	switch {
+	case (inst>>24)&0x9f == 0x90: // ADRP
+		return ld.MACHO_ARM64_RELOC_PAGE21, true, true
+	case (inst>>24)&0x9f == 0x91: // ADD (immediate)
+		return ld.MACHO_ARM64_RELOC_PAGEOFF12, false, true
+	case (inst>>24)&0x3b == 0x39: // load/store (unsigned immediate)
+		return ld.MACHO_ARM64_RELOC_PAGEOFF12, false, true
+	default:
+		return 0, false, false
+	}
 }
 
 func pereloc1(arch *sys.Arch, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, r loader.ExtReloc, sectoff int64) bool {
@@ -795,6 +826,25 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		nExtReloc := 0
 		switch rt := r.Type(); rt {
 		default:
+		case objabi.R_ARM64_PCREL:
+			// Mach-O represents each ADRP or ADD/load/store fixup as an
+			// independent PAGE21 or PAGEOFF12 relocation. Keep LLVM's
+			// independent R_ARM64_PCREL records unresolved for the Darwin
+			// external linker, which may change the final section layout.
+			if !target.IsDarwin() {
+				break
+			}
+			rs, off := ld.FoldSubSymbolOffset(ldr, rs)
+			xadd := r.Add() + off
+			rst := ldr.SymType(rs)
+			if rst != sym.SHOSTOBJ && rst != sym.SDYNIMPORT && ldr.SymSect(rs) == nil {
+				ldr.Errorf(s, "missing section for %s", ldr.SymName(rs))
+			}
+			nExtReloc = 1
+			if xadd != 0 {
+				nExtReloc = 2
+			}
+			return val, nExtReloc, isOk
 		case objabi.R_ARM64_GOTPCREL,
 			objabi.R_ARM64_PCREL_LDST8,
 			objabi.R_ARM64_PCREL_LDST16,
@@ -1127,6 +1177,10 @@ func archrelocvariant(*ld.Target, *loader.Loader, loader.Reloc, sym.RelocVariant
 
 func extreloc(target *ld.Target, ldr *loader.Loader, r loader.Reloc, s loader.Sym) (loader.ExtReloc, bool) {
 	switch rt := r.Type(); rt {
+	case objabi.R_ARM64_PCREL:
+		if target.IsDarwin() {
+			return ld.ExtrelocViaOuterSym(ldr, r, s), true
+		}
 	case objabi.R_ARM64_GOTPCREL,
 		objabi.R_ARM64_PCREL_LDST8,
 		objabi.R_ARM64_PCREL_LDST16,
