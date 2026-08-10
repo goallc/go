@@ -29,6 +29,7 @@ type LLVMFuncContext struct {
 	OpenDeferSlots    map[llvmLocalKey]int
 	F                 *Func
 	LF                llvm.Value
+	DISubprogram      llvm.Metadata
 	Prologue          llvm.BasicBlock
 	OpenDeferRecovery llvm.BasicBlock
 	ClosureContext    llvm.Value
@@ -2054,10 +2055,13 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		return lv
 	}
 	savedBlock := lfc.b.GetInsertBlock()
+	savedLocation := lfc.b.CurrentDebugLocationMetadata()
 	if v.Block != nil {
 		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
+	lfc.setDebugLocation(v.Pos)
 	defer func() {
+		lfc.b.SetCurrentDebugLocationMetadata(savedLocation)
 		if !savedBlock.IsNil() {
 			lfc.b.SetInsertPointAtEnd(savedBlock)
 		}
@@ -2731,9 +2735,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 
 func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 	lfc.b.SetInsertPointAtEnd(lfc.BBs[BB.ID])
+	lfc.b.ClearCurrentDebugLocation()
 	for _, v := range values {
 		lfc.GenLV(v)
 	}
+	lfc.setDebugLocation(BB.Pos)
+	defer lfc.b.ClearCurrentDebugLocation()
 	switch BB.Kind {
 	case BlockRet:
 		if lfc.ResultCount == 0 {
@@ -2938,6 +2945,10 @@ func LLVMCompile(f *Func) {
 	if FCtxt.LF.BasicBlocksCount() != 0 {
 		f.fe.Fatalf(f.Entry.Pos, "duplicate LLVM definition for %s", f.OwnAux.Fn.Name)
 	}
+	FCtxt.DISubprogram = llvmDebugSubprogram(
+		f.OwnAux.Fn, llvmSourcePos(f.Entry.Pos), f)
+	llvmDISubprogramVals[f.OwnAux.Fn] = FCtxt.LF
+	FCtxt.LF.SetSubprogram(FCtxt.DISubprogram)
 	FCtxt.LF.SetGC(goGCStrategy)
 	// Go has already made its source-level inlining decision before LLVM
 	// lowering. Preserve both explicit //go:noinline boundaries and the
@@ -3489,6 +3500,7 @@ func InitModule(pkg *types.Pkg) {
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
 	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
+	initLLVMDebugInfo(pkg)
 }
 
 // goObjTargetTriple identifies the GoObj target that llc should use when it
@@ -3552,5 +3564,6 @@ func Output(fileName string) error {
 		emitGoObjCgoModuleAsm()
 		goObjImportsWritten = true
 	}
+	finalizeLLVMDebugInfo()
 	return llvm.LLVMPrintModuleToFile(CurrentModule, fileName)
 }

@@ -699,6 +699,102 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 	}
 }
 
+func TestLLVMPCLNInlineTraceback(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	opt := os.Getenv("GOALLC_OPT")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || opt == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC, GOALLC_OPT, and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	packagePath := "cmd/llvmtoolexec/testdata/pclninline"
+	source := filepath.Join(root, "src", packagePath, "main.go")
+
+	// Verify the source-semantic graph independently of final code layout.
+	archive := filepath.Join(t.TempDir(), "pclninline.a")
+	compile := testenv.Command(t, goTool, "tool", "compile",
+		"-p=main", "-enablellvm", "-llvmironly", "-o", archive, source)
+	if out, err := compile.CombinedOutput(); err != nil {
+		t.Fatalf("compiling PCLN inline fixture to LLVM IR: %v\n%s", err, out)
+	}
+	ir, err := os.ReadFile(archive + ".ll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"DICompileUnit(language: DW_LANG_Go",
+		"emissionKind: LineTablesOnly",
+		"!goobj.debug.funcs",
+		"inlinedAt:",
+	} {
+		if !bytes.Contains(ir, []byte(want)) {
+			t.Fatalf("LLVM PCLN metadata does not contain %q:\n%s", want, ir)
+		}
+	}
+	verify := testenv.Command(t, opt, "-passes=verify", "-disable-output", archive+".ll")
+	if out, err := verify.CombinedOutput(); err != nil {
+		t.Fatalf("verifying PCLN inline LLVM IR: %v\n%s", err, out)
+	}
+
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+		"-opt=" + opt,
+		"-opt-passes=default<O2>",
+	}, " ")
+	executable := filepath.Join(t.TempDir(), "pclninline")
+	buildFixture := testenv.Command(t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
+		"-ldflags=-w",
+		"-o", executable,
+		"./src/"+packagePath,
+	)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "GOCACHE="+t.TempDir())
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building PCLN inline fixture: %v\n%s", err, out)
+	}
+
+	output, runErr := testenv.Command(t, executable).CombinedOutput()
+	if runErr == nil {
+		t.Fatalf("PCLN inline fixture did not panic:\n%s", output)
+	}
+	trace := string(output)
+	if !strings.Contains(trace, "panic: pcln-inline") {
+		t.Fatalf("unexpected PCLN inline fixture failure: %v\n%s", runErr, output)
+	}
+	patterns := []string{
+		`(?m)^main\.capture\(\)\n\t.*pclninline/main\.go:21 \+0x[0-9a-f]+$`,
+		`(?m)^main\.inner\(\.\.\.\)\n\t.*pclninline/main\.go:8$`,
+		`(?m)^main\.middle\(\.\.\.\)\n\t.*pclninline/main\.go:12$`,
+		`(?m)^main\.outer\(\.\.\.\)\n\t.*pclninline/main\.go:16$`,
+		`(?m)^main\.main\(\)\n\t.*pclninline/main\.go:25 \+0x[0-9a-f]+$`,
+	}
+	last := -1
+	for _, pattern := range patterns {
+		location := regexp.MustCompile(pattern).FindStringIndex(trace)
+		if location == nil {
+			t.Fatalf("traceback does not match %q:\n%s", pattern, output)
+		}
+		if location[0] <= last {
+			t.Fatalf("inline frames are out of order:\n%s", output)
+		}
+		last = location[0]
+	}
+}
+
 func TestLLVMInitTaskOrder(t *testing.T) {
 	llc := os.Getenv("GOALLC_LLC")
 	plugin := os.Getenv("GOALLC_PASS_PLUGIN")

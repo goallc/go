@@ -3,14 +3,19 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCPreCodeGen.h"
+#include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/RegisterTargetPassConfigCallback.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
+
+Pass *createGoALLCInlineAnchorPass();
 
 namespace {
 
@@ -40,6 +45,13 @@ bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
   }
   return false;
 }
+
+RegisterTargetPassConfigCallback RegisterGoALLCInlineAnchors(
+    [](TargetMachine &TM, PassManagerBase &, TargetPassConfig *TPC) {
+      if (TPC && TM.getTargetTriple().isOSBinFormatGoObj())
+        TPC->addPreBranchRelaxationPass(
+            []() { return createGoALLCInlineAnchorPass(); });
+    });
 
 } // namespace
 

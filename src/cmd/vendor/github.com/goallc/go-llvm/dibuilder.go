@@ -60,8 +60,17 @@ const (
 type DwarfLang uint32
 
 const (
-	// http://dwarfstd.org/ShowIssue.php?issue=101014.1&type=open
-	DW_LANG_Go DwarfLang = 0x0016
+	// LLVMDWARFSourceLanguage is a dense C API enum, not the raw DW_LANG
+	// encoding from the DWARF specification.
+	DW_LANG_Go DwarfLang = C.LLVMDWARFSourceLanguageGo
+)
+
+type DwarfEmissionKind uint8
+
+const (
+	DwarfEmissionFull DwarfEmissionKind = iota
+	DwarfEmissionLineTablesOnly
+	DwarfEmissionNone
 )
 
 type DwarfTypeEncoding uint32
@@ -120,6 +129,7 @@ type DICompileUnit struct {
 	RuntimeVersion int
 	SysRoot        string
 	SDK            string
+	EmissionKind   DwarfEmissionKind
 }
 
 // CreateCompileUnit creates compile unit debug metadata.
@@ -136,6 +146,16 @@ func (d *DIBuilder) CreateCompileUnit(cu DICompileUnit) Metadata {
 	defer C.free(unsafe.Pointer(sysroot))
 	sdk := C.CString(cu.SDK)
 	defer C.free(unsafe.Pointer(sdk))
+	emissionKind := C.LLVMDWARFEmissionKind(C.LLVMDWARFEmissionFull)
+	switch cu.EmissionKind {
+	case DwarfEmissionFull:
+	case DwarfEmissionLineTablesOnly:
+		emissionKind = C.LLVMDWARFEmissionLineTablesOnly
+	case DwarfEmissionNone:
+		emissionKind = C.LLVMDWARFEmissionNone
+	default:
+		panic("invalid DWARF emission kind")
+	}
 	result := C.LLVMDIBuilderCreateCompileUnit(
 		d.ref,
 		C.LLVMDWARFSourceLanguage(cu.Language),
@@ -145,7 +165,7 @@ func (d *DIBuilder) CreateCompileUnit(cu DICompileUnit) Metadata {
 		flags, C.size_t(len(cu.Flags)),
 		C.unsigned(cu.RuntimeVersion),
 		/*SplitName=*/ nil, 0,
-		C.LLVMDWARFEmissionFull,
+		emissionKind,
 		/*DWOId=*/ 0,
 		/*SplitDebugInlining*/ C.LLVMBool(boolToCInt(true)),
 		/*DebugInfoForProfiling*/ C.LLVMBool(boolToCInt(false)),
@@ -153,6 +173,13 @@ func (d *DIBuilder) CreateCompileUnit(cu DICompileUnit) Metadata {
 		sdk, C.size_t(len(cu.SDK)),
 	)
 	return Metadata{C: result}
+}
+
+// CreateDebugLocation creates an exact DILocation, including an optional
+// inlinedAt chain.
+func (c Context) CreateDebugLocation(line, col uint, scope, inlinedAt Metadata) Metadata {
+	return Metadata{C: C.LLVMDIBuilderCreateDebugLocation(
+		c.C, C.uint(line), C.uint(col), scope.C, inlinedAt.C)}
 }
 
 // CreateFile creates file debug metadata.

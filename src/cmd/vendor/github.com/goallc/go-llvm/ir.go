@@ -1390,6 +1390,20 @@ func (b Builder) SetCurrentDebugLocation(line, col uint, scope, inlinedAt Metada
 	C.LLVMGoSetCurrentDebugLocation(b.C, C.unsigned(line), C.unsigned(col), scope.C, inlinedAt.C)
 }
 
+// SetCurrentDebugLocationMetadata sets the exact DILocation inherited by
+// subsequently created instructions. A nil value clears it.
+func (b Builder) SetCurrentDebugLocationMetadata(loc Metadata) {
+	C.LLVMSetCurrentDebugLocation2(b.C, loc.C)
+}
+
+func (b Builder) CurrentDebugLocationMetadata() Metadata {
+	return Metadata{C: C.LLVMGetCurrentDebugLocation2(b.C)}
+}
+
+func (b Builder) ClearCurrentDebugLocation() {
+	C.LLVMSetCurrentDebugLocation2(b.C, nil)
+}
+
 // Get current debug location. Please do not call this function until setting debug location with SetCurrentDebugLocation()
 func (b Builder) GetCurrentDebugLocation() (loc DebugLoc) {
 	md := C.LLVMGoGetCurrentDebugLocation(b.C)

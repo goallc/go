@@ -21,6 +21,7 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
 add_llvm_pass_plugin(GoALLCStatepoints
+  GoALLCInlineAnchors.cpp
   GoALLCPreCodeGen.cpp
   GoALLCStackMapPrinter.cpp
   GoALLCStatepoints.cpp
@@ -181,6 +182,16 @@ if(BUILD_TESTING)
   set_tests_properties(GoALLCStatepoints.FrontendMarkersPreserved PROPERTIES
     PASS_REGULAR_EXPRESSION
       "go-stack-growth-statepoint"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.DebugInlineGoObj
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-debug-inline.py"
+      --llc "${GOALLC_LLC_EXECUTABLE}"
+      --plugin "$<TARGET_FILE:GoALLCStatepoints>"
+      --input "${CMAKE_CURRENT_SOURCE_DIR}/testdata/debug-inline.ll"
   )
 
   add_test(
