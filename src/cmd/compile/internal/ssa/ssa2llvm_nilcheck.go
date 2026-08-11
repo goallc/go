@@ -111,6 +111,7 @@ func (lfc *LLVMFuncContext) expandNilCheckIntrinsics() {
 		if before.IsNil() || llvm.NextInstruction(call).IsNil() {
 			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "LLVM nil-check intrinsic is not followed by a block terminator")
 		}
+		debugLoc := call.InstructionDebugLoc()
 
 		panicBlock := GlobalCtxt.AddBasicBlock(lfc.LF, "nilcheck.nil")
 		continueBlock := GlobalCtxt.AddBasicBlock(lfc.LF, "nilcheck.notnil")
@@ -124,6 +125,11 @@ func (lfc *LLVMFuncContext) expandNilCheckIntrinsics() {
 
 		checked := call.Operand(0)
 		call.EraseFromParentAsInstruction()
+		// The marker was emitted at the Go OpNilCheck position. Preserve its
+		// complete DILocation, including any inlined-at chain, on the explicit
+		// control flow and panic call that replace it. Otherwise a recovered
+		// panic inherits the preceding source line in Go's pcline table.
+		b.SetCurrentDebugLocationMetadata(debugLoc)
 		b.SetInsertPointAtEnd(before)
 		isNil := b.CreateICmp(llvm.IntEQ, checked, llvm.ConstNull(checked.Type()), "nilcheck.isnil")
 		b.CreateCondBr(isNil, panicBlock, continueBlock)
@@ -140,6 +146,7 @@ func (lfc *LLVMFuncContext) expandNilCheckIntrinsics() {
 		// the conservative continuation edge until a future noreturn form can
 		// also guarantee a valid call return PC and PCSP range.
 		b.CreateBr(continueBlock)
+		b.ClearCurrentDebugLocation()
 
 		lfc.replacePhiPredecessor(before, continueBlock)
 	}

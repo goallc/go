@@ -1165,6 +1165,7 @@
       "unsafebuiltins.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution",
       "abi/open_defer_1.go": "open-coded defer registration and return repeatedly pass LLVM O2 compile, GoObj link, and execution on both CI architectures",
       "chan/doubleselect.go": "double select execution repeatedly passes LLVM O2 compile, GoObj link, and execution on both CI architectures",
+      "devirtualization_nil_panics.go": "expanded LLVM nil checks preserve the source call DILocation through LLVM O2, GoObj pcline emission, recover, and execution",
       "fixedbugs/issue19658.go": "closure and interface regression repeatedly passes LLVM O2 compile, GoObj link, and execution on both CI architectures",
       "fixedbugs/issue26411.go": "compiler-generated stack address observations across regexp and bytes calls repeatedly pass LLVM O2 compile, GoObj link, and execution on both CI architectures",
       "fixedbugs/issue28688.go": "soft-float copy regression repeatedly passes LLVM O2 compile, GoObj link, and execution on both CI architectures",
@@ -1178,7 +1179,6 @@
       "zerodivide.go": "defer/recover execution repeatedly qualified through LLVM O2 compile, link, and execution"
     },
     "graylist": {
-      "devirtualization_nil_panics.go": "LLVM PCLN attributes the deferred nil-interface panic to the defer statement instead of the devirtualized call source line",
       "maymorestack.go": "LLVM-generated stack checks do not yet call the configured mayMoreStack hook",
       "*": "LLVM lowering or runtime ABI support has not reached this test yet"
     },

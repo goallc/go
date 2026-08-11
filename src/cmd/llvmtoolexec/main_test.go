@@ -903,6 +903,18 @@ func TestLLVMExplicitNilCheckGoObj(t *testing.T) {
 	if out, err := compileFixture.CombinedOutput(); err != nil {
 		t.Fatalf("compiling LLVM nil-check GoObj fixture: %v\n%s", err, out)
 	}
+	ir, err := os.ReadFile(archive + ".ll")
+	if err != nil {
+		t.Fatalf("reading LLVM nil-check IR: %v", err)
+	}
+	panicLoc := regexp.MustCompile(`(?m)^[[:space:]]*(?:tail )?call goabiinternal void @runtime\.panicmem\(\), !dbg !([0-9]+)$`).FindSubmatch(ir)
+	if panicLoc == nil {
+		t.Fatalf("panicmem call is missing its nil-check debug location:\n%s", ir)
+	}
+	wantLoc := []byte("!" + string(panicLoc[1]) + " = !DILocation(line: 8,")
+	if !bytes.Contains(ir, wantLoc) {
+		t.Fatalf("panicmem debug location is not the source dereference line; want %q:\n%s", wantLoc, ir)
+	}
 
 	object := filepath.Join(t.TempDir(), "nilcheckobj.o")
 	runLLC := testenv.Command(
