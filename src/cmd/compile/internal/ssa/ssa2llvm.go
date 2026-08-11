@@ -459,6 +459,17 @@ func (lfc *LLVMFuncContext) llvmRoundIntrinsic(v *Value, genericName string, amd
 	return lfc.b.CreateCall(sig, fn, []llvm.Value{x, mode}, v.String())
 }
 
+func (lfc *LLVMFuncContext) llvmFMA(v *Value) llvm.Value {
+	if lfc.F.Config.arch != "amd64" || buildcfg.GOAMD64 >= 3 {
+		return lfc.llvmTernaryIntrinsic(v, "llvm.fma.f64")
+	}
+
+	// At GOAMD64=v1 and v2, the AMD64 SSA control flow has already guarded this
+	// operation with runtime.x86HasFMA. GOAMD64=v3 and above instead use the
+	// generic intrinsic under a function target-cpu that guarantees FMA.
+	return lfc.llvmTernaryIntrinsic(v, "llvm.x86.go.fma.f64")
+}
+
 func llvmTargetCPU(arch string, goamd64 int) string {
 	if arch != "amd64" {
 		return ""
@@ -2129,7 +2140,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpMax32F:
 		lVal = lfc.llvmBinaryIntrinsic(v, "llvm.maximum.f32")
 	case OpFMA:
-		lVal = lfc.llvmTernaryIntrinsic(v, "llvm.fma.f64")
+		lVal = lfc.llvmFMA(v)
 	case OpEq64, OpEq32, OpEq16, OpEq8, OpEqB:
 		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpEqPtr:
