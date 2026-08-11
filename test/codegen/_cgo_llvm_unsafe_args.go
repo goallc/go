@@ -21,7 +21,7 @@ func llvmCgoUnsafeSink(*uintptr)
 // LLVM: {{%.*}} = load i64, ptr [[RESULT]]
 // LLVM: attributes #[[NOINLINE]] = { {{.*}}noinline
 // LLVM-OPT-LABEL: define goabi0 i64 @codegen.llvmCgoUnsafeFrame.goallc.abi0(
-// LLVM-OPT-SAME: i64 %p) {{.*}} #[[OPT_NOINLINE:[0-9]+]] gc "goallc"
+// LLVM-OPT-SAME: i64 %p) {{.*}}#[[OPT_NOINLINE:[0-9]+]] gc "goallc"
 // LLVM-OPT-NOT: alloca
 // LLVM-OPT: [[OPT_FRAME:%.*]] = {{.*}}call ptr @llvm.go.abi0.frame()
 // LLVM-OPT-NOT: llvm.addressofreturnaddress
