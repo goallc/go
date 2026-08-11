@@ -351,6 +351,17 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.X86ABI0EntryArgsGoObj
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=obj
+      -o "${CMAKE_CURRENT_BINARY_DIR}/x86-abi0-entry-args.goobj"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/x86-abi0-entry-args.ll"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.MultipleCallsRewrite
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"
@@ -441,6 +452,18 @@ if(BUILD_TESTING)
     )
     set_tests_properties(GoALLCStatepoints.AArch64FrameObjView PROPERTIES
       DEPENDS GoALLCStatepoints.AArch64FrameGoObj
+    )
+
+    add_test(
+      NAME GoALLCStatepoints.X86ABI0EntryArgsObjView
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/check-x86-abi0-entry-args.py"
+        --objview "${GOALLC_OBJVIEW_EXECUTABLE}"
+        --object "${CMAKE_CURRENT_BINARY_DIR}/x86-abi0-entry-args.goobj"
+    )
+    set_tests_properties(GoALLCStatepoints.X86ABI0EntryArgsObjView PROPERTIES
+      DEPENDS GoALLCStatepoints.X86ABI0EntryArgsGoObj
     )
 
     add_test(
