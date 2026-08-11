@@ -13,7 +13,9 @@ func middle() {
 }
 
 func outer() {
-	middle()
+	func() {
+		middle()
+	}()
 }
 
 //go:noinline

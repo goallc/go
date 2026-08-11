@@ -76,10 +76,11 @@ func finalizeLLVMDebugInfo() {
 		}
 		return syms[i].ABI() < syms[j].ABI()
 	})
+	abstractValues := make(map[string]llvm.Value)
 	for _, sym := range syms {
 		value, ok := llvmDISubprogramVals[sym]
 		if !ok {
-			value = llvmGoDataRef(sym)
+			value = llvmDebugSubprogramValue(sym, llvmDISubprograms[sym], abstractValues)
 		}
 		preserveGoObjMetadataValues(value)
 		CurrentModule.AddNamedMetadataOperand("goobj.debug.funcs", GlobalCtxt.MDNode([]llvm.Metadata{
@@ -92,6 +93,60 @@ func finalizeLLVMDebugInfo() {
 	llvmDIBuilder.Destroy()
 	llvmDIBuilder = nil
 	llvmDIDebugFinalized = true
+}
+
+func llvmDebugSubprogramValue(sym *obj.LSym, sp llvm.Metadata, abstractValues map[string]llvm.Value) llvm.Value {
+	storageName := llvmFunctionStorageName(sym.Name, llvmCallConv(sym.ABI()))
+	value := CurrentModule.NamedFunction(storageName)
+	if !value.IsNil() && !value.IsDeclaration() {
+		return value
+	}
+
+	if !sym.ContentAddressable() {
+		return llvmGoDataRef(sym)
+	}
+
+	// Imported inline closures can retain the native compiler's call-stack
+	// hash even when their body was emitted under the canonical, unhashed name
+	// in this object. Reuse that equivalent definition when it exists.
+	canonicalName := obj.TrimInlineHash(sym.Name)
+	abstractKey := llvmFunctionStorageName(canonicalName, llvmCallConv(sym.ABI()))
+	if abstract, ok := abstractValues[abstractKey]; ok {
+		return abstract
+	}
+	if canonicalName != sym.Name {
+		canonical := CurrentModule.NamedFunction(
+			llvmFunctionStorageName(canonicalName, llvmCallConv(sym.ABI())))
+		if !canonical.IsNil() && !canonical.IsDeclaration() {
+			return canonical
+		}
+	}
+
+	// Native GoObj emits a zero-sized STEXT symbol with FuncInfo when a
+	// content-addressable closure was completely inlined and has no remaining
+	// body. LLVM needs an emitted function symbol for the same linker contract.
+	// The unreachable body is never called, but keeps the logical callee
+	// and its FuncInfo available to the final pcinline tree.
+	if !value.IsNil() {
+		if !value.FirstUse().IsNil() {
+			return llvmGoDataRef(sym)
+		}
+		value.EraseFromParentAsFunction()
+	}
+	value = llvm.AddFunction(CurrentModule, storageName,
+		llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
+	value.SetFunctionCallConv(llvmCallConv(sym.ABI()))
+	value.SetLinkage(llvm.WeakAnyLinkage)
+	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolNameMD), GlobalCtxt.MDNode([]llvm.Metadata{
+		GlobalCtxt.MDString(canonicalName),
+	}))
+	value.SetSubprogram(sp)
+	b := GlobalCtxt.NewBuilder()
+	b.SetInsertPointAtEnd(GlobalCtxt.AddBasicBlock(value, "goobj.abstract"))
+	b.CreateUnreachable()
+	b.Dispose()
+	abstractValues[abstractKey] = value
+	return value
 }
 
 func llvmSourcePos(xpos src.XPos) src.Pos {

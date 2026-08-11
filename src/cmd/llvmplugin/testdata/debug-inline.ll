@@ -22,9 +22,20 @@ entry:
   ret void
 }
 
+define goabiinternal i64 @main.zero(i64 %x) !dbg !14 {
+entry:
+  %a = add i64 %x, 1, !dbg !35
+  ret i64 %a, !dbg !35
+}
+
+define goabiinternal i64 @main.zeroCallee(i64 %x) !dbg !15 {
+entry:
+  ret i64 %x, !dbg !37
+}
+
 !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!5, !6}
-!goobj.debug.funcs = !{!40, !41, !42, !43}
+!goobj.debug.funcs = !{!40, !41, !42, !43, !44, !45}
 
 !0 = distinct !DICompileUnit(language: DW_LANG_Go, file: !1, producer: "goallc-test", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !2, splitDebugInlining: true, nameTableKind: None)
 !1 = !DIFile(filename: "outer.go", directory: "/tmp/goobj-inline")
@@ -38,14 +49,21 @@ entry:
 !11 = distinct !DISubprogram(name: "main.mid", linkageName: "main.mid", scope: !1, file: !1, line: 15, type: !3, scopeLine: 15, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
 !12 = distinct !DISubprogram(name: "main.inner", linkageName: "main.inner", scope: !1, file: !1, line: 25, type: !3, scopeLine: 25, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
 !13 = distinct !DISubprogram(name: "main.unlocated", linkageName: "main.unlocated", scope: !4, file: !4, line: 40, type: !3, scopeLine: 40, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+!14 = distinct !DISubprogram(name: "main.zero", linkageName: "main.zero", scope: !1, file: !1, line: 50, type: !3, scopeLine: 50, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+!15 = distinct !DISubprogram(name: "main.zeroCallee", linkageName: "main.zeroCallee", scope: !1, file: !1, line: 60, type: !3, scopeLine: 60, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
 
 !30 = !DILocation(line: 30, column: 3, scope: !12, inlinedAt: !31)
 !31 = distinct !DILocation(line: 20, column: 3, scope: !11, inlinedAt: !32)
 !32 = distinct !DILocation(line: 10, column: 3, scope: !10)
 !33 = !DILocation(line: 16, column: 2, scope: !11)
 !34 = !DILocation(line: 26, column: 2, scope: !12)
+!35 = !DILocation(line: 61, column: 2, scope: !15, inlinedAt: !36)
+!36 = distinct !DILocation(line: 0, column: 0, scope: !14)
+!37 = !DILocation(line: 61, column: 2, scope: !15)
 
 !40 = !{!10, ptr @main.outer}
 !41 = !{!11, ptr @main.mid}
 !42 = !{!12, ptr @main.inner}
 !43 = !{!13, ptr @main.unlocated}
+!44 = !{!14, ptr @main.zero}
+!45 = !{!15, ptr @main.zeroCallee}

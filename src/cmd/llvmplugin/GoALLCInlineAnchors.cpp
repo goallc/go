@@ -13,6 +13,7 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
@@ -62,8 +63,26 @@ public:
 
           TII.insertNoop(MBB, It);
           MachineInstr &Anchor = *std::prev(It);
+
+          // Compiler-generated wrappers can carry a real inline edge whose
+          // callsite line is zero. GoObj still needs a ParentPC for that edge,
+          // while the line-table collector deliberately ignores line zero.
+          // Give only the artificial anchor the nearest existing caller line;
+          // the inline-tree node retains the frontend's original line zero.
+          unsigned AnchorLine = CallSite->getLine();
+          for (const DILocation *Caller = CallSite->getInlinedAt();
+               AnchorLine == 0 && Caller; Caller = Caller->getInlinedAt())
+            AnchorLine = Caller->getLine();
+          if (AnchorLine == 0)
+            if (const DISubprogram *SP =
+                    CallSite->getScope()->getSubprogram())
+              AnchorLine = SP->getLine();
+          if (AnchorLine == 0)
+            report_fatal_error(
+                "GoALLC inline anchor has no usable caller source line");
+
           auto *Artificial = DILocation::get(
-              MF.getFunction().getContext(), CallSite->getLine(),
+              MF.getFunction().getContext(), AnchorLine,
               CallSite->getColumn(), CallSite->getScope(),
               CallSite->getInlinedAt(), /*ImplicitCode=*/true,
               CallSite->getAtomGroup(), CallSite->getAtomRank());

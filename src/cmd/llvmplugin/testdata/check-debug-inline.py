@@ -283,6 +283,31 @@ def check_target(llc, plugin, input_path, triple, quantum, output):
             f"StartLine={start_line} pcline={unlocated_pcline}"
         )
 
+    zero = obj.auxiliaries("main.zero")
+    zero_func_info = one_aux(
+        zero, 1, "FuncInfo", symbol="main.zero"
+    )
+    _, zero_file_count = struct.unpack_from("<iI", zero_func_info, 12)
+    zero_inline_offset = 20 + zero_file_count * 4
+    zero_inline_count = struct.unpack_from(
+        "<I", zero_func_info, zero_inline_offset
+    )[0]
+    if zero_inline_count != 1:
+        fail(
+            "zero-line callsite has unexpected inline node count: "
+            f"{zero_inline_count}"
+        )
+    zero_node = struct.unpack_from(
+        "<iIiIIi", zero_func_info, zero_inline_offset + 4
+    )
+    zero_line = zero_node[2]
+    zero_parent_pc = zero_node[5]
+    if zero_line != 0 or zero_parent_pc < 0:
+        fail(
+            "zero-line callsite did not retain its line and final-layout "
+            f"anchor: line={zero_line} ParentPC={zero_parent_pc}"
+        )
+
 
 def main():
     parser = argparse.ArgumentParser()

@@ -776,11 +776,12 @@ func TestLLVMPCLNInlineTraceback(t *testing.T) {
 		t.Fatalf("unexpected PCLN inline fixture failure: %v\n%s", runErr, output)
 	}
 	patterns := []string{
-		`(?m)^main\.capture\(\)\n\t.*pclninline/main\.go:21 \+0x[0-9a-f]+$`,
+		`(?m)^main\.capture\(\)\n\t.*pclninline/main\.go:23 \+0x[0-9a-f]+$`,
 		`(?m)^main\.inner\(\.\.\.\)\n\t.*pclninline/main\.go:8$`,
 		`(?m)^main\.middle\(\.\.\.\)\n\t.*pclninline/main\.go:12$`,
-		`(?m)^main\.outer\(\.\.\.\)\n\t.*pclninline/main\.go:16$`,
-		`(?m)^main\.main\(\)\n\t.*pclninline/main\.go:25 \+0x[0-9a-f]+$`,
+		`(?m)^main\.outer\.func1(?:#[^\n]+#)?\(\.\.\.\)\n\t.*pclninline/main\.go:17$`,
+		`(?m)^main\.outer\(\.\.\.\)\n\t.*pclninline/main\.go:18$`,
+		`(?m)^main\.main\(\)\n\t.*pclninline/main\.go:27 \+0x[0-9a-f]+$`,
 	}
 	last := -1
 	for _, pattern := range patterns {
