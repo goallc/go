@@ -1279,6 +1279,178 @@ func (lfc *LLVMFuncContext) unsignedAverage(v *Value) llvm.Value {
 	return lfc.b.CreateAdd(half, y, v.String())
 }
 
+func llvmAMD64ByteVectorType() llvm.Type {
+	return llvm.VectorType(GlobalCtxt.Int8Type(), 16)
+}
+
+func llvmVectorShuffleMask(indices ...uint64) llvm.Value {
+	elements := make([]llvm.Value, len(indices))
+	for i, index := range indices {
+		elements[i] = llvm.ConstInt(GlobalCtxt.Int32Type(), index, false)
+	}
+	return llvm.ConstVector(elements, false)
+}
+
+// amd64MoveQIntToFP lowers MOVQi2f as the bitwise register transfer that the
+// native backend emits, rather than as an integer-to-floating-point
+// conversion. The map-group intrinsics deliberately give this operation the
+// pseudo-type int128: MOVQ initializes the low 64 bits of the XMM register and
+// clears its high 64 bits, producing the byte vector consumed by the following
+// packed operations.
+func (lfc *LLVMFuncContext) amd64MoveQIntToFP(v *Value) llvm.Value {
+	src := lfc.GenLV(v.Args[0])
+	if src.Type() != GlobalCtxt.Int64Type() {
+		v.Fatalf("%s source has LLVM type %v, want i64", v.Op, src.Type())
+	}
+
+	want := getLLVMType(v.Type)
+	if want == GlobalCtxt.DoubleType() {
+		return lfc.b.CreateBitCast(src, want, v.String())
+	}
+	if want != llvmAMD64ByteVectorType() {
+		v.Fatalf("%s result has LLVM type %v, want double or <16 x i8>", v.Op, want)
+	}
+
+	lowBytes := lfc.b.CreateBitCast(src, llvm.VectorType(GlobalCtxt.Int8Type(), 8), v.String()+".low")
+	zeroBytes := llvm.ConstNull(lowBytes.Type())
+	return lfc.b.CreateShuffleVector(
+		lowBytes,
+		zeroBytes,
+		llvmVectorShuffleMask(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+		v.String(),
+	)
+}
+
+func (lfc *LLVMFuncContext) amd64BroadcastByte(v *Value) llvm.Value {
+	src := lfc.GenLV(v.Args[0])
+	want := llvmAMD64ByteVectorType()
+	if getLLVMType(v.Type) != want {
+		v.Fatalf("%s result has LLVM type %v, want <16 x i8>", v.Op, getLLVMType(v.Type))
+	}
+
+	var byte0 llvm.Value
+	switch src.Type() {
+	case GlobalCtxt.Int64Type():
+		byte0 = lfc.b.CreateTrunc(src, GlobalCtxt.Int8Type(), v.String()+".byte")
+	case want:
+		byte0 = lfc.b.CreateExtractElement(src, llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false), v.String()+".byte")
+	default:
+		v.Fatalf("%s source has LLVM type %v, want i64 or <16 x i8>", v.Op, src.Type())
+	}
+
+	seed := lfc.b.CreateInsertElement(
+		llvm.Undef(want),
+		byte0,
+		llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false),
+		v.String()+".seed",
+	)
+	return lfc.b.CreateShuffleVector(
+		seed,
+		llvm.Undef(want),
+		llvmVectorShuffleMask(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+		v.String(),
+	)
+}
+
+func (lfc *LLVMFuncContext) amd64UnpackLowBytes(v *Value) llvm.Value {
+	x, y := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1])
+	want := llvmAMD64ByteVectorType()
+	if x.Type() != want || y.Type() != want || getLLVMType(v.Type) != want {
+		v.Fatalf("%s requires <16 x i8> operands and result", v.Op)
+	}
+	return lfc.b.CreateShuffleVector(
+		x,
+		y,
+		llvmVectorShuffleMask(0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23),
+		v.String(),
+	)
+}
+
+func (lfc *LLVMFuncContext) amd64ShuffleLowWords(v *Value) llvm.Value {
+	src := lfc.GenLV(v.Args[0])
+	want := llvmAMD64ByteVectorType()
+	if src.Type() != want || getLLVMType(v.Type) != want {
+		v.Fatalf("%s requires a <16 x i8> operand and result", v.Op)
+	}
+	wordsType := llvm.VectorType(GlobalCtxt.Int16Type(), 8)
+	words := lfc.b.CreateBitCast(src, wordsType, v.String()+".words")
+	control := uint8(auxIntToInt64(v.AuxInt))
+	shuffled := lfc.b.CreateShuffleVector(
+		words,
+		llvm.Undef(wordsType),
+		llvmVectorShuffleMask(
+			uint64(control&3),
+			uint64((control>>2)&3),
+			uint64((control>>4)&3),
+			uint64((control>>6)&3),
+			4, 5, 6, 7,
+		),
+		v.String()+".words.shuffled",
+	)
+	return lfc.b.CreateBitCast(shuffled, want, v.String())
+}
+
+func (lfc *LLVMFuncContext) amd64SignBytes(v *Value) llvm.Value {
+	x, signs := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1])
+	want := llvmAMD64ByteVectorType()
+	if x.Type() != want || signs.Type() != want || getLLVMType(v.Type) != want {
+		v.Fatalf("%s requires <16 x i8> operands and result", v.Op)
+	}
+	zero := llvm.ConstNull(want)
+	positive := lfc.b.CreateICmp(llvm.IntSGT, signs, zero, v.String()+".positive")
+	negative := lfc.b.CreateICmp(llvm.IntSLT, signs, zero, v.String()+".negative")
+	negated := lfc.b.CreateSub(zero, x, v.String()+".negated")
+	nonPositive := lfc.b.CreateSelect(negative, negated, zero, v.String()+".nonpositive")
+	return lfc.b.CreateSelect(positive, x, nonPositive, v.String())
+}
+
+func (lfc *LLVMFuncContext) amd64CompareEqualBytes(v *Value) llvm.Value {
+	x, y := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1])
+	want := llvmAMD64ByteVectorType()
+	if x.Type() != want || y.Type() != want || getLLVMType(v.Type) != want {
+		v.Fatalf("%s requires <16 x i8> operands and result", v.Op)
+	}
+	equal := lfc.b.CreateICmp(llvm.IntEQ, x, y, v.String()+".equal")
+	return lfc.b.CreateSExt(equal, want, v.String())
+}
+
+func (lfc *LLVMFuncContext) amd64MoveByteMask(v *Value) llvm.Value {
+	src := lfc.GenLV(v.Args[0])
+	if src.Type() != llvmAMD64ByteVectorType() {
+		v.Fatalf("%s source has LLVM type %v, want <16 x i8>", v.Op, src.Type())
+	}
+	resultType := getLLVMType(v.Type)
+	if resultType.TypeKind() != llvm.IntegerTypeKind {
+		v.Fatalf("%s result has non-integer LLVM type %v", v.Op, resultType)
+	}
+	switch resultType.IntTypeWidth() {
+	case 8, 16, 32, 64:
+	default:
+		v.Fatalf("%s result has unsupported LLVM integer width %d", v.Op, resultType.IntTypeWidth())
+	}
+
+	// PMOVMSKB always forms a 16-bit mask from all XMM byte lanes. Use LLVM's
+	// exact SSE2 intrinsic so instruction selection retains that operation
+	// rather than synthesizing a scalar lane-reduction sequence. The intrinsic
+	// returns i32, with the complete mask in bits 0..15. Some Go intrinsics
+	// deliberately assign the SSA operation uint8 and thereby keep only the low
+	// eight lane bits; make that truncation explicit below.
+	fn := getLLVMIntrinsicDeclaration("llvm.x86.sse2.pmovmskb.128")
+	maskType := GlobalCtxt.Int32Type()
+	if got := fn.GlobalValueType(); got != llvm.FunctionType(maskType, []llvm.Type{llvmAMD64ByteVectorType()}, false) {
+		v.Fatalf("%s intrinsic has unexpected LLVM type %v", v.Op, got)
+	}
+	result := lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{src}, v.String()+".mask")
+	switch {
+	case resultType.IntTypeWidth() < 32:
+		result = lfc.b.CreateTrunc(result, resultType, v.String()+".trunc")
+	case resultType.IntTypeWidth() > 32:
+		result = lfc.b.CreateZExt(result, resultType, v.String()+".wide")
+	}
+	result.SetName(v.String())
+	return result
+}
+
 func (lfc *LLVMFuncContext) FinishPhi() {
 	for _, BB := range lfc.F.Blocks {
 		for _, v := range BB.Values {
@@ -2037,6 +2209,23 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.highMultiply(v, false)
 	case OpAvg32u, OpAvg64u:
 		lVal = lfc.unsignedAverage(v)
+	case OpAMD64MOVQi2f:
+		lVal = lfc.amd64MoveQIntToFP(v)
+	case OpAMD64MOVQf2i, OpAMD64MOVLi2f, OpAMD64MOVLf2i:
+		// These are raw register-bank transfers, not numeric conversions.
+		lVal = lfc.b.CreateBitCast(arg0(), getLLVMType(v.Type), v.String())
+	case OpAMD64PUNPCKLBW:
+		lVal = lfc.amd64UnpackLowBytes(v)
+	case OpAMD64PSHUFLW:
+		lVal = lfc.amd64ShuffleLowWords(v)
+	case OpAMD64PSHUFBbroadcast, OpAMD64VPBROADCASTB:
+		lVal = lfc.amd64BroadcastByte(v)
+	case OpAMD64PSIGNB:
+		lVal = lfc.amd64SignBytes(v)
+	case OpAMD64PCMPEQB:
+		lVal = lfc.amd64CompareEqualBytes(v)
+	case OpAMD64PMOVMSKB:
+		lVal = lfc.amd64MoveByteMask(v)
 	case OpMul32F, OpMul64F:
 		lVal = lfc.b.CreateFMul(arg0(), arg1(), v.String())
 	case OpDiv64, OpDiv32, OpDiv16, OpDiv8:
@@ -3289,6 +3478,9 @@ func InitModule(pkg *types.Pkg) {
 	}
 	type2lTypes[types.ByteType] = GlobalCtxt.Int8Type()
 	type2lTypes[types.RuneType] = GlobalCtxt.Int32Type()
+	// AMD64's TypeInt128 is an untyped 128-bit XMM carrier. Model it as
+	// bytes so packed byte operations retain their lane semantics in LLVM IR.
+	type2lTypes[types.TypeInt128] = llvmAMD64ByteVectorType()
 
 	CurrentModule = GlobalCtxt.NewModule(pkg.Path)
 	CurrentModule.SetTarget(goObjTargetTriple())
