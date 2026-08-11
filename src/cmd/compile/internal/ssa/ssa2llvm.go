@@ -79,6 +79,7 @@ const goObjSymbolNameMD = "goobj.symbol.name"
 const goObjSymbolIndexMD = "goobj.symbol.index"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
+const llvmTargetCPUAttr = "target-cpu"
 
 // Keep fixed-size memmoves within the store expansion limits of the supported
 // LLVM targets. Larger moves must use runtime.memmove rather than a libc symbol,
@@ -434,6 +435,43 @@ func (lfc *LLVMFuncContext) llvmTernaryIntrinsic(v *Value, name string) llvm.Val
 	sig := llvm.FunctionType(want, []llvm.Type{want, want, want}, false)
 	fn := getOrInsertLLVMIntrinsic(name, sig)
 	return lfc.b.CreateCall(sig, fn, []llvm.Value{x, y, z}, v.String())
+}
+
+func (lfc *LLVMFuncContext) llvmRoundIntrinsic(v *Value, genericName string, amd64Mode uint64) llvm.Value {
+	if lfc.F.Config.arch != "amd64" || buildcfg.GOAMD64 >= 2 {
+		return lfc.llvmUnaryIntrinsic(v, genericName)
+	}
+
+	// At GOAMD64=v1, Go SSA places these operations behind
+	// runtime.x86HasSSE41. Preserve that path-sensitive contract in the
+	// intrinsic instead of enabling SSE4.1 for the whole function. At v2 and
+	// above, the function target-cpu guarantees SSE4.1 and the generic LLVM
+	// intrinsic exposes the usual optimization opportunities.
+	x := lfc.GenLV(v.Args[0])
+	want := getLLVMType(v.Type)
+	if x.Type() != want || want.TypeKind() != llvm.DoubleTypeKind {
+		v.Fatalf("%s has incompatible LLVM operand and result types", v.Op)
+	}
+	i32 := GlobalCtxt.Int32Type()
+	sig := llvm.FunctionType(want, []llvm.Type{want, i32}, false)
+	fn := getOrInsertLLVMIntrinsic("llvm.x86.go.sse41.round.f64", sig)
+	mode := llvm.ConstInt(i32, amd64Mode, false)
+	return lfc.b.CreateCall(sig, fn, []llvm.Value{x, mode}, v.String())
+}
+
+func llvmTargetCPU(arch string, goamd64 int) string {
+	if arch != "amd64" {
+		return ""
+	}
+	switch goamd64 {
+	case 1:
+		return "x86-64"
+	case 2, 3, 4:
+		return fmt.Sprintf("x86-64-v%d", goamd64)
+	default:
+		base.Fatalf("LLVM target CPU is not configured for GOAMD64=v%d", goamd64)
+		return ""
+	}
 }
 
 func (lfc *LLVMFuncContext) buildPureTuple(v *Value, values ...llvm.Value) llvm.Value {
@@ -2262,15 +2300,15 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpAbs:
 		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.fabs.f64")
 	case OpFloor:
-		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.floor.f64")
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.floor.f64", 1)
 	case OpCeil:
-		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.ceil.f64")
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.ceil.f64", 2)
 	case OpTrunc:
-		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.trunc.f64")
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.trunc.f64", 3)
 	case OpRound:
 		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.round.f64")
 	case OpRoundToEven:
-		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.roundeven.f64")
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.roundeven.f64", 0)
 	case OpMin64F:
 		lVal = lfc.llvmBinaryIntrinsic(v, "llvm.minimum.f64")
 	case OpMin32F:
@@ -2939,6 +2977,12 @@ func LLVMCompile(f *Func) {
 		f.fe.Fatalf(f.Entry.Pos, "duplicate LLVM definition for %s", f.OwnAux.Fn.Name)
 	}
 	FCtxt.LF.SetGC(goGCStrategy)
+	if cpu := llvmTargetCPU(f.Config.arch, buildcfg.GOAMD64); cpu != "" {
+		// GOAMD64 levels are the standard x86-64 microarchitecture levels.
+		// Make the required instruction set visible to both LLVM optimization
+		// and instruction selection without selecting a host-specific CPU.
+		FCtxt.LF.AddTargetDependentFunctionAttr(llvmTargetCPUAttr, cpu)
+	}
 	// Go has already made its source-level inlining decision before LLVM
 	// lowering. Preserve both explicit //go:noinline boundaries and the
 	// frontend's implicit no-inline rules for functions containing defer or

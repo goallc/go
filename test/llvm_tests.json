@@ -84,8 +84,7 @@
     "blacklist": {},
     "platform_graylist": {
       "linux/amd64": {
-        "codegen/llvm_abs.go": "the native AMD64 frontend does not form OpAbs for math.Abs",
-        "codegen/llvm_trunc.go": "GOAMD64=v1 guards OpTrunc with unsupported HasCPUFeature lowering"
+        "codegen/llvm_abs.go": "the native AMD64 frontend does not form OpAbs for math.Abs"
       }
     }
   },

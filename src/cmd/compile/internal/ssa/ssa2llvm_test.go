@@ -149,3 +149,23 @@ func TestLLVMAMD64MapPackedByteLowering(t *testing.T) {
 		}
 	})
 }
+
+func TestLLVMTargetCPU(t *testing.T) {
+	for _, test := range []struct {
+		arch    string
+		goamd64 int
+		want    string
+	}{
+		{"arm64", 1, ""},
+		{"amd64", 1, "x86-64"},
+		{"amd64", 2, "x86-64-v2"},
+		{"amd64", 3, "x86-64-v3"},
+		{"amd64", 4, "x86-64-v4"},
+	} {
+		t.Run(test.arch+"/"+test.want, func(t *testing.T) {
+			if got := llvmTargetCPU(test.arch, test.goamd64); got != test.want {
+				t.Fatalf("llvmTargetCPU(%q, %d) = %q, want %q", test.arch, test.goamd64, got, test.want)
+			}
+		})
+	}
+}
