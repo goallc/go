@@ -20,10 +20,57 @@ using namespace llvm;
 
 namespace {
 
+struct CanonicalInlineSite {
+  const DILocation *Original = nullptr;
+  const DISubprogram *Callee = nullptr;
+  const DILocation *Parent = nullptr;
+  DILocation *Canonical = nullptr;
+};
+
 /// Materialize one real instruction for every source inline edge that remains
 /// after all generic machine layout passes. Go's inline unwinder needs a PC in
 /// the parent frame; a zero-width label alone cannot create that PC range.
 class GoALLCInlineAnchorPass final : public MachineFunctionPass {
+  SmallVector<CanonicalInlineSite, 16> CanonicalSites;
+
+  DILocation *canonicalizeInlineSite(const DILocation *CallSite,
+                                     const DISubprogram *Callee) {
+    if (!CallSite || !Callee)
+      report_fatal_error("GoALLC inline site has no callsite or callee");
+
+    DILocation *Parent = nullptr;
+    if (const DILocation *Outer = CallSite->getInlinedAt())
+      Parent =
+          canonicalizeInlineSite(Outer, CallSite->getScope()->getSubprogram());
+
+    for (const CanonicalInlineSite &Site : CanonicalSites)
+      if (Site.Original == CallSite && Site.Callee == Callee &&
+          Site.Parent == Parent)
+        return Site.Canonical;
+
+    // GoObj identifies a surviving inline edge by its DILocation pointer.
+    // LLVM may otherwise share one callsite node between different inlinees,
+    // so give every (callsite, callee, parent) edge a stable distinct node.
+    DILocation *Canonical = DILocation::getDistinct(
+        CallSite->getContext(), CallSite->getLine(), CallSite->getColumn(),
+        CallSite->getScope(), Parent, CallSite->isImplicitCode(),
+        CallSite->getAtomGroup(), CallSite->getAtomRank());
+    CanonicalSites.push_back({CallSite, Callee, Parent, Canonical});
+    return Canonical;
+  }
+
+  DILocation *canonicalizeLocation(const DILocation *Loc) {
+    const DILocation *CallSite = Loc->getInlinedAt();
+    if (!CallSite)
+      return const_cast<DILocation *>(Loc);
+    const DISubprogram *Callee = Loc->getScope()->getSubprogram();
+    DILocation *CanonicalCallSite = canonicalizeInlineSite(CallSite, Callee);
+    return DILocation::get(Loc->getContext(), Loc->getLine(), Loc->getColumn(),
+                           Loc->getScope(), CanonicalCallSite,
+                           Loc->isImplicitCode(), Loc->getAtomGroup(),
+                           Loc->getAtomRank());
+  }
+
 public:
   static char ID;
 
@@ -39,6 +86,16 @@ public:
       return false;
 
     const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+    CanonicalSites.clear();
+
+    // Normalize complete inline chains before inspecting them. This keeps the
+    // anchor pass and the later GoObj debug handler on the same edge identity.
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (!MI.isMetaInstruction() && MI.getDebugLoc())
+          MI.setDebugLoc(
+              DebugLoc(canonicalizeLocation(MI.getDebugLoc().get())));
+
     DenseSet<const DILocation *> AnchoredCallsites;
     bool Changed = false;
 
@@ -74,18 +131,17 @@ public:
                AnchorLine == 0 && Caller; Caller = Caller->getInlinedAt())
             AnchorLine = Caller->getLine();
           if (AnchorLine == 0)
-            if (const DISubprogram *SP =
-                    CallSite->getScope()->getSubprogram())
+            if (const DISubprogram *SP = CallSite->getScope()->getSubprogram())
               AnchorLine = SP->getLine();
           if (AnchorLine == 0)
             report_fatal_error(
                 "GoALLC inline anchor has no usable caller source line");
 
           auto *Artificial = DILocation::get(
-              MF.getFunction().getContext(), AnchorLine,
-              CallSite->getColumn(), CallSite->getScope(),
-              CallSite->getInlinedAt(), /*ImplicitCode=*/true,
-              CallSite->getAtomGroup(), CallSite->getAtomRank());
+              MF.getFunction().getContext(), AnchorLine, CallSite->getColumn(),
+              CallSite->getScope(), CallSite->getInlinedAt(),
+              /*ImplicitCode=*/true, CallSite->getAtomGroup(),
+              CallSite->getAtomRank());
           Anchor.setDebugLoc(DebugLoc(Artificial));
 
           MCSymbol *Label = MF.getContext().createTempSymbol();

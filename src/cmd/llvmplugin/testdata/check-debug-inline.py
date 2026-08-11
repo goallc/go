@@ -308,6 +308,41 @@ def check_target(llc, plugin, input_path, triple, quantum, output):
             f"anchor: line={zero_line} ParentPC={zero_parent_pc}"
         )
 
+    shared = obj.auxiliaries("main.shared")
+    shared_func_info = one_aux(
+        shared, 1, "FuncInfo", symbol="main.shared"
+    )
+    _, shared_file_count = struct.unpack_from("<iI", shared_func_info, 12)
+    shared_inline_offset = 20 + shared_file_count * 4
+    shared_inline_count = struct.unpack_from(
+        "<I", shared_func_info, shared_inline_offset
+    )[0]
+    if shared_inline_count != 2:
+        fail(
+            "shared callsite has unexpected inline node count: "
+            f"{shared_inline_count}"
+        )
+    shared_nodes = []
+    for index in range(shared_inline_count):
+        node = struct.unpack_from(
+            "<iIiIIi",
+            shared_func_info,
+            shared_inline_offset + 4 + index * 24,
+        )
+        shared_nodes.append(
+            (node[0], node[2], obj.resolve(node[3], node[4]), node[5])
+        )
+    if [(n[0], n[1], n[2]) for n in shared_nodes] != [
+        (-1, 71, "main.sharedLeft"),
+        (-1, 71, "main.sharedRight"),
+    ]:
+        fail(f"shared callsite did not retain separate callees: {shared_nodes}")
+    shared_parent_pcs = [node[3] for node in shared_nodes]
+    if any(pc < 0 or pc % quantum for pc in shared_parent_pcs):
+        fail(f"shared callsite has invalid ParentPC values: {shared_parent_pcs}")
+    if shared_parent_pcs[0] == shared_parent_pcs[1]:
+        fail(f"shared callsite reused one ParentPC: {shared_parent_pcs}")
+
 
 def main():
     parser = argparse.ArgumentParser()
