@@ -34,7 +34,7 @@ func llvmFloor64(x float64) float64 {
 }
 
 // LLVM-DAG: define goabiinternal double @codegen.llvmRound64(double %x)
-// LLVM-DAG: call double @llvm.round.f64(double %x)
+// LLVM-ARM64-DAG: call double @llvm.round.f64(double %x)
 func llvmRound64(x float64) float64 {
 	return math.Round(x)
 }
