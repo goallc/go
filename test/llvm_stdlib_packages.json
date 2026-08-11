@@ -73,8 +73,7 @@
         "bytes": "llc/GoObj: GoObj stack-growth statepoint contains an invalid argument pointer slot",
         "crypto/md5": "runtime semantics: TestGolden passes corrupted interface arguments to runtime.convTnoptr",
         "crypto/sha1": "runtime semantics: stack growth in blockAVX2 reports an untyped argument frame with a missing stack map",
-        "io": "runtime semantics: repeated TestPipeConcurrent runs intermittently replace written data with zero bytes",
-        "math": "llc/GoObj: x86-64 lowering requires unavailable ftrunc and ffloor libcalls"
+        "io": "runtime semantics: repeated TestPipeConcurrent runs intermittently replace written data with zero bytes"
       }
     }
   }
