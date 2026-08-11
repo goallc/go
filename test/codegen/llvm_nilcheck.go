@@ -48,7 +48,7 @@ package codegen
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheck(
 // LLVM-OPT-NOT: llvm.goallc.nilcheck
 // LLVM-OPT: icmp eq ptr %p, null
-// LLVM-OPT: br i1 {{%.*}}, label %[[OPTNIL:.*]], label %[[OPTCONT:.*]]
+// LLVM-OPT: br i1 {{%.*}}, label %[[OPTNIL:[^,]+]], label %[[OPTCONT:[^,]+]], !dbg
 // LLVM-OPT: [[OPTNIL]]:
 // LLVM-OPT-NEXT: call goabiinternal void @runtime.panicmem()
 // LLVM-OPT-NEXT: br label %[[OPTCONT]]
