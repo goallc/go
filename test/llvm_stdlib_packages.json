@@ -25,8 +25,11 @@
       "encoding/gob": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "encoding/hex": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "encoding/json": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
+      "encoding/json/jsontext": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "encoding/pem": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "encoding/xml": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
+      "errors": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
+      "go/printer": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "go/scanner": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "go/token": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "hash": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
@@ -39,11 +42,14 @@
       "image": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "image/color": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "index/suffixarray": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
+      "internal/runtime/maps": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "io": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "io/fs": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "math": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "math/bits": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "math/cmplx": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
+      "math/rand": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
+      "math/rand/v2": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "mime": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "mime/quotedprintable": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "net/netip": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
@@ -64,16 +70,12 @@
     },
     "blacklist": {
       "*": "entry package has not yet been qualified through LLVM O2 compile, GoObj/archive, link, and package tests",
-      "compress/flate": "llc/GoObj: X86 and AArch64 SelectionDAG instruction-selection assertions",
-      "math/rand": "llc/GoObj: x86-64 lowering requires an unavailable ffloor libcall; Linux arm64 qualification is pending",
-      "math/rand/v2": "llc/GoObj: x86-64 lowering requires an unavailable ffloor libcall; Linux arm64 qualification is pending"
+      "compress/flate": "llc/GoObj: X86 and AArch64 SelectionDAG instruction-selection assertions"
     },
     "platform_blacklist": {
       "linux/amd64": {
-        "bytes": "llc/GoObj: GoObj stack-growth statepoint contains an invalid argument pointer slot",
         "crypto/md5": "runtime semantics: TestGolden passes corrupted interface arguments to runtime.convTnoptr",
-        "crypto/sha1": "runtime semantics: stack growth in blockAVX2 reports an untyped argument frame with a missing stack map",
-        "io": "runtime semantics: repeated TestPipeConcurrent runs intermittently replace written data with zero bytes"
+        "crypto/sha1": "runtime semantics: stack growth in blockAVX2 reports an untyped argument frame with a missing stack map"
       }
     }
   }

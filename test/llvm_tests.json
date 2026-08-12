@@ -1194,13 +1194,7 @@
       "rotate2.go": "slow: exceeds the one-minute LLVM CI per-case budget",
       "rotate3.go": "slow: exceeds the one-minute LLVM CI per-case budget"
     },
-    "platform_graylist": {
-      "linux/amd64": {
-        "fixedbugs/issue23522.go": "x86 dynamic SSE4.1 floor selection lowers the guarded LLVM intrinsic to an unavailable external libcall",
-        "fixedbugs/issue68322.go": "x86 dynamic SSE4.1 truncation lowers the guarded LLVM intrinsic to an unavailable external libcall",
-        "llvm_float_intrinsics.go": "x86 dynamic SSE4.1 and FMA intrinsics lower to unavailable external libc and libm calls"
-      }
-    },
+    "platform_graylist": {},
     "platform_blacklist": {
       "darwin/arm64": {
         "fixedbugs/issue9604b.go": "slow: #108 fixes byte-identical generation, but LLVM O2 compilation of the generated entry still exceeds the one-minute per-case budget on Darwin/arm64"
