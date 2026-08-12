@@ -136,7 +136,7 @@ func walkRange(nrange *ir.RangeStmt) ir.Node {
 		}
 
 		// for v1, v2 := range ha { body }
-		if cheapComputableIndex(elem.Size()) {
+		if base.Flag.EnableLLVM || cheapComputableIndex(elem.Size()) {
 			// v1, v2 = hv1, ha[hv1]
 			tmp := ir.NewIndexExpr(base.Pos, ha, hv1)
 			tmp.SetBounded(true)

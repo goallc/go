@@ -162,6 +162,7 @@
       "llvm_args_pointer_maps_gc.go": "entry argument pointer maps across recursive stack growth, ordinary safepoints, and runtime.GC",
       "llvm_aggregate_call_argument.go": "pointer-containing struct used only as a call argument, without caller gc-live or relocation",
       "llvm_alloca_statepoint_gc.go": "address-taken pointer locals expanded from live-out alloca layouts across GC and stack growth",
+      "llvm_range_statepoint_gc.go": "wide array range derives each element from a relocatable base across repeated statepoints and stack growth",
       "llvm_memeq.go": "raw memory equality for true, false, different-length, and offset substring inputs",
       "llvm_move.go": "overlap-safe, aligned, and runtime-helper memory moves",
       "llvm_private_string.go": "frontend private string constant materialization, GoObj linking, and execution",
