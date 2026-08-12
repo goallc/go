@@ -5,7 +5,7 @@ target triple = "x86_64-unknown-linux-goobj"
 declare goabiinternal void @safepoint()
 
 define goabiinternal void @nonentry_pointer_alloca(
-    i1 %allocate) "go-stack-growth-statepoint" gc "goallc" {
+    i1 %allocate) gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   br i1 %allocate, label %allocate.block, label %exit

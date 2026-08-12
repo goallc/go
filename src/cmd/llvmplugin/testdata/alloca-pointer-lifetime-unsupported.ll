@@ -89,7 +89,7 @@ declare goabiinternal void @safepoint()
 declare goabiinternal void @observe(ptr)
 declare goabiinternal void @observe_slice({ ptr, i64, i64 })
 
-define goabiinternal void @locals_pointer_alloca_with_lifetime() "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @locals_pointer_alloca_with_lifetime() gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   call goabiinternal void @safepoint()
@@ -101,7 +101,7 @@ entry:
   ret void
 }
 
-define goabiinternal void @stack_object_alloca_with_lifetime() "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @stack_object_alloca_with_lifetime() gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   call goabiinternal void @safepoint()
@@ -112,7 +112,7 @@ entry:
   ret void
 }
 
-define goabiinternal void @loop_reinitialized_pointer_alloca(i1 %again) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @loop_reinitialized_pointer_alloca(i1 %again) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   br label %loop
@@ -129,7 +129,7 @@ exit:
   ret void
 }
 
-define goabiinternal void @preinitialized_pointer_alloca() "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @preinitialized_pointer_alloca() gc "goallc" {
 entry:
   %slot = alloca [2 x ptr], align 8
   call void @llvm.lifetime.start.p0(i64 16, ptr %slot)
@@ -140,7 +140,7 @@ entry:
 }
 
 define goabiinternal void @store_initialized_pointer_alloca(
-    ptr %first, ptr %second) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %first, ptr %second) gc "goallc" {
 entry:
   %slot = alloca %pointer_gap, align 8
   call void @llvm.lifetime.start.p0(i64 24, ptr %slot)
@@ -154,7 +154,7 @@ entry:
 }
 
 define goabiinternal void @partially_stored_pointer_alloca(
-    ptr %first, ptr %second) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %first, ptr %second) gc "goallc" {
 entry:
   %slot = alloca %pointer_gap, align 8
   call void @llvm.lifetime.start.p0(i64 24, ptr %slot)
@@ -168,7 +168,7 @@ entry:
 }
 
 define goabiinternal void @phi_edge_pointer_alloca(
-    i1 %use_stack, ptr %other) "go-stack-growth-statepoint" gc "goallc" {
+    i1 %use_stack, ptr %other) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   br i1 %use_stack, label %initialize, label %external
@@ -188,7 +188,7 @@ merge:
   ret void
 }
 
-define goabiinternal void @hoisted_aggregate_pointer_alloca() "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @hoisted_aggregate_pointer_alloca() gc "goallc" {
 entry:
   %slot = alloca [2 x ptr], align 8
   %slice = insertvalue { ptr, i64, i64 } poison, ptr %slot, 0

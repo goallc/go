@@ -146,11 +146,13 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		[]byte("define goabiinternal"),
 		[]byte(`"go_results_tuple"`),
 		[]byte(`gc "goallc"`),
-		[]byte(`"go-stack-growth-statepoint"`),
 	} {
 		if !bytes.Contains(ir, needle) {
 			t.Fatalf("GoALLC IR does not contain %q", needle)
 		}
+	}
+	if bytes.Contains(ir, []byte(`"go-stack-growth-statepoint"`)) {
+		t.Fatal("GoALLC IR still contains the obsolete stack-growth attribute")
 	}
 
 	opt := llvmToolPath(t, "opt", "GOALLC_OPT")

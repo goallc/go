@@ -59,14 +59,14 @@ declare goabiinternal void @leaf_consume_pair(%pair) #0
 declare goabiinternal void @leaf_consume_nested(%nested) #0
 declare goabiinternal void @leaf_consume_vector_pair(%vector_pair) #0
 
-define goabiinternal ptr @pair_across_call(%pair %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @pair_across_call(%pair %value) gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   %pointer = extractvalue %pair %value, 0
   ret ptr %pointer
 }
 
-define goabiinternal ptr @triple_across_call(%triple %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @triple_across_call(%triple %value) gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   %first = extractvalue %triple %value, 1
@@ -76,14 +76,14 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal void @nested_across_call(%nested %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @nested_across_call(%nested %value) gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   call goabiinternal void @leaf_consume_nested(%nested %value)
   ret void
 }
 
-define goabiinternal ptr @fixed_vector_across_call(ptr %source) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @fixed_vector_across_call(ptr %source) gc "goallc" {
 entry:
   %value = load <2 x ptr>, ptr %source, align 8
   call goabiinternal void @safepoint()
@@ -91,7 +91,7 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal ptr @nested_fixed_vector_across_call(ptr %source, i64 %number) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @nested_fixed_vector_across_call(ptr %source, i64 %number) gc "goallc" {
 entry:
   %vector.value = load <2 x ptr>, ptr %source, align 8
   %with_vector = insertvalue %vector_pair poison, <2 x ptr> %vector.value, 0
@@ -103,7 +103,7 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal ptr @insertvalue_across_call(ptr %pointer, i64 %number) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @insertvalue_across_call(ptr %pointer, i64 %number) gc "goallc" {
 entry:
   %with_pointer = insertvalue %pair zeroinitializer, ptr %pointer, 0
   %value = insertvalue %pair %with_pointer, i64 %number, 1
@@ -117,7 +117,7 @@ entry:
 ; pointer roots for poison leaves. Those leaves can be overwritten after the
 ; safepoint without ever being observed, as happens while reflect.Value is
 ; assembled for a later call.
-define goabiinternal ptr @partial_insertvalue_across_call(ptr %pointer, i64 %number) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @partial_insertvalue_across_call(ptr %pointer, i64 %number) gc "goallc" {
 entry:
   %partial = insertvalue %reflect_value poison, ptr %pointer, 0
   call goabiinternal void @safepoint()
@@ -127,7 +127,7 @@ entry:
   ret ptr %leaf
 }
 
-define goabiinternal ptr @phi_across_call(i1 %choose, %pair %left_value, %pair %right_value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @phi_across_call(i1 %choose, %pair %left_value, %pair %right_value) gc "goallc" {
 entry:
   br i1 %choose, label %left, label %right
 
@@ -144,7 +144,7 @@ merge:
   ret ptr %result
 }
 
-define goabiinternal ptr @select_across_call(i1 %choose, %pair %left_value, %pair %right_value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @select_across_call(i1 %choose, %pair %left_value, %pair %right_value) gc "goallc" {
 entry:
   %value = select i1 %choose, %pair %left_value, %pair %right_value
   call goabiinternal void @safepoint()
@@ -152,7 +152,7 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal ptr @phi_edge_use(%pair %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @phi_edge_use(%pair %value) gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   br label %merge
@@ -163,7 +163,7 @@ merge:
   ret ptr %result
 }
 
-define goabiinternal ptr @multiple_calls(%pair %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @multiple_calls(%pair %value) gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   call goabiinternal void @safepoint()
@@ -171,7 +171,7 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal ptr @aggregate_call_result(ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @aggregate_call_result(ptr %pointer) gc "goallc" {
 entry:
   %value = call goabiinternal %pair @make_pair(ptr %pointer, i64 7)
   call goabiinternal void @safepoint()
@@ -179,13 +179,13 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal void @aggregate_current_call_argument(%pair %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @aggregate_current_call_argument(%pair %value) gc "goallc" {
 entry:
   call goabiinternal void @consume_pair(%pair %value)
   ret void
 }
 
-define goabiinternal void @aggregate_load_store(ptr %source, ptr %destination) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @aggregate_load_store(ptr %source, ptr %destination) gc "goallc" {
 entry:
   %value = load %pair, ptr %source, align 8
   call goabiinternal void @safepoint()
@@ -193,7 +193,7 @@ entry:
   ret void
 }
 
-define goabiinternal ptr @alloca_derived_leaf(i64 %number) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @alloca_derived_leaf(i64 %number) gc "goallc" {
 entry:
   %slot = alloca i64, align 8
   store i64 %number, ptr %slot, align 8
@@ -203,7 +203,7 @@ entry:
   ret ptr %result
 }
 
-define goabiinternal void @frozen_aggregate() "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @frozen_aggregate() gc "goallc" {
 entry:
   %value = freeze %pair poison
   call goabiinternal void @safepoint()

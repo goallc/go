@@ -251,14 +251,15 @@ func Split(pointer *int) *int {
 	}
 	noSplitAttrs := attributeLine("p.NoSplit")
 	if !bytes.Contains(noSplitAttrs, []byte(`"go-nosplit"`)) ||
-		!bytes.Contains(noSplitAttrs, []byte(`"go-stack-growth-statepoint"`)) ||
 		!bytes.Contains(noSplitAttrs, []byte(`noinline`)) {
 		t.Fatalf("LLVM nosplit attributes do not select the nosplit prologue policy: %s", noSplitAttrs)
 	}
 	splitAttrs := attributeLine("p.Split")
-	if !bytes.Contains(splitAttrs, []byte(`"go-stack-growth-statepoint"`)) ||
-		bytes.Contains(splitAttrs, []byte(`"go-nosplit"`)) {
+	if bytes.Contains(splitAttrs, []byte(`"go-nosplit"`)) {
 		t.Fatalf("LLVM split attributes do not select the stack-growth prologue policy: %s", splitAttrs)
+	}
+	if bytes.Contains(ir, []byte(`"go-stack-growth-statepoint"`)) {
+		t.Fatal("LLVM IR still contains the obsolete stack-growth attribute")
 	}
 
 	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
@@ -274,9 +275,17 @@ func Split(pointer *int) *int {
 	if llvmABIHasRelocationTo(document, noSplit, "runtime.morestack_noctxt") {
 		t.Fatal("p.NoSplit unexpectedly calls runtime.morestack_noctxt")
 	}
+	noSplitArgs := llvmABIArgsPointerBitmaps(t, noSplit)
+	if len(noSplitArgs) == 0 || !slices.Equal(noSplitArgs[0], []int{0}) {
+		t.Fatalf("p.NoSplit entry ArgsPointerMaps = %v, want pointer bit 0", noSplitArgs)
+	}
 	split := findLLVMABISymbol(t, document, "p.Split")
 	if !llvmABIHasRelocationTo(document, split, "runtime.morestack_noctxt") {
 		t.Fatal("p.Split has no runtime.morestack_noctxt relocation")
+	}
+	splitArgs := llvmABIArgsPointerBitmaps(t, split)
+	if len(splitArgs) == 0 || !slices.Equal(splitArgs[0], []int{0}) {
+		t.Fatalf("p.Split entry ArgsPointerMaps = %v, want pointer bit 0", splitArgs)
 	}
 }
 

@@ -135,4 +135,4 @@ entry:
   ret i64 %regarg
 }
 
-attributes #0 = { "frame-pointer"="non-leaf" "go-stack-growth-statepoint" }
+attributes #0 = { "frame-pointer"="non-leaf" }

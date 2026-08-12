@@ -30,7 +30,7 @@ target triple = "x86_64-unknown-linux-goobj"
 
 declare goabiinternal void @safepoint()
 
-define goabiinternal ptr @open_defer(ptr %value) #0 gc "goallc" {
+define goabiinternal ptr @open_defer(ptr %value) gc "goallc" {
 entry:
   %bits = alloca i8, align 1, !goallc.open_defer_bits !0
   %slots = alloca [2 x ptr], align 8, !goallc.open_defer_slots !1
@@ -46,8 +46,6 @@ entry:
   %result = load volatile ptr, ptr %slot0, align 8
   ret ptr %result
 }
-
-attributes #0 = { "go-stack-growth-statepoint" }
 
 !0 = !{}
 !1 = !{i32 2}

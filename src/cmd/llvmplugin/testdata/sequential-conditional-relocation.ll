@@ -5,7 +5,7 @@ declare goabiinternal void @second_callee()
 
 define goabiinternal i64 @sequential_conditional_safepoints(
     ptr %p, i1 %take_first, i1 %take_second)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %take_first, label %first_call, label %first_skip
 

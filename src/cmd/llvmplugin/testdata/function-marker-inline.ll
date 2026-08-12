@@ -14,14 +14,14 @@ target triple = "x86_64-unknown-linux-goobj"
 declare void @llvm.sideeffect()
 
 define internal goabiinternal void @callee()
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   call void @llvm.sideeffect(), !goobj.marker_reloc !0
   ret void
 }
 
 define goabiinternal void @caller()
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   call goabiinternal void @callee()
   ret void

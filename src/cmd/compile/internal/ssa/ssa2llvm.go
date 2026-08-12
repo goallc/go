@@ -70,7 +70,6 @@ const goABI0SymbolSuffix = "<ABI0>"
 const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
-const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
 const goNoSplitAttr = "go-nosplit"
 const goSystemStackAttr = "go-systemstack"
 const goAsyncUnsafeAttr = "go-async-unsafe"
@@ -3259,10 +3258,6 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, ""))
-	// The stack-growth attribute supplies the target's entry-argument map and,
-	// when a split prologue is permitted, asks it to represent the late
-	// morestack call as a root-free statepoint.
-	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goStackGrowthStatepointAttr, ""))
 	// A //go:nosplit function must not acquire that late morestack edge. Besides
 	// violating the runtime's nosplit call graph, it would expose a safepoint the
 	// frontend deliberately prohibited. Give target frame lowering the source

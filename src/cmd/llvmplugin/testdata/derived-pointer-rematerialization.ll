@@ -29,7 +29,7 @@ declare goabiinternal void @callee()
 ; above the source nil guard.  The non-heap value null+96 must not become a Go
 ; GC root at the intervening safepoint.
 define goabiinternal i1 @hoisted_null_offset(ptr %base)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %derived = getelementptr i8, ptr %base, i64 96
   call goabiinternal void @callee()
@@ -42,7 +42,7 @@ entry:
 ; Rebuild the full address-expression chain from the relocated base, not from
 ; an independently relocated interior pointer.
 define goabiinternal i8 @derived_chain(ptr %base)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %field = getelementptr i8, ptr %base, i64 16
   %element = getelementptr i8, ptr %field, i64 8
@@ -55,7 +55,7 @@ entry:
 ; a safepoint: the merge must select the rebuilt address on that path and the
 ; original address on the other path.
 define goabiinternal i8 @conditional_derived(ptr %base, i1 %take_call)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %derived = getelementptr i8, ptr %base, i64 32
   br i1 %take_call, label %call, label %skip
@@ -76,7 +76,7 @@ merge:
 ; derived pointer. Relocate the vector base as one value, then rebuild the
 ; vector GEP instead of exposing its interior-pointer lanes as Go GC roots.
 define goabiinternal <2 x ptr> @derived_vector(<2 x ptr> %base)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %derived = getelementptr i8, <2 x ptr> %base,
       <2 x i64> <i64 16, i64 32>
@@ -88,7 +88,7 @@ entry:
 ; base. Keep that scalar base live and rebuild the vector result after it is
 ; relocated.
 define goabiinternal <2 x ptr> @derived_vector_from_scalar(ptr %base)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %derived = getelementptr i8, ptr %base,
       <2 x i64> <i64 16, i64 32>

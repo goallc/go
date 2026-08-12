@@ -70,7 +70,7 @@ declare goabiinternal void @leaf_consume_pair(%pair) #0
 
 define goabiinternal ptr @aggregate_call_result_goobj(
     ptr %seed, i1 %take_call)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %value = call goabiinternal %pair @make_pair(ptr %seed, i64 17)
   br i1 %take_call, label %call, label %skip

@@ -2,7 +2,7 @@ target triple = "x86_64-unknown-linux-goobj"
 
 declare goabiinternal void @callee()
 
-define goabiinternal i64 @selected_stack_address_live_across_call(i1 %choose_a) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal i64 @selected_stack_address_live_across_call(i1 %choose_a) gc "goallc" {
 entry:
   %a = alloca i64, align 8
   %b = alloca i64, align 8
