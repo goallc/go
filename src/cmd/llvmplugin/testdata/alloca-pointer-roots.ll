@@ -257,16 +257,13 @@ entry:
 }
 
 define goabiinternal void @argument_aggregate_home_address_across_calls(
-    %nested %value) gc "goallc" {
+    ptr byval(%nested) align 8 %value) gc "goallc" {
 entry:
-  ; The split aggregate parameter still has one complete fixed home and one
-  ; argp-relative StackObject covering all ABI pieces and padding.
-  %slot = alloca %nested, align 8
-  call void @llvm.lifetime.start.p0(i64 48, ptr %slot)
-  store %nested %value, ptr %slot, align 8
-  call goabiinternal void @observe_stack_address(ptr %slot)
+  ; A stack-assigned parameter is already one complete fixed incoming home.
+  ; Its typed byval layout supplies the entry and call-site argument bitmaps.
+  call goabiinternal void @observe_stack_address(ptr %value)
   call goabiinternal void @safepoint()
-  call goabiinternal void @observe_stack_address(ptr %slot)
+  call goabiinternal void @observe_stack_address(ptr %value)
   ret void
 }
 

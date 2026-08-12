@@ -54,7 +54,7 @@ The current SSA value and CFG rewrite support matrix is:
 
 | Value or control-flow shape | Status | Current contract |
 | --- | --- | --- |
-| Pointer arguments | AArch64 GoObj qualified; SelectionDAG home reuse also tested on X86 | Values live after a call use caller statepoints; exact stack inputs stay in their fixed ABI homes, while register inputs and transformed values use normal statepoint spills. Call-only arguments are described by the callee's type-derived entry map. |
+| Pointer arguments | AArch64 GoObj qualified; typed stack homes also tested on X86 | Go ABI stack assignments use typed `byval` carriers bound directly to their incoming homes. The home is a memory root when active; pointer values loaded from it and live after a call use normal scalar statepoint tracking. Call-only arguments are described by the callee's type-derived entry map. |
 | Static `alloca` addresses | Supported | The raw alloca is the storage identity and the only extra `gc-live` root. First-class GEP/cast uses are rebuilt immediately at the use; direct memory uses stay on the FrameIndex and never enter relocation SSA. Pointers loaded from memory remain tracked. |
 | `select`, GEP, and pointer casts | Supported | Fixed-allocation GEP/no-op cast chains stay as direct FrameIndex uses or are rebuilt immediately at first-class uses. Merged or non-stack pointer values remain ordinary scalar roots. |
 | Pointer-valued call results | Supported | `gc.result` replaces the ordinary result and later safepoints relocate it. |
@@ -63,7 +63,7 @@ The current SSA value and CFG rewrite support matrix is:
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
 | Fixed struct/array SSA aggregates | Supported | Pointer and fixed pointer-vector leaves are extracted before liveness and reconstructed from the current relocated SSA leaves. |
 | Fixed-width pointer-vector SSA values | Supported | The vector remains one `gc-live` operand and one same-typed `gc.relocate`; it is not split into lanes. Pointer vectors in allocas remain unsupported. |
-| Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; supported fixed formal layouts also contribute pointer words to AArch64 entry maps. |
+| Aggregate arguments and call results | Supported for IR rewriting and AArch64 runtime ABI tests | Go ABI stack inputs use typed `byval`; stack results use caller-owned typed `byref` carriers plus `go_memory_results`, while register results remain compact LLVM returns. Only first-class leaves live after the call enter caller `gc-live`; fixed input/result homes contribute pointer words to GoObj maps according to their final locations. |
 | Aggregate load results and store operands | Supported | First-class SSA values use aggregate normalization. Pointer leaves in surviving fixed allocas remain memory roots described by the alloca deopt layout protocol. |
 | Pointer-containing `alloca` storage | GoObj qualified for fixed layouts | Go `VarDef` emits `llvm.lifetime.start`; parameter homes and addressed result homes have explicit starts at their initialization sites. The statepoint pass uses starts as backward liveness kills and real address uses as gens, so the last use supplies the implicit end. Active contents contribute callsite `LocalsPointerMaps`; address-observable objects additionally get function-wide `FUNCDATA_StackObjects` and one entry initialization because stack growth adjusts them even while source-dead. Locals-only storage is not initialized by the plugin, and no lifetime ends are emitted. |
 | Scalable vectors | Unsupported | The generic LLVM statepoint rewrite assumes a fixed vector width when constructing relocates; fails closed. |
@@ -268,18 +268,24 @@ the same direct location is instead the frame base whose bitmap selects memory
 slots. Its contents are active only when a matching explicit direct alloca
 also occurs in the statepoint's GC operands.
 
-Ordinary stack inputs use the same statepoint path. SelectionDAG formal
-lowering records a value home only when a Go ABI pointer part is a direct,
-non-extending load from an immutable fixed object and its IR aggregate offset,
-ABI part offset, load size, and object size all agree. If `gc-live` later
-contains that argument or an exact `extractvalue` leaf, statepoint lowering
-uses the existing fixed frame index as its indirect memory location, makes the
-slot mutable for GC relocation, and reloads `gc.relocate` from that same frame
-index. No pre-call copy to a local spill is emitted. A merged, derived,
-size-mismatched, or otherwise unproven value falls back to LLVM's normal local
-statepoint spill. This is a SelectionDAG contract; it does not introduce
-`byval`/`sret`, change GoALLC's LLVM IR emission point, or bypass the standard
-statepoint operand format.
+Ordinary stack inputs use typed LLVM `byval` parameters whenever Go's ABI
+assignment contains no registers. The target lowers that carrier to the exact
+mutable incoming Go home, and the frontend binds addressable parameter uses to
+the carrier instead of copying the value through a compiler-owned alloca. At a
+call site an existing source address is reused; a pure SSA value is materialized
+in a short-lived entry alloca solely to provide the `byval` address. This is one
+Go ABI classification rule, not a separate scalar-versus-aggregate policy.
+Statepoint lowering rematerializes the fixed home itself after stack growth;
+pointer values loaded from the home remain ordinary scalar roots when live.
+
+Results whose Go `OutParam` assignment contains no registers use caller-owned
+typed `byref` carriers. The `go_memory_results` function/call attribute records
+their logical Go result indexes because LLVM `sret` cannot represent Go's
+mixed register-and-stack or multiple stack-result layouts. The target maps a
+callee carrier to its fixed outgoing result home and copies that physical home
+back to the caller-owned carrier after the call. Register-assigned results keep
+the compact LLVM return and `go_results_tuple` mapping. Both carrier kinds keep
+the standard statepoint operand format.
 
 For AArch64 GoObj, target frame lowering uses Go's frame-chain layout instead
 of the platform ABI frame record: LR is at `SP+0`, this function writes its FP
@@ -294,11 +300,12 @@ moving SP so asynchronous traceback cannot observe a half-built frame.
 
 The ArgsPointerMaps phase supports scalar LLVM pointer inputs and receivers,
 plus pointer leaves in supported fixed struct/array formal layouts, in
-ABIInternal register homes, ABIInternal stack-input slots, and ABI0 stack-input
-slots on AArch64. Pair 0 is always `(EntryArgs, empty locals)`. Ordinary
-statepoints use their actual final machine locations: indirect pointer slots in
-the current frame become locals bits, while exact fixed input homes and stack
-result slots above the final frame become args bits. The writer jointly
+ABIInternal register homes, ABIInternal stack-input slots, ABI0 stack-input
+slots, and typed `byref` result slots on AArch64. Pair 0 is always
+`(EntryArgs, empty locals)`. Ordinary statepoints use their actual final machine
+locations: indirect pointer slots in the current frame become locals bits,
+while exact fixed input homes and stack result slots above the final frame
+become args bits. The writer jointly
 deduplicates each complete `(Args, locals)` pair, so the two tables always have
 the same count. It does not eagerly mark declared result slots; a result slot
 is an args root only when a statepoint records a live pointer in that physical
@@ -362,10 +369,9 @@ forces an entry input home and an ordinary stack-result root into different
 ArgsPointerMaps entries, then checks their exact objview bitmaps and
 `PCDATA_StackMapIndex` sequence. The identical-source Go fixture
 `test/abi/llvm_args_pointer_maps.go` separately forces a scalar pointer and a
-three-word pointer aggregate onto the incoming stack. It checks native
-assembly stack loads, scalar-only rewritten `gc-live`/`gc.relocate`, alloca
-memory roots with no synthetic statepoint spill, and exact Args/Locals/PCDATA
-objview data.
+three-word pointer aggregate onto the incoming stack. It checks typed `byval`
+IR, native assembly stack loads, scalar-only rewritten `gc-live`/`gc.relocate`,
+fixed-home memory roots, and exact Args/Locals/PCDATA objview data.
 The executable identical-source fixture `test/abi/llvm_args_results.go` repeats
 those checks with `runtime.GC` for a scalar stack pointer, two pointer stack
 arguments separated by a scalar, a pointer-containing stack aggregate, and the

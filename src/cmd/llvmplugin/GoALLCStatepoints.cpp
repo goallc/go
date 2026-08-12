@@ -40,6 +40,7 @@ namespace {
 constexpr StringLiteral GoALLCGCName = "goallc";
 constexpr StringLiteral GCLeafAttr = "gc-leaf-function";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
+constexpr StringLiteral GoMemoryResultsAttr = "go_memory_results";
 constexpr StringLiteral GoDeferResultMD = "goallc.defer_result";
 constexpr StringLiteral GoOpenDeferBitsMD = "goallc.open_defer_bits";
 constexpr StringLiteral GoOpenDeferSlotsMD = "goallc.open_defer_slots";
@@ -116,6 +117,14 @@ struct PointerAllocaRecord {
   SmallVector<Instruction *, 16> AddressUses;
   SmallVector<CallInst *, 8> ActiveCalls;
   bool ActivityUnclear = false;
+};
+
+struct PointerByValRecord {
+  Argument *Base;
+  uint64_t ByteSize;
+  uint64_t Alignment;
+  uint64_t BitCount;
+  SmallVector<uint64_t, 4> BitmapWords;
 };
 
 struct OpenDeferInfo {
@@ -1316,6 +1325,62 @@ Error collectPointerAllocas(
   return Error::success();
 }
 
+Error collectPointerByVals(Function &F,
+                           SmallVectorImpl<PointerByValRecord> &Records) {
+  if (!isGoCallingConv(F.getCallingConv()))
+    return Error::success();
+
+  const DataLayout &DL = F.getDataLayout();
+  uint64_t PointerSize = DL.getPointerSize(0);
+  for (Argument &Arg : F.args()) {
+    if (!Arg.hasByValAttr())
+      continue;
+    Type *StorageType = Arg.getParamByValType();
+    if (!StorageType || !containsPointer(StorageType))
+      continue;
+
+    TypeSize AllocationSize = DL.getTypeAllocSize(StorageType);
+    if (AllocationSize.isScalable())
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support scalable byval parameter "
+          "layouts");
+    Align Alignment =
+        Arg.getParamAlign().value_or(DL.getABITypeAlign(StorageType));
+    uint64_t ByteSize = AllocationSize.getFixedValue();
+    if (!PointerSize || !ByteSize || ByteSize % PointerSize != 0 ||
+        Alignment < DL.getABITypeAlign(StorageType))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints require pointer-aligned fixed byval parameter "
+          "layouts");
+
+    SmallVector<PointerAllocaLeaf, 8> Leaves;
+    SmallVector<unsigned, 4> Path;
+    if (Error Err =
+            enumeratePointerAllocaLeaves(StorageType, DL, Path, 0, Leaves))
+      return std::move(Err);
+    uint64_t BitCount = ByteSize / PointerSize;
+    SmallVector<uint64_t, 4> BitmapWords((BitCount + 63) / 64, 0);
+    for (const PointerAllocaLeaf &Leaf : Leaves) {
+      if (Leaf.Offset % PointerSize != 0 || Leaf.Offset >= ByteSize)
+        return createStringError(
+            std::errc::not_supported,
+            "GoALLC statepoint byval pointer slot is not pointer-aligned");
+      uint64_t Bit = Leaf.Offset / PointerSize;
+      uint64_t Mask = uint64_t(1) << (Bit % 64);
+      if (BitmapWords[Bit / 64] & Mask)
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC statepoint byval pointer slots overlap");
+      BitmapWords[Bit / 64] |= Mask;
+    }
+    Records.push_back(
+        {&Arg, ByteSize, Alignment.value(), BitCount, std::move(BitmapWords)});
+  }
+  return Error::success();
+}
+
 Error validateSafepoint(const SafepointRecord &Record) {
   const CallInst &Call = *Record.Call;
   if (Call.isInlineAsm())
@@ -1332,14 +1397,30 @@ Error validateSafepoint(const SafepointRecord &Record) {
         std::errc::not_supported,
         "GoALLC statepoints only support a single deopt call operand bundle");
   for (unsigned I = 0; I != Call.arg_size(); ++I) {
+    if (Call.paramHasAttr(I, Attribute::ByVal) &&
+        (!isGoCallingConv(Call.getCallingConv()) ||
+         !Call.getArgOperand(I)->getType()->isPointerTy() ||
+         !Call.getParamByValType(I) || !Call.getParamAlign(I)))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints require typed, aligned byval only on Go calls");
+    if (Call.paramHasAttr(I, Attribute::ByRef) &&
+        (!isGoCallingConv(Call.getCallingConv()) ||
+         !Call.getArgOperand(I)->getType()->isPointerTy() ||
+         !Call.getParamByRefType(I) || !Call.getParamAlign(I)))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints require typed, aligned byref only on Go calls");
     for (Attribute Attr : Call.getAttributes().getParamAttrs(I)) {
       // These non-ABI attributes remain valid after LLVM's generic
       // RewriteStatepointsForGC pass and are natively accepted by both the
       // statepoint verifier and SelectionDAG call lowering. O2 commonly
       // infers them on otherwise ordinary runtime calls. Keep ABI-affecting
-      // attributes fail closed except for nest, whose Go closure ABI lowering
-      // is covered separately.
+      // attributes fail closed except for nest and typed byval, whose Go ABI
+      // lowering is covered separately.
       if (!Attr.hasAttribute(Attribute::Nest) &&
+          !Attr.hasAttribute(Attribute::ByVal) &&
+          !Attr.hasAttribute(Attribute::ByRef) &&
           !Attr.hasAttribute(Attribute::Captures) &&
           !Attr.hasAttribute(Attribute::ReadNone) &&
           !Attr.hasAttribute(Attribute::ReadOnly) &&
@@ -1363,8 +1444,9 @@ Error validateSafepoint(const SafepointRecord &Record) {
 
 void appendAllocaPtrMapDeoptOperands(
     IRBuilder<> &Builder, ArrayRef<const PointerAllocaRecord *> Allocas,
+    ArrayRef<const PointerByValRecord *> ByVals,
     SmallVectorImpl<Value *> &Deopt) {
-  if (Allocas.empty())
+  if (Allocas.empty() && ByVals.empty())
     return;
   // ProtocolLength covers BEGIN through END, but not the trailing duplicate
   // length.  The envelope itself therefore contributes BEGIN, length,
@@ -1372,27 +1454,39 @@ void appendAllocaPtrMapDeoptOperands(
   uint64_t ProtocolLength = 4;
   for (const PointerAllocaRecord *Alloca : Allocas)
     ProtocolLength += 10 + Alloca->BitmapWords.size();
+  for (const PointerByValRecord *ByVal : ByVals)
+    ProtocolLength += 10 + ByVal->BitmapWords.size();
 
   auto AppendConstant = [&](uint64_t Value) {
     Deopt.push_back(ConstantInt::get(Builder.getInt64Ty(), Value));
   };
   AppendConstant(GoObj::AllocaPtrMapBeginMagic);
   AppendConstant(ProtocolLength);
-  AppendConstant(Allocas.size());
-  for (const PointerAllocaRecord *Alloca : Allocas) {
+  AppendConstant(Allocas.size() + ByVals.size());
+  auto AppendRecord = [&](Value *Base, uint64_t ByteSize, uint64_t Alignment,
+                          uint64_t BitCount, ArrayRef<uint64_t> BitmapWords) {
     AppendConstant(GoObj::AllocaPtrMapRecordTag);
-    AppendConstant(10 + Alloca->BitmapWords.size());
-    Deopt.push_back(Alloca->Alloca);
-    AppendConstant(0); // First contract version describes the whole alloca.
-    AppendConstant(Alloca->ByteSize);
-    AppendConstant(Alloca->Alignment);
-    AppendConstant(Alloca->Alloca->getDataLayout().getPointerSize(0));
-    AppendConstant(Alloca->BitCount);
+    AppendConstant(10 + BitmapWords.size());
+    Deopt.push_back(Base);
+    AppendConstant(0); // First contract version describes the whole object.
+    AppendConstant(ByteSize);
+    AppendConstant(Alignment);
+    AppendConstant(
+        Builder.GetInsertBlock()->getModule()->getDataLayout().getPointerSize(
+            0));
+    AppendConstant(BitCount);
     AppendConstant(GoObj::AllocaPtrMapBitmapWordBits);
-    AppendConstant(Alloca->BitmapWords.size());
-    for (uint64_t Word : Alloca->BitmapWords)
+    AppendConstant(BitmapWords.size());
+    for (uint64_t Word : BitmapWords)
       AppendConstant(Word);
+  };
+  for (const PointerAllocaRecord *Alloca : Allocas) {
+    AppendRecord(Alloca->Alloca, Alloca->ByteSize, Alloca->Alignment,
+                 Alloca->BitCount, Alloca->BitmapWords);
   }
+  for (const PointerByValRecord *ByVal : ByVals)
+    AppendRecord(ByVal->Base, ByVal->ByteSize, ByVal->Alignment,
+                 ByVal->BitCount, ByVal->BitmapWords);
   AppendConstant(GoObj::AllocaPtrMapEndMagic);
   AppendConstant(ProtocolLength);
 }
@@ -1417,6 +1511,7 @@ void appendOpenDeferDeoptOperands(IRBuilder<> &Builder,
 
 Error rewriteCall(SafepointRecord &Record,
                   ArrayRef<const PointerAllocaRecord *> PointerAllocas,
+                  ArrayRef<const PointerByValRecord *> PointerByVals,
                   const std::optional<OpenDeferInfo> &OpenDefer) {
   CallInst *Call = Record.Call;
 
@@ -1433,7 +1528,8 @@ Error rewriteCall(SafepointRecord &Record,
   // Keep the open-defer envelope before the alloca ptrmap envelope. The latter
   // deliberately remains the final self-describing suffix for compatibility.
   appendOpenDeferDeoptOperands(Builder, OpenDefer, Deopt);
-  appendAllocaPtrMapDeoptOperands(Builder, PointerAllocas, Deopt);
+  appendAllocaPtrMapDeoptOperands(Builder, PointerAllocas, PointerByVals,
+                                  Deopt);
   Record.Statepoint = Builder.CreateGCStatepointCall(
       Record.ID, 0, Callee, CallArgs,
       Deopt.empty() ? std::nullopt
@@ -1443,6 +1539,8 @@ Error rewriteCall(SafepointRecord &Record,
   if (Call->hasFnAttr(GoResultsTupleAttr))
     Record.Statepoint->addFnAttr(
         Attribute::get(Call->getContext(), GoResultsTupleAttr));
+  if (Attribute Attr = Call->getFnAttr(GoMemoryResultsAttr); Attr.isValid())
+    Record.Statepoint->addFnAttr(Attr);
   for (unsigned I = 0; I != Call->arg_size(); ++I) {
     for (Attribute Attr : Call->getAttributes().getParamAttrs(I))
       Record.Statepoint->addParamAttr(GCStatepointInst::CallArgsBeginPos + I,
@@ -1515,14 +1613,21 @@ Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
 
 void repairRelocationSSA(Function &F, DominatorTree &DT,
                          ArrayRef<SafepointRecord> Records) {
-  // Each ordinary relocated pointer and each rematerialized alloca-derived
-  // address is a new reaching definition of its original SSA value.
+  // Each ordinary relocated pointer and each rematerialized fixed-object
+  // derived address is a new reaching definition of its original SSA value.
+  // Static allocas and typed byval/byref arguments are themselves fixed frame
+  // addresses: SelectionDAG rematerializes either from its frame index at each
+  // use, so replacing the original IR value with a gc.relocate chain would
+  // turn later statepoints into ordinary pointer spills.
   MapVector<Value *, SmallVector<Value *, 4>> Definitions;
   for (const SafepointRecord &Record : Records) {
     for (CallInst *RelocateCall : Record.Relocates) {
       auto *Relocate = cast<GCRelocateInst>(RelocateCall);
       Value *Original = Relocate->getDerivedPtr();
-      if (!isa<AllocaInst>(Original))
+      auto *Arg = dyn_cast<Argument>(Original);
+      if (!isa<AllocaInst>(Original) &&
+          !(Arg && (Arg->hasByValAttr() ||
+                    Arg->hasAttribute(Attribute::ByRef))))
         Definitions[Original].push_back(RelocateCall);
     }
 
@@ -1658,6 +1763,9 @@ Error rewriteFunction(Function &F) {
   SmallVector<PointerAllocaRecord, 8> PointerAllocas;
   if (Error Err = collectPointerAllocas(F, OpenDefer, PointerAllocas))
     return Err;
+  SmallVector<PointerByValRecord, 4> PointerByVals;
+  if (Error Err = collectPointerByVals(F, PointerByVals))
+    return Err;
   if (Error Err = scalarizeLivePointerAggregates(F))
     return Err;
 
@@ -1690,6 +1798,13 @@ Error rewriteFunction(Function &F) {
       // the exact address expression after the statepoint.
       Record.Live.insert(rematerializableDerivedBase(Address));
     }
+  // A typed byval parameter is the address of a caller-initialized fixed Go
+  // argument object. Keep that base relocatable at every ordinary safepoint;
+  // the accompanying layout record tells GoObj which words in the object are
+  // GC pointers, while the direct base location itself is not a pointer root.
+  for (SafepointRecord &Record : Records)
+    for (const PointerByValRecord &ByVal : PointerByVals)
+      Record.Live.insert(ByVal.Base);
   for (const SafepointRecord &Record : Records)
     if (Error Err = validateSafepoint(Record))
       return Err;
@@ -1731,6 +1846,9 @@ Error rewriteFunction(Function &F) {
   if (Error Err =
           promoteAllocasToWholeFunctionLifetime(F, WholeLifetimeAllocas))
     return Err;
+  SmallVector<const PointerByValRecord *, 4> ByValRecords;
+  for (const PointerByValRecord &ByVal : PointerByVals)
+    ByValRecords.push_back(&ByVal);
   for (SafepointRecord &Record : llvm::reverse(Records)) {
     SmallVector<const PointerAllocaRecord *, 8> AllocaRecords;
     for (const PointerAllocaRecord &Alloca : PointerAllocas) {
@@ -1749,7 +1867,7 @@ Error rewriteFunction(Function &F) {
       if (IsActive || Alloca.NeedsStackObject)
         AllocaRecords.push_back(&Alloca);
     }
-    if (Error Err = rewriteCall(Record, AllocaRecords, OpenDefer))
+    if (Error Err = rewriteCall(Record, AllocaRecords, ByValRecords, OpenDefer))
       return Err;
   }
   eraseOriginalCalls(Records);

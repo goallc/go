@@ -98,12 +98,16 @@ entry:
   ret ptr %result
 }
 
-define goabi0 ptr @"aarch64_abi0_pointer_result<ABI0>"(ptr %pointer) #0 gc "goallc" {
+define goabi0 void @"aarch64_abi0_pointer_result<ABI0>"(
+    ptr byval(ptr) align 8 %pointer.home,
+    ptr byref(ptr) align 8 %result.home) #1 gc "goallc" {
 entry:
+  %pointer = load ptr, ptr %pointer.home, align 8
   %buf = alloca [8192 x i8], align 16
   %slot = getelementptr inbounds [8192 x i8], ptr %buf, i64 0, i64 8191
   store volatile i8 1, ptr %slot, align 1
-  ret ptr %pointer
+  store ptr %pointer, ptr %result.home, align 8
+  ret void
 }
 
 define goabiinternal ptr @aarch64_stack_pointer_arg(
@@ -111,8 +115,9 @@ define goabiinternal ptr @aarch64_stack_pointer_arg(
     i64 %a4, i64 %a5, i64 %a6, i64 %a7,
     i64 %a8, i64 %a9, i64 %a10, i64 %a11,
     i64 %a12, i64 %a13, i64 %a14, i64 %a15,
-    ptr %pointer) #0 gc "goallc" {
+    ptr byval(ptr) align 8 %pointer.home) #0 gc "goallc" {
 entry:
+  %pointer = load ptr, ptr %pointer.home, align 8
   %buf = alloca [8192 x i8], align 16
   %slot = getelementptr inbounds [8192 x i8], ptr %buf, i64 0, i64 8191
   store volatile i8 1, ptr %slot, align 1
@@ -130,10 +135,11 @@ entry:
 ; The i64 register argument's home starts beyond the 8-byte scaled-uimm12
 ; limit (32760), forcing the frameless morestack path to materialize SP+32776.
 define goabiinternal i64 @aarch64_large_arg_home(
-    [4096 x i64] %stackarg, i64 %regarg) #0 gc "goallc" {
+    ptr byval([4096 x i64]) align 8 %stackarg, i64 %regarg) #0 gc "goallc" {
 entry:
   call goabiinternal void @"runtime.GC"()
   ret i64 %regarg
 }
 
 attributes #0 = { "frame-pointer"="non-leaf" }
+attributes #1 = { "frame-pointer"="non-leaf" "go_memory_results"="0" }

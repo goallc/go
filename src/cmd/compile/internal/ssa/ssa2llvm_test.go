@@ -182,6 +182,35 @@ func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	}
 }
 
+func TestLLVMStaticCallMemoryResultsCompatibility(t *testing.T) {
+	config := abi.NewABIConfig(1, 0, 0, uint8(obj.ABIInternal))
+	intType := types.Types[types.TINT]
+	ptrType := types.Types[types.TUNSAFEPTR]
+	structType := types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, nil, ptrType),
+		types.NewField(src.NoXPos, nil, intType),
+	})
+	types.CalcSize(structType)
+	makeAux := func(results ...*types.Type) *AuxCall {
+		return StaticAuxCall(new(obj.LSym), config.ABIAnalyzeTypes(nil, results))
+	}
+
+	// A caller's aggregate result and a callee's expanded fields may use the
+	// same register count, but once either side spills, goret needs identical
+	// logical result boundaries.
+	aggregate := makeAux(structType)
+	expanded := makeAux(ptrType, intType)
+	if llvmStaticCallMemoryResultsCompatible(aggregate, expanded, llvmSignature(aggregate), llvmSignature(expanded)) {
+		t.Fatal("differently grouped memory results reported compatible")
+	}
+
+	left := makeAux(ptrType, intType)
+	right := makeAux(ptrType, intType)
+	if !llvmStaticCallMemoryResultsCompatible(left, right, llvmSignature(left), llvmSignature(right)) {
+		t.Fatal("identical physical memory-result homes reported incompatible")
+	}
+}
+
 func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer
