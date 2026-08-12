@@ -5,8 +5,8 @@ target triple = "aarch64-unknown-linux-goobj"
 declare goabiinternal void @supported_callee(ptr)
 declare goabiinternal void @supported_byval_callee(
     ptr byval(%stack_arg) align 8)
-declare goabiinternal void @supported_byref_callee(
-    ptr byref(%stack_arg) align 8) #1
+declare goabiinternal void @supported_goret_callee(
+    ptr goret(%stack_arg) "goretindex"="0" align 8)
 
 define goabiinternal void @supported_param_attrs(ptr %argument) #0 gc "goallc" {
 entry:
@@ -25,13 +25,12 @@ entry:
   ret void
 }
 
-define goabiinternal void @supported_byref_attr() #0 gc "goallc" {
+define goabiinternal void @supported_goret_attr() #0 gc "goallc" {
 entry:
   %stack_result = alloca %stack_arg, align 8
-  call goabiinternal void @supported_byref_callee(
-      ptr byref(%stack_arg) align 8 %stack_result) #1
+  call goabiinternal void @supported_goret_callee(
+      ptr goret(%stack_arg) "goretindex"="0" align 8 %stack_result)
   ret void
 }
 
 attributes #0 = { "frame-pointer"="non-leaf" }
-attributes #1 = { "go_memory_results"="0" }

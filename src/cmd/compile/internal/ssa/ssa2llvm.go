@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"internal/buildcfg"
 	"strconv"
-	"strings"
 
 	"github.com/goallc/go-llvm"
 )
@@ -78,7 +77,6 @@ const goABIInternalCallConv llvm.CallConv = 22
 const goABI0CallConv llvm.CallConv = 23
 const goABI0SymbolSuffix = "<ABI0>"
 const goResultsTupleAttr = "go_results_tuple"
-const goMemoryResultsAttr = "go_memory_results"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
 const goNoSplitAttr = "go-nosplit"
@@ -110,7 +108,6 @@ type llvmFuncSignature struct {
 	ReturnCount         int
 	Params              []llvmParamSignature
 	Results             []llvmResultSignature
-	MemoryResultIndices []int
 	HasClosureContext   bool
 	ClosureContextIndex int
 }
@@ -215,7 +212,6 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 
 	results := make([]llvm.Type, 0, aux.NResults())
 	resultSignatures := make([]llvmResultSignature, 0, aux.NResults())
-	memoryResultIndices := make([]int, 0, aux.NResults())
 	for i := int64(0); i < aux.NResults(); i++ {
 		goType := aux.TypeOfResult(i)
 		result := llvmResultSignature{
@@ -232,7 +228,6 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 			result.Alignment = int(goType.Alignment())
 			result.ParamIndex = len(params)
 			params = append(params, GlobalCtxt.PointerType(0))
-			memoryResultIndices = append(memoryResultIndices, int(i))
 		} else {
 			result.ReturnIndex = len(results)
 			results = append(results, result.ValueType)
@@ -256,7 +251,6 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 		ReturnCount:         len(results),
 		Params:              paramSignatures,
 		Results:             resultSignatures,
-		MemoryResultIndices: memoryResultIndices,
 		ClosureContextIndex: -1,
 	}
 }
@@ -286,20 +280,16 @@ func llvmByValAttribute(t llvm.Type) llvm.Attribute {
 	return GlobalCtxt.CreateTypeAttribute(kind, t)
 }
 
-func llvmByRefAttribute(t llvm.Type) llvm.Attribute {
-	kind := llvm.AttributeKindID("byref")
+func llvmGoRetAttribute(t llvm.Type) llvm.Attribute {
+	kind := llvm.AttributeKindID("goret")
 	if kind == 0 {
-		base.Fatalf("LLVM does not provide the byref parameter attribute")
+		base.Fatalf("LLVM does not provide the goret parameter attribute")
 	}
 	return GlobalCtxt.CreateTypeAttribute(kind, t)
 }
 
-func llvmMemoryResultsAttribute(indices []int) llvm.Attribute {
-	values := make([]string, len(indices))
-	for i, index := range indices {
-		values[i] = strconv.Itoa(index)
-	}
-	return GlobalCtxt.CreateStringAttribute(goMemoryResultsAttr, strings.Join(values, ","))
+func llvmGoRetIndexAttribute(index int) llvm.Attribute {
+	return GlobalCtxt.CreateStringAttribute("goretindex", strconv.Itoa(index))
 }
 
 func llvmNullPointerIsValidAttribute() llvm.Attribute {
@@ -323,9 +313,6 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 	if sig.ReturnCount > 1 {
 		fn.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
-	if len(sig.MemoryResultIndices) != 0 {
-		fn.AddFunctionAttr(llvmMemoryResultsAttribute(sig.MemoryResultIndices))
-	}
 	for i, param := range sig.Params {
 		if !param.ByVal {
 			continue
@@ -333,11 +320,12 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 		fn.AddAttributeAtIndex(i+1, llvmByValAttribute(param.ValueType))
 		fn.Param(i).SetParamAlignment(param.Alignment)
 	}
-	for _, result := range sig.Results {
+	for index, result := range sig.Results {
 		if !result.InMemory {
 			continue
 		}
-		fn.AddAttributeAtIndex(result.ParamIndex+1, llvmByRefAttribute(result.ValueType))
+		fn.AddAttributeAtIndex(result.ParamIndex+1, llvmGoRetAttribute(result.ValueType))
+		fn.AddAttributeAtIndex(result.ParamIndex+1, llvmGoRetIndexAttribute(index))
 		fn.Param(result.ParamIndex).SetParamAlignment(result.Alignment)
 	}
 	if sig.HasClosureContext {
@@ -352,9 +340,6 @@ func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
 	if sig.ReturnCount > 1 {
 		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
-	if len(sig.MemoryResultIndices) != 0 {
-		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmMemoryResultsAttribute(sig.MemoryResultIndices))
-	}
 	for i, param := range sig.Params {
 		if !param.ByVal {
 			continue
@@ -362,11 +347,12 @@ func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
 		call.AddCallSiteAttribute(i+1, llvmByValAttribute(param.ValueType))
 		call.SetInstrParamAlignment(i+1, param.Alignment)
 	}
-	for _, result := range sig.Results {
+	for index, result := range sig.Results {
 		if !result.InMemory {
 			continue
 		}
-		call.AddCallSiteAttribute(result.ParamIndex+1, llvmByRefAttribute(result.ValueType))
+		call.AddCallSiteAttribute(result.ParamIndex+1, llvmGoRetAttribute(result.ValueType))
+		call.AddCallSiteAttribute(result.ParamIndex+1, llvmGoRetIndexAttribute(index))
 		call.SetInstrParamAlignment(result.ParamIndex+1, result.Alignment)
 	}
 }
@@ -1777,7 +1763,7 @@ func (lfc *LLVMFuncContext) llvmByValCallArgument(v, argValue *Value, index int,
 }
 
 func (lfc *LLVMFuncContext) llvmMemoryResultCallArguments(v *Value, sig llvmFuncSignature, aux *AuxCall) []llvm.Value {
-	args := make([]llvm.Value, 0, len(sig.MemoryResultIndices))
+	args := make([]llvm.Value, 0, sig.ResultCount-sig.ReturnCount)
 	for index, result := range sig.Results {
 		if !result.InMemory {
 			continue
@@ -3681,7 +3667,7 @@ func LLVMCompile(f *Func) {
 			}
 		}
 	}
-	// Results that Go assigned to memory use caller-owned typed byref carriers.
+	// Results that Go assigned to memory use caller-owned typed goret carriers.
 	// Reserve their stable destinations before call emission; ordinary SelectN
 	// loads from the same object that SelectNAddr exposes by address.
 	for _, BB := range f.Blocks {

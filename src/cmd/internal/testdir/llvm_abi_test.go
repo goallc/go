@@ -146,8 +146,8 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	for _, needle := range [][]byte{
 		[]byte("define goabiinternal"),
 		[]byte(" byval("),
-		[]byte(" byref("),
-		[]byte(`"go_memory_results"`),
+		[]byte(" goret("),
+		[]byte(` "goretindex"="`),
 		[]byte(`"go_results_tuple"`),
 		[]byte(`gc "goallc"`),
 	} {
@@ -208,7 +208,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		"liveScalarStackArgument", "livePointerSequenceStackArguments",
 		"livePointerAggregateStackArgument", "overflowResults",
 		"stackAggregateResult", "bothOverflow", "pointerAggregateBothOverflow")
-	checkLLVMABIStatepointMemoryResultAttrs(t, rewrittenIR, map[string]string{
+	checkLLVMABIStatepointGoRetAttrs(t, rewrittenIR, map[string]string{
 		"overflowResults":              "16,17",
 		"initializedStackResult":       "16",
 		"stackAggregateResult":         "15",
@@ -806,18 +806,19 @@ func checkLLVMABIStatepointTupleAttrs(t *testing.T, ir []byte, callees ...string
 	}
 }
 
-func checkLLVMABIStatepointMemoryResultAttrs(t *testing.T, ir []byte, callees map[string]string) {
+func checkLLVMABIStatepointGoRetAttrs(t *testing.T, ir []byte, callees map[string]string) {
 	t.Helper()
 	for callee, want := range callees {
 		call := regexp.MustCompile(`(?m)^.*@llvm\.experimental\.gc\.statepoint.*@main\.` +
-			regexp.QuoteMeta(callee) + `.*#([0-9]+)(?: \[|$)`).FindSubmatch(ir)
-		if len(call) != 2 {
+			regexp.QuoteMeta(callee) + `.*$`).Find(ir)
+		if call == nil {
 			t.Fatalf("rewritten IR has no attributed statepoint call to main.%s", callee)
 		}
-		attr := regexp.MustCompile(`(?m)^attributes #` + string(call[1]) +
-			` = \{[^\n]*"go_memory_results"="` + regexp.QuoteMeta(want) + `"`).Find(ir)
-		if attr == nil {
-			t.Fatalf("statepoint call to main.%s lost go_memory_results=%q", callee, want)
+		for _, index := range strings.Split(want, ",") {
+			pattern := `goret\([^)]*\)[^\n,)]*"goretindex"="` + regexp.QuoteMeta(index) + `"`
+			if !regexp.MustCompile(pattern).Match(call) {
+				t.Fatalf("statepoint call to main.%s lost goret index %s: %s", callee, index, call)
+			}
 		}
 	}
 }

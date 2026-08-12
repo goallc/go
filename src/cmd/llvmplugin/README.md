@@ -63,7 +63,7 @@ The current SSA value and CFG rewrite support matrix is:
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
 | Fixed struct/array SSA aggregates | Supported | Pointer and fixed pointer-vector leaves are extracted before liveness and reconstructed from the current relocated SSA leaves. |
 | Fixed-width pointer-vector SSA values | Supported | The vector remains one `gc-live` operand and one same-typed `gc.relocate`; it is not split into lanes. Pointer vectors in allocas remain unsupported. |
-| Aggregate arguments and call results | Supported for IR rewriting and AArch64 runtime ABI tests | Go ABI stack inputs use typed `byval`; stack results use caller-owned typed `byref` carriers plus `go_memory_results`, while register results remain compact LLVM returns. Only first-class leaves live after the call enter caller `gc-live`; fixed input/result homes contribute pointer words to GoObj maps according to their final locations. |
+| Aggregate arguments and call results | Supported for IR rewriting and AArch64 runtime ABI tests | Go ABI stack inputs use typed `byval`; stack results use caller-owned typed `goret(T) "goretindex"="N"` carriers, while register results remain compact LLVM returns. Only first-class leaves live after the call enter caller `gc-live`; fixed input/result homes contribute pointer words to GoObj maps according to their final locations. |
 | Aggregate load results and store operands | Supported | First-class SSA values use aggregate normalization. Pointer leaves in surviving fixed allocas remain memory roots described by the alloca deopt layout protocol. |
 | Pointer-containing `alloca` storage | GoObj qualified for fixed layouts | Go `VarDef` emits `llvm.lifetime.start`; parameter homes and addressed result homes have explicit starts at their initialization sites. The statepoint pass uses starts as backward liveness kills and real address uses as gens, so the last use supplies the implicit end. Active contents contribute callsite `LocalsPointerMaps`; address-observable objects additionally get function-wide `FUNCDATA_StackObjects` and one entry initialization because stack growth adjusts them even while source-dead. Locals-only storage is not initialized by the plugin, and no lifetime ends are emitted. |
 | Scalable vectors | Unsupported | The generic LLVM statepoint rewrite assumes a fixed vector width when constructing relocates; fails closed. |
@@ -279,7 +279,7 @@ Statepoint lowering rematerializes the fixed home itself after stack growth;
 pointer values loaded from the home remain ordinary scalar roots when live.
 
 Results whose Go `OutParam` assignment contains no registers use caller-owned
-typed `byref` carriers. The `go_memory_results` function/call attribute records
+typed `goret(T)` carriers. Each carrier's `"goretindex"="N"` parameter attribute records
 their logical Go result indexes because LLVM `sret` cannot represent Go's
 mixed register-and-stack or multiple stack-result layouts. The target maps a
 callee carrier to its fixed outgoing result home and copies that physical home
@@ -301,7 +301,7 @@ moving SP so asynchronous traceback cannot observe a half-built frame.
 The ArgsPointerMaps phase supports scalar LLVM pointer inputs and receivers,
 plus pointer leaves in supported fixed struct/array formal layouts, in
 ABIInternal register homes, ABIInternal stack-input slots, ABI0 stack-input
-slots, and typed `byref` result slots on AArch64. Pair 0 is always
+slots, and typed `goret` result slots on AArch64. Pair 0 is always
 `(EntryArgs, empty locals)`. Ordinary statepoints use their actual final machine
 locations: indirect pointer slots in the current frame become locals bits,
 while exact fixed input homes and stack result slots above the final frame

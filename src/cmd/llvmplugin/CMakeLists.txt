@@ -354,7 +354,7 @@ if(BUILD_TESTING)
   )
 
   add_test(
-    NAME GoALLCStatepoints.ByRefResultAttrRewrite
+    NAME GoALLCStatepoints.GoRetResultAttrRewrite
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"
       "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
@@ -363,9 +363,9 @@ if(BUILD_TESTING)
       -o -
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/supported-param-attrs.ll"
   )
-  set_tests_properties(GoALLCStatepoints.ByRefResultAttrRewrite PROPERTIES
+  set_tests_properties(GoALLCStatepoints.GoRetResultAttrRewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "ptr byref.*5 x ptr.* align 8 %stack_result.address;go_memory_results.*0"
+      "ptr goret.*5 x ptr.* align 8.*goretindex.*0.* %stack_result.address"
   )
 
   add_test(

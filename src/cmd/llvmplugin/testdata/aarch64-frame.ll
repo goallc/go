@@ -100,7 +100,7 @@ entry:
 
 define goabi0 void @"aarch64_abi0_pointer_result<ABI0>"(
     ptr byval(ptr) align 8 %pointer.home,
-    ptr byref(ptr) align 8 %result.home) #1 gc "goallc" {
+    ptr goret(ptr) "goretindex"="0" align 8 %result.home) #0 gc "goallc" {
 entry:
   %pointer = load ptr, ptr %pointer.home, align 8
   %buf = alloca [8192 x i8], align 16
@@ -142,4 +142,3 @@ entry:
 }
 
 attributes #0 = { "frame-pointer"="non-leaf" }
-attributes #1 = { "frame-pointer"="non-leaf" "go_memory_results"="0" }
