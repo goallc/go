@@ -61,6 +61,13 @@ func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 			return
 		}
 	}
+	// Linknamed symbols live in GoObj's non-package namespace even when the
+	// compiler learned about them through an imported package. Their export
+	// symbol index addresses that package's ordinary symbol block and must not
+	// be attached to the LLVM declaration as an imported reference.
+	if s.PkgIdx == goobj.PkgIdxNone || s.IsLinkname() {
+		return
+	}
 	localPkg := objabi.PathToPrefix(base.Ctxt.Pkgpath)
 	if s.Pkg == "" || s.Pkg == `""` || s.Pkg == "_" || s.Pkg == localPkg || !s.Indexed() {
 		return

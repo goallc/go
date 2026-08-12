@@ -21,6 +21,9 @@ func main() {
 	if got := reflect.TypeOf(boxed).Name(); got != "int" {
 		panic(got)
 	}
+	if got := reflect.TypeOf((*int)(nil)).Elem().Kind(); got != reflect.Int {
+		panic(got)
+	}
 	got := fmt.Sprintf("%s/%v", value, boxed)
 	if got != "dep/7" {
 		panic(got)

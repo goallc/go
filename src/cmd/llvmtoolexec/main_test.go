@@ -25,8 +25,12 @@ type importObjviewObject struct {
 		Package     string `json:"package"`
 		Fingerprint string `json:"fingerprint"`
 	} `json:"autolib"`
-	Packages []string `json:"packages"`
-	Symbols  []struct {
+	Packages   []string `json:"packages"`
+	References []struct {
+		Name  string `json:"name"`
+		Class string `json:"class"`
+	} `json:"references"`
+	Symbols []struct {
 		Name        string   `json:"name"`
 		FlagNames   []string `json:"flag_names"`
 		Relocations []struct {
@@ -263,6 +267,15 @@ func TestLLVMImportedPackageReferences(t *testing.T) {
 	}
 	if len(object.Packages) == 0 || object.Packages[0] != "" {
 		t.Errorf("PkgIdx has no dummy index 0: %v", object.Packages)
+	}
+	linknameRefs := make(map[string]string)
+	for _, ref := range object.References {
+		linknameRefs[ref.Name] = ref.Class
+	}
+	for _, name := range []string{"reflect.(*rtype).Elem", "reflect.(*rtype).Kind"} {
+		if got := linknameRefs[name]; got != "nonpackage_reference" {
+			t.Errorf("reference class for imported linkname %s = %q, want nonpackage_reference", name, got)
+		}
 	}
 
 	wantRefs := map[string]string{
