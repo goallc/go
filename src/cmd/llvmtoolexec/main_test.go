@@ -384,6 +384,27 @@ func TestCompileInvocationClassification(t *testing.T) {
 	}
 }
 
+func TestNativePackageOverride(t *testing.T) {
+	packages := stringSetFlag{"runtime_test": {}}
+	args := []string{
+		"-p", "runtime_test", "-enablellvm", "-llvmironly=true",
+		"-o", "out.a", "callers_test.go",
+	}
+	if !useNativeCompiler(args, packages) {
+		t.Fatal("exact native package was not recognized")
+	}
+	native := withoutLLVMCompileFlags(args)
+	if hasLLVMCompileFlags(native) {
+		t.Fatalf("LLVM selection survived native override: %q", native)
+	}
+	if got, ok := toolFlag(native, "-p"); !ok || got != "runtime_test" {
+		t.Fatalf("native override changed package flag to %q, %v", got, ok)
+	}
+	if useNativeCompiler([]string{"-p=runtime", "-enablellvm", "-llvmironly"}, packages) {
+		t.Fatal("native package override matched a different package")
+	}
+}
+
 func TestBoolToolFlag(t *testing.T) {
 	tests := []struct {
 		name string

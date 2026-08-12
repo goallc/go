@@ -25,6 +25,7 @@ type LLVMFuncContext struct {
 	ClosureCodeLoads  map[ID]bool
 	DeferResults      map[llvmLocalKey]bool
 	DeferResultKeys   map[ID]llvmLocalKey
+	RequiredInlinePos map[int]bool
 	OpenDeferBits     llvmLocalKey
 	HasOpenDeferBits  bool
 	OpenDeferSlots    map[llvmLocalKey]int
@@ -70,6 +71,8 @@ const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
 const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
+const goNoSplitAttr = "go-nosplit"
+const goSystemStackAttr = "go-systemstack"
 const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
@@ -79,6 +82,7 @@ const goOpenDeferBitsMD = "goallc.open_defer_bits"
 const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolIndexMD = "goobj.symbol.index"
+const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
@@ -144,11 +148,37 @@ func llvmTypeContainsABIPad(typ llvm.Type) bool {
 	return false
 }
 
+// getLLVMABIStorageType removes Go's nominal aggregate identity from a
+// function ABI carrier. Compiler-generated runtime calls can describe the
+// same physical ABI value using a substituted builtin type (for example []T),
+// while the runtime definition uses a named implementation type (for example
+// runtime.slice). The native backends join those at the symbol's physical ABI;
+// using literal LLVM aggregates does the same without weakening the semantic
+// types used inside either function body.
+func getLLVMABIStorageType(typ *types.Type) llvm.Type {
+	switch typ.Kind() {
+	case types.TARRAY:
+		return llvm.ArrayType(getLLVMABIStorageType(typ.Elem()), int(typ.NumElem()))
+	case types.TSTRUCT:
+		fields := make([]llvm.Type, typ.NumFields(), typ.NumFields()+1)
+		for i := 0; i < typ.NumFields(); i++ {
+			fields[i] = getLLVMABIStorageType(typ.FieldType(i))
+		}
+		if llvmStructHasTailPad(typ) {
+			fields = append(fields, getLLVMABIPadType())
+		}
+		return llvm.StructType(fields, false)
+	default:
+		return getLLVMType(typ)
+	}
+}
+
 // getLLVMABIType makes a non-empty carrier only at a top-level zero-sized ABI
-// boundary. The original zero-sized type remains in the wrapper, so DataLayout
-// supplies its Go alignment without storing that alignment in an attribute.
+// boundary. The original zero-sized layout remains in the wrapper, so
+// DataLayout supplies its Go alignment without storing that alignment in an
+// attribute.
 func getLLVMABIType(typ *types.Type) llvm.Type {
-	storage := getLLVMType(typ)
+	storage := getLLVMABIStorageType(typ)
 	if typ.Size() == 0 {
 		return llvm.StructType([]llvm.Type{storage, getLLVMABIPadType()}, false)
 	}
@@ -580,7 +610,12 @@ func (lfc *LLVMFuncContext) currentG(v *Value) llvm.Value {
 	}
 
 	i64 := GlobalCtxt.Int64Type()
-	registerName := GlobalCtxt.MetadataAsValue(GlobalCtxt.MDString(register))
+	// llvm.read_register requires a metadata node whose first operand is the
+	// register-name string. A bare MDString passes IR verification but crashes
+	// SelectionDAG's intrinsic lowering when it casts the operand to MDNode.
+	registerName := GlobalCtxt.MetadataAsValue(GlobalCtxt.MDNode([]llvm.Metadata{
+		GlobalCtxt.MDString(register),
+	}))
 	sig := llvm.FunctionType(i64, []llvm.Type{registerName.Type()}, false)
 	fn := getOrInsertLLVMIntrinsic("llvm.read_register.i64", sig)
 	raw := lfc.b.CreateCall(sig, fn, []llvm.Value{registerName}, v.String()+".register")
@@ -943,9 +978,8 @@ func (lfc *LLVMFuncContext) cgoUnsafeArgAddress(name *ir.Name, llvmName string) 
 	return lfc.b.CreateGEP(GlobalCtxt.Int8Type(), lfc.ABI0FrameBase, []llvm.Value{index}, llvmName+".frame")
 }
 
-func markLLVMGCLeaf(fn, call llvm.Value) {
+func markLLVMGCLeafCall(call llvm.Value) {
 	attr := GlobalCtxt.CreateStringAttribute(goGCLeafFunctionAttr, "")
-	fn.AddFunctionAttr(attr)
 	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, attr)
 }
 
@@ -1069,7 +1103,7 @@ func (lfc *LLVMFuncContext) llvmRuntimeMemmove(dst, src, length llvm.Value) llvm
 	attachGoObjABISymbolRef(fn, "runtime.memmove", obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{dst, src, length}, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
-	markLLVMGCLeaf(fn, call)
+	markLLVMGCLeafCall(call)
 	return call
 }
 
@@ -1129,7 +1163,7 @@ func (lfc *LLVMFuncContext) llvmMemEq(v *Value) llvm.Value {
 	attachGoObjABISymbolRef(fn, "runtime.memequal", obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{left, right, size}, v.String())
 	call.SetInstructionCallConv(goABIInternalCallConv)
-	markLLVMGCLeaf(fn, call)
+	markLLVMGCLeafCall(call)
 	return call
 }
 
@@ -1731,11 +1765,32 @@ func (lfc *LLVMFuncContext) llvmIData(v *Value) llvm.Value {
 	return result
 }
 
-// reshapeLLVMValue converts between the distinct nominal LLVM aggregate types
-// used for a generic shape and one of its concrete instantiations. Go's type
-// system already records these as identical for shape-aware operations; keep
-// that decision as the authority and rebuild only the affected first-class
-// struct or array value. Scalar leaves and memory keep their normal lowering.
+func llvmValueTypesCanReshape(from, to *types.Type) bool {
+	if from == nil || to == nil {
+		return false
+	}
+	if types.Identical(from, to) && !types.IdenticalStrict(from, to) && (from.HasShape() || to.HasShape()) {
+		return true
+	}
+	if from.Kind() != to.Kind() {
+		return false
+	}
+	switch from.Kind() {
+	case types.TSTRUCT, types.TARRAY:
+		// The frontend lowers explicit conversions between defined aggregate
+		// types with identical underlying types (ignoring struct tags) to Copy.
+		// LLVM still gives each defined struct its own nominal identity.
+		return types.IdenticalIgnoreTags(from.Underlying(), to.Underlying())
+	}
+	return false
+}
+
+// reshapeLLVMValue converts between distinct nominal LLVM aggregate types
+// that Go has already established are representation-preserving: either a
+// generic shape and its concrete instantiation, or an explicit conversion
+// between aggregates with identical underlying types. Rebuild only the
+// affected first-class struct or array value; scalar leaves and memory keep
+// their normal lowering.
 func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, to *types.Type, name string) llvm.Value {
 	if value.IsNil() {
 		v.Fatalf("cannot reshape an empty LLVM value")
@@ -1756,14 +1811,14 @@ func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, t
 			return lfc.b.CreateBitCast(value, want, name)
 		}
 	}
-	if from == nil || to == nil || !types.Identical(from, to) || types.IdenticalStrict(from, to) || (!from.HasShape() && !to.HasShape()) {
+	if !llvmValueTypesCanReshape(from, to) {
 		v.Fatalf("cannot reshape LLVM value from Go type %v to %v", from, to)
 	}
 
 	switch from.Kind() {
 	case types.TSTRUCT:
 		if to.Kind() != types.TSTRUCT || value.Type().TypeKind() != llvm.StructTypeKind || want.TypeKind() != llvm.StructTypeKind {
-			v.Fatalf("shape-identical structs have incompatible LLVM aggregate kinds")
+			v.Fatalf("representation-identical structs have incompatible LLVM aggregate kinds")
 		}
 		fromElements := value.Type().StructElementTypes()
 		toElements := want.StructElementTypes()
@@ -1776,7 +1831,7 @@ func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, t
 			toElementCount++
 		}
 		if from.NumFields() != to.NumFields() || len(fromElements) != fromElementCount || len(toElements) != toElementCount {
-			v.Fatalf("shape-identical structs have incompatible field counts")
+			v.Fatalf("representation-identical structs have incompatible field counts")
 		}
 		result := llvm.Undef(want)
 		for i := 0; i < from.NumFields(); i++ {
@@ -1792,7 +1847,7 @@ func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, t
 
 	case types.TARRAY:
 		if to.Kind() != types.TARRAY || from.NumElem() != to.NumElem() || value.Type().TypeKind() != llvm.ArrayTypeKind || want.TypeKind() != llvm.ArrayTypeKind {
-			v.Fatalf("shape-identical arrays have incompatible LLVM aggregate layouts")
+			v.Fatalf("representation-identical arrays have incompatible LLVM aggregate layouts")
 		}
 		result := llvm.Undef(want)
 		for i := int64(0); i < from.NumElem(); i++ {
@@ -1804,7 +1859,56 @@ func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, t
 		return result
 
 	default:
-		v.Fatalf("shape-identical Go types %v and %v require unsupported LLVM reshaping", from, to)
+		v.Fatalf("representation-identical Go types %v and %v require unsupported LLVM reshaping", from, to)
+		return llvm.Value{}
+	}
+}
+
+// reshapeLLVMABICarrier rebuilds a value between semantically distinct LLVM
+// aggregate types that have the same physical Go ABI structure. This is used
+// only at function boundaries: named aggregate identity remains intact in the
+// function body, while the signature uses literal aggregates so independently
+// constructed runtime helper declarations and definitions agree.
+func (lfc *LLVMFuncContext) reshapeLLVMABICarrier(v *Value, value llvm.Value, target llvm.Type, name string) llvm.Value {
+	if value.Type() == target {
+		return value
+	}
+
+	source := value.Type()
+	switch target.TypeKind() {
+	case llvm.StructTypeKind:
+		if source.TypeKind() != llvm.StructTypeKind {
+			v.Fatalf("cannot reshape non-struct LLVM ABI carrier to struct")
+		}
+		sourceFields := source.StructElementTypes()
+		targetFields := target.StructElementTypes()
+		if len(sourceFields) != len(targetFields) {
+			v.Fatalf("cannot reshape LLVM ABI structs with different field counts")
+		}
+		result := llvm.Undef(target)
+		for i := range sourceFields {
+			fieldName := fmt.Sprintf("%s.abi.field%d", name, i)
+			field := lfc.b.CreateExtractValue(value, i, fieldName+".extract")
+			field = lfc.reshapeLLVMABICarrier(v, field, targetFields[i], fieldName)
+			result = lfc.b.CreateInsertValue(result, field, i, fieldName+".insert")
+		}
+		return result
+
+	case llvm.ArrayTypeKind:
+		if source.TypeKind() != llvm.ArrayTypeKind || source.ArrayLength() != target.ArrayLength() {
+			v.Fatalf("cannot reshape incompatible LLVM ABI arrays")
+		}
+		result := llvm.Undef(target)
+		for i := 0; i < source.ArrayLength(); i++ {
+			elementName := fmt.Sprintf("%s.abi.element%d", name, i)
+			element := lfc.b.CreateExtractValue(value, i, elementName+".extract")
+			element = lfc.reshapeLLVMABICarrier(v, element, target.ElementType(), elementName)
+			result = lfc.b.CreateInsertValue(result, element, i, elementName+".insert")
+		}
+		return result
+
+	default:
+		v.Fatalf("cannot reshape LLVM ABI carrier from %v to %v", source, target)
 		return llvm.Value{}
 	}
 }
@@ -1817,10 +1921,7 @@ func (lfc *LLVMFuncContext) llvmValueToABI(v *Value, value llvm.Value, from, log
 		return llvm.Undef(abiType)
 	}
 	value = lfc.reshapeLLVMValue(v, value, from, logical, name)
-	if value.Type() != abiType {
-		v.Fatalf("Go ABI value has incompatible LLVM carrier")
-	}
-	return value
+	return lfc.reshapeLLVMABICarrier(v, value, abiType, name)
 }
 
 func (lfc *LLVMFuncContext) llvmValueFromABI(v *Value, value llvm.Value, logical, to *types.Type, name string) llvm.Value {
@@ -1830,12 +1931,15 @@ func (lfc *LLVMFuncContext) llvmValueFromABI(v *Value, value llvm.Value, logical
 		}
 		return llvm.Undef(getLLVMType(to))
 	}
+	value = lfc.reshapeLLVMABICarrier(v, value, getLLVMType(logical), name)
 	return lfc.reshapeLLVMValue(v, value, logical, to, name)
 }
 
 // llvmStaticCallSignature restores semantic pointer types for compiler-built
 // runtime calls whose AuxCall uses uintptr only to compute physical ABI
-// assignments. AuxCall remains the physical ABI authority; the LLVM operands
+// assignments. When compiling runtime itself, an ordinary source call to the
+// same helper already has its semantic pointer type and needs no rewrite.
+// AuxCall remains the physical ABI authority in both cases; the LLVM operands
 // and runtime helper parameters are pointers.
 func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvmFuncSignature {
 	if aux == nil || aux.Fn == nil {
@@ -1863,8 +1967,9 @@ func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvm
 		v.Fatalf("%s uses unsupported ABI %v", aux.Fn.Name, aux.ABI().Which())
 	}
 	if aux.NArgs() != wantArgs || aux.NResults() != 0 {
-		v.Fatalf("%s has unexpected raw call signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
+		v.Fatalf("%s has unexpected call signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
 	}
+	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
 	for i := int64(0); i < pointerArgs; i++ {
 		if int(i) >= len(v.Args)-1 || v.Args[i].Type == nil {
 			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
@@ -1880,13 +1985,20 @@ func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvm
 		if !pointerShaped && !writeBarrierTypeAddr {
 			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
 		}
-		if typ := aux.TypeOfArg(i); typ == nil || !typ.IsUintptr() {
-			v.Fatalf("argument %d to %s is not raw uintptr", i, aux.Fn.Name)
+		typ := aux.TypeOfArg(i)
+		switch {
+		case typ != nil && typ.IsUintptr():
+			params[i] = GlobalCtxt.PointerType(0)
+		case typ != nil && typ.IsPtrShaped():
+			if !pointerShaped {
+				v.Fatalf("semantic pointer argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
+			}
+			if params[i].TypeKind() != llvm.PointerTypeKind {
+				v.Fatalf("argument %d to %s has non-pointer LLVM type", i, aux.Fn.Name)
+			}
+		default:
+			v.Fatalf("argument %d to %s is neither raw uintptr nor a semantic pointer", i, aux.Fn.Name)
 		}
-	}
-	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
-	for i := int64(0); i < pointerArgs; i++ {
-		params[i] = GlobalCtxt.PointerType(0)
 	}
 	sig.Type = llvm.FunctionType(sig.ReturnType, params, false)
 	return sig
@@ -1931,7 +2043,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	configureLLVMCall(call, sig)
 	lfc.materializeAddressedResults(v, call, aux)
 	if llvmGCLeaf {
-		markLLVMGCLeaf(fn, call)
+		markLLVMGCLeafCall(call)
 	}
 	return call
 }
@@ -2038,6 +2150,46 @@ func llvmFunctionUsesClosureContext(f *Func) bool {
 		f.fe.Fatalf(f.Entry.Pos, "closure context on unsupported ABI %v for %s", f.OwnAux.ABI().Which(), f.Name)
 	}
 	return hasContext
+}
+
+// llvmRuntimeConstructedClosure reports whether call uses the runtime's
+// trusted hand-built funcval shape. The runtime receives some callback entry
+// points as unsafe.Pointer and stores that code word into a local funcval.
+// Scalar replacement can forward the pointer-to-uintptr Convert directly to
+// the closure call instead of reloading the funcval's first word.
+//
+// Follow the call's memory chain and require the exact forwarded code value to
+// have been stored at offset zero of the context. This keeps arbitrary integer
+// indirect calls fail-closed and preserves the code/context identity that the
+// ordinary Load form establishes structurally.
+func llvmRuntimeConstructedClosure(call, code, context *Value) bool {
+	if code.Op != OpConvert || !code.Type.IsUintptr() || len(code.Args) != 2 ||
+		!code.Args[0].Type.IsUnsafePtr() || !code.Args[1].Type.IsMemory() || code.Uses != 2 ||
+		context == nil || !context.Type.IsPtr() || len(call.Args) == 0 {
+		return false
+	}
+	for mem, steps := call.Args[len(call.Args)-1], 0; mem != nil && steps < 32; steps++ {
+		switch mem.Op {
+		case OpStore:
+			if len(mem.Args) != 3 {
+				return false
+			}
+			addr := mem.Args[0]
+			if mem.Args[1] == code && (addr == context ||
+				(addr.Op == OpOffPtr && auxIntToInt64(addr.AuxInt) == 0 && len(addr.Args) == 1 && addr.Args[0] == context)) {
+				return true
+			}
+			mem = mem.Args[2]
+		case OpVarDef, OpVarLive:
+			if len(mem.Args) != 1 {
+				return false
+			}
+			mem = mem.Args[0]
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func llvmLocalName(v *Value) (*ir.Name, llvmLocalKey) {
@@ -2822,10 +2974,17 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		lfc.b.CreateUnreachable()
 	case BlockJumpTable:
 		index := lfc.GenLV(BB.Controls[0])
-		table := lfc.b.CreateSwitch(index, lfc.BBs[BB.Succs[0].Block().ID], len(BB.Succs))
+		// BlockJumpTable's control is already proven to be in range, and every
+		// Go SSA edge is represented by one indexed successor. A real successor
+		// as LLVM's default would add an extra CFG edge and make PHIs on a
+		// repeated target have one too few incoming values.
+		defaultBlock := GlobalCtxt.AddBasicBlock(lfc.LF, BB.String()+".jump.default")
+		table := lfc.b.CreateSwitch(index, defaultBlock, len(BB.Succs))
 		for i, succ := range BB.Succs {
 			table.AddCase(llvm.ConstInt(index.Type(), uint64(i), false), lfc.BBs[succ.Block().ID])
 		}
+		lfc.b.SetInsertPointAtEnd(defaultBlock)
+		lfc.b.CreateUnreachable()
 	default:
 		BB.Func.fe.Fatalf(BB.Pos, "unsupported SSA block kind in LLVM lowering: %s", BB.Kind)
 	}
@@ -2845,14 +3004,25 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 	attachGoObjABISymbolRef(deferReturn, "runtime.deferreturn", obj.ABIInternal)
 
 	lfc.b.SetInsertPointAtEnd(lfc.OpenDeferRecovery)
+	frontendFunc := lfc.F.Frontend().Func()
+	if frontendFunc == nil || !frontendFunc.Endlineno.IsKnown() {
+		lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer recovery has no function-end source position")
+	}
+	// Match the native shared deferreturn convention: its synthetic call is
+	// attributed to the function end, after every source-level defer. Besides
+	// giving PCLN a stable line, a call in an LLVM debug-info function must
+	// carry a !dbg location even when it lives in a disconnected recovery block.
+	lfc.setDebugLocation(frontendFunc.Endlineno)
 	call := lfc.b.CreateCall(deferReturnSig.Type, deferReturn, nil, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
+	lfc.b.ClearCurrentDebugLocation()
 
 	outParams := lfc.F.OwnAux.ABIInfo().OutParams()
 	if len(outParams) != lfc.ResultCount {
 		lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result count %d does not match LLVM signature result count %d", len(outParams), lfc.ResultCount)
 	}
 	results := make([]llvm.Value, len(outParams))
+	reshapeContext := &Value{Block: lfc.F.Entry, Pos: lfc.F.Entry.Pos}
 	for i, result := range outParams {
 		var abiType llvm.Type
 		if lfc.ResultCount == 1 {
@@ -2874,6 +3044,7 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 		value := lfc.b.CreateLoad(getLLVMType(result.Type), slot.Value, fmt.Sprintf("open.defer.result%d", i))
 		value.SetAlignment(int(result.Type.Alignment()))
 		value.SetVolatile(true)
+		value = lfc.llvmValueToABI(reshapeContext, value, result.Type, lfc.F.OwnAux.TypeOfResult(int64(i)), abiType, fmt.Sprintf("open.defer.result%d.abi", i))
 		if value.Type() != abiType {
 			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result %d has incompatible LLVM ABI type", i)
 		}
@@ -2966,6 +3137,11 @@ func llvmFuncCalls(f *Func, target string) bool {
 	return false
 }
 
+func llvmPreserveRecoverFrame(f *Func) bool {
+	return f.OwnAux != nil && f.OwnAux.Fn != nil && f.OwnAux.Fn.Name == "runtime.gorecover" ||
+		llvmFuncCalls(f, "runtime.gorecover")
+}
+
 func LLVMCompile(f *Func) {
 	if f.OwnAux == nil || f.OwnAux.Fn == nil || f.OwnAux.ABIInfo() == nil {
 		f.fe.Fatalf(f.Entry.Pos, "missing function ABI information in LLVM lowering for %s", f.Name)
@@ -2976,20 +3152,21 @@ func LLVMCompile(f *Func) {
 	}
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
 	FCtxt := &LLVMFuncContext{
-		BBs:              map[ID]llvm.BasicBlock{},
-		Vs:               map[ID]llvm.Value{},
-		Locals:           map[llvmLocalKey]llvmStackSlot{},
-		AddressedResults: map[ID][]llvmAddressedResult{},
-		ResultSlots:      map[ID]llvm.Value{},
-		ItabMethods:      map[ID]bool{},
-		ClosureCodeLoads: map[ID]bool{},
-		DeferResults:     map[llvmLocalKey]bool{},
-		DeferResultKeys:  map[ID]llvmLocalKey{},
-		OpenDeferSlots:   map[llvmLocalKey]int{},
-		F:                f,
-		b:                GlobalCtxt.NewBuilder(),
-		ReturnType:       sig.ReturnType,
-		ResultCount:      sig.ResultCount,
+		BBs:               map[ID]llvm.BasicBlock{},
+		Vs:                map[ID]llvm.Value{},
+		Locals:            map[llvmLocalKey]llvmStackSlot{},
+		AddressedResults:  map[ID][]llvmAddressedResult{},
+		ResultSlots:       map[ID]llvm.Value{},
+		ItabMethods:       map[ID]bool{},
+		ClosureCodeLoads:  map[ID]bool{},
+		DeferResults:      map[llvmLocalKey]bool{},
+		DeferResultKeys:   map[ID]llvmLocalKey{},
+		RequiredInlinePos: map[int]bool{},
+		OpenDeferSlots:    map[llvmLocalKey]int{},
+		F:                 f,
+		b:                 GlobalCtxt.NewBuilder(),
+		ReturnType:        sig.ReturnType,
+		ResultCount:       sig.ResultCount,
 	}
 	defer FCtxt.b.Dispose()
 
@@ -3042,8 +3219,20 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	cgoUnsafeArgs := frontendFunc != nil && frontendFunc.Pragma&ir.CgoUnsafeArgs != 0
-	frontendNoInline := frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
-	if frontendNoInline || llvmFuncCalls(f, "runtime.gorecover") {
+	// Native Go performs all inlining before it computes and checks the nosplit
+	// call graph. Do not let LLVM perform a second, invisible round of inlining
+	// for a nosplit callee: doing so can inflate a caller's frame after Go's
+	// budget decisions and make an otherwise valid runtime nosplit chain fail at
+	// link time.
+	frontendNoInline := f.NoSplit || frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
+	// Go 1.27's gorecover implementation unwinds physical frames and skips its
+	// own frame before counting the deferred caller. LLVM is capable of inlining
+	// this much larger function even though the Go inliner does not; doing so
+	// removes the frame that the runtime algorithm deliberately skips and can
+	// make an unrelated active panic recoverable. Preserve both gorecover itself
+	// and every direct recover caller as physical frame boundaries.
+	preserveRecoverFrame := llvmPreserveRecoverFrame(f)
+	if frontendNoInline || preserveRecoverFrame {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
 	if f.OpenDeferBits != nil {
@@ -3070,10 +3259,24 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, ""))
-	// TODO(goallc): Once LLVM lowering propagates the compiler's precise
-	// morestack policy, attach this only to functions whose prologue can grow
-	// the Go stack.
+	// The stack-growth attribute supplies the target's entry-argument map and,
+	// when a split prologue is permitted, asks it to represent the late
+	// morestack call as a root-free statepoint.
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goStackGrowthStatepointAttr, ""))
+	// A //go:nosplit function must not acquire that late morestack edge. Besides
+	// violating the runtime's nosplit call graph, it would expose a safepoint the
+	// frontend deliberately prohibited. Give target frame lowering the source
+	// policy directly instead of asking it to infer a pragma from GoObj metadata.
+	if f.NoSplit {
+		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goNoSplitAttr, ""))
+	}
+	// Native Go gives //go:systemstack functions a distinct stack-growth
+	// prologue: it checks g.stackguard1 and calls runtime.morestackc. Carry the
+	// source pragma through AttrCFunc so target frame lowering cannot silently
+	// use the ordinary goroutine stack-growth protocol for runtime code.
+	if f.OwnAux.Fn.CFunc() {
+		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goSystemStackAttr, ""))
+	}
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(llvmFramePointerAttr, llvmFramePointerNonLeaf))
 	if sig.HasClosureContext {
 		FCtxt.ClosureContext = FCtxt.LF.Param(sig.ClosureContextIndex)
@@ -3120,6 +3323,10 @@ func LLVMCompile(f *Func) {
 				case OpAddr:
 					if !code.Type.IsUintptr() {
 						v.Fatalf("direct closure call code address has type %v", code.Type)
+					}
+				case OpConvert:
+					if !base.Flag.CompilingRuntime || !llvmRuntimeConstructedClosure(v, code, v.Args[1]) {
+						v.Fatalf("closure call has unsupported converted code pointer")
 					}
 				default:
 					v.Fatalf("closure call code pointer has unsupported form %s", code.Op)
@@ -3247,6 +3454,27 @@ func LLVMCompile(f *Func) {
 	}
 	var parameterHomes []*Value
 	var parameterLifetimeSlots []llvmStackSlot
+	type cgoUnsafeParameterHome struct {
+		index int
+		name  *ir.Name
+		typ   *types.Type
+		slot  llvmStackSlot
+	}
+	var cgoUnsafeParameterHomes []cgoUnsafeParameterHome
+	if cgoUnsafeArgs {
+		for i, param := range inParams {
+			if param.Name == nil || param.Type.Size() == 0 {
+				continue
+			}
+			slot, _ := preallocateLocal(param.Name, param.Name.Sym().Name+".cgo")
+			cgoUnsafeParameterHomes = append(cgoUnsafeParameterHomes, cgoUnsafeParameterHome{
+				index: i,
+				name:  param.Name,
+				typ:   param.Type,
+				slot:  slot,
+			})
+		}
+	}
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
 			if v.Op != OpLocalAddr || v.Uses == 0 {
@@ -3359,16 +3587,38 @@ func LLVMCompile(f *Func) {
 	// incoming register piece separately and addresses stack-assigned parameters
 	// in their incoming slots. The full aggregate store makes any existing piece
 	// loads and stores redundant and lets normal LLVM memory optimization remove
-	// them. A future optimization may bind wholly stack-assigned parameters
-	// directly to their incoming fixed stack slots.
+	// them. Store the physical ABI carrier directly through the opaque pointer:
+	// reconstructing its semantic named aggregate first obscures the formal
+	// argument store from SelectionDAG and prevents a wholly stack-assigned
+	// parameter home from being folded back to its incoming fixed stack slot.
 	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
+	if len(cgoUnsafeParameterHomes) != 0 {
+		var owner *Value
+		for _, block := range f.Blocks {
+			if len(block.Values) != 0 {
+				owner = block.Values[0]
+				break
+			}
+		}
+		if owner == nil {
+			f.fe.Fatalf(f.Entry.Pos, "cgo unsafe argument function has no SSA value for diagnostics")
+		}
+		for _, home := range cgoUnsafeParameterHomes {
+			param := FCtxt.LF.Param(home.index)
+			param = FCtxt.llvmValueFromABI(owner, param, home.typ, home.slot.Type, home.name.Sym().Name+".cgo.home")
+			if param.Type() != getLLVMType(home.slot.Type) {
+				f.fe.Fatalf(home.name.Pos(), "cgo unsafe argument home changes LLVM representation")
+			}
+			init := FCtxt.b.CreateStore(param, home.slot.Value)
+			init.SetAlignment(int(home.slot.Type.Alignment()))
+		}
+	}
 	for _, v := range parameterHomes {
 		name, key := llvmLocalName(v)
 		slot := FCtxt.Locals[key]
 		param, paramType := FCtxt.paramForArgNameAndType(v, name)
-		param = FCtxt.llvmValueFromABI(v, param, paramType, slot.Type, v.String()+".home")
-		if param.Type() != getLLVMType(slot.Type) {
-			v.Fatalf("parameter home changes LLVM representation")
+		if paramType.Size() != slot.Type.Size() || param.Type() != getLLVMABIType(slot.Type) {
+			v.Fatalf("parameter home has incompatible physical ABI carrier")
 		}
 		init := FCtxt.b.CreateStore(param, slot.Value)
 		init.SetAlignment(int(slot.Type.Alignment()))

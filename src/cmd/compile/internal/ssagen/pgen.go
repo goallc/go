@@ -307,6 +307,7 @@ func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
 		// enter genssa: ssa.Compile has already emitted LLVM IR, while genssa
 		// consumes native register-allocation state and emits the _go_.o
 		// member that llc is replacing.
+		recordLLVMNoWriteBarrierCalls(fn, f)
 		return
 	}
 	// Note: check arg size to fix issue 25507.

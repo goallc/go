@@ -10,11 +10,167 @@ import (
 	"strings"
 	"testing"
 
+	"cmd/compile/internal/ir"
+	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
+	"cmd/internal/src"
 
 	"github.com/goallc/go-llvm"
 )
+
+type llvmTestTypeName struct {
+	sym *types.Sym
+}
+
+func (n *llvmTestTypeName) Sym() *types.Sym { return n.sym }
+func (*llvmTestTypeName) Pos() src.XPos     { return src.NoXPos }
+func (*llvmTestTypeName) Type() *types.Type { return nil }
+
+func TestLLVMABICarrierErasesNamedAggregateIdentity(t *testing.T) {
+	pkg := types.NewPkg("runtime", "runtime")
+	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})
+	namedSlice.SetUnderlying(types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("array"), types.Types[types.TUNSAFEPTR]),
+		types.NewField(src.NoXPos, pkg.Lookup("len"), types.Types[types.TINT]),
+		types.NewField(src.NoXPos, pkg.Lookup("cap"), types.Types[types.TINT]),
+	}))
+	types.CalcSize(namedSlice)
+	builtinSlice := types.NewSlice(types.Types[types.TUINT8])
+	types.CalcSize(builtinSlice)
+
+	if getLLVMType(namedSlice) == getLLVMType(builtinSlice) {
+		t.Fatal("semantic LLVM types unexpectedly lost named aggregate identity")
+	}
+	if got, want := getLLVMABIType(namedSlice), getLLVMABIType(builtinSlice); got != want {
+		t.Fatalf("physical ABI carriers differ: named=%v builtin=%v", got, want)
+	}
+}
+
+func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) {
+	oldModule := CurrentModule
+	oldLowerer := currentLLVMDataLowerer
+	oldTarget := typecheck.Target
+	module := GlobalCtxt.NewModule("abi0_function_address")
+	CurrentModule = module
+	currentLLVMDataLowerer = nil
+	typecheck.Target = new(ir.Package)
+	t.Cleanup(func() {
+		typecheck.Target = oldTarget
+		currentLLVMDataLowerer = oldLowerer
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+
+	typ := llvm.FunctionType(GlobalCtxt.VoidType(), nil, false)
+	internal := llvm.AddFunction(module, "runtime.asyncPreempt", typ)
+	internal.SetFunctionCallConv(goABIInternalCallConv)
+
+	pkg := types.NewPkg("runtime", "runtime")
+	fn := ir.NewFunc(src.NoXPos, src.NoXPos, pkg.Lookup("asyncPreempt"), nil)
+	fn.ABI = obj.ABI0
+	typecheck.Target.Funcs = append(typecheck.Target.Funcs, fn)
+	sym := fn.LinksymABI(fn.ABI)
+	if sym.Type != objabi.Sxxx {
+		t.Fatalf("test requires an unresolved bodyless LSym, got %v", sym.Type)
+	}
+	got := llvmGoDataRef(sym)
+	if got.IsAFunction().IsNil() || got.Name() != "runtime.asyncPreempt.goallc.abi0" {
+		t.Fatalf("ABI0 function address resolved to %q, want ABI0 function declaration", got.Name())
+	}
+}
+
+func TestLLVMNamedAggregateConversionCanReshape(t *testing.T) {
+	pkg := types.NewPkg("runtime", "runtime")
+	newCacheType := func(name string, scavType *types.Type) *types.Type {
+		typ := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup(name)})
+		typ.SetUnderlying(types.NewStruct([]*types.Field{
+			types.NewField(src.NoXPos, pkg.Lookup("base"), types.Types[types.TUINTPTR]),
+			types.NewField(src.NoXPos, pkg.Lookup("cache"), types.Types[types.TUINT64]),
+			types.NewField(src.NoXPos, pkg.Lookup("scav"), scavType),
+		}))
+		return typ
+	}
+	pageCache := newCacheType("pageCache", types.Types[types.TUINT64])
+	exportedPageCache := newCacheType("PageCache", types.Types[types.TUINT64])
+	wrongPageCache := newCacheType("WrongPageCache", types.Types[types.TUINT32])
+
+	if !llvmValueTypesCanReshape(pageCache, exportedPageCache) {
+		t.Fatal("defined structs with identical underlying types cannot reshape")
+	}
+	if llvmValueTypesCanReshape(pageCache, wrongPageCache) {
+		t.Fatal("defined structs with different underlying types can reshape")
+	}
+}
+
+func TestLLVMRuntimeConstructedClosure(t *testing.T) {
+	mem := &Value{ID: 1, Op: OpInitMem, Type: types.TypeMem}
+	rawCode := &Value{ID: 2, Op: OpArg, Type: types.Types[types.TUNSAFEPTR]}
+	code := &Value{ID: 3, Op: OpConvert, Type: types.Types[types.TUINTPTR], Args: []*Value{rawCode, mem}, Uses: 2}
+	context := &Value{ID: 4, Op: OpLocalAddr, Type: types.NewPtr(types.Types[types.TUINTPTR])}
+	codeAddress := &Value{ID: 5, Op: OpOffPtr, Type: types.NewPtr(types.Types[types.TUINTPTR]), Args: []*Value{context}}
+	codeStore := &Value{ID: 6, Op: OpStore, Type: types.TypeMem, Args: []*Value{codeAddress, code, mem}}
+	otherStore := &Value{ID: 7, Op: OpStore, Type: types.TypeMem, Args: []*Value{context, context, codeStore}}
+	argument := &Value{ID: 8, Op: OpArg, Type: types.Types[types.TUNSAFEPTR]}
+	call := &Value{ID: 9, Op: OpClosureLECall, Type: types.TypeMem, Args: []*Value{code, context, argument, otherStore}}
+
+	if !llvmRuntimeConstructedClosure(call, code, context) {
+		t.Fatal("runtime-constructed funcval was not recognized")
+	}
+
+	wrongCode := &Value{ID: 10, Op: OpConvert, Type: types.Types[types.TUINTPTR], Args: []*Value{rawCode, mem}, Uses: 2}
+	call.Args[0] = wrongCode
+	if llvmRuntimeConstructedClosure(call, wrongCode, context) {
+		t.Fatal("code value not stored in the funcval context was accepted")
+	}
+}
+
+func TestLLVMJumpTableDefaultIsUnreachable(t *testing.T) {
+	module := GlobalCtxt.NewModule("jump_table_default")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	i64 := GlobalCtxt.Int64Type()
+	function := llvm.AddFunction(module, "jump_table_default", llvm.FunctionType(i64, []llvm.Type{i64}, false))
+	jumpLLVM := llvm.AddBasicBlock(function, "jump")
+	mergeLLVM := llvm.AddBasicBlock(function, "merge")
+	otherLLVM := llvm.AddBasicBlock(function, "other")
+
+	jump := &Block{ID: 1, Kind: BlockJumpTable}
+	merge := &Block{ID: 2}
+	other := &Block{ID: 3}
+	control := &Value{ID: 1, Type: types.Types[types.TINT]}
+	jump.Controls[0] = control
+	jump.Succs = []Edge{{b: merge}, {b: merge}, {b: other}}
+	context := &LLVMFuncContext{
+		BBs: map[ID]llvm.BasicBlock{
+			jump.ID:  jumpLLVM,
+			merge.ID: mergeLLVM,
+			other.ID: otherLLVM,
+		},
+		Vs: map[ID]llvm.Value{control.ID: function.Param(0)},
+		LF: function,
+		b:  builder,
+	}
+	context.CompileBlock(jump, nil)
+
+	builder.SetInsertPointAtEnd(mergeLLVM)
+	phi := builder.CreatePHI(i64, "carried")
+	seven := llvm.ConstInt(i64, 7, false)
+	phi.AddIncoming([]llvm.Value{seven, seven}, []llvm.BasicBlock{jumpLLVM, jumpLLVM})
+	builder.CreateRet(phi)
+	builder.SetInsertPointAtEnd(otherLLVM)
+	builder.CreateRet(llvm.ConstInt(i64, 9, false))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("jump table added a non-SSA default edge: %v\n%s", err, module.String())
+	}
+	if ir := module.String(); !strings.Contains(ir, "b1.jump.default") || !strings.Contains(ir, "unreachable") {
+		t.Fatalf("jump table has no unreachable default block\n%s", ir)
+	}
+}
 
 func TestLLVMCurrentGRegister(t *testing.T) {
 	for _, test := range []struct {
@@ -182,5 +338,33 @@ func TestLLVMTargetCPU(t *testing.T) {
 				t.Fatalf("llvmTargetCPU(%q, %d) = %q, want %q", test.arch, test.goamd64, got, test.want)
 			}
 		})
+	}
+}
+
+func TestLLVMPreserveRecoverFrameUsesLinkSymbolName(t *testing.T) {
+	recoverFn := &Func{
+		Name:   "gorecover",
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "runtime.gorecover"}},
+	}
+	if !llvmPreserveRecoverFrame(recoverFn) {
+		t.Fatal("gorecover definition was not recognized from its qualified link symbol")
+	}
+
+	unrelated := &Func{
+		Name:   "gorecover",
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "other.gorecover"}},
+	}
+	if llvmPreserveRecoverFrame(unrelated) {
+		t.Fatal("unqualified SSA function name incorrectly identified another package's gorecover")
+	}
+
+	caller := &Func{
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "runtime.preprintpanics.func1"}},
+		Blocks: []*Block{{
+			Values: []*Value{{Aux: &AuxCall{Fn: &obj.LSym{Name: "runtime.gorecover"}}}},
+		}},
+	}
+	if !llvmPreserveRecoverFrame(caller) {
+		t.Fatal("direct gorecover caller was not preserved as a physical frame")
 	}
 }

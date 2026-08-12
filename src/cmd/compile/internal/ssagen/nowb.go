@@ -10,6 +10,7 @@ import (
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
+	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
@@ -115,6 +116,27 @@ func (c *nowritebarrierrecChecker) recordCall(fn *ir.Func, to *obj.LSym, pos src
 		fn.NWBRCalls = new([]ir.SymAndPos)
 	}
 	*fn.NWBRCalls = append(*fn.NWBRCalls, ir.SymAndPos{Sym: to, Pos: pos})
+}
+
+// recordLLVMNoWriteBarrierCalls records the direct calls that remain in the
+// final SSA graph for the LLVM IR-only backend. The native backend normally
+// records these from State.PrepareCall while emitting machine instructions,
+// but the LLVM pipeline deliberately returns before genssa because llc emits
+// the linker object instead. Keep the runtime's //go:nowritebarrierrec check
+// attached to the same post-optimization SSA call graph in both pipelines.
+func recordLLVMNoWriteBarrierCalls(fn *ir.Func, f *ssa.Func) {
+	if nowritebarrierrecCheck == nil {
+		return
+	}
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			call, ok := v.Aux.(*ssa.AuxCall)
+			if !ok || call.Fn == nil {
+				continue
+			}
+			nowritebarrierrecCheck.recordCall(fn, call.Fn, v.Pos)
+		}
+	}
 }
 
 func (c *nowritebarrierrecChecker) check() {

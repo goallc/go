@@ -77,25 +77,32 @@ bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
       // operands, GC base/derived pairs, and GC allocas into Locations. The
       // first three entries and the deopt operands are not GC roots.
       const StackMaps::CallsiteInfo &CSI = *Callsite++;
-      if (CSI.Locations.size() < 3)
-        report_fatal_error("malformed GoALLC statepoint location list");
-      (void)getNonnegativeConstant(CSI.Locations[0], "calling convention");
-      (void)getNonnegativeConstant(CSI.Locations[1], "flags");
-      uint64_t NumDeopts =
-          getNonnegativeConstant(CSI.Locations[2], "deopt count");
-      if (NumDeopts > CSI.Locations.size() - 3)
-        report_fatal_error("malformed GoALLC statepoint deopt operands");
-      if (NumDeopts > std::numeric_limits<uint32_t>::max())
-        report_fatal_error("GoALLC statepoint has too many deopt operands");
+      bool IsNoSplitEntry = CSI.ID == goabi::NoSplitEntryStackMapID;
+      uint64_t NumDeopts = 0;
+      ArrayRef<StackMaps::Location> Locations = CSI.Locations;
+      if (!IsNoSplitEntry) {
+        if (Locations.size() < 3)
+          report_fatal_error("malformed GoALLC statepoint location list");
+        (void)getNonnegativeConstant(Locations[0], "calling convention");
+        (void)getNonnegativeConstant(Locations[1], "flags");
+        NumDeopts = getNonnegativeConstant(Locations[2], "deopt count");
+        if (NumDeopts > Locations.size() - 3)
+          report_fatal_error("malformed GoALLC statepoint deopt operands");
+        if (NumDeopts > std::numeric_limits<uint32_t>::max())
+          report_fatal_error("GoALLC statepoint has too many deopt operands");
+        Locations = Locations.drop_front(3);
+      }
 
-      MCContext::GoObjStackMapEntry Entry{CSI.CSOffsetExpr,   CSI.ID,
+      MCContext::GoObjStackMapEntry Entry{CSI.CSOffsetExpr,
+                                          IsNoSplitEntry
+                                              ? goabi::StackGrowthStatepointID
+                                              : CSI.ID,
                                           CSI.IsIndirectCall, Info.StackSize,
                                           PointerSize,
                                           static_cast<uint32_t>(NumDeopts),
                                           {}};
-      Entry.Locations.reserve(CSI.Locations.size() - 3);
-      for (const StackMaps::Location &Location :
-           ArrayRef(CSI.Locations).drop_front(3)) {
+      Entry.Locations.reserve(Locations.size());
+      for (const StackMaps::Location &Location : Locations) {
         auto Type = convertLocationType(Location.Type);
         int64_t Offset = Location.Offset;
         if (Location.Type == StackMaps::Location::Constant ||

@@ -15,7 +15,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -189,6 +191,8 @@ func runLLVMInfrastructureTests(t *testing.T, common testCommon) {
 		runLLVMCallerStateTest(t, common.gorootTestDir)
 	})
 	t.Run("getg-abi0-fail-closed", runLLVMGetGABI0FailClosedTest)
+	t.Run("nosplit", runLLVMNoSplitTest)
+	t.Run("nowritebarrierrec", runLLVMNoWriteBarrierRecTest)
 	t.Run("writebarrier-helpers", runLLVMWriteBarrierHelperTest)
 	t.Run("compile-only-regressions", func(t *testing.T) {
 		for _, name := range []string{"cmp.go", "typeparam/issue47684c.go"} {
@@ -198,6 +202,112 @@ func runLLVMInfrastructureTests(t *testing.T, common testCommon) {
 		}
 	})
 	t.Run("writebarrier-ir", runLLVMWriteBarrierIRTests)
+}
+
+func runLLVMNoSplitTest(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "nosplit.go")
+	program := `package p
+
+func use(*[32]uintptr)
+
+//go:nosplit
+//go:noinline
+func NoSplit(pointer *int) *int {
+	var words [32]uintptr
+	use(&words)
+	return pointer
+}
+
+//go:noinline
+func Split(pointer *int) *int {
+	var words [32]uintptr
+	use(&words)
+	return pointer
+}
+`
+	if err := os.WriteFile(source, []byte(program), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "nosplit.a")
+	runLLVMABICommand(t, nil, goTool, "tool", "compile",
+		"-p=p", "-enablellvm", "-llvmironly", "-o", archive, source)
+	ir, err := os.ReadFile(archive + ".ll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attributeLine := func(name string) []byte {
+		definition := regexp.MustCompile(`(?m)^define goabiinternal .*@` + regexp.QuoteMeta(name) + `\([^\n]*\) #([0-9]+)`).FindSubmatch(ir)
+		if definition == nil {
+			t.Fatalf("LLVM IR has no attributed definition for %s\n%s", name, ir)
+		}
+		pattern := regexp.MustCompile(`(?m)^attributes #` + string(definition[1]) + ` = \{.*$`)
+		line := pattern.Find(ir)
+		if line == nil {
+			t.Fatalf("LLVM IR has no attribute group for %s\n%s", name, ir)
+		}
+		return line
+	}
+	noSplitAttrs := attributeLine("p.NoSplit")
+	if !bytes.Contains(noSplitAttrs, []byte(`"go-nosplit"`)) ||
+		!bytes.Contains(noSplitAttrs, []byte(`"go-stack-growth-statepoint"`)) ||
+		!bytes.Contains(noSplitAttrs, []byte(`noinline`)) {
+		t.Fatalf("LLVM nosplit attributes do not select the nosplit prologue policy: %s", noSplitAttrs)
+	}
+	splitAttrs := attributeLine("p.Split")
+	if !bytes.Contains(splitAttrs, []byte(`"go-stack-growth-statepoint"`)) ||
+		bytes.Contains(splitAttrs, []byte(`"go-nosplit"`)) {
+		t.Fatalf("LLVM split attributes do not select the stack-growth prologue policy: %s", splitAttrs)
+	}
+
+	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
+	plugin := llvmABIPassPlugin(t, llc)
+	object := filepath.Join(dir, "nosplit.o")
+	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
+		"-verify-machineinstrs", "-filetype=obj", "-o", object, archive+".ll")
+	document := readLLVMABIObject(t, object)
+	noSplit := findLLVMABISymbol(t, document, "p.NoSplit")
+	if !slices.Contains(noSplit.FlagNames, "nosplit") {
+		t.Fatalf("p.NoSplit GoObj flags %v do not contain nosplit", noSplit.FlagNames)
+	}
+	if llvmABIHasRelocationTo(document, noSplit, "runtime.morestack_noctxt") {
+		t.Fatal("p.NoSplit unexpectedly calls runtime.morestack_noctxt")
+	}
+	split := findLLVMABISymbol(t, document, "p.Split")
+	if !llvmABIHasRelocationTo(document, split, "runtime.morestack_noctxt") {
+		t.Fatal("p.Split has no runtime.morestack_noctxt relocation")
+	}
+}
+
+func runLLVMNoWriteBarrierRecTest(t *testing.T) {
+	t.Helper()
+	archive := filepath.Join(t.TempDir(), "nowritebarrier.a")
+	source := filepath.Join(testenv.GOROOT(t), "test", "nowritebarrier.go")
+	cmd := exec.Command(goTool, "tool", "compile",
+		"-p=runtime",
+		"-+",
+		"-C",
+		"-e",
+		"-d=ssa/check/on",
+		"-enablellvm",
+		"-llvmironly",
+		"-o", archive,
+		source,
+	)
+	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("LLVM accepted prohibited runtime write barriers\n%s", out)
+	}
+	for _, want := range []string{
+		"write barrier prohibited by caller; b2",
+		"write barrier prohibited by caller; d3",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Fatalf("LLVM //go:nowritebarrierrec check missed %q: %v\n%s", want, err, out)
+		}
+	}
 }
 
 func runLLVMGetGABI0FailClosedTest(t *testing.T) {

@@ -20,6 +20,8 @@ type llvmAllocaArchitectureChecks struct {
 	restoredStorePattern string
 	goallcLocals         uint32
 	goallcPointerBits    []int
+	goallcPCData         []int32
+	goallcQueries        []int32
 }
 
 var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
@@ -28,12 +30,16 @@ var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
 		restoredStorePattern: `(?m)^\s*(?:str|stp)\b`,
 		goallcLocals:         88,
 		goallcPointerBits:    []int{5, 7, 8, 9},
+		goallcPCData:         []int32{-1, 0, 1},
+		goallcQueries:        []int32{0, 1, 1, 1, 1},
 	},
 	"linux/amd64": {
 		betweenCallsPattern:  `(?s)\bcallq\s+p\.mutateLocal\n(.*?)\bcallq\s+p\.safepoint`,
 		restoredStorePattern: `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`,
 		goallcLocals:         88,
 		goallcPointerBits:    []int{5, 7, 8, 9},
+		goallcPCData:         []int32{-1, 1, 0},
+		goallcQueries:        []int32{1, 1, 1, 1, 0},
 	},
 }
 
@@ -86,10 +92,10 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 	parameterInputFunction := llvmAllocaIRFunction(t, inputIR,
 		"p.parameterAcrossSafepoints")
 	for _, pattern := range []string{
-		`define goabiinternal void @p\.parameterAcrossSafepoints\(%p\.pointerLocal %value\)`,
+		`define goabiinternal void @p\.parameterAcrossSafepoints\(\{ ptr, i64, ptr, \[2 x ptr\] \} %value\)`,
 		`alloca %p\.pointerLocal, align 8`,
 		`call void @llvm\.lifetime\.start\.p0\(ptr %v[0-9]+\)`,
-		`store %p\.pointerLocal %value, ptr %v[0-9]+, align 8`,
+		`store \{ ptr, i64, ptr, \[2 x ptr\] \} %value, ptr %v[0-9]+, align 8`,
 	} {
 		if !regexp.MustCompile(pattern).Match(parameterInputFunction) {
 			t.Fatalf("input parameter-home IR does not match %q\n%s",
@@ -283,8 +289,8 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		checks.goallcLocals,
 		[][]int{nil, nil},
 		[][]int{nil, checks.goallcPointerBits},
-		[]int32{-1, 1, 0},
-		[]int32{1, 1, 1, 1, 0})
+		checks.goallcPCData,
+		checks.goallcQueries)
 
 	goallcStackObjects := llvmABIStackObjects(t, symbol)
 	if len(goallcStackObjects) != 0 {

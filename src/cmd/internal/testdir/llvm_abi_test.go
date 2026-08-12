@@ -21,14 +21,29 @@ import (
 type llvmABIDocument struct {
 	Members []struct {
 		GoObject *struct {
-			Symbols []llvmABISymbol `json:"symbols"`
+			Symbols    []llvmABISymbol `json:"symbols"`
+			References []llvmABISymbol `json:"references"`
 		} `json:"go_object"`
 	} `json:"members"`
 }
 
-type llvmABISymbol struct {
+type llvmABIReference struct {
+	PkgKind  string `json:"pkg_kind"`
+	SymIndex uint32 `json:"sym_index"`
 	Name     string `json:"name"`
-	ABI      uint16 `json:"abi"`
+}
+
+type llvmABISymbol struct {
+	Class       string   `json:"class"`
+	ClassIndex  uint32   `json:"class_index"`
+	Name        string   `json:"name"`
+	ABI         uint16   `json:"abi"`
+	Flags       uint64   `json:"flags"`
+	FlagNames   []string `json:"flag_names"`
+	Relocations []struct {
+		Type   string           `json:"type"`
+		Target llvmABIReference `json:"target"`
+	} `json:"relocations"`
 	Function *struct {
 		Info *struct {
 			Args   uint32 `json:"args"`
@@ -190,9 +205,17 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	runLLVMABICommand(t, rewrittenIR, opt,
 		"-load-pass-plugin="+plugin, "-passes=verify", "-disable-output", "-")
 
+	// The runtime wrapper applies its configured LLVM optimization pipeline
+	// before llc. In particular, InstCombine removes the field-by-field bridge
+	// between physical ABI carriers and semantic named aggregates, allowing
+	// stack-assigned pointer arguments to remain in their canonical fixed homes.
+	optimizedLLVMIR := llvmArchive + ".opt.ll"
+	runLLVMABICommand(t, nil, opt, "-passes=default<O2>", "-S", llvmIR,
+		"-o", optimizedLLVMIR)
+
 	machineIR := runLLVMABICommand(t, nil, llc,
 		"-load-pass-plugin="+plugin, "-stop-after=finalize-isel",
-		"-o", "-", llvmIR)
+		"-o", "-", optimizedLLVMIR)
 	for _, pattern := range []string{
 		`(?s)name:\s+main\.liveScalarStackArgument.*?fixedStack:.*?offset:\s+8.*?isImmutable:\s+false.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.0`,
 		`(?s)name:\s+main\.livePointerSequenceStackArguments.*?fixedStack:.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.2[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.[02].*?LDRXui\s+%fixed-stack\.[02]`,
@@ -205,7 +228,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	}
 
 	goallcAssembly := runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-filetype=asm", llvmIR, "-o", "-")
+		"-load-pass-plugin="+plugin, "-filetype=asm", optimizedLLVMIR, "-o", "-")
 	for _, name := range []string{
 		"main.mixedABI", "main.liveScalarStackArgument",
 		"main.livePointerSequenceStackArguments",
@@ -220,7 +243,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	checkLLVMABIAssembly(t, nativeAssembly, goallcAssembly)
 
 	runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-filetype=obj", llvmIR, "-o", goallcObject)
+		"-load-pass-plugin="+plugin, "-filetype=obj", optimizedLLVMIR, "-o", goallcObject)
 
 	native := readLLVMABIObject(t, nativeObject)
 	goallc := readLLVMABIObject(t, goallcObject)
@@ -230,7 +253,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			nativeArgsMaps:  [][]int{{0}, nil},
 			goallcArgsMaps:  [][]int{{0}, nil, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 0, 2},
+			goallcStackMaps: []int32{-1, 0, 1, 2},
 		},
 		{
 			name: "mixedABI", args: 152, pointerBits: []int{2, 4, 18},
@@ -239,8 +262,8 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			// homes in LocalsPointerMaps through locals-only alloca records.
 			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
-			goallcQueryMaps: [][]int{{2}, {2}, {2}, {2}, {2, 4, 18}},
+			goallcStackMaps: []int32{-1, 0, 1},
+			goallcQueryMaps: [][]int{{2, 4, 18}, {2}, {2}, {2}, {2}},
 		},
 		{
 			name: "liveScalarStackArgument", args: 136, pointerBits: []int{0},
@@ -289,35 +312,35 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			nativeArgsMaps:  [][]int{{0}, nil},
 			goallcArgsMaps:  [][]int{{0}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 0, 1},
 		},
 		{
 			name: "overflowResults", args: 48, pointerBits: []int{2, 3, 4, 5},
 			nativeArgsMaps:  [][]int{{2, 3, 4, 5}, nil},
 			goallcArgsMaps:  [][]int{{2, 3, 4, 5}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 0, 1},
 		},
 		{
 			name: "initializedStackResult", args: 16, pointerBits: []int{1},
 			nativeArgsMaps:  [][]int{{1}, nil},
 			goallcArgsMaps:  [][]int{{1}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 0, 1},
 		},
 		{
 			name: "stackAggregateResult", args: 40, pointerBits: []int{4},
 			nativeArgsMaps:  [][]int{{4}, nil},
 			goallcArgsMaps:  [][]int{{4}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 0, 1},
 		},
 		{
 			name: "bothOverflow", args: 168, pointerBits: []int{2, 6, 20},
 			nativeArgsMaps:  [][]int{{2, 6, 20}, nil},
 			goallcArgsMaps:  [][]int{{2, 6, 20}, {2}, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 0, 2},
+			goallcStackMaps: []int32{-1, 0, 1, 2},
 		},
 		{
 			name: "pointerAggregateBothOverflow", args: 152, pointerBits: []int{0, 2},
@@ -338,7 +361,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			nativeArgsMaps:  [][]int{{4}, nil},
 			goallcArgsMaps:  [][]int{{4}, nil, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 2, 0},
+			goallcStackMaps: []int32{-1, 0, 1, 2},
 		},
 	}
 	for _, tc := range cases {
@@ -616,10 +639,13 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 	}
 	runLLVMABICommand(t, rewrittenIR, opt, "-load-pass-plugin="+plugin,
 		"-passes=verify", "-disable-output", "-")
+	optimizedGoallcIR := goallcArchive + ".opt.ll"
+	runLLVMABICommand(t, nil, opt, "-passes=default<O2>", "-S", goallcIR,
+		"-o", optimizedGoallcIR)
 
 	machineIR := runLLVMABICommand(t, nil, llc,
 		"-load-pass-plugin="+plugin, "-stop-after=finalize-isel",
-		"-o", "-", goallcIR)
+		"-o", "-", optimizedGoallcIR)
 	for _, pattern := range []string{
 		`(?s)name:\s+p\.liveScalarStackArgument.*?fixedStack:.*?isImmutable:\s+false.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.0`,
 		`(?s)name:\s+p\.liveAggregateStackArgument.*?fixedStack:.*?id:\s+2.*?size:\s+24.*?isAliased:\s+true.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.1[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.1`,
@@ -629,7 +655,7 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 		}
 	}
 	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
-		"-filetype=obj", goallcIR, "-o", goallcObject)
+		"-filetype=obj", optimizedGoallcIR, "-o", goallcObject)
 
 	native := readLLVMABIObject(t, nativeObject)
 	goallc := readLLVMABIObject(t, goallcObject)
@@ -654,16 +680,16 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 			nativeLocals: 8, goallcLocals: 24,
 			nativeArgs: [][]int{{1}, nil}, goallcArgs: [][]int{{1}, nil},
 			nativeMaps: [][]int{nil, nil}, goallcMaps: [][]int{nil, {1}},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{1, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0, 1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 1},
 		},
 		{
 			name: "partiallyInitializedAggregateResult", args: 40, entryBits: []int{3, 4},
 			nativeLocals: 8, goallcLocals: 24,
 			nativeArgs: [][]int{{3, 4}, nil}, goallcArgs: [][]int{{3, 4}, nil},
 			nativeMaps: [][]int{nil, nil}, goallcMaps: [][]int{nil, {0, 1}},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
-			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{1, 1, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0, 1},
+			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{0, 1, 1},
 		},
 		{
 			name: "liveScalarStackArgument", args: 136, entryBits: []int{0},
@@ -746,7 +772,7 @@ func checkLLVMABIStatepointTupleAttrs(t *testing.T, ir []byte, callees ...string
 	t.Helper()
 	for _, callee := range callees {
 		call := regexp.MustCompile(`(?m)^.*@llvm\.experimental\.gc\.statepoint.*@main\.` +
-			regexp.QuoteMeta(callee) + `.*#([0-9]+)$`).FindSubmatch(ir)
+			regexp.QuoteMeta(callee) + `.*#([0-9]+)(?:,|$)`).FindSubmatch(ir)
 		if len(call) != 2 {
 			t.Fatalf("rewritten IR has no attributed statepoint call to main.%s", callee)
 		}
@@ -934,6 +960,42 @@ func findLLVMABISymbol(t *testing.T, document llvmABIDocument, name string) llvm
 	}
 	t.Fatalf("objview output has no symbol %s", name)
 	return llvmABISymbol{}
+}
+
+func llvmABIRelocationTargetName(document llvmABIDocument, target llvmABIReference) string {
+	if target.Name != "" || target.PkgKind != "none" {
+		return target.Name
+	}
+	for _, member := range document.Members {
+		if member.GoObject == nil {
+			continue
+		}
+		var nonpackageDefinitions uint32
+		for _, symbol := range member.GoObject.Symbols {
+			if symbol.Class == "nonpackage" && symbol.ClassIndex >= nonpackageDefinitions {
+				nonpackageDefinitions = symbol.ClassIndex + 1
+			}
+		}
+		if target.SymIndex < nonpackageDefinitions {
+			continue
+		}
+		classIndex := target.SymIndex - nonpackageDefinitions
+		for _, reference := range member.GoObject.References {
+			if reference.Class == "nonpackage_reference" && reference.ClassIndex == classIndex {
+				return reference.Name
+			}
+		}
+	}
+	return ""
+}
+
+func llvmABIHasRelocationTo(document llvmABIDocument, symbol llvmABISymbol, name string) bool {
+	for _, relocation := range symbol.Relocations {
+		if llvmABIRelocationTargetName(document, relocation.Target) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func checkLLVMABISymbol(t *testing.T, backend string, symbol llvmABISymbol, tc llvmABICase) {
