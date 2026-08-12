@@ -463,22 +463,23 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 		}
 	}
 
-	goallcAssembly := runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-filetype=asm", "-o", "-", goallcIR)
+	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
+		"-filetype=obj", goallcIR, "-o", goallcObject)
+	// Check the instructions from the GoObj artifact used below, rather than
+	// llc's diagnostic assembly-text output.
+	goallcDisassembly := runLLVMABICommand(t, nil, goTool, "tool", "objdump", goallcObject)
 	for _, pattern := range []string{
-		`(?s)p\.initializedPointerResult:.*?movq\s+%rax, 72\(%rbp\)`,
-		`(?s)p\.partiallyInitializedAggregateResult:.*?movq\s+%rcx, 64\(%rbp\)`,
-		`(?s)p\.partiallyInitializedAggregateResult:.*?movq\s+%rax, 80\(%rbp\)`,
-		`(?s)p\.liveScalarStackArgument:.*?callq\s+p\.safepoint.*?movq\s+72\(%rbp\), %rax`,
-		`(?s)p\.liveAggregateStackArgument:.*?callq\s+p\.safepoint.*?movq\s+72\(%rbp\), %rbx.*?movq\s+56\(%rbp\), %rax`,
+		`(?s)TEXT p\.initializedPointerResult.*?MOVQ\s+AX, 0x48\(BP\)`,
+		`(?s)TEXT p\.partiallyInitializedAggregateResult.*?MOVQ\s+CX, 0x40\(BP\)`,
+		`(?s)TEXT p\.partiallyInitializedAggregateResult.*?MOVQ\s+AX, 0x50\(BP\)`,
+		`(?s)TEXT p\.liveScalarStackArgument.*?R_CALL:p\.safepoint.*?MOVQ\s+0x48\(BP\), AX`,
+		`(?s)TEXT p\.liveAggregateStackArgument.*?R_CALL:p\.safepoint.*?MOVQ\s+0x48\(BP\), BX.*?MOVQ\s+0x38\(BP\), AX`,
 	} {
-		if !regexp.MustCompile(pattern).Match(goallcAssembly) {
-			t.Fatalf("GoALLC amd64 assembly does not match %q", pattern)
+		if !regexp.MustCompile(pattern).Match(goallcDisassembly) {
+			t.Fatalf("GoALLC amd64 object disassembly does not match %q", pattern)
 		}
 	}
 
-	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
-		"-filetype=obj", goallcIR, "-o", goallcObject)
 	native := readLLVMABIObject(t, nativeObject)
 	goallc := readLLVMABIObject(t, goallcObject)
 	type amd64Case struct {
