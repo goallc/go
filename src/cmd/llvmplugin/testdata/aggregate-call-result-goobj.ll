@@ -5,7 +5,7 @@ target triple = "x86_64-unknown-linux-goobj"
 ; OBJVIEW: "kind": "stack_map_index"
 ; OBJVIEW: "start": 0
 ; OBJVIEW-NEXT: "end": [[#MAKE_START:]]
-; OBJVIEW-NEXT: "value": 0
+; OBJVIEW-NEXT: "value": -1
 ; OBJVIEW: "start": [[#MAKE_START]]
 ; OBJVIEW-NEXT: "end": [[#SAFEPOINT_START:]]
 ; OBJVIEW-NEXT: "value": 1
@@ -14,7 +14,7 @@ target triple = "x86_64-unknown-linux-goobj"
 ; OBJVIEW-NEXT: "value": 2
 ; OBJVIEW: "start": [[#ENTRY_DEPTH_START]]
 ; OBJVIEW-NEXT: "end": [[#SIZE]]
-; OBJVIEW-NEXT: "value": 0
+; OBJVIEW-NEXT: "value": -1
 ; OBJVIEW: "kind": "args_pointer_maps"
 ; OBJVIEW: "count": 3
 ; OBJVIEW-NEXT: "num_bits": 2
@@ -48,7 +48,7 @@ target triple = "x86_64-unknown-linux-goobj"
 ; OBJVIEW: "stack_map_index": 2
 ; OBJVIEW-NEXT: "relocation_type": "R_CALL"
 ; OBJVIEW: "sym_index": 2
-; OBJVIEW: "stack_map_index": 0
+; OBJVIEW: "stack_map_index": -1
 ; OBJVIEW-NEXT: "relocation_type": "R_CALL"
 ; OBJVIEW: "sym_index": 3
 ; OBJVIEW: "references": [

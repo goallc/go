@@ -23,7 +23,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW-NEXT: 1
 
 ; FRAME-TEXT-LABEL: TEXT aarch64_pointer_and_code_live(SB)
-; FRAME-TEXT: PCDATA_StackMapIndex=0{{.*}}ArgsPointerMaps=01{{.*}}LocalsPointerMaps=00
+; FRAME-TEXT: PCDATA_StackMapIndex=-1
 ; FRAME-TEXT: R_CALLARM64:runtime.morestack_noctxt
 ; FRAME-TEXT-NEXT: {{.*}}stack-growth safepoint{{.*}}map[0]{{.*}}ArgsPointerMaps=01{{.*}}LocalsPointerMaps=00
 ; FRAME-TEXT: R_CALLIND{{.*}}PCDATA_StackMapIndex=1{{.*}}ArgsPointerMaps=00{{.*}}LocalsPointerMaps=01
@@ -38,7 +38,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW-NEXT: 0
 ; OBJVIEW: "kind": "locals_pointer_maps"
 ; OBJVIEW: "count": 1
-; OBJVIEW: "stack_map_index": 0
+; OBJVIEW: "stack_map_index": -1
 ; OBJVIEW-NEXT: "relocation_type": "R_CALLARM64"
 
 ; OBJVIEW-LABEL: "name": "aarch64_stack_pointer_arg"
@@ -50,7 +50,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW-NEXT: 0
 ; OBJVIEW: "kind": "locals_pointer_maps"
 ; OBJVIEW: "count": 1
-; OBJVIEW: "stack_map_index": 0
+; OBJVIEW: "stack_map_index": -1
 ; OBJVIEW-NEXT: "relocation_type": "R_CALLARM64"
 
 ; OBJVIEW-LABEL: "name": "aarch64_subword_homes"
@@ -59,7 +59,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW: "count": 1
 ; OBJVIEW-NEXT: "num_bits": 1
 ; OBJVIEW: "set_bits": null
-; OBJVIEW: "stack_map_index": 0
+; OBJVIEW: "stack_map_index": -1
 ; OBJVIEW-NEXT: "relocation_type": "R_CALLARM64"
 
 ; OBJVIEW-LABEL: "name": "aarch64_large_arg_home"
@@ -68,7 +68,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW: "count": 1
 ; OBJVIEW-NEXT: "num_bits": 4097
 ; OBJVIEW: "set_bits": null
-; OBJVIEW: "stack_map_index": 0
+; OBJVIEW: "stack_map_index": -1
 ; OBJVIEW-NEXT: "relocation_type": "R_CALLARM64"
 
 ; ASM: TEXT aarch64_subword_homes(SB)

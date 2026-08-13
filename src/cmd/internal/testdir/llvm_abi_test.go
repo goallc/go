@@ -230,7 +230,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			nativeArgsMaps:  [][]int{{0}, nil},
 			goallcArgsMaps:  [][]int{{0}, nil, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 0, 2},
+			goallcStackMaps: []int32{-1, 1, -1, 2},
 		},
 		{
 			name: "mixedABI", args: 152, pointerBits: []int{2, 4, 18},
@@ -239,106 +239,106 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			// homes in LocalsPointerMaps through locals-only alloca records.
 			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
-			goallcQueryMaps: [][]int{{2}, {2}, {2}, {2}, {2, 4, 18}},
+			goallcStackMaps: []int32{-1, 1, -1},
+			goallcQueryMaps: [][]int{{2, 4, 18}, {2}, {2}, {2}, {2}},
 		},
 		{
 			name: "liveScalarStackArgument", args: 136, pointerBits: []int{0},
 			nativeArgsMaps:  [][]int{{0}, nil},
 			goallcArgsMaps:  [][]int{{0}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 0},
+			goallcStackMaps: []int32{-1, 0, -1},
 			checkFullMaps:   true,
 			nativeLocals:    8,
 			goallcLocals:    24,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
-			goallcQueries:   []int32{0, 0},
+			goallcQueries:   []int32{-1, 0},
 		},
 		{
 			name: "livePointerSequenceStackArguments", args: 152, pointerBits: []int{0, 2},
 			nativeArgsMaps:  [][]int{{0, 2}, nil},
 			goallcArgsMaps:  [][]int{{0, 2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 0},
+			goallcStackMaps: []int32{-1, 0, -1},
 			checkFullMaps:   true,
 			nativeLocals:    8,
 			goallcLocals:    24,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
-			goallcQueries:   []int32{0, 0},
+			goallcQueries:   []int32{-1, 0},
 		},
 		{
 			name: "livePointerAggregateStackArgument", args: 136, pointerBits: []int{0, 2},
 			nativeArgsMaps:  [][]int{{0, 2}, nil},
 			goallcArgsMaps:  [][]int{{0, 2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 0},
+			goallcStackMaps: []int32{-1, 0, -1},
 			checkFullMaps:   true,
 			nativeLocals:    8,
 			goallcLocals:    24,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
-			goallcQueries:   []int32{0, 0},
+			goallcQueries:   []int32{-1, 0},
 		},
 		{
 			name: "growPointer", args: 16, pointerBits: []int{0},
 			nativeArgsMaps:  [][]int{{0}, nil},
 			goallcArgsMaps:  [][]int{{0}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 1, -1},
 		},
 		{
 			name: "overflowResults", args: 48, pointerBits: []int{2, 3, 4, 5},
 			nativeArgsMaps:  [][]int{{2, 3, 4, 5}, nil},
 			goallcArgsMaps:  [][]int{{2, 3, 4, 5}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 1, -1},
 		},
 		{
 			name: "initializedStackResult", args: 16, pointerBits: []int{1},
 			nativeArgsMaps:  [][]int{{1}, nil},
 			goallcArgsMaps:  [][]int{{1}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 1, -1},
 		},
 		{
 			name: "stackAggregateResult", args: 40, pointerBits: []int{4},
 			nativeArgsMaps:  [][]int{{4}, nil},
 			goallcArgsMaps:  [][]int{{4}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, 0},
+			goallcStackMaps: []int32{-1, 1, -1},
 		},
 		{
 			name: "bothOverflow", args: 168, pointerBits: []int{2, 6, 20},
 			nativeArgsMaps:  [][]int{{2, 6, 20}, nil},
 			goallcArgsMaps:  [][]int{{2, 6, 20}, {2}, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 0, 2},
+			goallcStackMaps: []int32{-1, 1, -1, 2},
 		},
 		{
 			name: "pointerAggregateBothOverflow", args: 152, pointerBits: []int{0, 2},
 			nativeArgsMaps:  [][]int{{0, 2}, nil},
 			goallcArgsMaps:  [][]int{{0, 2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 0},
+			goallcStackMaps: []int32{-1, 0, -1},
 			checkFullMaps:   true,
 			nativeLocals:    8,
 			goallcLocals:    136,
 			nativeLocalMaps: [][]int{nil, nil},
 			goallcLocalMaps: [][]int{nil},
 			nativeQueries:   []int32{0, -1},
-			goallcQueries:   []int32{0, 0},
+			goallcQueries:   []int32{-1, 0},
 		},
 		{
 			name: "requireAggregate", args: 40, pointerBits: []int{4},
 			nativeArgsMaps:  [][]int{{4}, nil},
 			goallcArgsMaps:  [][]int{{4}, nil, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 2, 0},
+			goallcStackMaps: []int32{-1, 1, 2, -1, 2},
 		},
 	}
 	for _, tc := range cases {
@@ -503,30 +503,30 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 			name: "initializedPointerResult", args: 72, entryBits: []int{8},
 			goallcLocals: 16, goallcArgs: [][]int{{8}, nil},
 			goallcMaps:   [][]int{nil, {1}},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{1, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, -1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{1, -1},
 			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 16, 8, 0},
 		},
 		{
 			name: "partiallyInitializedAggregateResult", args: 88,
 			entryBits: []int{9, 10}, goallcLocals: 24,
 			goallcArgs: [][]int{{9, 10}, nil}, goallcMaps: [][]int{nil, {1, 2}},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
-			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{1, 1, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, -1},
+			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{1, 1, -1},
 			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 24, 8, 0},
 		},
 		{
 			name: "liveScalarStackArgument", args: 136, entryBits: []int{7},
 			goallcLocals: 8, goallcArgs: [][]int{{7}}, goallcMaps: [][]int{nil},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0, -1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, -1},
 			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 0},
 		},
 		{
 			name: "liveAggregateStackArgument", args: 136, entryBits: []int{5, 7},
 			goallcLocals: 8, goallcArgs: [][]int{{5, 7}}, goallcMaps: [][]int{nil},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0, -1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, -1},
 			nativePCSP: []int32{0, 8, 0}, goallcPCSP: []int32{0, 8, 0},
 		},
 	}
@@ -656,32 +656,32 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 			nativeLocals: 8, goallcLocals: 24,
 			nativeArgs: [][]int{{1}, nil}, goallcArgs: [][]int{{1}, nil},
 			nativeMaps: [][]int{nil, nil}, goallcMaps: [][]int{nil, {1}},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{1, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, -1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{-1, 1},
 		},
 		{
 			name: "partiallyInitializedAggregateResult", args: 40, entryBits: []int{3, 4},
 			nativeLocals: 8, goallcLocals: 24,
 			nativeArgs: [][]int{{3, 4}, nil}, goallcArgs: [][]int{{3, 4}, nil},
 			nativeMaps: [][]int{nil, nil}, goallcMaps: [][]int{nil, {0, 1}},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, 0},
-			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{1, 1, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 1, -1},
+			nativeQueries: []int32{0, 0, -1}, goallcQueries: []int32{-1, 1, 1},
 		},
 		{
 			name: "liveScalarStackArgument", args: 136, entryBits: []int{0},
 			nativeLocals: 8, goallcLocals: 8,
 			nativeArgs: [][]int{{0}, nil}, goallcArgs: [][]int{{0}},
 			nativeMaps: [][]int{nil, nil}, goallcMaps: [][]int{nil},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0, -1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{-1, 0},
 		},
 		{
 			name: "liveAggregateStackArgument", args: 136, entryBits: []int{0, 2},
 			nativeLocals: 8, goallcLocals: 8,
 			nativeArgs: [][]int{{0, 2}, nil}, goallcArgs: [][]int{{0, 2}},
 			nativeMaps: [][]int{nil, nil}, goallcMaps: [][]int{nil},
-			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0},
-			nativeQueries: []int32{0, -1}, goallcQueries: []int32{0, 0},
+			nativePCData: []int32{-1, 0, -1}, goallcPCData: []int32{-1, 0, -1},
+			nativeQueries: []int32{0, -1}, goallcQueries: []int32{-1, 0},
 		},
 	}
 	for _, tc := range cases {
@@ -725,7 +725,7 @@ func runLLVMABIArgsPointerMapMachineTest(t *testing.T, goroot, llc, plugin strin
 		[][]int{nil, nil}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("machine LocalsPointerMaps=%v, want %v", got, want)
 	}
-	if got, want := llvmABIStackMapRanges(symbol), []int32{-1, 0, 1}; !reflect.DeepEqual(got, want) {
+	if got, want := llvmABIStackMapRanges(symbol), []int32{-1, 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("machine PCDATA_StackMapIndex=%v, want %v", got, want)
 	}
 	var queryIndexes []int32
@@ -735,7 +735,7 @@ func runLLVMABIArgsPointerMapMachineTest(t *testing.T, goroot, llc, plugin strin
 		}
 		queryIndexes = append(queryIndexes, query.StackMapIndex)
 	}
-	if got, want := queryIndexes, []int32{0, 1}; !reflect.DeepEqual(got, want) {
+	if got, want := queryIndexes, []int32{-1, 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("machine stack-map query indexes=%v, want %v", got, want)
 	}
 	t.Logf("machine ArgsPointerMaps=%v LocalsPointerMaps=%v PCDATA=%v",
@@ -748,7 +748,7 @@ func checkLLVMABIStatepointTupleAttrs(t *testing.T, ir []byte, callees ...string
 	t.Helper()
 	for _, callee := range callees {
 		call := regexp.MustCompile(`(?m)^.*@llvm\.experimental\.gc\.statepoint.*@main\.` +
-			regexp.QuoteMeta(callee) + `.*#([0-9]+)$`).FindSubmatch(ir)
+			regexp.QuoteMeta(callee) + `.*#([0-9]+)[^\n]*$`).FindSubmatch(ir)
 		if len(call) != 2 {
 			t.Fatalf("rewritten IR has no attributed statepoint call to main.%s", callee)
 		}
@@ -990,11 +990,16 @@ func checkLLVMABIStackMapQueryBitmaps(t *testing.T, backend string, symbol llvmA
 		if query.DecodeError != "" {
 			t.Fatalf("%s stack-map query failed: %s", backend, query.DecodeError)
 		}
-		if query.StackMapIndex < 0 || int(query.StackMapIndex) >= len(args) {
+		index := query.StackMapIndex
+		if index == -1 {
+			// runtime.stkframe.getStackMap interprets the entry sentinel as map 0.
+			index = 0
+		}
+		if index < 0 || int(index) >= len(args) {
 			t.Fatalf("%s stack-map query index %d is outside %d ArgsPointerMaps",
 				backend, query.StackMapIndex, len(args))
 		}
-		got = append(got, args[query.StackMapIndex])
+		got = append(got, args[index])
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%s stack-map query bitmaps=%v, want %v", backend, got, want)

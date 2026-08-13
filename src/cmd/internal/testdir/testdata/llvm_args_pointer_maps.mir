@@ -7,7 +7,7 @@
     ptr
   }
 
-  declare goabi0 void @runtime.morestack_noctxt()
+  declare goabi0 void @"runtime.morestack_noctxt<ABI0>"()
   declare goabiinternal void @p.safepoint()
 
   define goabiinternal %results @p.argResult(ptr %input)
@@ -18,7 +18,6 @@
 
   attributes #0 = {
     "frame-pointer"="non-leaf"
-    "go-stack-growth-statepoint"
     "go_results_tuple"
   }
 ...
@@ -43,8 +42,9 @@ body:             |
   bb.0.entry:
     liveins: $lr
 
+    STACKMAP 5147419139155979380, 0, 1, 8, $sp, 16
     $x3 = COPY $lr
-    STATEPOINT 5147424658422983495, 0, 0, &runtime.morestack_noctxt, 2, 22, 2, 0, 2, 0, 2, 1, 1, 8, $sp, 16, 2, 0, 2, 1, 0, 0, csr_aarch64_go, implicit-def $sp, implicit-def dead early-clobber $lr, implicit $x3
+    BL &"runtime.morestack_noctxt<ABI0>", implicit-def $lr, implicit $sp, implicit $x3
     STATEPOINT 1, 0, 0, &p.safepoint, 2, 22, 2, 0, 2, 0, 2, 1, 1, 8, $sp, 8, 2, 0, 2, 1, 0, 0, csr_aarch64_go, implicit-def $sp, implicit-def dead early-clobber $lr
     RET_ReallyLR
 ...

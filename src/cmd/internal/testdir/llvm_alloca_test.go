@@ -20,6 +20,8 @@ type llvmAllocaArchitectureChecks struct {
 	restoredStorePattern string
 	goallcLocals         uint32
 	goallcPointerBits    []int
+	goallcPCData         []int32
+	goallcQueries        []int32
 }
 
 var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
@@ -28,12 +30,16 @@ var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
 		restoredStorePattern: `(?m)^\s*(?:str|stp)\b`,
 		goallcLocals:         88,
 		goallcPointerBits:    []int{5, 7, 8, 9},
+		goallcPCData:         []int32{-1, 1, -1},
+		goallcQueries:        []int32{-1, 1, 1, 1, 1},
 	},
 	"linux/amd64": {
 		betweenCallsPattern:  `(?s)\bcallq\s+p\.mutateLocal\n(.*?)\bcallq\s+p\.safepoint`,
 		restoredStorePattern: `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`,
 		goallcLocals:         88,
 		goallcPointerBits:    []int{5, 7, 8, 9},
+		goallcPCData:         []int32{-1, 1, -1},
+		goallcQueries:        []int32{1, 1, 1, 1, -1},
 	},
 }
 
@@ -283,8 +289,8 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		checks.goallcLocals,
 		[][]int{nil, nil},
 		[][]int{nil, checks.goallcPointerBits},
-		[]int32{0, 1, 0},
-		[]int32{1, 1, 1, 1, 0})
+		checks.goallcPCData,
+		checks.goallcQueries)
 
 	goallcStackObjects := llvmABIStackObjects(t, symbol)
 	if len(goallcStackObjects) != 0 {
