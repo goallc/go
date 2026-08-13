@@ -1849,10 +1849,45 @@ func (lfc *LLVMFuncContext) reshapeLLVMABICarrier(v *Value, value llvm.Value, ta
 	}
 
 	source := value.Type()
+	// Go ABI analysis may describe a promoted method receiver using its single
+	// physical register carrier while the generated wrapper definition retains
+	// the named aggregate receiver type. Peel and rebuild singleton aggregates
+	// at that caller boundary. This keeps the callee signature semantic without
+	// introducing an anonymous aggregate signature shared by both sides.
+	if source.TypeKind() != target.TypeKind() {
+		switch source.TypeKind() {
+		case llvm.StructTypeKind:
+			fields := source.StructElementTypes()
+			if len(fields) == 1 {
+				field := lfc.b.CreateExtractValue(value, 0, name+".abi.unwrap")
+				return lfc.reshapeLLVMABICarrier(v, field, target, name)
+			}
+		case llvm.ArrayTypeKind:
+			if source.ArrayLength() == 1 {
+				element := lfc.b.CreateExtractValue(value, 0, name+".abi.unwrap")
+				return lfc.reshapeLLVMABICarrier(v, element, target, name)
+			}
+		}
+
+		switch target.TypeKind() {
+		case llvm.StructTypeKind:
+			fields := target.StructElementTypes()
+			if len(fields) == 1 {
+				field := lfc.reshapeLLVMABICarrier(v, value, fields[0], name)
+				return lfc.b.CreateInsertValue(llvm.Undef(target), field, 0, name+".abi.wrap")
+			}
+		case llvm.ArrayTypeKind:
+			if target.ArrayLength() == 1 {
+				element := lfc.reshapeLLVMABICarrier(v, value, target.ElementType(), name)
+				return lfc.b.CreateInsertValue(llvm.Undef(target), element, 0, name+".abi.wrap")
+			}
+		}
+	}
+
 	switch target.TypeKind() {
 	case llvm.StructTypeKind:
 		if source.TypeKind() != llvm.StructTypeKind {
-			v.Fatalf("cannot reshape non-struct LLVM ABI carrier to struct")
+			v.Fatalf("cannot reshape LLVM ABI carrier kind %d to struct at %s", source.TypeKind(), name)
 		}
 		sourceFields := source.StructElementTypes()
 		targetFields := target.StructElementTypes()

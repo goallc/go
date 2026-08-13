@@ -52,6 +52,40 @@ func TestLLVMABICarrierPreservesNamedAggregateIdentity(t *testing.T) {
 	}
 }
 
+func TestLLVMABICarrierBridgesPromotedReceiverAtCaller(t *testing.T) {
+	module := GlobalCtxt.NewModule("promoted_receiver_carrier")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	pointer := GlobalCtxt.PointerType(0)
+	receiver := GlobalCtxt.StructCreateNamed("goallc.test.promoted.receiver")
+	receiver.StructSetBody([]llvm.Type{pointer}, false)
+
+	wrap := llvm.AddFunction(module, "wrap", llvm.FunctionType(receiver, []llvm.Type{pointer}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(wrap, "entry"))
+	context := &LLVMFuncContext{b: builder}
+	value := &Value{ID: 1, Type: types.Types[types.TUNSAFEPTR]}
+	builder.CreateRet(context.reshapeLLVMABICarrier(value, wrap.Param(0), receiver, "receiver"))
+
+	unwrap := llvm.AddFunction(module, "unwrap", llvm.FunctionType(pointer, []llvm.Type{receiver}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(unwrap, "entry"))
+	builder.CreateRet(context.reshapeLLVMABICarrier(value, unwrap.Param(0), pointer, "receiver"))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected promoted receiver carrier bridge: %v\n%s", err, module.String())
+	}
+	ir := module.String()
+	for _, want := range []string{
+		"insertvalue %goallc.test.promoted.receiver undef, ptr %0, 0",
+		"extractvalue %goallc.test.promoted.receiver %0, 0",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("promoted receiver bridge does not contain %q\n%s", want, ir)
+		}
+	}
+}
+
 func TestLLVMStaticCalleeAuxUsesPackageDefinition(t *testing.T) {
 	oldTarget := typecheck.Target
 	oldCache := llvmStaticCalleeAuxCache
