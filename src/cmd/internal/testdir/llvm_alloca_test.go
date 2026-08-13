@@ -92,10 +92,10 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 	parameterInputFunction := llvmAllocaIRFunction(t, inputIR,
 		"p.parameterAcrossSafepoints")
 	for _, pattern := range []string{
-		`define goabiinternal void @p\.parameterAcrossSafepoints\(\{ ptr, i64, ptr, \[2 x ptr\] \} %value\)`,
+		`define goabiinternal void @p\.parameterAcrossSafepoints\(%p\.pointerLocal %value\)`,
 		`alloca %p\.pointerLocal, align 8`,
 		`call void @llvm\.lifetime\.start\.p0\(ptr %v[0-9]+\)`,
-		`store \{ ptr, i64, ptr, \[2 x ptr\] \} %value, ptr %v[0-9]+, align 8`,
+		`store %p\.pointerLocal %value, ptr %v[0-9]+, align 8`,
 	} {
 		if !regexp.MustCompile(pattern).Match(parameterInputFunction) {
 			t.Fatalf("input parameter-home IR does not match %q\n%s",

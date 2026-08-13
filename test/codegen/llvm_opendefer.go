@@ -32,18 +32,16 @@ type llvmOpenDeferNamedResult struct {
 // LLVM-OPT: [[RECOVERY_OPT]]:
 // LLVM-OPT: call goabiinternal void @runtime.deferreturn(), !dbg !{{[0-9]+}}
 
-// LLVM-LABEL: define goabiinternal { i64 } @codegen.llvmOpenDeferNamed(
+// LLVM-LABEL: define goabiinternal %codegen.llvmOpenDeferNamedResult @codegen.llvmOpenDeferNamed(
 // LLVM: open.defer.recovery:
 // LLVM-NEXT: call goabiinternal void @runtime.deferreturn(), !dbg !{{[0-9]+}}
 // LLVM: load volatile %codegen.llvmOpenDeferNamedResult
-// LLVM: insertvalue { i64 }
-// LLVM: ret { i64 }
+// LLVM: ret %codegen.llvmOpenDeferNamedResult
 // LLVM: ![[SLOTS_MD]] = !{i32 2}
-// LLVM-OPT-LABEL: define goabiinternal { i64 } @codegen.llvmOpenDeferNamed(
+// LLVM-OPT-LABEL: define goabiinternal %codegen.llvmOpenDeferNamedResult @codegen.llvmOpenDeferNamed(
 // LLVM-OPT: common.ret:
 // LLVM-OPT: load volatile %codegen.llvmOpenDeferNamedResult
-// LLVM-OPT: insertvalue { i64 }
-// LLVM-OPT: ret { i64 }
+// LLVM-OPT: ret %codegen.llvmOpenDeferNamedResult
 // LLVM-OPT: open.defer.recovery:
 // LLVM-OPT: call goabiinternal void @runtime.deferreturn(), !dbg !{{[0-9]+}}
 // LLVM-OPT: ![[SLOTS_OPT_MD]] = !{i32 2}
