@@ -438,24 +438,26 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 		"-o", "-", goallcIR)
 	machinePatterns := map[string][]string{
 		"p.initializedPointerResult": {
-			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 72,`,
 			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 0,`,
 		},
 		"p.partiallyInitializedAggregateResult": {
-			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 80,[^\n]*\$rsp, 88,`,
 			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 0,[^\n]*\$rsp, 8,`,
 		},
 		"p.liveScalarStackArgument": {
-			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 64,`,
 			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 72,`,
 		},
 		"p.liveAggregateStackArgument": {
-			`STATEPOINT 5147424658422983495,[^\n]*\$rsp, 48,[^\n]*\$rsp, 64,`,
 			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 56,[^\n]*\$rsp, 72,`,
 		},
 	}
 	for name, patterns := range machinePatterns {
 		body := llvmABIMachineFunction(t, machineIR, name)
+		if !regexp.MustCompile(`(?m)^.*CALL64pcrel32 &"?runtime\.morestack_noctxt<ABI0>"?[^\n]*$`).Match(body) {
+			t.Fatalf("%s PEI MIR has no raw ABI0 morestack call\n%s", name, body)
+		}
+		if regexp.MustCompile(`(?m)^.*STATEPOINT[^\n]*runtime\.morestack_noctxt[^\n]*$`).Match(body) {
+			t.Fatalf("%s PEI MIR still represents morestack as a statepoint\n%s", name, body)
+		}
 		for _, pattern := range patterns {
 			if !regexp.MustCompile(pattern).Match(body) {
 				t.Fatalf("%s PEI MIR does not match %q\n%s", name, pattern, body)

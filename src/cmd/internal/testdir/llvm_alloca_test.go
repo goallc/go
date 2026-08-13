@@ -283,7 +283,7 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		checks.goallcLocals,
 		[][]int{nil, nil},
 		[][]int{nil, checks.goallcPointerBits},
-		[]int32{-1, 1, 0},
+		[]int32{0, 1, 0},
 		[]int32{1, 1, 1, 1, 0})
 
 	goallcStackObjects := llvmABIStackObjects(t, symbol)
