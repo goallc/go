@@ -23,7 +23,8 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW-NEXT: 1
 
 ; FRAME-TEXT-LABEL: TEXT aarch64_pointer_and_code_live(SB)
-; FRAME-TEXT: R_CALLARM64:runtime.morestack_noctxt{{.*}}PCDATA_StackMapIndex=0{{.*}}ArgsPointerMaps=01{{.*}}LocalsPointerMaps=00
+; FRAME-TEXT: PCDATA_StackMapIndex=0{{.*}}ArgsPointerMaps=01{{.*}}LocalsPointerMaps=00
+; FRAME-TEXT: R_CALLARM64:runtime.morestack_noctxt
 ; FRAME-TEXT-NEXT: {{.*}}stack-growth safepoint{{.*}}map[0]{{.*}}ArgsPointerMaps=01{{.*}}LocalsPointerMaps=00
 ; FRAME-TEXT: R_CALLIND{{.*}}PCDATA_StackMapIndex=1{{.*}}ArgsPointerMaps=00{{.*}}LocalsPointerMaps=01
 ; FRAME-TEXT-NEXT: {{.*}}ordinary safepoint{{.*}}map[1]{{.*}}ArgsPointerMaps=00{{.*}}LocalsPointerMaps=01
