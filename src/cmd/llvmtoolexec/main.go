@@ -21,9 +21,35 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
+
+type stringSetFlag map[string]struct{}
+
+func (f *stringSetFlag) Set(value string) error {
+	if value == "" {
+		return errors.New("package path must not be empty")
+	}
+	if *f == nil {
+		*f = make(map[string]struct{})
+	}
+	(*f)[value] = struct{}{}
+	return nil
+}
+
+func (f *stringSetFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	values := make([]string, 0, len(*f))
+	for value := range *f {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ",")
+}
 
 var (
 	llcPath        = flag.String("llc", os.Getenv("GOALLC_LLC"), "path to llc")
@@ -31,7 +57,12 @@ var (
 	optPasses      = flag.String("opt-passes", "", "optional LLVM optimization pipeline to run before llc")
 	passPluginPath = flag.String("pass-plugin", os.Getenv("GOALLC_PASS_PLUGIN"), "path to the GoALLC LLVM pass plugin (default next to llc)")
 	keepIR         = flag.Bool("keep-ir", false, "keep the compiler-generated .ll sidecar")
+	nativePackages stringSetFlag
 )
+
+func init() {
+	flag.Var(&nativePackages, "native-package", "compile this exact -p package with the native Go backend even when inherited gcflags select LLVM (repeatable)")
+}
 
 func main() {
 	flag.Parse()
@@ -53,6 +84,10 @@ func main() {
 	}
 	if !hasLLVMCompileFlags(args) {
 		run(tool, args...)
+		return
+	}
+	if useNativeCompiler(args, nativePackages) {
+		run(tool, withoutLLVMCompileFlags(args)...)
 		return
 	}
 	if !isCompileAction(args) {
@@ -290,6 +325,8 @@ func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses
 	identityInput := append([]byte(nil), out...)
 	identityInput = append(identityInput, "\x00opt-passes="...)
 	identityInput = append(identityInput, optPasses...)
+	identityInput = append(identityInput, "\x00native-packages="...)
+	identityInput = append(identityInput, nativePackages.String()...)
 	identity, err := backendIdentity(identityInput, append([]string{wrapper}, backendFiles...)...)
 	if err != nil {
 		fatalf("computing backend identity: %v", err)
@@ -424,6 +461,27 @@ func toolFlag(args []string, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func useNativeCompiler(args []string, packages stringSetFlag) bool {
+	pkg, ok := toolFlag(args, "-p")
+	if !ok {
+		return false
+	}
+	_, ok = packages[pkg]
+	return ok
+}
+
+func withoutLLVMCompileFlags(args []string) []string {
+	native := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "-enablellvm" || strings.HasPrefix(arg, "-enablellvm=") ||
+			arg == "-llvmironly" || strings.HasPrefix(arg, "-llvmironly=") {
+			continue
+		}
+		native = append(native, arg)
+	}
+	return native
 }
 
 func run(path string, args ...string) {

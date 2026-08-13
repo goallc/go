@@ -886,6 +886,10 @@ func runLLVMWriteBarrierIRTests(t *testing.T) {
 }
 
 func llvmToolexec(t *testing.T, optPasses string) string {
+	return llvmToolexecWithNativePackages(t, optPasses)
+}
+
+func llvmToolexecWithNativePackages(t *testing.T, optPasses string, nativePackages ...string) string {
 	t.Helper()
 	wrapper := llvmToolexecPath(t)
 
@@ -899,6 +903,9 @@ func llvmToolexec(t *testing.T, optPasses string) string {
 	if optPasses != "" {
 		opt := llvmToolPath(t, "opt", "GOALLC_OPT")
 		args = append(args, "-opt="+opt, "-opt-passes="+optPasses)
+	}
+	for _, name := range nativePackages {
+		args = append(args, "-native-package="+name)
 	}
 	value, err := quoted.Join(args)
 	if err != nil {
