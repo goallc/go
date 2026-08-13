@@ -4,7 +4,7 @@ declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)
 declare void @llvm.fake.use(...)
 declare goabiinternal void @safepoint()
 
-define goabiinternal void @path_local_pointer_alloca_lifetime(i1 %start) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal void @path_local_pointer_alloca_lifetime(i1 %start) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   br i1 %start, label %live, label %join

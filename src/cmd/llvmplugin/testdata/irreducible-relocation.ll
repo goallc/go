@@ -4,7 +4,7 @@ declare goabiinternal void @callee()
 
 define goabiinternal i64 @irreducible_relocation(
     ptr %p, i1 %enter_b, i1 %leave_a, i1 %leave_b)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %enter_b, label %b, label %a
 

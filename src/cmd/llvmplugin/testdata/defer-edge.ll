@@ -26,7 +26,7 @@ declare goabiinternal void @runtime.panicmem()
 declare void @llvm.go.defer.edge()
 declare void @llvm.lifetime.start.p0(ptr captures(none))
 
-define goabiinternal void @defer_edge() #0 gc "goallc" {
+define goabiinternal void @defer_edge() gc "goallc" {
 entry:
   call goabiinternal void @runtime.deferproc()
   callbr void @llvm.go.defer.edge() to label %normal [label %recover]
@@ -39,7 +39,7 @@ recover:
   ret void
 }
 
-define goabiinternal ptr @defer_result(ptr %pointer) #0 gc "goallc" {
+define goabiinternal ptr @defer_result(ptr %pointer) gc "goallc" {
 entry:
   %result = alloca ptr, align 8, !goallc.defer_result !1
   call void @llvm.lifetime.start.p0(ptr %result)
@@ -62,8 +62,6 @@ define goabiinternal void @defer_wrapper() !goobj.func.info !0 {
 entry:
   ret void
 }
-
-attributes #0 = { "go-stack-growth-statepoint" }
 
 !0 = !{i8 23, i8 0}
 !1 = !{}

@@ -132,7 +132,7 @@ declare goabiinternal i64 @readonly_pointer_slot(ptr readonly) memory(read)
 declare goabiinternal i64 @readnone_callee() memory(none)
 declare void @llvm.lifetime.start.p0(i64 immarg, ptr captures(none))
 
-define goabiinternal ptr @pointer_slot(ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @pointer_slot(ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
@@ -143,7 +143,7 @@ entry:
 }
 
 define goabiinternal ptr @nested_whole_aggregate(
-    ptr %first, ptr %second, ptr %third) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %first, ptr %second, ptr %third) gc "goallc" {
 entry:
   ; The optimized use graph contains only direct memory operations, so this
   ; must use fixed homes and remain eligible for SROA.
@@ -159,7 +159,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_call_skip(
-    i1 %take_call, ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    i1 %take_call, ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
@@ -175,7 +175,7 @@ merge:
 }
 
 define goabiinternal ptr @alloca_multiple_calls(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
@@ -186,7 +186,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_partial_initialization()
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   ; Each field is initialized from a different safepointing call. The plugin
   ; must zero the whole object before the first call so the complete bitmap is
@@ -204,7 +204,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_loop(
-    i1 %again, ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    i1 %again, ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
@@ -220,7 +220,7 @@ exit:
 }
 
 define goabiinternal ptr @alloca_gep_address_across_call(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca %pointer_field, align 8
   %field = getelementptr inbounds %pointer_field, ptr %slot, i32 0, i32 1
@@ -231,7 +231,7 @@ entry:
 }
 
 define goabiinternal void @alloca_direct_address_across_calls()
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr null, ptr %slot, align 8
@@ -242,7 +242,7 @@ entry:
 }
 
 define goabiinternal void @argument_home_address_across_calls(ptr %pointer)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   ; This canonical parameter alloca becomes the argument's fixed ABI home.
   ; Its last callsite has no direct gc-live base, so the function also needs
@@ -257,7 +257,7 @@ entry:
 }
 
 define goabiinternal void @argument_aggregate_home_address_across_calls(
-    %nested %value) "go-stack-growth-statepoint" gc "goallc" {
+    %nested %value) gc "goallc" {
 entry:
   ; The split aggregate parameter still has one complete fixed home and one
   ; argp-relative StackObject covering all ABI pieces and padding.
@@ -271,7 +271,7 @@ entry:
 }
 
 define goabiinternal void @alloca_gep_value_across_calls()
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %slot = alloca %pointer_field, align 8
   %field = getelementptr inbounds %pointer_field, ptr %slot, i32 0, i32 1
@@ -283,7 +283,7 @@ entry:
 }
 
 define goabiinternal void @alloca_pointer_free_address_across_calls()
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %slot = alloca i64, align 8
   store i64 0, ptr %slot, align 8
@@ -294,7 +294,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_address_passed_to_callee(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   ; The structural call use makes the address observable.
   %slot = alloca ptr, align 8
@@ -305,7 +305,7 @@ entry:
 }
 
 define goabiinternal void @alloca_marker_free_at_safepoint(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr null, ptr %slot, align 8
@@ -315,7 +315,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_high_bitmap_word(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca %high_bitmap, align 8
   %field = getelementptr inbounds %high_bitmap, ptr %slot, i32 0, i32 1
@@ -326,7 +326,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_multiple_records(
-    ptr %first, ptr %second) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %first, ptr %second) gc "goallc" {
 entry:
   %left = alloca ptr, align 8
   %right = alloca ptr, align 8
@@ -338,7 +338,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_select_same_base(
-    i1 %choose, ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    i1 %choose, ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   %same = getelementptr inbounds i8, ptr %slot, i64 0
@@ -350,7 +350,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_nocapture_writable(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
@@ -360,7 +360,7 @@ entry:
 }
 
 define goabiinternal ptr @alloca_escaped_before_unknown_write(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8
@@ -371,7 +371,7 @@ entry:
 }
 
 define goabiinternal i64 @alloca_readonly_and_readnone(
-    ptr %pointer) "go-stack-growth-statepoint" gc "goallc" {
+    ptr %pointer) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
   store ptr %pointer, ptr %slot, align 8

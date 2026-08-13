@@ -22,14 +22,29 @@ import (
 type llvmABIDocument struct {
 	Members []struct {
 		GoObject *struct {
-			Symbols []llvmABISymbol `json:"symbols"`
+			Symbols    []llvmABISymbol `json:"symbols"`
+			References []llvmABISymbol `json:"references"`
 		} `json:"go_object"`
 	} `json:"members"`
 }
 
-type llvmABISymbol struct {
+type llvmABIReference struct {
+	PkgKind  string `json:"pkg_kind"`
+	SymIndex uint32 `json:"sym_index"`
 	Name     string `json:"name"`
-	ABI      uint16 `json:"abi"`
+}
+
+type llvmABISymbol struct {
+	Class       string   `json:"class"`
+	ClassIndex  uint32   `json:"class_index"`
+	Name        string   `json:"name"`
+	ABI         uint16   `json:"abi"`
+	Flags       uint64   `json:"flags"`
+	FlagNames   []string `json:"flag_names"`
+	Relocations []struct {
+		Type   string           `json:"type"`
+		Target llvmABIReference `json:"target"`
+	} `json:"relocations"`
 	Function *struct {
 		Info *struct {
 			Args   uint32 `json:"args"`
@@ -132,11 +147,13 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		[]byte("define goabiinternal"),
 		[]byte(`"go_results_tuple"`),
 		[]byte(`gc "goallc"`),
-		[]byte(`"go-stack-growth-statepoint"`),
 	} {
 		if !bytes.Contains(ir, needle) {
 			t.Fatalf("GoALLC IR does not contain %q", needle)
 		}
+	}
+	if bytes.Contains(ir, []byte(`"go-stack-growth-statepoint"`)) {
+		t.Fatal("GoALLC IR still contains the obsolete stack-growth attribute")
 	}
 
 	opt := llvmToolPath(t, "opt", "GOALLC_OPT")
@@ -248,7 +265,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			// homes in LocalsPointerMaps through locals-only alloca records.
 			goallcArgsMaps:  [][]int{{2, 4, 18}, {2}},
 			nativeStackMaps: []int32{-1, 0, -1},
-			goallcStackMaps: []int32{-1, 1, -1},
+			goallcStackMaps: []int32{-1, 1, -1, 1},
 			goallcQueryMaps: [][]int{{2, 4, 18}, {2}, {2}, {2}, {2}},
 		},
 		{
@@ -347,7 +364,8 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			nativeArgsMaps:  [][]int{{4}, nil},
 			goallcArgsMaps:  [][]int{{4}, nil, nil},
 			nativeStackMaps: []int32{-1, 0, 1, -1},
-			goallcStackMaps: []int32{-1, 1, 2, -1, 2},
+			goallcStackMaps: []int32{-1, 1, -1, 2},
+			goallcQueryMaps: [][]int{{4}, nil, nil, nil},
 		},
 	}
 	for _, tc := range cases {
@@ -953,6 +971,42 @@ func findLLVMABISymbol(t *testing.T, document llvmABIDocument, name string) llvm
 	}
 	t.Fatalf("objview output has no symbol %s", name)
 	return llvmABISymbol{}
+}
+
+func llvmABIRelocationTargetName(document llvmABIDocument, target llvmABIReference) string {
+	if target.Name != "" || target.PkgKind != "none" {
+		return target.Name
+	}
+	for _, member := range document.Members {
+		if member.GoObject == nil {
+			continue
+		}
+		var nonpackageDefinitions uint32
+		for _, symbol := range member.GoObject.Symbols {
+			if symbol.Class == "nonpackage" && symbol.ClassIndex >= nonpackageDefinitions {
+				nonpackageDefinitions = symbol.ClassIndex + 1
+			}
+		}
+		if target.SymIndex < nonpackageDefinitions {
+			continue
+		}
+		classIndex := target.SymIndex - nonpackageDefinitions
+		for _, reference := range member.GoObject.References {
+			if reference.Class == "nonpackage_reference" && reference.ClassIndex == classIndex {
+				return reference.Name
+			}
+		}
+	}
+	return ""
+}
+
+func llvmABIHasRelocationTo(document llvmABIDocument, symbol llvmABISymbol, name string) bool {
+	for _, relocation := range symbol.Relocations {
+		if llvmABIRelocationTargetName(document, relocation.Target) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func checkLLVMABISymbol(t *testing.T, backend string, symbol llvmABISymbol, tc llvmABICase) {

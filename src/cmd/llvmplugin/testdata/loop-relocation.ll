@@ -4,7 +4,7 @@ declare goabiinternal void @callee()
 
 define goabiinternal i64 @loop_relocation(
     ptr %p, i1 %take_call, i1 %again)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br label %header
 

@@ -8,4 +8,4 @@ entry:
   ret void
 }
 
-attributes #0 = { "frame-pointer"="non-leaf" "go-stack-growth-statepoint" }
+attributes #0 = { "frame-pointer"="non-leaf" }

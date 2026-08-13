@@ -21,9 +21,9 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
 add_llvm_pass_plugin(GoALLCStatepoints
+  GoALLCGCMetadataPrinter.cpp
   GoALLCInlineAnchors.cpp
   GoALLCPreCodeGen.cpp
-  GoALLCStackMapPrinter.cpp
   GoALLCStatepoints.cpp
   GoALLCStatepointPlugin.cpp
 )
@@ -252,7 +252,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.FrontendMarkersPreserved PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "go-stack-growth-statepoint"
+      "gc \"goallc\""
   )
 
   foreach(GOALLC_DEBUG_TARGET IN ITEMS X86 AArch64)

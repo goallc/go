@@ -171,10 +171,10 @@ use 的 local 不生成 LLVM 栈槽，避免无意义地增大 frame。
 
 GoObj stack growth、SP 恢复和当前 stack-map 路径只支持编译期固定 frame。
 因此 amd64 和 arm64 GoObj target 对 variable-sized `alloca` 都确定性报错，
-不能把动态栈分配交给 LLVM 通用 lowering。当前 GoObj writer 的 args/locals
-pointer maps 仍为空；本实现只保证现有固定栈槽的 dominance、frame placement
-和 stack-growth 约束，不代表已经支持完整 precise-GC stack maps、goroutine、
-defer 或 panic unwind。
+不能把动态栈分配交给 LLVM 通用 lowering。当前 GoObj writer 已为所有 GoObj Go
+函数生成类型推导的入口 ArgsPointerMaps，并为已支持的普通 statepoint 和固定
+`alloca` 生成 LocalsPointerMaps；这仍不代表已经支持完整 precise-GC stack maps、
+goroutine、defer 或 panic unwind。
 
 对应回归包括：
 
@@ -273,9 +273,10 @@ pass plugin 默认从 `llc` 所属 LLVM payload 的
 wrapper 覆盖的 compile action 重新编译。
 
 插件的功能性源码和测试位于 Go 仓库
-`src/cmd/llvmplugin`，不放入 LLVM 源码树。LLVM 只提供通用的
-`-load-pass-plugin` 和 pre-codegen callback；GoALLC statepoint rewrite 及其
-pass 顺序都应继续在这个 Go-owned 工程中实现。当前
+`src/cmd/llvmplugin`，不放入 LLVM 源码树。LLVM 提供通用的
+`-load-pass-plugin`、pre-codegen callback，以及 GoObj 对 Machine StackMaps
+的对象格式适配；GoALLC statepoint rewrite 及其 pass 顺序都应继续在这个
+Go-owned 工程中实现。当前
 `runPreCodeGenPipeline` 调用 Go-owned statepoint pass：它对 Go ABI 函数执行
 CFG 逆向数据流活跃性分析，为普通调用分配稳定 callsite ID，生成
 `gc.statepoint` / `gc.relocate`，并识别 `gc-leaf-function`。受管指针分类当前
@@ -285,21 +286,21 @@ aggregate、`invoke`、`musttail` 和非 leaf inline asm fail closed。未来
 compile 进程内集成 LLVM 时直接复用该 core 入口，不经过 plugin adapter。
 
 机器位置不通过修改 LLVM 通用 `StackMaps.cpp` 截获。SSA→LLVM IR 前端为 Go ABI
-函数声明 `gc "goallc"` 和 `go-stack-growth-statepoint`，插件只负责注册对应的
-GC strategy 与 `GCMetadataPrinter::emitStackMaps`，并消费这些前端标记。在
+函数声明 `gc "goallc"`；GoObj Go 函数默认采用原生 Go 的可扩栈策略，只有
+`go-nosplit`、`go-systemstack` 这样的例外策略需要额外属性。插件负责注册对应的
+GC strategy、执行 statepoint rewrite 并消费这些前端标记。在 LLVM GoObj
 AsmPrinter 模块收尾阶段
 读取标准 `FnInfos/CSInfos`，跳过 statepoint 的 CC、flags 和 deopt 前缀后，把
 原始 GC locations 写入 MCContext。GoObj writer 在最终 layout 后完成 SP
 校验、`Direct`/`Indirect` 解释、LocalsPointerMaps 和 PCDATA_StackMapIndex
-编码。GoALLC 要求 StackMaps 记录 CALL 起点；map 从 CALL 开始。前端添加的
-`go-stack-growth-statepoint` 属性使 LLVM 在 PEI 阶段把
-`runtime.morestack` 调用生成为物理 MIR `STATEPOINT`。其 deopt 和 GC alloca
-区为空，GC pointer 区则记录类型推导出的入口参数 home。它从 morestack CALL
-起点选择入口 ArgsPointerMaps 和空 locals bitmap，因此普通调用与栈增长调用
-走同一 Machine StackMaps 链路，且不依赖 return PC 反推调用范围。已有
-Machine `STATEPOINT` 但缺少该前端属性时，
-LLVM target lowering 会 fail closed；不再使用 slow-path reset label 兼容普通
-morestack CALL。GoObj 先写索引 0 的
+编码。GoALLC 要求 StackMaps 记录 CALL 起点；map 从 CALL 开始。LLVM target
+formal lowering 为每个 GoObj Go 函数推导入口参数 home，并用一个独立、零字节的
+`EntryArgsStackMapID` 表达函数级 ArgsPointerMaps；该记录不是调用点，不生成
+PCDATA。非 nosplit 函数在 PEI 阶段额外把 `runtime.morestack` 调用生成为物理、
+root-free 的 `StackGrowthStatepointID`，从 CALL 起点选择入口 ArgsPointerMaps 和
+空 locals bitmap。nosplit 函数不得包含这个 statepoint。这样普通调用与栈增长
+调用仍走同一 Machine StackMaps 链路，且不依赖 return PC 反推调用范围，同时
+函数级入口图不再伪装成 morestack 调用。GoObj 先写索引 0 的
 `PCDATA_UnsafePoint`（当前恒为 safe 的 `-1`），再写索引 1 的
 `PCDATA_StackMapIndex`；不能只写后一张表，否则 linker 会把它误认成索引 0。
 `Direct SP+offset` 是栈地址本身，不表示该 slot 存有 pointer，因此不会设置

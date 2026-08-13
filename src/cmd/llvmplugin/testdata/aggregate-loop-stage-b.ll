@@ -4,7 +4,7 @@ target triple = "x86_64-unknown-linux-goobj"
 
 declare goabiinternal void @safepoint()
 
-define goabiinternal ptr @aggregate_loop_relocation(i1 %take_call, i1 %again, %pair %value) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal ptr @aggregate_loop_relocation(i1 %take_call, i1 %again, %pair %value) gc "goallc" {
 entry:
   br label %header
 

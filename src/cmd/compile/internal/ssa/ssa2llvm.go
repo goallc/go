@@ -71,7 +71,8 @@ const goABI0SymbolSuffix = "<ABI0>"
 const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
-const goStackGrowthStatepointAttr = "go-stack-growth-statepoint"
+const goNoSplitAttr = "go-nosplit"
+const goSystemStackAttr = "go-systemstack"
 const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
@@ -3278,10 +3279,20 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, ""))
-	// TODO(goallc): Once LLVM lowering propagates the compiler's precise
-	// morestack policy, attach this only to functions whose prologue can grow
-	// the Go stack.
-	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goStackGrowthStatepointAttr, ""))
+	// A //go:nosplit function must not acquire that late morestack edge. Besides
+	// violating the runtime's nosplit call graph, it would expose a safepoint the
+	// frontend deliberately prohibited. Give target frame lowering the source
+	// policy directly instead of asking it to infer a pragma from GoObj metadata.
+	if f.NoSplit {
+		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goNoSplitAttr, ""))
+	}
+	// Native Go gives //go:systemstack functions a distinct stack-growth
+	// prologue: it checks g.stackguard1 and calls runtime.morestackc. Carry the
+	// source pragma through AttrCFunc so target frame lowering cannot silently
+	// use the ordinary goroutine stack-growth protocol for runtime code.
+	if f.OwnAux.Fn.CFunc() {
+		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goSystemStackAttr, ""))
+	}
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(llvmFramePointerAttr, llvmFramePointerNonLeaf))
 	if sig.HasClosureContext {
 		FCtxt.ClosureContext = FCtxt.LF.Param(sig.ClosureContextIndex)
