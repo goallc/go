@@ -3,7 +3,7 @@ target triple = "x86_64-unknown-linux-goobj"
 declare goabiinternal void @left_callee()
 declare goabiinternal void @right_callee()
 
-define goabiinternal i64 @branch_safepoints(ptr %p, i1 %take_left) "go-stack-growth-statepoint" gc "goallc" {
+define goabiinternal i64 @branch_safepoints(ptr %p, i1 %take_left) gc "goallc" {
 entry:
   br i1 %take_left, label %left, label %right
 

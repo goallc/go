@@ -12,9 +12,11 @@ future in-process `cmd/compile` integration can call the same pipeline without
 going through `llc`.
 
 The SSA-to-LLVM lowering owns the function-level contract: Go ABI definitions
-carry `gc "goallc"` and the `go-stack-growth-statepoint` attribute. Loading this
-plugin registers the named GC strategy and its metadata printer; the rewrite
-pass consumes the frontend markers rather than adding them.
+carry `gc "goallc"`, and only source-level exceptions to the native Go stack
+policy need target attributes such as `go-nosplit` or `go-systemstack`. Loading
+this plugin registers the named GC strategy and the no-op metadata-printer
+marker required by AsmPrinter; the rewrite pass consumes the frontend markers
+rather than adding them. GoObj stack-map adaptation lives in LLVM core.
 
 Entry argument pointer maps do not use an IR marker or intrinsic. After LLVM
 optimization and inlining, target formal-argument lowering recursively derives
@@ -156,7 +158,7 @@ constants in Machine StackMaps. For `gc "goallc"`, a static alloca used only
 as a deopt layout carrier is not implicitly promoted to a GC root; explicit
 `gc-live` is the activity signal. The resulting `gc.relocate(alloca)` is
 `NoRelocate` and rematerializes the same frame index, so no root spill is
-created. The Go-owned StackMaps bridge retains the deopt prefix and resolves
+created. LLVM's GoObj StackMaps bridge retains the deopt prefix and resolves
 both inline constants and `ConstantIndex` values. The GoObj writer strictly
 parses the suffix and maps every layout with a matching direct `gc-live` alloca
 plus bitmap bit to that callsite's `LocalsPointerMaps`. An unmatched layout is
@@ -231,28 +233,28 @@ non-trivial implementation block is copied verbatim, it must live in a
 separately attributed source file retaining LLVM's Apache-2.0-with-exception
 notice; BSD-only Go source files should not silently absorb copied code.
 
-`GoALLCStackMapPrinter.cpp` is the Go-owned boundary between LLVM Machine
-StackMaps and GoObj. It uses the standard
-`AsmPrinter -> GCMetadataPrinter::emitStackMaps` hook, retains deopt and GC
-locations in `MCContext`, and resolves StackMaps constant-pool indexes without
-adding a parallel serializer. LLVM's generic `StackMaps.cpp` only exposes the
-constant resolver; it has no GoALLC grammar or GoObj policy. LLVM records GoObj
-statepoint callsites at the CALL
+The Go-owned metadata printer is the boundary between Machine StackMaps and
+GoObj. It retains deopt and GC locations in LLVM's `MCContext` and resolves
+StackMaps constant-pool indexes without adding a parallel serializer; LLVM's
+GoObj writer remains responsible for final object-format serialization. LLVM
+records GoObj statepoint callsites at the CALL
 start, matching Go's `PCDATA_StackMapIndex` convention without a command-line
-mode. The frontend's stack-growth attribute
-asks LLVM to express the late-generated `runtime.morestack` call as a physical
-MIR `STATEPOINT` with empty deopt and GC-alloca sections. Before frame
-allocation, AArch64 formal lowering maps every type-derived input pointer word
-onto the existing fixed home reserved for that ABI input. Frame lowering encodes
-those homes in the morestack statepoint's GC pointer section as indirect
-`SP+offset` locations with base-equals-derived pairs; it never asks the
-statepoint machinery to allocate another spill. The GoObj writer recognizes
-the stack-growth ID, interprets those offsets in the entry-SP geometry, and
-selects pair 0: non-empty `EntryArgs` when present and empty locals. Ordinary
-and stack-growth calls use the same Machine StackMaps pipeline without relying
-on a return-PC convention. GoObj functions that already contain a Machine
-`STATEPOINT` but lack the frontend stack-growth attribute fail closed; there is
-no slow-path reset-label fallback for a raw morestack call.
+mode. GoObj Go functions use native Go's split-stack policy by default: unless
+`go-nosplit` is present, target frame lowering expresses the late-generated
+`runtime.morestack` call as an ordinary ABI0 MIR call. Before frame allocation,
+formal lowering maps each live type-derived input pointer word onto the existing
+fixed home reserved for that ABI input. It still reserves and saves complete ABI
+homes for an unused formal so a morestack retry preserves the register
+assignment, but does not scan a word that LLVM callers may replace with poison.
+Frame lowering records the live homes in a separate zero-byte
+`EntryArgsStackMapID` record for every GoObj Go function. This is function
+metadata rather than a callsite. The GoObj writer uses it as pair 0: non-empty
+`EntryArgs` when present and empty locals, and initializes
+`PCDATA_StackMapIndex` to 0. AsmPrinter's PCSP stream has already resolved the
+Machine CFG; every transition back to the entry stack depth selects map 0. This
+covers the pre-frame morestack path without identifying `runtime.morestack` by
+name or manufacturing a statepoint. An ordinary statepoint selects its actual
+live map and overrides a same-PC entry-depth transition.
 GoObj emits the currently constant safe `PCDATA_UnsafePoint` table first and
 the statepoint-derived `PCDATA_StackMapIndex` table second, as required by
 their Go ABI indexes 0 and 1.

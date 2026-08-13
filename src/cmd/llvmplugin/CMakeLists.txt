@@ -21,9 +21,9 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
 add_llvm_pass_plugin(GoALLCStatepoints
+  GoALLCStackMapPrinter.cpp
   GoALLCInlineAnchors.cpp
   GoALLCPreCodeGen.cpp
-  GoALLCStackMapPrinter.cpp
   GoALLCStatepoints.cpp
   GoALLCStatepointPlugin.cpp
 )
@@ -252,7 +252,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.FrontendMarkersPreserved PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "go-stack-growth-statepoint"
+      "gc \"goallc\""
   )
 
   foreach(GOALLC_DEBUG_TARGET IN ITEMS X86 AArch64)
@@ -505,6 +505,17 @@ if(BUILD_TESTING)
         DEPENDS GoALLCStatepoints.DebugInline${GOALLC_DEBUG_TARGET}GoObj
       )
     endforeach()
+    goallc_add_filecheck_test(
+      GoALLCStatepoints.GoObjStackMaps
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/statepoint.ll"
+      OBJVIEW-TEXT
+      "${GOALLC_OBJVIEW_EXECUTABLE}" -format=text
+      "${CMAKE_CURRENT_BINARY_DIR}/statepoint.goobj"
+    )
+    set_tests_properties(GoALLCStatepoints.GoObjStackMaps PROPERTIES
+      DEPENDS GoALLCStatepoints.GoObj
+    )
+
     goallc_add_filecheck_test(
       GoALLCStatepoints.DeferEdgeObjView
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/defer-edge.ll"

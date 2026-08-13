@@ -62,7 +62,7 @@ declare goabiinternal void @leaf_consume_pair(%pair) #0
 
 define goabiinternal ptr @aggregate_diamond_call_skip(
     i1 %take_call, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %take_call, label %call, label %skip
 
@@ -81,7 +81,7 @@ merge:
 
 define goabiinternal ptr @aggregate_branch_safepoints(
     i1 %take_left, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %take_left, label %left, label %right
 
@@ -101,7 +101,7 @@ merge:
 
 define goabiinternal ptr @aggregate_sequential_conditional(
     i1 %take_first, i1 %take_second, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %take_first, label %first_call, label %first_skip
 
@@ -130,7 +130,7 @@ second_merge:
 
 define goabiinternal ptr @aggregate_natural_loop(
     i32 %count, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br label %header
 
@@ -149,7 +149,7 @@ exit:
 
 define goabiinternal ptr @aggregate_irreducible(
     i1 %enter_b, i1 %leave_a, i1 %leave_b, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %enter_b, label %b, label %a
 
@@ -168,7 +168,7 @@ exit:
 
 define goabiinternal ptr @aggregate_phi_edge_use(
     i1 %take_call, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   br i1 %take_call, label %call, label %skip
 
@@ -189,7 +189,7 @@ merge:
 
 define goabiinternal ptr @aggregate_phi_duplicate_edge(
     i32 %which, %pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   switch i32 %which, label %merge [
@@ -206,7 +206,7 @@ merge:
 
 define goabiinternal ptr @aggregate_call_result_conditional(
     ptr %seed, i1 %take_call)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %value = call goabiinternal %pair @make_pair(ptr %seed, i64 7)
   br i1 %take_call, label %call, label %skip
@@ -226,7 +226,7 @@ merge:
 
 define goabiinternal ptr @aggregate_call_result_loop(
     ptr %seed, i32 %count)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %value = call goabiinternal %pair @make_pair(ptr %seed, i64 11)
   br label %header
@@ -246,7 +246,7 @@ exit:
 
 define goabiinternal ptr @aggregate_call_result_irreducible(
     ptr %seed, i1 %enter_b, i1 %leave_a, i1 %leave_b)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   %value = call goabiinternal %pair @make_pair(ptr %seed, i64 13)
   br i1 %enter_b, label %b, label %a
@@ -265,7 +265,7 @@ exit:
 }
 
 define goabiinternal ptr @aggregate_multiple_safepoints(%pair %value)
-    "go-stack-growth-statepoint" gc "goallc" {
+    gc "goallc" {
 entry:
   call goabiinternal void @safepoint()
   call goabiinternal void @safepoint()

@@ -8,4 +8,4 @@ entry:
   ret void
 }
 
-attributes #0 = { "gc-leaf-function" "go-stack-growth-statepoint" }
+attributes #0 = { "gc-leaf-function" }

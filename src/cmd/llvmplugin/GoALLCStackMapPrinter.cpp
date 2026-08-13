@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/GCMetadataPrinter.h"
-#include "llvm/CodeGen/GoCallingConv.h"
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -56,8 +56,7 @@ static GCMetadataPrinterRegistry::Add<GoALLCStackMapPrinter>
                                       "GoALLC GoObj Machine StackMaps bridge");
 
 bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
-  // Other object formats can continue to use LLVM's standard stackmap
-  // serialization while the GoObj bridge is being brought up.
+  // Other object formats continue to use LLVM's standard stackmap format.
   if (!AP.OutContext.isGoObj())
     return false;
 
@@ -71,31 +70,37 @@ bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
     for (uint64_t I = 0; I != Info.RecordCount; ++I) {
       if (Callsite == Callsites.end())
         report_fatal_error(
-            "GoALLC statepoint function record count exceeds callsites");
+            "GoALLC stackmap function record count exceeds callsites");
 
-      // LLVM's statepoint parser flattens CC, flags, deopt count, deopt
-      // operands, GC base/derived pairs, and GC allocas into Locations. The
-      // first three entries and the deopt operands are not GC roots.
       const StackMaps::CallsiteInfo &CSI = *Callsite++;
-      if (CSI.Locations.size() < 3)
-        report_fatal_error("malformed GoALLC statepoint location list");
-      (void)getNonnegativeConstant(CSI.Locations[0], "calling convention");
-      (void)getNonnegativeConstant(CSI.Locations[1], "flags");
-      uint64_t NumDeopts =
-          getNonnegativeConstant(CSI.Locations[2], "deopt count");
-      if (NumDeopts > CSI.Locations.size() - 3)
-        report_fatal_error("malformed GoALLC statepoint deopt operands");
-      if (NumDeopts > std::numeric_limits<uint32_t>::max())
-        report_fatal_error("GoALLC statepoint has too many deopt operands");
+      const bool IsEntryArgs = CSI.ID == GoObj::EntryArgsStackMapID;
+      uint64_t NumDeopts = 0;
+      ArrayRef<StackMaps::Location> Locations = CSI.Locations;
+      if (!IsEntryArgs) {
+        // Statepoint records start with the calling convention, flags, deopt
+        // count, and then the deopt operands. EntryArgsStackMapID is a plain
+        // STACKMAP whose locations are only function argument pointer homes.
+        if (Locations.size() < 3)
+          report_fatal_error("malformed GoALLC statepoint location list");
+        (void)getNonnegativeConstant(Locations[0], "calling convention");
+        (void)getNonnegativeConstant(Locations[1], "flags");
+        NumDeopts = getNonnegativeConstant(Locations[2], "deopt count");
+        if (NumDeopts > Locations.size() - 3)
+          report_fatal_error("malformed GoALLC statepoint deopt operands");
+        if (NumDeopts > std::numeric_limits<uint32_t>::max())
+          report_fatal_error("GoALLC statepoint has too many deopt operands");
+        Locations = Locations.drop_front(3);
+      }
 
-      MCContext::GoObjStackMapEntry Entry{CSI.CSOffsetExpr,   CSI.ID,
-                                          CSI.IsIndirectCall, Info.StackSize,
+      MCContext::GoObjStackMapEntry Entry{CSI.CSOffsetExpr,
+                                          CSI.ID,
+                                          CSI.IsIndirectCall,
+                                          Info.StackSize,
                                           PointerSize,
                                           static_cast<uint32_t>(NumDeopts),
                                           {}};
-      Entry.Locations.reserve(CSI.Locations.size() - 3);
-      for (const StackMaps::Location &Location :
-           ArrayRef(CSI.Locations).drop_front(3)) {
+      Entry.Locations.reserve(Locations.size());
+      for (const StackMaps::Location &Location : Locations) {
         auto Type = convertLocationType(Location.Type);
         int64_t Offset = Location.Offset;
         if (Location.Type == StackMaps::Location::Constant ||
@@ -107,8 +112,7 @@ bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
           Type = MCContext::GoObjStackMapLocation::Constant;
           Offset = *Constant;
         }
-        Entry.Locations.push_back(
-            {Type, Location.Size, Location.Reg, Offset});
+        Entry.Locations.push_back({Type, Location.Size, Location.Reg, Offset});
       }
       AP.OutContext.addGoObjSymbolStackMapEntry(Function, std::move(Entry));
     }
@@ -116,7 +120,7 @@ bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
 
   if (Callsite != Callsites.end())
     report_fatal_error(
-        "GoALLC statepoint callsites exceed function record counts");
+        "GoALLC stackmap callsites exceed function record counts");
 
   SM.reset();
   return true;
