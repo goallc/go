@@ -16,6 +16,7 @@ import (
 	"cmd/compile/internal/liveness"
 	"cmd/compile/internal/objw"
 	"cmd/compile/internal/pgoir"
+	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/ssagen"
 	"cmd/compile/internal/staticinit"
 	"cmd/compile/internal/types"
@@ -66,10 +67,15 @@ func enqueueFunc(fn *ir.Func, symABIs *ssagen.SymABIs) {
 				// is ABI0, and only ABI0 assembly function can have a FUNCDATA
 				// reference to args_stackmap (see cmd/internal/obj/plist.go:Flushplist).
 				// So avoid introducing an args_stackmap if the func is not ABI0.
-				liveness.WriteFuncMap(fn, abiInfo)
+				argMap := liveness.WriteFuncMap(fn, abiInfo)
 
-				x := ssagen.EmitArgInfo(fn, abiInfo)
-				objw.Global(x, int32(len(x.P)), obj.RODATA|obj.LOCAL)
+				argInfo := ssagen.EmitArgInfo(fn, abiInfo)
+				objw.Global(argInfo, int32(len(argInfo.P)), obj.RODATA|obj.LOCAL)
+				if base.Flag.EnableLLVM && symABIs.HasDef(fn.Sym()) {
+					// Assembly FUNCDATA directives refer to these definitions from
+					// another archive member, so LLVM cannot discover their uses.
+					ssa.MarkGoObjDataReferencedOutsideLLVM(argMap, argInfo)
+				}
 			}
 			return
 		}

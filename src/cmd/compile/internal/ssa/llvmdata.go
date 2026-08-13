@@ -193,8 +193,36 @@ func LowerGoObjData() {
 		setGoObjKeepMetadata(g, s)
 		setGoObjGotypeMetadata(g, s)
 		setGoObjMarkerRelocMetadata(g, s)
+		if lowerer.externalRoots[s] {
+			// This definition is referenced from a different archive member, so
+			// its use is invisible to LLVM. Keep it present and distinct through
+			// GlobalDCE and ConstantMerge; Go linker reachability still decides
+			// whether the GoObj symbol survives in the final binary.
+			preserveGoObjMetadataValues(g)
+		}
+	}
+	for s := range lowerer.externalRoots {
+		if !lowerer.lowered[s] {
+			base.Fatalf("GoObj data referenced outside LLVM was not lowered: %s", s.Name)
+		}
 	}
 	emitGoObjCompilerUsed()
+}
+
+// MarkGoObjDataReferencedOutsideLLVM marks compiler data definitions whose
+// references live in another archive member and therefore cannot participate
+// in LLVM IR reachability. The definitions are kept only through object
+// emission; the Go linker remains responsible for final reachability.
+func MarkGoObjDataReferencedOutsideLLVM(syms ...*obj.LSym) {
+	if currentLLVMDataLowerer == nil {
+		base.Fatalf("marking external GoObj data before LLVM module initialization")
+	}
+	for _, s := range syms {
+		if s == nil {
+			base.Fatalf("marking nil GoObj data referenced outside LLVM")
+		}
+		currentLLVMDataLowerer.externalRoots[s] = true
+	}
 }
 
 // FinalizeGoObjSymbolMetadata carries native GoObj definition classes and
@@ -243,6 +271,14 @@ func setGoObjPackageSymbolIndexMetadata(value llvm.Value, s *obj.LSym) {
 	if value.IsNil() || s == nil || s.PkgIdx != goobj.PkgIdxSelf || !s.Indexed() || s.SymIdx < 0 {
 		base.Fatalf("invalid LLVM GoObj package symbol index")
 	}
+	// Calls emitted before obj.NumberSyms may initially classify a runtime
+	// builtin as an undefined PkgIdxBuiltin reference. When compiling runtime,
+	// that same LLVM GlobalValue later becomes this package's definition.
+	// Definitions are addressed by their package symbol index, so remove the
+	// now-stale undefined-reference attachment before handing the module to the
+	// GoObj AsmPrinter.
+	value.EraseGlobalMetadata(GlobalCtxt.MDKindID("goobj.builtin"))
+	value.EraseGlobalMetadata(GlobalCtxt.MDKindID("goobj.import"))
 	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolIndexMD), GlobalCtxt.MDNode([]llvm.Metadata{
 		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(s.SymIdx), false).ConstantAsMetadata(),
 	}))
@@ -275,7 +311,11 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 	if s == nil {
 		base.Fatalf("nil Go data symbol in LLVM lowering")
 	}
-	if s.Type == objabi.STEXT || s.Type == objabi.STEXTFIPS || s.ABI() == obj.ABIInternal {
+	// FuncPCABI0 carries an ABI0 LSym through OpAddr, but bodyless assembly
+	// functions still have the unresolved Sxxx kind here. Recover the semantic
+	// function identity from the front end before choosing an LLVM GlobalValue;
+	// ABI alone is insufficient because ordinary data symbols also use ABI0.
+	if llvmGoFunctionSymbol(s) {
 		data := map[*obj.LSym]bool(nil)
 		if currentLLVMDataLowerer != nil {
 			data = currentLLVMDataLowerer.data
@@ -323,6 +363,28 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 	}
 	attachGoObjSymbolRef(g, s)
 	return g
+}
+
+func llvmGoFunctionSymbol(s *obj.LSym) bool {
+	if s.Type == objabi.STEXT || s.Type == objabi.STEXTFIPS || s.ABI() == obj.ABIInternal {
+		return true
+	}
+	// Bodyless assembly declarations are initialized without setupTextLSym, so
+	// their LSym remains Sxxx. typecheck.Target.Funcs is the authoritative list
+	// of current-package function declarations and includes generated ABI
+	// wrappers before LLVM module initialization.
+	if typecheck.Target == nil {
+		return false
+	}
+	for _, fn := range typecheck.Target.Funcs {
+		if fn == nil || fn.Nname == nil || fn.Sym() == nil || fn.Sym().Name == "_" {
+			continue
+		}
+		if fn.LinksymABI(fn.ABI) == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *llvmDataLowerer) globalName(s *obj.LSym) string {
@@ -459,7 +521,7 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 	// at this point. Their ABI nevertheless identifies them as functions (for
 	// example runtime.memequal64 in an equality closure), so do not rely on
 	// STEXT alone here.
-	if s.Type == objabi.STEXT || s.Type == objabi.STEXTFIPS || s.ABI() == obj.ABIInternal {
+	if llvmGoFunctionSymbol(s) {
 		storageName := llvmFunctionStorageName(s.Name, llvmCallConv(s.ABI()))
 		if f := CurrentModule.NamedFunction(storageName); !f.IsNil() {
 			attachGoObjSymbolRef(f, s)
@@ -564,8 +626,17 @@ func setGoObjFunctionFlags(fn llvm.Value, s *obj.LSym) {
 	if s.ReflectMethod() {
 		flag |= goobj.SymFlagReflectMethod
 	}
+	if s.NoSplit() {
+		flag |= goobj.SymFlagNoSplit
+	}
+	if s.IsPkgInit() {
+		flag2 |= goobj.SymFlagPkgInit
+	}
 	if s.IsLinkname() || s.Name == "main.main" {
 		flag2 |= goobj.SymFlagLinkname
+	}
+	if s.IsLinknameStd() {
+		flag2 |= goobj.SymFlagLinknameStd
 	}
 	if s.ABIWrapper() {
 		flag2 |= goobj.SymFlagABIWrapper

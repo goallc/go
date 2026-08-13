@@ -1555,11 +1555,11 @@ func isfat(t *types.Type) bool {
 }
 
 // WriteFuncMap writes the pointer bitmaps for bodyless function fn's
-// inputs and outputs as the value of symbol <fn>.args_stackmap.
-// If fn has outputs, two bitmaps are written, otherwise just one.
-func WriteFuncMap(fn *ir.Func, abiInfo *abi.ABIParamResultInfo) {
+// inputs and outputs as the value of symbol <fn>.args_stackmap and returns
+// that symbol. If fn has outputs, two bitmaps are written, otherwise just one.
+func WriteFuncMap(fn *ir.Func, abiInfo *abi.ABIParamResultInfo) *obj.LSym {
 	if ir.FuncName(fn) == "_" {
-		return
+		return nil
 	}
 	nptr := int(abiInfo.ArgWidth() / int64(types.PtrSize))
 	bv := bitvec.New(int32(nptr))
@@ -1592,6 +1592,7 @@ func WriteFuncMap(fn *ir.Func, abiInfo *abi.ABIParamResultInfo) {
 	}
 
 	objw.Global(lsym, int32(off), obj.RODATA|obj.LOCAL)
+	return lsym
 }
 
 // checkStackmapOverflow checks for potential overflow in runtime stackmap reading.

@@ -10,11 +10,166 @@ import (
 	"strings"
 	"testing"
 
+	"cmd/compile/internal/base"
+	"cmd/compile/internal/ir"
+	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
+	"cmd/internal/src"
 
 	"github.com/goallc/go-llvm"
 )
+
+func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
+	oldModule := CurrentModule
+	oldLowerer := currentLLVMDataLowerer
+	oldCompilerUsed := goObjCompilerUsed
+	oldCompilerUsedNames := goObjCompilerUsedNames
+	oldData := base.Ctxt.Data
+	module := GlobalCtxt.NewModule("goobj_external_data_roots")
+	CurrentModule = module
+	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
+	goObjCompilerUsed = nil
+	goObjCompilerUsedNames = make(map[string]bool)
+	t.Cleanup(func() {
+		base.Ctxt.Data = oldData
+		goObjCompilerUsedNames = oldCompilerUsedNames
+		goObjCompilerUsed = oldCompilerUsed
+		currentLLVMDataLowerer = oldLowerer
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+
+	newLocalData := func(name string, value byte) *obj.LSym {
+		s := &obj.LSym{Name: name, Type: objabi.SRODATA, Size: 1, P: []byte{value}}
+		s.Set(obj.AttrLocal, true)
+		return s
+	}
+	externalRoot := newLocalData("test.external.root", 1)
+	ordinaryLocal := newLocalData("test.ordinary.local", 2)
+	base.Ctxt.Data = []*obj.LSym{externalRoot, ordinaryLocal}
+	MarkGoObjDataReferencedOutsideLLVM(externalRoot)
+	LowerGoObjData()
+
+	var used string
+	for _, line := range strings.Split(module.String(), "\n") {
+		if strings.HasPrefix(line, "@llvm.compiler.used =") {
+			used = line
+			break
+		}
+	}
+	if used == "" {
+		t.Fatalf("module has no llvm.compiler.used:\n%s", module.String())
+	}
+	if !strings.Contains(used, "@test.external.root") {
+		t.Fatalf("external GoObj root is not compiler-used: %s", used)
+	}
+	if strings.Contains(used, "@test.ordinary.local") {
+		t.Fatalf("ordinary local GoObj data is unnecessarily compiler-used: %s", used)
+	}
+}
+
+func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) {
+	oldModule := CurrentModule
+	oldLowerer := currentLLVMDataLowerer
+	oldTarget := typecheck.Target
+	module := GlobalCtxt.NewModule("abi0_function_address")
+	CurrentModule = module
+	currentLLVMDataLowerer = nil
+	typecheck.Target = new(ir.Package)
+	t.Cleanup(func() {
+		typecheck.Target = oldTarget
+		currentLLVMDataLowerer = oldLowerer
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+
+	typ := llvm.FunctionType(GlobalCtxt.VoidType(), nil, false)
+	internal := llvm.AddFunction(module, "runtime.asyncPreempt", typ)
+	internal.SetFunctionCallConv(goABIInternalCallConv)
+
+	pkg := types.NewPkg("runtime", "runtime")
+	fn := ir.NewFunc(src.NoXPos, src.NoXPos, pkg.Lookup("asyncPreempt"), nil)
+	fn.ABI = obj.ABI0
+	typecheck.Target.Funcs = append(typecheck.Target.Funcs, fn)
+	sym := fn.LinksymABI(fn.ABI)
+	if sym.Type != objabi.Sxxx {
+		t.Fatalf("test requires an unresolved bodyless LSym, got %v", sym.Type)
+	}
+	got := llvmGoDataRef(sym)
+	if got.IsAFunction().IsNil() || got.Name() != "runtime.asyncPreempt<ABI0>" {
+		t.Fatalf("ABI0 function address resolved to %q, want ABI0 function declaration", got.Name())
+	}
+}
+
+func TestLLVMRuntimeConstructedClosure(t *testing.T) {
+	mem := &Value{ID: 1, Op: OpInitMem, Type: types.TypeMem}
+	rawCode := &Value{ID: 2, Op: OpArg, Type: types.Types[types.TUNSAFEPTR]}
+	code := &Value{ID: 3, Op: OpConvert, Type: types.Types[types.TUINTPTR], Args: []*Value{rawCode, mem}, Uses: 2}
+	context := &Value{ID: 4, Op: OpLocalAddr, Type: types.NewPtr(types.Types[types.TUINTPTR])}
+	codeAddress := &Value{ID: 5, Op: OpOffPtr, Type: types.NewPtr(types.Types[types.TUINTPTR]), Args: []*Value{context}}
+	codeStore := &Value{ID: 6, Op: OpStore, Type: types.TypeMem, Args: []*Value{codeAddress, code, mem}}
+	otherStore := &Value{ID: 7, Op: OpStore, Type: types.TypeMem, Args: []*Value{context, context, codeStore}}
+	argument := &Value{ID: 8, Op: OpArg, Type: types.Types[types.TUNSAFEPTR]}
+	call := &Value{ID: 9, Op: OpClosureLECall, Type: types.TypeMem, Args: []*Value{code, context, argument, otherStore}}
+
+	if !llvmRuntimeConstructedClosure(call, code, context) {
+		t.Fatal("runtime-constructed funcval was not recognized")
+	}
+
+	wrongCode := &Value{ID: 10, Op: OpConvert, Type: types.Types[types.TUINTPTR], Args: []*Value{rawCode, mem}, Uses: 2}
+	call.Args[0] = wrongCode
+	if llvmRuntimeConstructedClosure(call, wrongCode, context) {
+		t.Fatal("code value not stored in the funcval context was accepted")
+	}
+}
+
+func TestLLVMJumpTableDefaultIsUnreachable(t *testing.T) {
+	module := GlobalCtxt.NewModule("jump_table_default")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	i64 := GlobalCtxt.Int64Type()
+	function := llvm.AddFunction(module, "jump_table_default", llvm.FunctionType(i64, []llvm.Type{i64}, false))
+	jumpLLVM := llvm.AddBasicBlock(function, "jump")
+	mergeLLVM := llvm.AddBasicBlock(function, "merge")
+	otherLLVM := llvm.AddBasicBlock(function, "other")
+
+	jump := &Block{ID: 1, Kind: BlockJumpTable}
+	merge := &Block{ID: 2}
+	other := &Block{ID: 3}
+	control := &Value{ID: 1, Type: types.Types[types.TINT]}
+	jump.Controls[0] = control
+	jump.Succs = []Edge{{b: merge}, {b: merge}, {b: other}}
+	context := &LLVMFuncContext{
+		BBs: map[ID]llvm.BasicBlock{
+			jump.ID:  jumpLLVM,
+			merge.ID: mergeLLVM,
+			other.ID: otherLLVM,
+		},
+		Vs: map[ID]llvm.Value{control.ID: function.Param(0)},
+		LF: function,
+		b:  builder,
+	}
+	context.CompileBlock(jump, nil)
+
+	builder.SetInsertPointAtEnd(mergeLLVM)
+	phi := builder.CreatePHI(i64, "carried")
+	seven := llvm.ConstInt(i64, 7, false)
+	phi.AddIncoming([]llvm.Value{seven, seven}, []llvm.BasicBlock{jumpLLVM, jumpLLVM})
+	builder.CreateRet(phi)
+	builder.SetInsertPointAtEnd(otherLLVM)
+	builder.CreateRet(llvm.ConstInt(i64, 9, false))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("jump table added a non-SSA default edge: %v\n%s", err, module.String())
+	}
+	if ir := module.String(); !strings.Contains(ir, "b1.jump.default") || !strings.Contains(ir, "unreachable") {
+		t.Fatalf("jump table has no unreachable default block\n%s", ir)
+	}
+}
 
 func TestLLVMCurrentGRegister(t *testing.T) {
 	for _, test := range []struct {

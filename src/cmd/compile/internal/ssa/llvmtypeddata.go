@@ -22,6 +22,7 @@ import (
 type llvmDataLowerer struct {
 	data             map[*obj.LSym]bool
 	roots            map[*obj.LSym]bool
+	externalRoots    map[*obj.LSym]bool
 	lowered          map[*obj.LSym]bool
 	values           map[*obj.LSym]llvm.Value
 	anonymousCount   int
@@ -34,6 +35,7 @@ func newLLVMDataLowerer(data map[*obj.LSym]bool) *llvmDataLowerer {
 	return &llvmDataLowerer{
 		data:             data,
 		roots:            make(map[*obj.LSym]bool),
+		externalRoots:    make(map[*obj.LSym]bool),
 		lowered:          make(map[*obj.LSym]bool),
 		values:           make(map[*obj.LSym]llvm.Value),
 		runtimeTypes:     make(map[*types.Type]llvm.Type),

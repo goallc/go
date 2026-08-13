@@ -580,7 +580,12 @@ func (lfc *LLVMFuncContext) currentG(v *Value) llvm.Value {
 	}
 
 	i64 := GlobalCtxt.Int64Type()
-	registerName := GlobalCtxt.MetadataAsValue(GlobalCtxt.MDString(register))
+	// llvm.read_register requires a metadata node whose first operand is the
+	// register-name string. A bare MDString passes IR verification but crashes
+	// SelectionDAG's intrinsic lowering when it casts the operand to MDNode.
+	registerName := GlobalCtxt.MetadataAsValue(GlobalCtxt.MDNode([]llvm.Metadata{
+		GlobalCtxt.MDString(register),
+	}))
 	sig := llvm.FunctionType(i64, []llvm.Type{registerName.Type()}, false)
 	fn := getOrInsertLLVMIntrinsic("llvm.read_register.i64", sig)
 	raw := lfc.b.CreateCall(sig, fn, []llvm.Value{registerName}, v.String()+".register")
@@ -943,9 +948,8 @@ func (lfc *LLVMFuncContext) cgoUnsafeArgAddress(name *ir.Name, llvmName string) 
 	return lfc.b.CreateGEP(GlobalCtxt.Int8Type(), lfc.ABI0FrameBase, []llvm.Value{index}, llvmName+".frame")
 }
 
-func markLLVMGCLeaf(fn, call llvm.Value) {
+func markLLVMGCLeafCall(call llvm.Value) {
 	attr := GlobalCtxt.CreateStringAttribute(goGCLeafFunctionAttr, "")
-	fn.AddFunctionAttr(attr)
 	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, attr)
 }
 
@@ -1069,7 +1073,7 @@ func (lfc *LLVMFuncContext) llvmRuntimeMemmove(dst, src, length llvm.Value) llvm
 	attachGoObjABISymbolRef(fn, "runtime.memmove", obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{dst, src, length}, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
-	markLLVMGCLeaf(fn, call)
+	markLLVMGCLeafCall(call)
 	return call
 }
 
@@ -1129,7 +1133,7 @@ func (lfc *LLVMFuncContext) llvmMemEq(v *Value) llvm.Value {
 	attachGoObjABISymbolRef(fn, "runtime.memequal", obj.ABIInternal)
 	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{left, right, size}, v.String())
 	call.SetInstructionCallConv(goABIInternalCallConv)
-	markLLVMGCLeaf(fn, call)
+	markLLVMGCLeafCall(call)
 	return call
 }
 
@@ -1931,7 +1935,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	configureLLVMCall(call, sig)
 	lfc.materializeAddressedResults(v, call, aux)
 	if llvmGCLeaf {
-		markLLVMGCLeaf(fn, call)
+		markLLVMGCLeafCall(call)
 	}
 	return call
 }
@@ -2038,6 +2042,46 @@ func llvmFunctionUsesClosureContext(f *Func) bool {
 		f.fe.Fatalf(f.Entry.Pos, "closure context on unsupported ABI %v for %s", f.OwnAux.ABI().Which(), f.Name)
 	}
 	return hasContext
+}
+
+// llvmRuntimeConstructedClosure reports whether call uses the runtime's
+// trusted hand-built funcval shape. The runtime receives some callback entry
+// points as unsafe.Pointer and stores that code word into a local funcval.
+// Scalar replacement can forward the pointer-to-uintptr Convert directly to
+// the closure call instead of reloading the funcval's first word.
+//
+// Follow the call's memory chain and require the exact forwarded code value to
+// have been stored at offset zero of the context. This keeps arbitrary integer
+// indirect calls fail-closed and preserves the code/context identity that the
+// ordinary Load form establishes structurally.
+func llvmRuntimeConstructedClosure(call, code, context *Value) bool {
+	if code.Op != OpConvert || !code.Type.IsUintptr() || len(code.Args) != 2 ||
+		!code.Args[0].Type.IsUnsafePtr() || !code.Args[1].Type.IsMemory() || code.Uses != 2 ||
+		context == nil || !context.Type.IsPtr() || len(call.Args) == 0 {
+		return false
+	}
+	for mem, steps := call.Args[len(call.Args)-1], 0; mem != nil && steps < 32; steps++ {
+		switch mem.Op {
+		case OpStore:
+			if len(mem.Args) != 3 {
+				return false
+			}
+			addr := mem.Args[0]
+			if mem.Args[1] == code && (addr == context ||
+				(addr.Op == OpOffPtr && auxIntToInt64(addr.AuxInt) == 0 && len(addr.Args) == 1 && addr.Args[0] == context)) {
+				return true
+			}
+			mem = mem.Args[2]
+		case OpVarDef, OpVarLive:
+			if len(mem.Args) != 1 {
+				return false
+			}
+			mem = mem.Args[0]
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func llvmLocalName(v *Value) (*ir.Name, llvmLocalKey) {
@@ -2822,10 +2866,17 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		lfc.b.CreateUnreachable()
 	case BlockJumpTable:
 		index := lfc.GenLV(BB.Controls[0])
-		table := lfc.b.CreateSwitch(index, lfc.BBs[BB.Succs[0].Block().ID], len(BB.Succs))
+		// BlockJumpTable's control is already proven to be in range, and every
+		// Go SSA edge is represented by one indexed successor. A real successor
+		// as LLVM's default would add an extra CFG edge and make PHIs on a
+		// repeated target have one too few incoming values.
+		defaultBlock := GlobalCtxt.AddBasicBlock(lfc.LF, BB.String()+".jump.default")
+		table := lfc.b.CreateSwitch(index, defaultBlock, len(BB.Succs))
 		for i, succ := range BB.Succs {
 			table.AddCase(llvm.ConstInt(index.Type(), uint64(i), false), lfc.BBs[succ.Block().ID])
 		}
+		lfc.b.SetInsertPointAtEnd(defaultBlock)
+		lfc.b.CreateUnreachable()
 	default:
 		BB.Func.fe.Fatalf(BB.Pos, "unsupported SSA block kind in LLVM lowering: %s", BB.Kind)
 	}
@@ -3121,6 +3172,10 @@ func LLVMCompile(f *Func) {
 					if !code.Type.IsUintptr() {
 						v.Fatalf("direct closure call code address has type %v", code.Type)
 					}
+				case OpConvert:
+					if !base.Flag.CompilingRuntime || !llvmRuntimeConstructedClosure(v, code, v.Args[1]) {
+						v.Fatalf("closure call has unsupported converted code pointer")
+					}
 				default:
 					v.Fatalf("closure call code pointer has unsupported form %s", code.Op)
 				}
@@ -3247,6 +3302,27 @@ func LLVMCompile(f *Func) {
 	}
 	var parameterHomes []*Value
 	var parameterLifetimeSlots []llvmStackSlot
+	type cgoUnsafeParameterHome struct {
+		index int
+		name  *ir.Name
+		typ   *types.Type
+		slot  llvmStackSlot
+	}
+	var cgoUnsafeParameterHomes []cgoUnsafeParameterHome
+	if cgoUnsafeArgs {
+		for i, param := range inParams {
+			if param.Name == nil || param.Type.Size() == 0 {
+				continue
+			}
+			slot, _ := preallocateLocal(param.Name, param.Name.Sym().Name+".cgo")
+			cgoUnsafeParameterHomes = append(cgoUnsafeParameterHomes, cgoUnsafeParameterHome{
+				index: i,
+				name:  param.Name,
+				typ:   param.Type,
+				slot:  slot,
+			})
+		}
+	}
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
 			if v.Op != OpLocalAddr || v.Uses == 0 {
@@ -3359,16 +3435,38 @@ func LLVMCompile(f *Func) {
 	// incoming register piece separately and addresses stack-assigned parameters
 	// in their incoming slots. The full aggregate store makes any existing piece
 	// loads and stores redundant and lets normal LLVM memory optimization remove
-	// them. A future optimization may bind wholly stack-assigned parameters
-	// directly to their incoming fixed stack slots.
+	// them. Store the physical ABI carrier directly through the opaque pointer:
+	// reconstructing its semantic named aggregate first obscures the formal
+	// argument store from SelectionDAG and prevents a wholly stack-assigned
+	// parameter home from being folded back to its incoming fixed stack slot.
 	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
+	if len(cgoUnsafeParameterHomes) != 0 {
+		var owner *Value
+		for _, block := range f.Blocks {
+			if len(block.Values) != 0 {
+				owner = block.Values[0]
+				break
+			}
+		}
+		if owner == nil {
+			f.fe.Fatalf(f.Entry.Pos, "cgo unsafe argument function has no SSA value for diagnostics")
+		}
+		for _, home := range cgoUnsafeParameterHomes {
+			param := FCtxt.LF.Param(home.index)
+			param = FCtxt.llvmValueFromABI(owner, param, home.typ, home.slot.Type, home.name.Sym().Name+".cgo.home")
+			if param.Type() != getLLVMType(home.slot.Type) {
+				f.fe.Fatalf(home.name.Pos(), "cgo unsafe argument home changes LLVM representation")
+			}
+			init := FCtxt.b.CreateStore(param, home.slot.Value)
+			init.SetAlignment(int(home.slot.Type.Alignment()))
+		}
+	}
 	for _, v := range parameterHomes {
 		name, key := llvmLocalName(v)
 		slot := FCtxt.Locals[key]
 		param, paramType := FCtxt.paramForArgNameAndType(v, name)
-		param = FCtxt.llvmValueFromABI(v, param, paramType, slot.Type, v.String()+".home")
-		if param.Type() != getLLVMType(slot.Type) {
-			v.Fatalf("parameter home changes LLVM representation")
+		if paramType.Size() != slot.Type.Size() || param.Type() != getLLVMABIType(slot.Type) {
+			v.Fatalf("parameter home has incompatible physical ABI carrier")
 		}
 		init := FCtxt.b.CreateStore(param, slot.Value)
 		init.SetAlignment(int(slot.Type.Alignment()))

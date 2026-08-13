@@ -307,6 +307,9 @@ func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
 		// enter genssa: ssa.Compile has already emitted LLVM IR, while genssa
 		// consumes native register-allocation state and emits the _go_.o
 		// member that llc is replacing.
+		// TODO(goallc): Enforce runtime //go:nowritebarrier(rec) against the
+		// finalized LLVM IR call graph in an LLVM pass. Do not approximate it
+		// by scanning SSA after LLVM IR emission.
 		return
 	}
 	// Note: check arg size to fix issue 25507.
