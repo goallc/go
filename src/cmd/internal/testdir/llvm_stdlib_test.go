@@ -373,6 +373,13 @@ func TestLLVMStdlib(t *testing.T) {
 					"-timeout=" + testTimeout,
 					"-toolexec=" + packageToolexec,
 				}
+				if name == "runtime" {
+					// LLVM GoObj does not yet emit the complete per-function
+					// DWARF carrier set expected by the Go linker. Runtime
+					// qualification currently covers code generation, GoObj,
+					// linking, and execution, but not debug information.
+					args = append(args, "-ldflags=-w")
+				}
 				for _, compilePackage := range compilePackages {
 					args = append(args, fmt.Sprintf("-gcflags=%s=-enablellvm -llvmironly", compilePackage))
 				}

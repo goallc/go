@@ -58,7 +58,7 @@
       "path/filepath": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "regexp": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "regexp/syntax": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
-      "runtime": "qualified through LLVM O2 compilation of its exact dependency closure, GoObj/archive, link, and runtime package tests with test scaffolding compiled natively",
+      "runtime": "qualified through LLVM O2 compilation of its exact dependency closure, GoObj/archive, stripped link (-w), and runtime package tests with test scaffolding compiled natively; DWARF is not yet qualified",
       "sort": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "strconv": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
       "strings": "qualified through entry-package LLVM O2 compile, GoObj/archive, link, and package tests",
