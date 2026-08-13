@@ -97,7 +97,7 @@ entry:
   ret ptr %result
 }
 
-define goabi0 ptr @aarch64_abi0_pointer_result(ptr %pointer) #0 gc "goallc" {
+define goabi0 ptr @"aarch64_abi0_pointer_result<ABI0>"(ptr %pointer) #0 gc "goallc" {
 entry:
   %buf = alloca [8192 x i8], align 16
   %slot = getelementptr inbounds [8192 x i8], ptr %buf, i64 0, i64 8191

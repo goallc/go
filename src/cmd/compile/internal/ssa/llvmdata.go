@@ -86,15 +86,6 @@ func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 	}))
 }
 
-func setGoObjABI0SymbolNameMetadata(value llvm.Value, name string, cc llvm.CallConv) {
-	if cc != goABI0CallConv {
-		return
-	}
-	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolNameMD), GlobalCtxt.MDNode([]llvm.Metadata{
-		GlobalCtxt.MDString(name),
-	}))
-}
-
 // attachGoObjABISymbolRef is for LLVM-generated runtime calls that do not
 // carry an SSA AuxCall. Use the compiler's ABI-aware symbol table so their
 // builtin/non-package classification stays identical to the native writer.
@@ -472,13 +463,11 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 		storageName := llvmFunctionStorageName(s.Name, llvmCallConv(s.ABI()))
 		if f := CurrentModule.NamedFunction(storageName); !f.IsNil() {
 			attachGoObjSymbolRef(f, s)
-			setGoObjABI0SymbolNameMetadata(f, s.Name, llvmCallConv(s.ABI()))
 			return f
 		}
 		f := llvm.AddFunction(CurrentModule, storageName, llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
 		f.SetFunctionCallConv(llvmCallConv(s.ABI()))
 		attachGoObjSymbolRef(f, s)
-		setGoObjABI0SymbolNameMetadata(f, s.Name, llvmCallConv(s.ABI()))
 		return f
 	}
 	if g := CurrentModule.NamedGlobal(s.Name); !g.IsNil() {

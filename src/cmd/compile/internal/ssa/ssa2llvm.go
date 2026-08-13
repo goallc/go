@@ -10,6 +10,7 @@ import (
 	"cmd/internal/src"
 	"fmt"
 	"internal/buildcfg"
+	"strings"
 
 	"github.com/goallc/go-llvm"
 )
@@ -64,6 +65,7 @@ type llvmAddressedResult struct {
 // the standard Go linker can call directly.
 const goABIInternalCallConv llvm.CallConv = 22
 const goABI0CallConv llvm.CallConv = 23
+const goABI0SymbolSuffix = "<ABI0>"
 const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
@@ -76,7 +78,6 @@ const goDeferResultMD = "goallc.defer_result"
 const goOpenDeferBitsMD = "goallc.open_defer_bits"
 const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
-const goObjSymbolNameMD = "goobj.symbol.name"
 const goObjSymbolIndexMD = "goobj.symbol.index"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
@@ -241,8 +242,11 @@ func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
 }
 
 func llvmFunctionStorageName(name string, cc llvm.CallConv) string {
+	if strings.HasSuffix(name, goABI0SymbolSuffix) {
+		base.Fatalf("Go symbol name %q uses reserved LLVM ABI suffix", name)
+	}
 	if cc == goABI0CallConv {
-		return name + ".goallc.abi0"
+		return name + goABI0SymbolSuffix
 	}
 	return name
 }
@@ -272,7 +276,6 @@ func getOrInsertLLVMFunction(name string, sig llvmFuncSignature, cc llvm.CallCon
 		replacement.SetName(storageName)
 		fn = replacement
 	}
-	setGoObjABI0SymbolNameMetadata(fn, name, cc)
 	configureLLVMFunction(fn, sig, cc)
 	return fn
 }

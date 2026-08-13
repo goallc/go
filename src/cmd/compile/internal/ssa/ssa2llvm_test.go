@@ -39,6 +39,21 @@ func TestLLVMCurrentGRegister(t *testing.T) {
 	}
 }
 
+func TestLLVMFunctionStorageName(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cc   llvm.CallConv
+		want string
+	}{
+		{"runtime.morestack", goABI0CallConv, "runtime.morestack<ABI0>"},
+		{"runtime.morestack", goABIInternalCallConv, "runtime.morestack"},
+	} {
+		if got := llvmFunctionStorageName(test.name, test.cc); got != test.want {
+			t.Errorf("llvmFunctionStorageName(%q, %d) = %q, want %q", test.name, test.cc, got, test.want)
+		}
+	}
+}
+
 func TestLLVMAMD64MapPackedByteLowering(t *testing.T) {
 	oldTypes := type2lTypes
 	oldModule := CurrentModule

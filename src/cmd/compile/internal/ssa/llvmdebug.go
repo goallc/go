@@ -137,9 +137,6 @@ func llvmDebugSubprogramValue(sym *obj.LSym, sp llvm.Metadata, abstractValues ma
 		llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
 	value.SetFunctionCallConv(llvmCallConv(sym.ABI()))
 	value.SetLinkage(llvm.WeakAnyLinkage)
-	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolNameMD), GlobalCtxt.MDNode([]llvm.Metadata{
-		GlobalCtxt.MDString(canonicalName),
-	}))
 	value.SetSubprogram(sp)
 	b := GlobalCtxt.NewBuilder()
 	b.SetInsertPointAtEnd(GlobalCtxt.AddBasicBlock(value, "goobj.abstract"))

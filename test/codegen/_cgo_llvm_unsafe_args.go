@@ -9,7 +9,7 @@ package codegen
 //go:noescape
 func llvmCgoUnsafeSink(*uintptr)
 
-// LLVM-LABEL: define goabi0 i64 @codegen.llvmCgoUnsafeFrame.goallc.abi0(
+// LLVM-LABEL: define goabi0 i64 @"codegen.llvmCgoUnsafeFrame<ABI0>"(
 // LLVM-SAME: i64 %p) #[[NOINLINE:[0-9]+]] gc "goallc"
 // LLVM-NOT: alloca
 // LLVM: [[FRAME:%.*]] = {{.*}}call ptr @llvm.go.abi0.frame()
@@ -20,7 +20,7 @@ func llvmCgoUnsafeSink(*uintptr)
 // LLVM: {{.*}}call goabiinternal void @codegen.llvmCgoUnsafeSink(ptr{{.*}} [[FRAME]])
 // LLVM: {{%.*}} = load i64, ptr [[RESULT]]
 // LLVM: attributes #[[NOINLINE]] = { {{.*}}noinline
-// LLVM-OPT-LABEL: define goabi0 i64 @codegen.llvmCgoUnsafeFrame.goallc.abi0(
+// LLVM-OPT-LABEL: define goabi0 i64 @"codegen.llvmCgoUnsafeFrame<ABI0>"(
 // LLVM-OPT-SAME: i64 %p) {{.*}}#[[OPT_NOINLINE:[0-9]+]] gc "goallc"
 // LLVM-OPT-NOT: alloca
 // LLVM-OPT: [[OPT_FRAME:%.*]] = {{.*}}call ptr @llvm.go.abi0.frame()
