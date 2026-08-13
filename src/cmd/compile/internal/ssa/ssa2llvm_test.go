@@ -555,3 +555,31 @@ func TestLLVMTargetCPU(t *testing.T) {
 		})
 	}
 }
+
+func TestLLVMPreserveRecoverFrameUsesLinkSymbolName(t *testing.T) {
+	recoverFn := &Func{
+		Name:   "gorecover",
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "runtime.gorecover"}},
+	}
+	if !llvmPreserveRecoverFrame(recoverFn) {
+		t.Fatal("gorecover definition was not recognized from its qualified link symbol")
+	}
+
+	unrelated := &Func{
+		Name:   "gorecover",
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "other.gorecover"}},
+	}
+	if llvmPreserveRecoverFrame(unrelated) {
+		t.Fatal("unqualified SSA function name incorrectly identified another package's gorecover")
+	}
+
+	caller := &Func{
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "runtime.preprintpanics.func1"}},
+		Blocks: []*Block{{
+			Values: []*Value{{Aux: &AuxCall{Fn: &obj.LSym{Name: "runtime.gorecover"}}}},
+		}},
+	}
+	if !llvmPreserveRecoverFrame(caller) {
+		t.Fatal("direct gorecover caller was not preserved as a physical frame")
+	}
+}

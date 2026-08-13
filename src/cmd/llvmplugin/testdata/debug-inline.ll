@@ -115,9 +115,28 @@ entry:
   ret i64 %x, !dbg !55
 }
 
+; The optimized instruction stream has no location for erasedInner. Frontend
+; required-location metadata must make the final machine pass materialize the
+; missing nested inline edge without constraining IR optimization.
+define goabiinternal void @main.erased() !dbg !19 {
+entry:
+  ret void, !dbg !65
+}
+
+define goabiinternal void @main.erasedMid() !dbg !20 {
+entry:
+  ret void, !dbg !66
+}
+
+define goabiinternal void @main.erasedInner() !dbg !21 {
+entry:
+  ret void, !dbg !67
+}
+
 !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!5, !6}
-!goobj.debug.funcs = !{!40, !41, !42, !43, !44, !45, !46, !47, !48}
+!goobj.debug.funcs = !{!40, !41, !42, !43, !44, !45, !46, !47, !48, !49, !56, !57}
+!goobj.debug.inline.required = !{!58}
 
 !0 = distinct !DICompileUnit(language: DW_LANG_Go, file: !1, producer: "goallc-test", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !2, splitDebugInlining: true, nameTableKind: None)
 !1 = !DIFile(filename: "outer.go", directory: "/tmp/goobj-inline")
@@ -136,6 +155,9 @@ entry:
 !16 = distinct !DISubprogram(name: "main.shared", linkageName: "main.shared", scope: !1, file: !1, line: 70, type: !3, scopeLine: 70, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
 !17 = distinct !DISubprogram(name: "main.sharedLeft", linkageName: "main.sharedLeft", scope: !1, file: !1, line: 80, type: !3, scopeLine: 80, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
 !18 = distinct !DISubprogram(name: "main.sharedRight", linkageName: "main.sharedRight", scope: !1, file: !1, line: 90, type: !3, scopeLine: 90, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+!19 = distinct !DISubprogram(name: "main.erased", linkageName: "main.erased", scope: !1, file: !1, line: 100, type: !3, scopeLine: 100, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+!20 = distinct !DISubprogram(name: "main.erasedMid", linkageName: "main.erasedMid", scope: !1, file: !1, line: 110, type: !3, scopeLine: 110, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+!21 = distinct !DISubprogram(name: "main.erasedInner", linkageName: "main.erasedInner", scope: !1, file: !1, line: 120, type: !3, scopeLine: 120, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
 
 !30 = !DILocation(line: 30, column: 3, scope: !12, inlinedAt: !31)
 !31 = distinct !DILocation(line: 20, column: 3, scope: !11, inlinedAt: !32)
@@ -151,6 +173,12 @@ entry:
 !53 = !DILocation(line: 72, column: 2, scope: !16)
 !54 = !DILocation(line: 81, column: 2, scope: !17)
 !55 = !DILocation(line: 91, column: 2, scope: !18)
+!60 = !DILocation(line: 121, column: 2, scope: !21, inlinedAt: !61)
+!61 = distinct !DILocation(line: 111, column: 2, scope: !20, inlinedAt: !62)
+!62 = distinct !DILocation(line: 101, column: 2, scope: !19)
+!65 = !DILocation(line: 102, column: 2, scope: !19)
+!66 = !DILocation(line: 112, column: 2, scope: !20)
+!67 = !DILocation(line: 122, column: 2, scope: !21)
 
 !40 = !{!10, ptr @main.outer}
 !41 = !{!11, ptr @main.mid}
@@ -161,3 +189,7 @@ entry:
 !46 = !{!16, ptr @main.shared}
 !47 = !{!17, ptr @main.sharedLeft}
 !48 = !{!18, ptr @main.sharedRight}
+!49 = !{!19, ptr @main.erased}
+!56 = !{!20, ptr @main.erasedMid}
+!57 = !{!21, ptr @main.erasedInner}
+!58 = !{ptr @main.erased, !60}
