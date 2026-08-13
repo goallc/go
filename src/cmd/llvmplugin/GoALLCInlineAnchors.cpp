@@ -3,14 +3,17 @@
 // license that can be found in the LICENSE file.
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -71,6 +74,42 @@ class GoALLCInlineAnchorPass final : public MachineFunctionPass {
                            Loc->getAtomRank());
   }
 
+  SmallVector<const DILocation *, 16>
+  requiredInlineLocations(const MachineFunction &MF) const {
+    SmallVector<const DILocation *, 16> Required;
+    const Module *M = MF.getFunction().getParent();
+    const NamedMDNode *Locations =
+        M ? M->getNamedMetadata("goobj.debug.inline.required") : nullptr;
+    if (!Locations)
+      return Required;
+
+    for (const MDNode *Entry : Locations->operands()) {
+      if (Entry->getNumOperands() != 2)
+        report_fatal_error("expected !goobj.debug.inline.required entries to "
+                           "have two operands");
+      const auto *CAM =
+          dyn_cast_or_null<ConstantAsMetadata>(Entry->getOperand(0));
+      const auto *GV = CAM ? dyn_cast<GlobalValue>(CAM->getValue()) : nullptr;
+      const auto *Loc = dyn_cast_or_null<DILocation>(Entry->getOperand(1));
+      if (!GV || !Loc || !Loc->getInlinedAt())
+        report_fatal_error("invalid !goobj.debug.inline.required entry");
+      if (GV == &MF.getFunction())
+        Required.push_back(Loc);
+    }
+
+    llvm::stable_sort(
+        Required, [](const DILocation *LHS, const DILocation *RHS) {
+          auto Depth = [](const DILocation *Loc) {
+            unsigned Result = 0;
+            for (; Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
+              ++Result;
+            return Result;
+          };
+          return Depth(LHS) > Depth(RHS);
+        });
+    return Required;
+  }
+
 public:
   static char ID;
 
@@ -88,6 +127,51 @@ public:
     const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
     CanonicalSites.clear();
 
+    // LLVM may merge instructions from distinct frontend inline frames (for
+    // example, SLP-vectorizing adjacent stores) and retain only one debug
+    // location. Materialize a source NOP for each required inline edge that no
+    // longer occurs in the optimized MachineFunction. Deeper chains are
+    // considered first because one such marker also preserves all its parents.
+    DenseSet<const DILocation *> SurvivingCallsites;
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (!MI.isMetaInstruction())
+          for (const DILocation *Loc = MI.getDebugLoc().get();
+               Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
+            SurvivingCallsites.insert(Loc->getInlinedAt());
+
+    bool Changed = false;
+    if (!MF.empty()) {
+      MachineBasicBlock *InsertBlock = nullptr;
+      MachineBasicBlock::iterator InsertAt;
+      for (MachineBasicBlock &MBB : MF) {
+        auto It = MBB.begin();
+        while (It != MBB.end() && (It->isMetaInstruction() ||
+                                   It->getFlag(MachineInstr::FrameSetup)))
+          ++It;
+        if (It != MBB.end()) {
+          InsertBlock = &MBB;
+          InsertAt = It;
+          break;
+        }
+      }
+      for (const DILocation *Loc : requiredInlineLocations(MF)) {
+        const DILocation *Innermost = Loc->getInlinedAt();
+        if (SurvivingCallsites.contains(Innermost))
+          continue;
+        if (!InsertBlock)
+          report_fatal_error("GoALLC required inline location has no "
+                             "post-prologue insertion point");
+        TII.insertNoop(*InsertBlock, InsertAt);
+        MachineInstr &Marker = *std::prev(InsertAt);
+        Marker.setDebugLoc(DebugLoc(Loc));
+        for (const DILocation *Site = Loc; Site && Site->getInlinedAt();
+             Site = Site->getInlinedAt())
+          SurvivingCallsites.insert(Site->getInlinedAt());
+        Changed = true;
+      }
+    }
+
     // Normalize complete inline chains before inspecting them. This keeps the
     // anchor pass and the later GoObj debug handler on the same edge identity.
     for (MachineBasicBlock &MBB : MF)
@@ -97,7 +181,6 @@ public:
               DebugLoc(canonicalizeLocation(MI.getDebugLoc().get())));
 
     DenseSet<const DILocation *> AnchoredCallsites;
-    bool Changed = false;
 
     for (MachineBasicBlock &MBB : MF) {
       for (auto It = MBB.begin(), End = MBB.end(); It != End; ++It) {

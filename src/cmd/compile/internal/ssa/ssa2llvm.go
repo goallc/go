@@ -25,6 +25,7 @@ type LLVMFuncContext struct {
 	ClosureCodeLoads  map[ID]bool
 	DeferResults      map[llvmLocalKey]bool
 	DeferResultKeys   map[ID]llvmLocalKey
+	RequiredInlinePos map[int]bool
 	OpenDeferBits     llvmLocalKey
 	HasOpenDeferBits  bool
 	OpenDeferSlots    map[llvmLocalKey]int
@@ -79,6 +80,7 @@ const goOpenDeferBitsMD = "goallc.open_defer_bits"
 const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolIndexMD = "goobj.symbol.index"
+const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
@@ -2846,8 +2848,18 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 	deferReturn := getOrInsertLLVMABISymbolRef("runtime.deferreturn", obj.ABIInternal, deferReturnSig, goABIInternalCallConv)
 
 	lfc.b.SetInsertPointAtEnd(lfc.OpenDeferRecovery)
+	frontendFunc := lfc.F.Frontend().Func()
+	if frontendFunc == nil || !frontendFunc.Endlineno.IsKnown() {
+		lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer recovery has no function-end source position")
+	}
+	// Match the native shared deferreturn convention: its synthetic call is
+	// attributed to the function end, after every source-level defer. Besides
+	// giving PCLN a stable line, a call in an LLVM debug-info function must
+	// carry a !dbg location even when it lives in a disconnected recovery block.
+	lfc.setDebugLocation(frontendFunc.Endlineno)
 	call := lfc.b.CreateCall(deferReturnSig.Type, deferReturn, nil, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
+	lfc.b.ClearCurrentDebugLocation()
 
 	outParams := lfc.F.OwnAux.ABIInfo().OutParams()
 	if len(outParams) != lfc.ResultCount {
@@ -2957,16 +2969,8 @@ func (lfc *LLVMFuncContext) MappingName() {
 	}
 }
 
-func llvmFuncCalls(f *Func, target string) bool {
-	for _, b := range f.Blocks {
-		for _, v := range b.Values {
-			aux, ok := v.Aux.(*AuxCall)
-			if ok && aux.Fn != nil && aux.Fn.Name == target {
-				return true
-			}
-		}
-	}
-	return false
+func llvmIsRuntimeGorecover(f *Func) bool {
+	return f.OwnAux != nil && f.OwnAux.Fn != nil && f.OwnAux.Fn.Name == "runtime.gorecover"
 }
 
 func LLVMCompile(f *Func) {
@@ -2979,20 +2983,21 @@ func LLVMCompile(f *Func) {
 	}
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
 	FCtxt := &LLVMFuncContext{
-		BBs:              map[ID]llvm.BasicBlock{},
-		Vs:               map[ID]llvm.Value{},
-		Locals:           map[llvmLocalKey]llvmStackSlot{},
-		AddressedResults: map[ID][]llvmAddressedResult{},
-		ResultSlots:      map[ID]llvm.Value{},
-		ItabMethods:      map[ID]bool{},
-		ClosureCodeLoads: map[ID]bool{},
-		DeferResults:     map[llvmLocalKey]bool{},
-		DeferResultKeys:  map[ID]llvmLocalKey{},
-		OpenDeferSlots:   map[llvmLocalKey]int{},
-		F:                f,
-		b:                GlobalCtxt.NewBuilder(),
-		ReturnType:       sig.ReturnType,
-		ResultCount:      sig.ResultCount,
+		BBs:               map[ID]llvm.BasicBlock{},
+		Vs:                map[ID]llvm.Value{},
+		Locals:            map[llvmLocalKey]llvmStackSlot{},
+		AddressedResults:  map[ID][]llvmAddressedResult{},
+		ResultSlots:       map[ID]llvm.Value{},
+		ItabMethods:       map[ID]bool{},
+		ClosureCodeLoads:  map[ID]bool{},
+		DeferResults:      map[llvmLocalKey]bool{},
+		DeferResultKeys:   map[ID]llvmLocalKey{},
+		RequiredInlinePos: map[int]bool{},
+		OpenDeferSlots:    map[llvmLocalKey]int{},
+		F:                 f,
+		b:                 GlobalCtxt.NewBuilder(),
+		ReturnType:        sig.ReturnType,
+		ResultCount:       sig.ResultCount,
 	}
 	defer FCtxt.b.Dispose()
 
@@ -3045,8 +3050,17 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	cgoUnsafeArgs := frontendFunc != nil && frontendFunc.Pragma&ir.CgoUnsafeArgs != 0
-	frontendNoInline := frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
-	if frontendNoInline || llvmFuncCalls(f, "runtime.gorecover") {
+	// TODO(goallc): Native Go permits nosplit functions to be inlined, and the
+	// linker checks the final GoObj PCSP tables and call relocations against the
+	// nosplit limit. This conservative fence currently keeps LLVM inlining from
+	// increasing runtime's callRet chain beyond that limit. Replace it with a
+	// targeted policy once the specific frame growth is understood.
+	frontendNoInline := f.NoSplit || frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
+	// gorecover explicitly advances the physical unwinder past its own frame
+	// before it walks the remaining physical and inline frames. Preserve that
+	// one physical boundary. Direct callers may be represented by Go's inline
+	// tree and are deliberately left available to LLVM's inliner.
+	if frontendNoInline || llvmIsRuntimeGorecover(f) {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
 	if f.OpenDeferBits != nil {

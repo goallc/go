@@ -20,7 +20,7 @@ type llvmOpenDeferNamedResult struct {
 // LLVM: store volatile ptr {{.*}}, ptr [[SLOT0]]
 // LLVM: store volatile ptr {{.*}}, ptr [[SLOT1]]
 // LLVM: [[RECOVERY]]:
-// LLVM-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
+// LLVM-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"(), !dbg !{{[0-9]+}}
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmOpenDeferTwo(i64 %value)
 // LLVM-OPT: [[SLOTS_OPT:%.*]] = alloca [2 x ptr], align 8, !goallc.open_defer_slots ![[SLOTS_OPT_MD:[0-9]+]]
 // LLVM-OPT: [[SLOT1_OPT:%.*]] = getelementptr {{.*}}i8, ptr [[SLOTS_OPT]], i64 8
@@ -30,11 +30,11 @@ type llvmOpenDeferNamedResult struct {
 // LLVM-OPT: store volatile ptr {{.*}}, ptr [[SLOTS_OPT]]
 // LLVM-OPT: store volatile ptr {{.*}}, ptr [[SLOT1_OPT]]
 // LLVM-OPT: [[RECOVERY_OPT]]:
-// LLVM-OPT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
+// LLVM-OPT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"(), !dbg !{{[0-9]+}}
 
 // LLVM-LABEL: define goabiinternal %codegen.llvmOpenDeferNamedResult @codegen.llvmOpenDeferNamed(
 // LLVM: open.defer.recovery:
-// LLVM-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
+// LLVM-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"(), !dbg !{{[0-9]+}}
 // LLVM: load volatile %codegen.llvmOpenDeferNamedResult
 // LLVM: ret %codegen.llvmOpenDeferNamedResult
 // LLVM: ![[SLOTS_MD]] = !{i32 2}
@@ -43,7 +43,7 @@ type llvmOpenDeferNamedResult struct {
 // LLVM-OPT: load volatile %codegen.llvmOpenDeferNamedResult
 // LLVM-OPT: ret %codegen.llvmOpenDeferNamedResult
 // LLVM-OPT: open.defer.recovery:
-// LLVM-OPT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
+// LLVM-OPT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"(), !dbg !{{[0-9]+}}
 // LLVM-OPT: ![[SLOTS_OPT_MD]] = !{i32 2}
 
 func llvmOpenDeferTwo(value int) (result int) {

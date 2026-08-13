@@ -257,6 +257,22 @@ func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
 	}
 
 	locationScope := llvmDIScopeForPos(scope, pos, 0)
-	lfc.b.SetCurrentDebugLocationMetadata(GlobalCtxt.CreateDebugLocation(
-		pos.RelLine(), pos.RelCol(), locationScope, inlinedAt))
+	location := GlobalCtxt.CreateDebugLocation(
+		pos.RelLine(), pos.RelCol(), locationScope, inlinedAt)
+	lfc.b.SetCurrentDebugLocationMetadata(location)
+
+	// Generic LLVM optimization may combine instructions from different Go
+	// inline frames and keep only one of their DILocations. Record one complete
+	// frontend location for every inline node independently of the instruction
+	// stream. The final machine pass uses this only when an inline edge has
+	// otherwise disappeared, so optimization remains unconstrained while Go's
+	// pcinline tree still has a real final-layout PC for every source edge.
+	if len(chain) != 0 && !lfc.RequiredInlinePos[pos.Base().InliningIndex()] {
+		lfc.RequiredInlinePos[pos.Base().InliningIndex()] = true
+		CurrentModule.AddNamedMetadataOperand(goObjDebugInlineRequiredMD,
+			GlobalCtxt.MDNode([]llvm.Metadata{
+				lfc.LF.ConstantAsMetadata(),
+				location,
+			}))
+	}
 }

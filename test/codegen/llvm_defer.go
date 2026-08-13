@@ -73,7 +73,7 @@ var llvmDeferSink int
 // LLVM: callbr void @llvm.go.defer.edge()
 // LLVM-NEXT: to label %{{.*}} [label %[[HEAP_RECOVER]]]
 // LLVM: define goabiinternal void @codegen.llvmDeferHeap.deferwrap1({{.*}}) {{.*}}!goobj.func.info ![[WRAPPER_INFO:[0-9]+]]
-// LLVM: define goabiinternal {{.*}} @codegen.llvmRecover(){{.*}} #[[LLVM_NOINLINE]] gc "goallc"
+// LLVM: define goabiinternal {{.*}} @codegen.llvmRecover(){{.*}} #[[LLVM_RECOVER_ATTRS:[0-9]+]] gc "goallc"
 // LLVM: call goabiinternal {{.*}} @"runtime.gorecover<builtin.{{[0-9]+}}>"(
 // LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmDeferHeap(i64 %count)
 // LLVM-OPT: [[HEAP_OPT_RECOVER:common.ret]]:
@@ -82,7 +82,7 @@ var llvmDeferSink int
 // LLVM-OPT: callbr void @llvm.go.defer.edge()
 // LLVM-OPT-NEXT: to label %{{.*}} [label %[[HEAP_OPT_RECOVER]]]
 // LLVM-OPT: define goabiinternal void @codegen.llvmDeferHeap.deferwrap1({{.*}}) {{.*}}!goobj.func.info ![[WRAPPER_OPT_INFO:[0-9]+]]
-// LLVM-OPT: define goabiinternal {{.*}} @codegen.llvmRecover(){{.*}} #[[LLVM_NOINLINE]] gc "goallc"
+// LLVM-OPT: define goabiinternal {{.*}} @codegen.llvmRecover(){{.*}} #[[LLVM_RECOVER_OPT_ATTRS:[0-9]+]] gc "goallc"
 // LLVM-OPT: call goabiinternal {{.*}} @"runtime.gorecover<builtin.{{[0-9]+}}>"(
 
 // An unnamed result still has a recovery-visible home. If evaluating a return
@@ -93,6 +93,7 @@ var llvmDeferSink int
 // LLVM: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM-NEXT: {{.*}} = load volatile i64, ptr [[UNNAMED_RESULT]]
 // LLVM: attributes #[[LLVM_NOINLINE]] = { {{.*}}noinline
+// LLVM-NOT: attributes #[[LLVM_RECOVER_ATTRS]] = { {{.*}}noinline
 // LLVM: ![[WRAPPER_INFO]] = !{i8 23, i8 0}
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmDeferUnnamedResult(i64 %value)
 // LLVM-OPT: [[UNNAMED_OPT_RESULT:%.*]] = alloca i64, align 8{{$}}
@@ -103,6 +104,7 @@ var llvmDeferSink int
 // LLVM-OPT-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM-OPT-NEXT: br label %[[UNNAMED_OPT_RETURN]]
 // LLVM-OPT: attributes #[[LLVM_NOINLINE]] = { {{.*}}noinline
+// LLVM-OPT-NOT: attributes #[[LLVM_RECOVER_OPT_ATTRS]] = { {{.*}}noinline
 // LLVM-OPT: ![[WRAPPER_OPT_INFO]] = !{i8 23, i8 0}
 
 // A defer in a loop uses runtime.deferproc rather than deferprocStack. Keep this

@@ -560,3 +560,31 @@ func TestLLVMTargetCPU(t *testing.T) {
 		})
 	}
 }
+
+func TestLLVMRuntimeGorecoverUsesLinkSymbolName(t *testing.T) {
+	recoverFn := &Func{
+		Name:   "gorecover",
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "runtime.gorecover"}},
+	}
+	if !llvmIsRuntimeGorecover(recoverFn) {
+		t.Fatal("gorecover definition was not recognized from its qualified link symbol")
+	}
+
+	unrelated := &Func{
+		Name:   "gorecover",
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "other.gorecover"}},
+	}
+	if llvmIsRuntimeGorecover(unrelated) {
+		t.Fatal("unqualified SSA function name incorrectly identified another package's gorecover")
+	}
+
+	caller := &Func{
+		OwnAux: &AuxCall{Fn: &obj.LSym{Name: "runtime.preprintpanics.func1"}},
+		Blocks: []*Block{{
+			Values: []*Value{{Aux: &AuxCall{Fn: &obj.LSym{Name: "runtime.gorecover"}}}},
+		}},
+	}
+	if llvmIsRuntimeGorecover(caller) {
+		t.Fatal("direct gorecover caller was incorrectly identified as gorecover itself")
+	}
+}
