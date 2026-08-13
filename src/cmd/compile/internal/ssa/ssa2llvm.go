@@ -145,8 +145,9 @@ func llvmTypeContainsABIPad(typ llvm.Type) bool {
 }
 
 // getLLVMABIType makes a non-empty carrier only at a top-level zero-sized ABI
-// boundary. The original zero-sized type remains in the wrapper, so DataLayout
-// supplies its Go alignment without storing that alignment in an attribute.
+// boundary. The original zero-sized layout remains in the wrapper, so
+// DataLayout supplies its Go alignment without storing that alignment in an
+// attribute.
 func getLLVMABIType(typ *types.Type) llvm.Type {
 	storage := getLLVMType(typ)
 	if typ.Size() == 0 {
@@ -1733,11 +1734,10 @@ func (lfc *LLVMFuncContext) llvmIData(v *Value) llvm.Value {
 	return result
 }
 
-// reshapeLLVMValue converts between the distinct nominal LLVM aggregate types
-// used for a generic shape and one of its concrete instantiations. Go's type
-// system already records these as identical for shape-aware operations; keep
-// that decision as the authority and rebuild only the affected first-class
-// struct or array value. Scalar leaves and memory keep their normal lowering.
+// reshapeLLVMValue converts between LLVM representations after Go SSA has
+// already established that the value can flow to the destination type. LLVM
+// identified structs retain Go's named aggregate identity, so rebuild the
+// first-class value when the source and destination names differ.
 func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, to *types.Type, name string) llvm.Value {
 	if value.IsNil() {
 		v.Fatalf("cannot reshape an empty LLVM value")
@@ -1758,56 +1758,85 @@ func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, t
 			return lfc.b.CreateBitCast(value, want, name)
 		}
 	}
-	if from == nil || to == nil || !types.Identical(from, to) || types.IdenticalStrict(from, to) || (!from.HasShape() && !to.HasShape()) {
-		v.Fatalf("cannot reshape LLVM value from Go type %v to %v", from, to)
+	return lfc.reshapeLLVMValueToType(value, want, name)
+}
+
+// reshapeLLVMValueToType is the LLVM-type half of reshapeLLVMValue. Call
+// boundaries also use it for the physical ABI carrier after selecting the
+// callee's semantic signature. Both relationships come from Go SSA and ABI
+// analysis, so this routine only performs the required reconstruction.
+func (lfc *LLVMFuncContext) reshapeLLVMValueToType(value llvm.Value, target llvm.Type, name string) llvm.Value {
+	if value.Type() == target {
+		return value
 	}
 
-	switch from.Kind() {
-	case types.TSTRUCT:
-		if to.Kind() != types.TSTRUCT || value.Type().TypeKind() != llvm.StructTypeKind || want.TypeKind() != llvm.StructTypeKind {
-			v.Fatalf("shape-identical structs have incompatible LLVM aggregate kinds")
-		}
-		fromElements := value.Type().StructElementTypes()
-		toElements := want.StructElementTypes()
-		fromElementCount := from.NumFields()
-		if llvmStructHasTailPad(from) {
-			fromElementCount++
-		}
-		toElementCount := to.NumFields()
-		if llvmStructHasTailPad(to) {
-			toElementCount++
-		}
-		if from.NumFields() != to.NumFields() || len(fromElements) != fromElementCount || len(toElements) != toElementCount {
-			v.Fatalf("shape-identical structs have incompatible field counts")
-		}
-		result := llvm.Undef(want)
-		for i := 0; i < from.NumFields(); i++ {
-			fieldName := fmt.Sprintf("%s.field%d", name, i)
-			field := lfc.b.CreateExtractValue(value, i, fieldName+".extract")
-			field = lfc.reshapeLLVMValue(v, field, from.FieldType(i), to.FieldType(i), fieldName)
-			if field.Type() != toElements[i] {
-				v.Fatalf("reshaped struct field %d has incompatible LLVM type", i)
+	source := value.Type()
+	// Go ABI analysis may describe a promoted method receiver using its single
+	// physical register carrier while the generated wrapper definition retains
+	// the named aggregate receiver type. Peel and rebuild singleton aggregates
+	// at that caller boundary. This keeps the callee signature semantic without
+	// introducing an anonymous aggregate signature shared by both sides.
+	if source.TypeKind() != target.TypeKind() {
+		switch source.TypeKind() {
+		case llvm.StructTypeKind:
+			fields := source.StructElementTypes()
+			if len(fields) == 1 {
+				field := lfc.b.CreateExtractValue(value, 0, name+".abi.unwrap")
+				return lfc.reshapeLLVMValueToType(field, target, name)
 			}
+		case llvm.ArrayTypeKind:
+			if source.ArrayLength() == 1 {
+				element := lfc.b.CreateExtractValue(value, 0, name+".abi.unwrap")
+				return lfc.reshapeLLVMValueToType(element, target, name)
+			}
+		}
+
+		switch target.TypeKind() {
+		case llvm.StructTypeKind:
+			fields := target.StructElementTypes()
+			if len(fields) == 1 {
+				field := lfc.reshapeLLVMValueToType(value, fields[0], name)
+				return lfc.b.CreateInsertValue(llvm.Undef(target), field, 0, name+".abi.wrap")
+			}
+		case llvm.ArrayTypeKind:
+			if target.ArrayLength() == 1 {
+				element := lfc.reshapeLLVMValueToType(value, target.ElementType(), name)
+				return lfc.b.CreateInsertValue(llvm.Undef(target), element, 0, name+".abi.wrap")
+			}
+		}
+	}
+
+	switch target.TypeKind() {
+	case llvm.StructTypeKind:
+		targetFields := target.StructElementTypes()
+		result := llvm.Undef(target)
+		for i := range targetFields {
+			fieldName := fmt.Sprintf("%s.abi.field%d", name, i)
+			field := lfc.b.CreateExtractValue(value, i, fieldName+".extract")
+			field = lfc.reshapeLLVMValueToType(field, targetFields[i], fieldName)
 			result = lfc.b.CreateInsertValue(result, field, i, fieldName+".insert")
 		}
 		return result
 
-	case types.TARRAY:
-		if to.Kind() != types.TARRAY || from.NumElem() != to.NumElem() || value.Type().TypeKind() != llvm.ArrayTypeKind || want.TypeKind() != llvm.ArrayTypeKind {
-			v.Fatalf("shape-identical arrays have incompatible LLVM aggregate layouts")
-		}
-		result := llvm.Undef(want)
-		for i := int64(0); i < from.NumElem(); i++ {
-			elementName := fmt.Sprintf("%s.element%d", name, i)
-			element := lfc.b.CreateExtractValue(value, int(i), elementName+".extract")
-			element = lfc.reshapeLLVMValue(v, element, from.Elem(), to.Elem(), elementName)
-			result = lfc.b.CreateInsertValue(result, element, int(i), elementName+".insert")
+	case llvm.ArrayTypeKind:
+		result := llvm.Undef(target)
+		for i := 0; i < target.ArrayLength(); i++ {
+			elementName := fmt.Sprintf("%s.abi.element%d", name, i)
+			element := lfc.b.CreateExtractValue(value, i, elementName+".extract")
+			element = lfc.reshapeLLVMValueToType(element, target.ElementType(), elementName)
+			result = lfc.b.CreateInsertValue(result, element, i, elementName+".insert")
 		}
 		return result
 
 	default:
-		v.Fatalf("shape-identical Go types %v and %v require unsupported LLVM reshaping", from, to)
-		return llvm.Value{}
+		switch {
+		case source.TypeKind() == llvm.PointerTypeKind && target.TypeKind() == llvm.IntegerTypeKind:
+			return lfc.b.CreatePtrToInt(value, target, name)
+		case source.TypeKind() == llvm.IntegerTypeKind && target.TypeKind() == llvm.PointerTypeKind:
+			return lfc.b.CreateIntToPtr(value, target, name)
+		default:
+			return lfc.b.CreateBitCast(value, target, name)
+		}
 	}
 }
 
@@ -1819,10 +1848,7 @@ func (lfc *LLVMFuncContext) llvmValueToABI(v *Value, value llvm.Value, from, log
 		return llvm.Undef(abiType)
 	}
 	value = lfc.reshapeLLVMValue(v, value, from, logical, name)
-	if value.Type() != abiType {
-		v.Fatalf("Go ABI value has incompatible LLVM carrier")
-	}
-	return value
+	return lfc.reshapeLLVMValueToType(value, abiType, name)
 }
 
 func (lfc *LLVMFuncContext) llvmValueFromABI(v *Value, value llvm.Value, logical, to *types.Type, name string) llvm.Value {
@@ -1832,69 +1858,35 @@ func (lfc *LLVMFuncContext) llvmValueFromABI(v *Value, value llvm.Value, logical
 		}
 		return llvm.Undef(getLLVMType(to))
 	}
+	value = lfc.reshapeLLVMValueToType(value, getLLVMType(logical), name)
 	return lfc.reshapeLLVMValue(v, value, logical, to, name)
 }
 
 // llvmStaticCallSignature restores semantic pointer types for compiler-built
 // runtime calls whose AuxCall uses uintptr only to compute physical ABI
-// assignments. AuxCall remains the physical ABI authority; the LLVM operands
+// assignments. When compiling runtime itself, an ordinary source call to the
+// same helper already has its semantic pointer type and needs no rewrite.
+// AuxCall remains the physical ABI authority in both cases; the LLVM operands
 // and runtime helper parameters are pointers.
-func llvmStaticCallSignature(v *Value, aux *AuxCall, sig llvmFuncSignature) llvmFuncSignature {
-	if aux == nil || aux.Fn == nil {
-		return sig
-	}
-	wantArgs := int64(0)
+func llvmStaticCallSignature(aux *AuxCall, sig llvmFuncSignature) llvmFuncSignature {
 	pointerArgs := int64(0)
 	switch aux.Fn {
 	case ir.Syms.Newproc, ir.Syms.Deferproc, ir.Syms.DeferprocStack:
-		wantArgs = 1
 		pointerArgs = 1
 	case ir.Syms.Deferprocat:
-		wantArgs = 2
 		pointerArgs = 1
 	case ir.Syms.WBZero:
-		wantArgs = 2
-		pointerArgs = wantArgs
+		pointerArgs = 2
 	case ir.Syms.WBMove:
-		wantArgs = 3
-		pointerArgs = wantArgs
+		pointerArgs = 3
 	default:
 		return sig
 	}
-	if aux.ABI().Which() != obj.ABIInternal {
-		v.Fatalf("%s uses unsupported ABI %v", aux.Fn.Name, aux.ABI().Which())
-	}
-	if aux.NArgs() != wantArgs || aux.NResults() != 0 {
-		v.Fatalf("%s has unexpected raw call signature: %d arguments, %d results", aux.Fn.Name, aux.NArgs(), aux.NResults())
-	}
-	// Runtime implementations may call a function that also has a compiler
-	// builtin entry (notably newproc) through its ordinary typed Go signature.
-	// Only the compiler-created form uses raw uintptr carriers and needs pointer
-	// restoration.
-	for i := int64(0); i < pointerArgs; i++ {
-		if typ := aux.TypeOfArg(i); typ == nil || !typ.IsUintptr() {
-			return sig
-		}
-	}
-	for i := int64(0); i < pointerArgs; i++ {
-		if int(i) >= len(v.Args)-1 || v.Args[i].Type == nil {
-			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
-		}
-		pointerShaped := v.Args[i].Type.IsPtrShaped()
-		// Write-barrier calls carry the type descriptor as Addr<uintptr> in
-		// Go SSA because AuxCall uses uintptr for its physical ABI assignment.
-		// OpAddr still lowers directly to an LLVM pointer, just like the
-		// pointer-shaped destination and source operands.
-		writeBarrierTypeAddr := i == 0 &&
-			(aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove) &&
-			v.Args[i].Op == OpAddr && v.Args[i].Type.IsUintptr()
-		if !pointerShaped && !writeBarrierTypeAddr {
-			v.Fatalf("argument %d to %s is not pointer-shaped", i, aux.Fn.Name)
-		}
-	}
 	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
 	for i := int64(0); i < pointerArgs; i++ {
-		params[i] = GlobalCtxt.PointerType(0)
+		if aux.TypeOfArg(i).IsUintptr() {
+			params[i] = GlobalCtxt.PointerType(0)
+		}
 	}
 	sig.Type = llvm.FunctionType(sig.ReturnType, params, false)
 	return sig
@@ -1909,7 +1901,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		v.Fatalf("static call to %s has %d LLVM arguments, want %d", aux.Fn.Name, got, want)
 	}
 
-	sig := llvmStaticCallSignature(v, aux, llvmSignature(aux))
+	sig := llvmStaticCallSignature(aux, llvmSignature(aux))
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunctionRef(aux.Fn, sig, cc)
 	// AMD64 rewrites some Move and Eq operations to static runtime calls before
@@ -1923,9 +1915,6 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		arg := lfc.GenLV(v.Args[i])
 		if arg.Type() != sig.Type.ParamTypes()[i] {
 			arg = lfc.llvmValueToABI(v, arg, v.Args[i].Type, aux.TypeOfArg(i), sig.Type.ParamTypes()[i], fmt.Sprintf("%s.arg%d", v, i))
-		}
-		if got, want := arg.Type(), sig.Type.ParamTypes()[i]; got != want {
-			v.Fatalf("argument %d to %s has incompatible LLVM type", i, aux.Fn.Name)
 		}
 		args = append(args, arg)
 	}
@@ -2865,6 +2854,7 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 		lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result count %d does not match LLVM signature result count %d", len(outParams), lfc.ResultCount)
 	}
 	results := make([]llvm.Value, len(outParams))
+	reshapeContext := &Value{Block: lfc.F.Entry, Pos: lfc.F.Entry.Pos}
 	for i, result := range outParams {
 		var abiType llvm.Type
 		if lfc.ResultCount == 1 {
@@ -2886,6 +2876,7 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 		value := lfc.b.CreateLoad(getLLVMType(result.Type), slot.Value, fmt.Sprintf("open.defer.result%d", i))
 		value.SetAlignment(int(result.Type.Alignment()))
 		value.SetVolatile(true)
+		value = lfc.llvmValueToABI(reshapeContext, value, result.Type, lfc.F.OwnAux.TypeOfResult(int64(i)), abiType, fmt.Sprintf("open.defer.result%d.abi", i))
 		if value.Type() != abiType {
 			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result %d has incompatible LLVM ABI type", i)
 		}

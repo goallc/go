@@ -22,6 +22,117 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
+type llvmTestTypeName struct {
+	sym *types.Sym
+}
+
+func (n *llvmTestTypeName) Sym() *types.Sym { return n.sym }
+func (*llvmTestTypeName) Pos() src.XPos     { return src.NoXPos }
+func (*llvmTestTypeName) Type() *types.Type { return nil }
+
+func TestLLVMABICarrierPreservesNamedAggregateIdentity(t *testing.T) {
+	pkg := types.NewPkg("runtime", "runtime")
+	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})
+	namedSlice.SetUnderlying(types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("array"), types.Types[types.TUNSAFEPTR]),
+		types.NewField(src.NoXPos, pkg.Lookup("len"), types.Types[types.TINT]),
+		types.NewField(src.NoXPos, pkg.Lookup("cap"), types.Types[types.TINT]),
+	}))
+	types.CalcSize(namedSlice)
+	builtinSlice := types.NewSlice(types.Types[types.TUINT8])
+	types.CalcSize(builtinSlice)
+
+	if getLLVMType(namedSlice) == getLLVMType(builtinSlice) {
+		t.Fatal("semantic LLVM types unexpectedly lost named aggregate identity")
+	}
+	if got, want := getLLVMABIType(namedSlice), getLLVMType(namedSlice); got != want {
+		t.Fatalf("named ABI carrier = %v, want semantic type %v", got, want)
+	}
+	if got, other := getLLVMABIType(namedSlice), getLLVMABIType(builtinSlice); got == other {
+		t.Fatalf("named ABI carrier unexpectedly collapsed to builtin carrier %v", got)
+	}
+}
+
+func TestLLVMABICarrierBridgesPromotedReceiverAtCaller(t *testing.T) {
+	module := GlobalCtxt.NewModule("promoted_receiver_carrier")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	pointer := GlobalCtxt.PointerType(0)
+	receiver := GlobalCtxt.StructCreateNamed("goallc.test.promoted.receiver")
+	receiver.StructSetBody([]llvm.Type{pointer}, false)
+
+	wrap := llvm.AddFunction(module, "wrap", llvm.FunctionType(receiver, []llvm.Type{pointer}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(wrap, "entry"))
+	context := &LLVMFuncContext{b: builder}
+	builder.CreateRet(context.reshapeLLVMValueToType(wrap.Param(0), receiver, "receiver"))
+
+	unwrap := llvm.AddFunction(module, "unwrap", llvm.FunctionType(pointer, []llvm.Type{receiver}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(unwrap, "entry"))
+	builder.CreateRet(context.reshapeLLVMValueToType(unwrap.Param(0), pointer, "receiver"))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected promoted receiver carrier bridge: %v\n%s", err, module.String())
+	}
+	ir := module.String()
+	for _, want := range []string{
+		"insertvalue %goallc.test.promoted.receiver undef, ptr %0, 0",
+		"extractvalue %goallc.test.promoted.receiver %0, 0",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("promoted receiver bridge does not contain %q\n%s", want, ir)
+		}
+	}
+}
+
+func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
+	oldModule := CurrentModule
+	module := GlobalCtxt.NewModule("builtin_call_signatures")
+	CurrentModule = module
+	t.Cleanup(func() {
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(builder.Dispose)
+	caller := llvm.AddFunction(module, "caller", llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(caller, "entry"))
+
+	fields := []llvm.Type{GlobalCtxt.PointerType(0), GlobalCtxt.Int64Type(), GlobalCtxt.Int64Type()}
+	builtinSlice := llvm.StructType(fields, false)
+	runtimeSlice := GlobalCtxt.StructCreateNamed("runtime.slice.call.signature")
+	runtimeSlice.StructSetBody(fields, false)
+	name, ok := goobj.BuiltinSymbolName("runtime.growslice", int(obj.ABIInternal))
+	if !ok {
+		t.Fatal("runtime.growslice is absent from the GoObj builtin table")
+	}
+
+	newSignature := func(result llvm.Type) llvmFuncSignature {
+		return llvmFuncSignature{
+			Type:                llvm.FunctionType(result, nil, false),
+			ReturnType:          result,
+			ResultCount:         1,
+			ClosureContextIndex: -1,
+		}
+	}
+	builtinSig := newSignature(builtinSlice)
+	fn := getOrInsertLLVMFunction(name, builtinSig, goABIInternalCallConv)
+	builtinCall := builder.CreateCall(builtinSig.Type, fn, nil, "builtin.call")
+	builtinCall.SetInstructionCallConv(goABIInternalCallConv)
+
+	runtimeSig := newSignature(runtimeSlice)
+	fn = getOrInsertLLVMFunction(name, runtimeSig, goABIInternalCallConv)
+	runtimeCall := builder.CreateCall(runtimeSig.Type, fn, nil, "runtime.call")
+	runtimeCall.SetInstructionCallConv(goABIInternalCallConv)
+	builder.CreateRetVoid()
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected builtin calls with distinct signatures: %v\n%s", err, module.String())
+	}
+}
+
 func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer
@@ -101,6 +212,28 @@ func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) 
 	got := llvmGoDataRef(sym)
 	if got.IsAFunction().IsNil() || got.Name() != "runtime.asyncPreempt<ABI0>" {
 		t.Fatalf("ABI0 function address resolved to %q, want ABI0 function declaration", got.Name())
+	}
+}
+
+func TestLLVMNamedAggregateConversionReshapesValue(t *testing.T) {
+	module := GlobalCtxt.NewModule("named_aggregate_conversion")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	fields := []llvm.Type{GlobalCtxt.Int64Type(), GlobalCtxt.Int64Type(), GlobalCtxt.Int64Type()}
+	pageCache := GlobalCtxt.StructCreateNamed("runtime.pageCache")
+	pageCache.StructSetBody(fields, false)
+	exportedPageCache := GlobalCtxt.StructCreateNamed("runtime.PageCache")
+	exportedPageCache.StructSetBody(fields, false)
+
+	fn := llvm.AddFunction(module, "convert", llvm.FunctionType(exportedPageCache, []llvm.Type{pageCache}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(fn, "entry"))
+	context := &LLVMFuncContext{b: builder}
+	builder.CreateRet(context.reshapeLLVMValueToType(fn.Param(0), exportedPageCache, "pagecache"))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected named aggregate reshape: %v\n%s", err, module.String())
 	}
 }
 

@@ -191,9 +191,17 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	runLLVMABICommand(t, rewrittenIR, opt,
 		"-load-pass-plugin="+plugin, "-passes=verify", "-disable-output", "-")
 
+	// The runtime wrapper applies its configured LLVM optimization pipeline
+	// before llc. In particular, InstCombine removes the field-by-field bridge
+	// between physical ABI carriers and semantic named aggregates, allowing
+	// stack-assigned pointer arguments to remain in their canonical fixed homes.
+	optimizedLLVMIR := llvmArchive + ".opt.ll"
+	runLLVMABICommand(t, nil, opt, "-passes=default<O2>", "-S", llvmIR,
+		"-o", optimizedLLVMIR)
+
 	machineIR := runLLVMABICommand(t, nil, llc,
 		"-load-pass-plugin="+plugin, "-stop-after=finalize-isel",
-		"-o", "-", llvmIR)
+		"-o", "-", optimizedLLVMIR)
 	for _, pattern := range []string{
 		`(?s)name:\s+main\.liveScalarStackArgument.*?fixedStack:.*?offset:\s+8.*?isImmutable:\s+false.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.0`,
 		`(?s)name:\s+main\.livePointerSequenceStackArguments.*?fixedStack:.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.2[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.[02].*?LDRXui\s+%fixed-stack\.[02]`,
@@ -206,7 +214,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	}
 
 	goallcAssembly := runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-filetype=asm", llvmIR, "-o", "-")
+		"-load-pass-plugin="+plugin, "-filetype=asm", optimizedLLVMIR, "-o", "-")
 	for _, name := range []string{
 		"main.mixedABI", "main.liveScalarStackArgument",
 		"main.livePointerSequenceStackArguments",
@@ -221,7 +229,7 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	checkLLVMABIAssembly(t, nativeAssembly, goallcAssembly)
 
 	runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-filetype=obj", llvmIR, "-o", goallcObject)
+		"-load-pass-plugin="+plugin, "-filetype=obj", optimizedLLVMIR, "-o", goallcObject)
 
 	native := readLLVMABIObject(t, nativeObject)
 	goallc := readLLVMABIObject(t, goallcObject)
@@ -624,10 +632,13 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 	}
 	runLLVMABICommand(t, rewrittenIR, opt, "-load-pass-plugin="+plugin,
 		"-passes=verify", "-disable-output", "-")
+	optimizedGoallcIR := goallcArchive + ".opt.ll"
+	runLLVMABICommand(t, nil, opt, "-passes=default<O2>", "-S", goallcIR,
+		"-o", optimizedGoallcIR)
 
 	machineIR := runLLVMABICommand(t, nil, llc,
 		"-load-pass-plugin="+plugin, "-stop-after=finalize-isel",
-		"-o", "-", goallcIR)
+		"-o", "-", optimizedGoallcIR)
 	for _, pattern := range []string{
 		`(?s)name:\s+p\.liveScalarStackArgument.*?fixedStack:.*?isImmutable:\s+false.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.0`,
 		`(?s)name:\s+p\.liveAggregateStackArgument.*?fixedStack:.*?id:\s+2.*?size:\s+24.*?isAliased:\s+true.*?stack:\s+\[\].*?STATEPOINT[^\n]*%fixed-stack\.1[^\n]*%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.0.*?LDRXui\s+%fixed-stack\.1`,
@@ -637,7 +648,7 @@ func runLLVMABIArgsPointerMapSourceTest(t *testing.T, gorootTestDir, llc, opt, p
 		}
 	}
 	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
-		"-filetype=obj", goallcIR, "-o", goallcObject)
+		"-filetype=obj", optimizedGoallcIR, "-o", goallcObject)
 
 	native := readLLVMABIObject(t, nativeObject)
 	goallc := readLLVMABIObject(t, goallcObject)
