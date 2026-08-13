@@ -9,14 +9,14 @@ target triple = "x86_64-unknown-linux-goobj"
 ; OBJVIEW: "kind": "stack_map_index"
 ; OBJVIEW: "start": 0
 ; OBJVIEW-NEXT: "end": [[#FIRST_START:]]
-; OBJVIEW-NEXT: "value": -1
+; OBJVIEW-NEXT: "value": 0
 ; OBJVIEW: "start": [[#FIRST_START]]
 ; OBJVIEW-NEXT: "end": [[#SECOND_START:]]
 ; OBJVIEW-NEXT: "value": 1
 ; OBJVIEW: "start": [[#SECOND_START]]
-; OBJVIEW-NEXT: "end": [[#MORESTACK_START:]]
+; OBJVIEW-NEXT: "end": [[#ENTRY_DEPTH_START:]]
 ; OBJVIEW-NEXT: "value": 2
-; OBJVIEW: "start": [[#MORESTACK_START]]
+; OBJVIEW: "start": [[#ENTRY_DEPTH_START]]
 ; OBJVIEW-NEXT: "end": [[#SIZE]]
 ; OBJVIEW-NEXT: "value": 0
 ; OBJVIEW: "kind": "locals_pointer_maps"
@@ -34,7 +34,6 @@ target triple = "x86_64-unknown-linux-goobj"
 ; OBJVIEW: "stack_map_index": 1
 ; OBJVIEW: "call_offset": [[#SECOND_START+1]]
 ; OBJVIEW: "stack_map_index": 2
-; OBJVIEW: "call_offset": [[#MORESTACK_START+1]]
 ; OBJVIEW: "stack_map_index": 0
 
 declare goabiinternal void @first_callee()

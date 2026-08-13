@@ -241,16 +241,20 @@ not object-format adaptation. LLVM records GoObj statepoint callsites at the CAL
 start, matching Go's `PCDATA_StackMapIndex` convention without a command-line
 mode. GoObj Go functions use native Go's split-stack policy by default: unless
 `go-nosplit` is present, target frame lowering expresses the late-generated
-`runtime.morestack` call as a physical, root-free MIR `STATEPOINT`. Before frame
-allocation, formal lowering maps every type-derived input pointer word onto the
-existing fixed home reserved for that ABI input. Frame lowering records those
-homes in a separate zero-byte `EntryArgsStackMapID` record for every GoObj Go
-function. This is function metadata rather than a callsite, so it emits no
-`PCDATA`. The GoObj writer uses it as pair 0: non-empty `EntryArgs` when present
-and empty locals. A split function must additionally contain exactly one real
-`StackGrowthStatepointID`, which selects pair 0 at the morestack call; a nosplit
-function must contain none. Ordinary and stack-growth calls use the same
-Machine StackMaps pipeline without relying on a return-PC convention.
+`runtime.morestack` call as an ordinary ABI0 MIR call. Before frame allocation,
+formal lowering maps each live type-derived input pointer word onto the existing
+fixed home reserved for that ABI input. It still reserves and saves complete ABI
+homes for an unused formal so a morestack retry preserves the register
+assignment, but does not scan a word that LLVM callers may replace with poison.
+Frame lowering records the live homes in a separate zero-byte
+`EntryArgsStackMapID` record for every GoObj Go function. This is function
+metadata rather than a callsite. The GoObj writer uses it as pair 0: non-empty
+`EntryArgs` when present and empty locals, and initializes
+`PCDATA_StackMapIndex` to 0. AsmPrinter's PCSP stream has already resolved the
+Machine CFG; every transition back to the entry stack depth selects map 0. This
+covers the pre-frame morestack path without identifying `runtime.morestack` by
+name or manufacturing a statepoint. An ordinary statepoint selects its actual
+live map and overrides a same-PC entry-depth transition.
 GoObj emits the currently constant safe `PCDATA_UnsafePoint` table first and
 the statepoint-derived `PCDATA_StackMapIndex` table second, as required by
 their Go ABI indexes 0 and 1.

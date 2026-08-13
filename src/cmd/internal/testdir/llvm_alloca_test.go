@@ -30,7 +30,7 @@ var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
 		restoredStorePattern: `(?m)^\s*(?:str|stp)\b`,
 		goallcLocals:         88,
 		goallcPointerBits:    []int{5, 7, 8, 9},
-		goallcPCData:         []int32{-1, 0, 1},
+		goallcPCData:         []int32{0, 1, 0},
 		goallcQueries:        []int32{0, 1, 1, 1, 1},
 	},
 	"linux/amd64": {
@@ -38,7 +38,7 @@ var llvmAllocaChecks = map[string]llvmAllocaArchitectureChecks{
 		restoredStorePattern: `(?m)^\s*mov[a-z]*\s+[^,\n]+,\s*-[0-9]+\(%rbp\)`,
 		goallcLocals:         88,
 		goallcPointerBits:    []int{5, 7, 8, 9},
-		goallcPCData:         []int32{-1, 1, 0},
+		goallcPCData:         []int32{0, 1, 0},
 		goallcQueries:        []int32{1, 1, 1, 1, 0},
 	},
 }

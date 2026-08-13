@@ -71,7 +71,7 @@
       "codegen/shortcircuit.go": "empty-interface extraction and concrete type comparison",
       "codegen/smallintiface.go": "small scalar boxing through runtime.staticuint64s",
       "codegen/spills.go": "integer and floating-point values preserved across calls",
-      "codegen/statepoint.go": "frontend-owned Go GC strategy and stack-growth statepoint function markers",
+      "codegen/statepoint.go": "frontend-owned Go GC strategy and nosplit-only stack-growth policy",
       "codegen/structs.go": "typed struct initialization and zeroing",
       "codegen/type_descriptor.go": "compiler-owned runtime type descriptor data and GoObj metadata",
       "codegen/type_descriptor_kinds.go": "all runtime type descriptor layouts and variable descriptor data",
