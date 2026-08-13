@@ -607,9 +607,23 @@ func G0StackOverflow() {
 	})
 }
 
+var stackOverflowTestState uint32
+
 func stackOverflow(x *byte) {
 	var buf [256]byte
+	// Keep this recursion from becoming a tail-recursive loop. The test needs
+	// real stack growth, but the LLVM backend is otherwise free to optimize tail
+	// calls more aggressively than the native Go backend. An atomic load makes
+	// the return path reachable to the optimizer, and the post-call atomic
+	// operation keeps state from the current frame live across the call.
+	buf[0] = byte(atomic.Load(&stackOverflowTestState))
+	if buf[0] != 0 {
+		return
+	}
 	stackOverflow(&buf[0])
+	if x != nil {
+		atomic.Xadd(&stackOverflowTestState, int32(*x))
+	}
 }
 
 func RunGetgThreadSwitchTest() {
