@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"cmd/compile/internal/abi"
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/typecheck"
@@ -21,6 +22,110 @@ import (
 
 	"github.com/goallc/go-llvm"
 )
+
+type llvmTestTypeName struct {
+	sym *types.Sym
+}
+
+func (n *llvmTestTypeName) Sym() *types.Sym { return n.sym }
+func (*llvmTestTypeName) Pos() src.XPos     { return src.NoXPos }
+func (*llvmTestTypeName) Type() *types.Type { return nil }
+
+func TestLLVMABICarrierPreservesNamedAggregateIdentity(t *testing.T) {
+	pkg := types.NewPkg("runtime", "runtime")
+	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})
+	namedSlice.SetUnderlying(types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("array"), types.Types[types.TUNSAFEPTR]),
+		types.NewField(src.NoXPos, pkg.Lookup("len"), types.Types[types.TINT]),
+		types.NewField(src.NoXPos, pkg.Lookup("cap"), types.Types[types.TINT]),
+	}))
+	types.CalcSize(namedSlice)
+	builtinSlice := types.NewSlice(types.Types[types.TUINT8])
+	types.CalcSize(builtinSlice)
+
+	if getLLVMType(namedSlice) == getLLVMType(builtinSlice) {
+		t.Fatal("semantic LLVM types unexpectedly lost named aggregate identity")
+	}
+	if got, want := getLLVMABIType(namedSlice), getLLVMType(namedSlice); got != want {
+		t.Fatalf("named ABI carrier = %v, want semantic type %v", got, want)
+	}
+	if got, other := getLLVMABIType(namedSlice), getLLVMABIType(builtinSlice); got == other {
+		t.Fatalf("named ABI carrier unexpectedly collapsed to builtin carrier %v", got)
+	}
+}
+
+func TestLLVMABICarrierBridgesPromotedReceiverAtCaller(t *testing.T) {
+	module := GlobalCtxt.NewModule("promoted_receiver_carrier")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	pointer := GlobalCtxt.PointerType(0)
+	receiver := GlobalCtxt.StructCreateNamed("goallc.test.promoted.receiver")
+	receiver.StructSetBody([]llvm.Type{pointer}, false)
+
+	wrap := llvm.AddFunction(module, "wrap", llvm.FunctionType(receiver, []llvm.Type{pointer}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(wrap, "entry"))
+	context := &LLVMFuncContext{b: builder}
+	value := &Value{ID: 1, Type: types.Types[types.TUNSAFEPTR]}
+	builder.CreateRet(context.reshapeLLVMABICarrier(value, wrap.Param(0), receiver, "receiver"))
+
+	unwrap := llvm.AddFunction(module, "unwrap", llvm.FunctionType(pointer, []llvm.Type{receiver}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(unwrap, "entry"))
+	builder.CreateRet(context.reshapeLLVMABICarrier(value, unwrap.Param(0), pointer, "receiver"))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected promoted receiver carrier bridge: %v\n%s", err, module.String())
+	}
+	ir := module.String()
+	for _, want := range []string{
+		"insertvalue %goallc.test.promoted.receiver undef, ptr %0, 0",
+		"extractvalue %goallc.test.promoted.receiver %0, 0",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("promoted receiver bridge does not contain %q\n%s", want, ir)
+		}
+	}
+}
+
+func TestLLVMStaticCalleeAuxUsesPackageDefinition(t *testing.T) {
+	oldTarget := typecheck.Target
+	oldCache := llvmStaticCalleeAuxCache
+	typecheck.Target = new(ir.Package)
+	llvmStaticCalleeAuxCache = make(map[*obj.LSym]*AuxCall)
+	t.Cleanup(func() {
+		typecheck.Target = oldTarget
+		llvmStaticCalleeAuxCache = oldCache
+	})
+
+	pkg := types.NewPkg("runtime", "runtime")
+	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})
+	namedSlice.SetUnderlying(types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("array"), types.Types[types.TUNSAFEPTR]),
+		types.NewField(src.NoXPos, pkg.Lookup("len"), types.Types[types.TINT]),
+		types.NewField(src.NoXPos, pkg.Lookup("cap"), types.Types[types.TINT]),
+	}))
+	types.CalcSize(namedSlice)
+	builtinSlice := types.NewSlice(types.Types[types.TUINT8])
+	types.CalcSize(builtinSlice)
+
+	fn := ir.NewFunc(src.NoXPos, src.NoXPos, pkg.Lookup("growslice"), types.NewSignature(nil, nil, []*types.Field{
+		types.NewField(src.NoXPos, nil, namedSlice),
+	}))
+	typecheck.Target.Funcs = []*ir.Func{fn}
+	config := abi.NewABIConfig(9, 15, 0, uint8(obj.ABIInternal))
+	caller := StaticAuxCall(fn.LinksymABI(obj.ABIInternal), config.ABIAnalyzeTypes(nil, []*types.Type{builtinSlice}))
+	callee := llvmStaticCalleeAux(caller)
+	if callee == caller {
+		t.Fatal("static call retained the caller's approximate runtime signature")
+	}
+	if got := callee.TypeOfResult(0); got != namedSlice {
+		t.Fatalf("callee result type = %v, want named runtime result %v", got, namedSlice)
+	}
+	if cached := llvmStaticCalleeAux(caller); cached != callee {
+		t.Fatal("static callee signature was not cached")
+	}
+}
 
 func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	oldModule := CurrentModule
@@ -101,6 +206,29 @@ func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) 
 	got := llvmGoDataRef(sym)
 	if got.IsAFunction().IsNil() || got.Name() != "runtime.asyncPreempt<ABI0>" {
 		t.Fatalf("ABI0 function address resolved to %q, want ABI0 function declaration", got.Name())
+	}
+}
+
+func TestLLVMNamedAggregateConversionCanReshape(t *testing.T) {
+	pkg := types.NewPkg("runtime", "runtime")
+	newCacheType := func(name string, scavType *types.Type) *types.Type {
+		typ := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup(name)})
+		typ.SetUnderlying(types.NewStruct([]*types.Field{
+			types.NewField(src.NoXPos, pkg.Lookup("base"), types.Types[types.TUINTPTR]),
+			types.NewField(src.NoXPos, pkg.Lookup("cache"), types.Types[types.TUINT64]),
+			types.NewField(src.NoXPos, pkg.Lookup("scav"), scavType),
+		}))
+		return typ
+	}
+	pageCache := newCacheType("pageCache", types.Types[types.TUINT64])
+	exportedPageCache := newCacheType("PageCache", types.Types[types.TUINT64])
+	wrongPageCache := newCacheType("WrongPageCache", types.Types[types.TUINT32])
+
+	if !llvmValueTypesCanReshape(pageCache, exportedPageCache) {
+		t.Fatal("defined structs with identical underlying types cannot reshape")
+	}
+	if llvmValueTypesCanReshape(pageCache, wrongPageCache) {
+		t.Fatal("defined structs with different underlying types can reshape")
 	}
 }
 
