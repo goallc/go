@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"cmd/compile/internal/abi"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
@@ -28,7 +29,7 @@ func (n *llvmTestTypeName) Sym() *types.Sym { return n.sym }
 func (*llvmTestTypeName) Pos() src.XPos     { return src.NoXPos }
 func (*llvmTestTypeName) Type() *types.Type { return nil }
 
-func TestLLVMABICarrierErasesNamedAggregateIdentity(t *testing.T) {
+func TestLLVMABICarrierPreservesNamedAggregateIdentity(t *testing.T) {
 	pkg := types.NewPkg("runtime", "runtime")
 	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})
 	namedSlice.SetUnderlying(types.NewStruct([]*types.Field{
@@ -43,8 +44,50 @@ func TestLLVMABICarrierErasesNamedAggregateIdentity(t *testing.T) {
 	if getLLVMType(namedSlice) == getLLVMType(builtinSlice) {
 		t.Fatal("semantic LLVM types unexpectedly lost named aggregate identity")
 	}
-	if got, want := getLLVMABIType(namedSlice), getLLVMABIType(builtinSlice); got != want {
-		t.Fatalf("physical ABI carriers differ: named=%v builtin=%v", got, want)
+	if got, want := getLLVMABIType(namedSlice), getLLVMType(namedSlice); got != want {
+		t.Fatalf("named ABI carrier = %v, want semantic type %v", got, want)
+	}
+	if got, other := getLLVMABIType(namedSlice), getLLVMABIType(builtinSlice); got == other {
+		t.Fatalf("named ABI carrier unexpectedly collapsed to builtin carrier %v", got)
+	}
+}
+
+func TestLLVMStaticCalleeAuxUsesPackageDefinition(t *testing.T) {
+	oldTarget := typecheck.Target
+	oldCache := llvmStaticCalleeAuxCache
+	typecheck.Target = new(ir.Package)
+	llvmStaticCalleeAuxCache = make(map[*obj.LSym]*AuxCall)
+	t.Cleanup(func() {
+		typecheck.Target = oldTarget
+		llvmStaticCalleeAuxCache = oldCache
+	})
+
+	pkg := types.NewPkg("runtime", "runtime")
+	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})
+	namedSlice.SetUnderlying(types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("array"), types.Types[types.TUNSAFEPTR]),
+		types.NewField(src.NoXPos, pkg.Lookup("len"), types.Types[types.TINT]),
+		types.NewField(src.NoXPos, pkg.Lookup("cap"), types.Types[types.TINT]),
+	}))
+	types.CalcSize(namedSlice)
+	builtinSlice := types.NewSlice(types.Types[types.TUINT8])
+	types.CalcSize(builtinSlice)
+
+	fn := ir.NewFunc(src.NoXPos, src.NoXPos, pkg.Lookup("growslice"), types.NewSignature(nil, nil, []*types.Field{
+		types.NewField(src.NoXPos, nil, namedSlice),
+	}))
+	typecheck.Target.Funcs = []*ir.Func{fn}
+	config := abi.NewABIConfig(9, 15, 0, uint8(obj.ABIInternal))
+	caller := StaticAuxCall(fn.LinksymABI(obj.ABIInternal), config.ABIAnalyzeTypes(nil, []*types.Type{builtinSlice}))
+	callee := llvmStaticCalleeAux(caller)
+	if callee == caller {
+		t.Fatal("static call retained the caller's approximate runtime signature")
+	}
+	if got := callee.TypeOfResult(0); got != namedSlice {
+		t.Fatalf("callee result type = %v, want named runtime result %v", got, namedSlice)
+	}
+	if cached := llvmStaticCalleeAux(caller); cached != callee {
+		t.Fatal("static callee signature was not cached")
 	}
 }
 
