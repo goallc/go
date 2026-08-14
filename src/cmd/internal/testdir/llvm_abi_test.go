@@ -6,6 +6,7 @@ package testdir_test
 
 import (
 	"bytes"
+	"cmd/internal/goobj"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -436,6 +437,11 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 	machineIR := runLLVMABICommand(t, nil, llc,
 		"-load-pass-plugin="+plugin, "-stop-after=prolog-epilog",
 		"-o", "-", goallcIR)
+	morestackName, ok := goobj.BuiltinSymbolName("runtime.morestack_noctxt", 0)
+	if !ok {
+		t.Fatal("runtime.morestack_noctxt ABI0 is absent from the builtin table")
+	}
+	morestackPattern := `(?m)^.*CALL64pcrel32 &"?` + regexp.QuoteMeta(morestackName+"<ABI0>") + `"?[^\n]*$`
 	machinePatterns := map[string][]string{
 		"p.initializedPointerResult": {
 			`STATEPOINT -[0-9]+,[^\n]*\$rsp, 0,`,
@@ -452,8 +458,8 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 	}
 	for name, patterns := range machinePatterns {
 		body := llvmABIMachineFunction(t, machineIR, name)
-		if !regexp.MustCompile(`(?m)^.*CALL64pcrel32 &"?runtime\.morestack_noctxt<ABI0>"?[^\n]*$`).Match(body) {
-			t.Fatalf("%s PEI MIR has no raw ABI0 morestack call\n%s", name, body)
+		if !regexp.MustCompile(morestackPattern).Match(body) {
+			t.Fatalf("%s PEI MIR has no builtin-encoded ABI0 morestack call\n%s", name, body)
 		}
 		if regexp.MustCompile(`(?m)^.*STATEPOINT[^\n]*runtime\.morestack_noctxt[^\n]*$`).Match(body) {
 			t.Fatalf("%s PEI MIR still represents morestack as a statepoint\n%s", name, body)

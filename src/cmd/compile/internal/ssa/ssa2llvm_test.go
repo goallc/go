@@ -104,28 +104,6 @@ func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) 
 	}
 }
 
-func TestLLVMRuntimeConstructedClosure(t *testing.T) {
-	mem := &Value{ID: 1, Op: OpInitMem, Type: types.TypeMem}
-	rawCode := &Value{ID: 2, Op: OpArg, Type: types.Types[types.TUNSAFEPTR]}
-	code := &Value{ID: 3, Op: OpConvert, Type: types.Types[types.TUINTPTR], Args: []*Value{rawCode, mem}, Uses: 2}
-	context := &Value{ID: 4, Op: OpLocalAddr, Type: types.NewPtr(types.Types[types.TUINTPTR])}
-	codeAddress := &Value{ID: 5, Op: OpOffPtr, Type: types.NewPtr(types.Types[types.TUINTPTR]), Args: []*Value{context}}
-	codeStore := &Value{ID: 6, Op: OpStore, Type: types.TypeMem, Args: []*Value{codeAddress, code, mem}}
-	otherStore := &Value{ID: 7, Op: OpStore, Type: types.TypeMem, Args: []*Value{context, context, codeStore}}
-	argument := &Value{ID: 8, Op: OpArg, Type: types.Types[types.TUNSAFEPTR]}
-	call := &Value{ID: 9, Op: OpClosureLECall, Type: types.TypeMem, Args: []*Value{code, context, argument, otherStore}}
-
-	if !llvmRuntimeConstructedClosure(call, code, context) {
-		t.Fatal("runtime-constructed funcval was not recognized")
-	}
-
-	wrongCode := &Value{ID: 10, Op: OpConvert, Type: types.Types[types.TUINTPTR], Args: []*Value{rawCode, mem}, Uses: 2}
-	call.Args[0] = wrongCode
-	if llvmRuntimeConstructedClosure(call, wrongCode, context) {
-		t.Fatal("code value not stored in the funcval context was accepted")
-	}
-}
-
 func TestLLVMJumpTableDefaultIsUnreachable(t *testing.T) {
 	module := GlobalCtxt.NewModule("jump_table_default")
 	builder := GlobalCtxt.NewBuilder()

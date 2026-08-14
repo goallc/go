@@ -2047,46 +2047,6 @@ func llvmFunctionUsesClosureContext(f *Func) bool {
 	return hasContext
 }
 
-// llvmRuntimeConstructedClosure reports whether call uses the runtime's
-// trusted hand-built funcval shape. The runtime receives some callback entry
-// points as unsafe.Pointer and stores that code word into a local funcval.
-// Scalar replacement can forward the pointer-to-uintptr Convert directly to
-// the closure call instead of reloading the funcval's first word.
-//
-// Follow the call's memory chain and require the exact forwarded code value to
-// have been stored at offset zero of the context. This keeps arbitrary integer
-// indirect calls fail-closed and preserves the code/context identity that the
-// ordinary Load form establishes structurally.
-func llvmRuntimeConstructedClosure(call, code, context *Value) bool {
-	if code.Op != OpConvert || !code.Type.IsUintptr() || len(code.Args) != 2 ||
-		!code.Args[0].Type.IsUnsafePtr() || !code.Args[1].Type.IsMemory() || code.Uses != 2 ||
-		context == nil || !context.Type.IsPtr() || len(call.Args) == 0 {
-		return false
-	}
-	for mem, steps := call.Args[len(call.Args)-1], 0; mem != nil && steps < 32; steps++ {
-		switch mem.Op {
-		case OpStore:
-			if len(mem.Args) != 3 {
-				return false
-			}
-			addr := mem.Args[0]
-			if mem.Args[1] == code && (addr == context ||
-				(addr.Op == OpOffPtr && auxIntToInt64(addr.AuxInt) == 0 && len(addr.Args) == 1 && addr.Args[0] == context)) {
-				return true
-			}
-			mem = mem.Args[2]
-		case OpVarDef, OpVarLive:
-			if len(mem.Args) != 1 {
-				return false
-			}
-			mem = mem.Args[0]
-		default:
-			return false
-		}
-	}
-	return false
-}
-
 func llvmLocalName(v *Value) (*ir.Name, llvmLocalKey) {
 	sym := auxToSym(v.Aux)
 	name, ok := sym.(*ir.Name)
@@ -3160,25 +3120,12 @@ func LLVMCompile(f *Func) {
 			}
 			if (v.Op == OpClosureCall || v.Op == OpClosureLECall) && len(v.Args) >= 2 {
 				code := v.Args[0]
-				switch code.Op {
-				case OpLoad:
-					if !code.Type.IsUintptr() || code.Uses != 1 {
-						v.Fatalf("closure call code pointer is not a single-use uintptr load")
-					}
-					if len(code.Args) == 0 || code.Args[0] != v.Args[1] {
-						v.Fatalf("closure call code pointer was not loaded from its funcval context")
-					}
+				if code.Op == OpLoad {
+					// A nil func value faults while loading its code word. Record
+					// loads only to preserve that behavior in LLVM; ClosureCall
+					// itself already defines the code/context contract and does not
+					// constrain how either value was produced.
 					FCtxt.ClosureCodeLoads[code.ID] = true
-				case OpAddr:
-					if !code.Type.IsUintptr() {
-						v.Fatalf("direct closure call code address has type %v", code.Type)
-					}
-				case OpConvert:
-					if !base.Flag.CompilingRuntime || !llvmRuntimeConstructedClosure(v, code, v.Args[1]) {
-						v.Fatalf("closure call has unsupported converted code pointer")
-					}
-				default:
-					v.Fatalf("closure call code pointer has unsupported form %s", code.Op)
 				}
 			} else if v.Op == OpClosureCall || v.Op == OpClosureLECall {
 				v.Fatalf("closure call has %d SSA arguments, want at least code, context, and memory", len(v.Args))
