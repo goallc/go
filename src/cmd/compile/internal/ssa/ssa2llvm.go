@@ -1540,18 +1540,18 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 }
 
 func (lfc *LLVMFuncContext) paramForArg(v *Value) llvm.Value {
-	param, typ := lfc.paramForArgNameAndType(v, v.Aux.(*ir.Name))
+	param, typ := lfc.paramForArgNameAndType(v.Aux.(*ir.Name))
 	return lfc.llvmValueFromABI(v, param, typ, v.Type, v.String()+".arg")
 }
 
-func (lfc *LLVMFuncContext) paramForArgNameAndType(v *Value, name *ir.Name) (llvm.Value, *types.Type) {
+func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *types.Type) {
 	key := llvmLocalKeyForName(name)
 	for i, param := range lfc.F.OwnAux.ABIInfo().InParams() {
 		if param.Name != nil && llvmLocalKeyForName(param.Name) == key {
 			return lfc.LF.Param(i), lfc.F.OwnAux.TypeOfArg(int64(i))
 		}
 	}
-	v.Fatalf("could not find LLVM parameter for %v", name)
+	lfc.F.fe.Fatalf(name.Pos(), "could not find LLVM parameter for %v", name)
 	return llvm.Value{}, nil
 }
 
@@ -3248,27 +3248,20 @@ func LLVMCompile(f *Func) {
 		init.SetAlignment(int(name.Type().Alignment()))
 		init.SetVolatile(true)
 	}
-	var parameterHomes []*Value
+	var parameterHomes []*ir.Name
 	var parameterLifetimeSlots []llvmStackSlot
-	type cgoUnsafeParameterHome struct {
-		index int
-		name  *ir.Name
-		typ   *types.Type
-		slot  llvmStackSlot
-	}
-	var cgoUnsafeParameterHomes []cgoUnsafeParameterHome
 	if cgoUnsafeArgs {
-		for i, param := range inParams {
+		// Reuse the ordinary parameter-home path established for the modeled
+		// ABI0 frame. CgoUnsafeArgs exposes the complete contiguous input area
+		// through one parameter address, so every non-empty input needs a home
+		// even when Go SSA contains no OpLocalAddr for it.
+		for _, param := range inParams {
 			if param.Name == nil || param.Type.Size() == 0 {
 				continue
 			}
-			slot, _ := preallocateLocal(param.Name, param.Name.Sym().Name+".cgo")
-			cgoUnsafeParameterHomes = append(cgoUnsafeParameterHomes, cgoUnsafeParameterHome{
-				index: i,
-				name:  param.Name,
-				typ:   param.Type,
-				slot:  slot,
-			})
+			if _, created := preallocateLocal(param.Name, param.Name.Sym().Name+".cgo"); created {
+				parameterHomes = append(parameterHomes, param.Name)
+			}
 		}
 	}
 	for _, BB := range f.Blocks {
@@ -3282,7 +3275,7 @@ func LLVMCompile(f *Func) {
 				continue
 			}
 			if name.Class == ir.PPARAM {
-				parameterHomes = append(parameterHomes, v)
+				parameterHomes = append(parameterHomes, name)
 				if name.Type().HasPointers() && !cgoUnsafeArgs {
 					parameterLifetimeSlots = append(parameterLifetimeSlots, FCtxt.Locals[key])
 				}
@@ -3388,33 +3381,12 @@ func LLVMCompile(f *Func) {
 	// argument store from SelectionDAG and prevents a wholly stack-assigned
 	// parameter home from being folded back to its incoming fixed stack slot.
 	FCtxt.b.SetInsertPointAtEnd(FCtxt.BBs[f.Entry.ID])
-	if len(cgoUnsafeParameterHomes) != 0 {
-		var owner *Value
-		for _, block := range f.Blocks {
-			if len(block.Values) != 0 {
-				owner = block.Values[0]
-				break
-			}
-		}
-		if owner == nil {
-			f.fe.Fatalf(f.Entry.Pos, "cgo unsafe argument function has no SSA value for diagnostics")
-		}
-		for _, home := range cgoUnsafeParameterHomes {
-			param := FCtxt.LF.Param(home.index)
-			param = FCtxt.llvmValueFromABI(owner, param, home.typ, home.slot.Type, home.name.Sym().Name+".cgo.home")
-			if param.Type() != getLLVMType(home.slot.Type) {
-				f.fe.Fatalf(home.name.Pos(), "cgo unsafe argument home changes LLVM representation")
-			}
-			init := FCtxt.b.CreateStore(param, home.slot.Value)
-			init.SetAlignment(int(home.slot.Type.Alignment()))
-		}
-	}
-	for _, v := range parameterHomes {
-		name, key := llvmLocalName(v)
+	for _, name := range parameterHomes {
+		key := llvmLocalKeyForName(name)
 		slot := FCtxt.Locals[key]
-		param, paramType := FCtxt.paramForArgNameAndType(v, name)
+		param, paramType := FCtxt.paramForArgNameAndType(name)
 		if paramType.Size() != slot.Type.Size() || param.Type() != getLLVMABIType(slot.Type) {
-			v.Fatalf("parameter home has incompatible physical ABI carrier")
+			f.fe.Fatalf(name.Pos(), "parameter home has incompatible physical ABI carrier")
 		}
 		init := FCtxt.b.CreateStore(param, slot.Value)
 		init.SetAlignment(int(slot.Type.Alignment()))
