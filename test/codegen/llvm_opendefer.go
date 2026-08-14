@@ -16,7 +16,7 @@ package codegen
 // LLVM: store volatile ptr {{.*}}, ptr [[SLOT0]]
 // LLVM: store volatile ptr {{.*}}, ptr [[SLOT1]]
 // LLVM: [[RECOVERY]]:
-// LLVM-NEXT: call goabiinternal void @runtime.deferreturn()
+// LLVM-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM: ![[SLOTS_MD]] = !{i32 2}
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmOpenDeferTwo(i64 %value)
 // LLVM-OPT: [[SLOTS_OPT:%.*]] = alloca [2 x ptr], align 8, !goallc.open_defer_slots ![[SLOTS_OPT_MD:[0-9]+]]
@@ -27,7 +27,7 @@ package codegen
 // LLVM-OPT: store volatile ptr {{.*}}, ptr [[SLOTS_OPT]]
 // LLVM-OPT: store volatile ptr {{.*}}, ptr [[SLOT1_OPT]]
 // LLVM-OPT: [[RECOVERY_OPT]]:
-// LLVM-OPT: call goabiinternal void @runtime.deferreturn()
+// LLVM-OPT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM-OPT: ![[SLOTS_OPT_MD]] = !{i32 2}
 
 func llvmOpenDeferTwo(value int) (result int) {

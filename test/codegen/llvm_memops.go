@@ -76,28 +76,26 @@ func llvmMovePointerToStack(src *llvmPointerStackZero) *int {
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveOverlapSized(
 // LLVM-ARM64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
-// LLVM-AMD64-DAG: call goabiinternal void @runtime.memmove(ptr %dst, ptr %src, i64 32) #{{[0-9]+}}
+// LLVM-AMD64-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr %src, i64 32) #{{[0-9]+}}
 func llvmMoveOverlapSized(dst, src *[32]byte) {
 	*dst = *src
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveAligned(
 // LLVM-ARM64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 8 %dst, ptr align 8 %src, i64 24, i1 false)
-// LLVM-AMD64-DAG: call goabiinternal void @runtime.memmove(ptr %dst, ptr %src, i64 24) #{{[0-9]+}}
+// LLVM-AMD64-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr %src, i64 24) #{{[0-9]+}}
 func llvmMoveAligned(dst, src *[3]uint64) {
 	*dst = *src
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveLarge(
-// LLVM-DAG: call goabiinternal void @runtime.memmove(ptr %dst, ptr {{%.*}}, i64 128) #{{[0-9]+}}
-// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal void @runtime.memmove(ptr, ptr, i64)
+// LLVM-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr {{%.*}}, i64 128) #{{[0-9]+}}
 func llvmMoveLarge(dst *[128]byte, src [128]byte) {
 	*dst = src
 }
 
 // LLVM-DAG: define goabiinternal i8 @codegen.llvmMemEq(
-// LLVM-DAG: call goabiinternal i8 @runtime.memequal(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}}) #{{[0-9]+}}
-// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal i8 @runtime.memequal(ptr, ptr, i64)
+// LLVM-DAG: call goabiinternal i8 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}}) #{{[0-9]+}}
 func llvmMemEq(a, b string) bool {
 	return a == b
 }

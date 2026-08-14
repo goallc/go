@@ -28,11 +28,10 @@ func (v llvmDoubleSwitchValue) Double() int {
 
 // LLVM-DAG: @codegen..interfaceSwitch.0 = internal global <{ ptr, [8 x i8], ptr, ptr }>
 // LLVM-DAG: load atomic ptr, ptr @codegen..interfaceSwitch.0 seq_cst
-// LLVM-DAG: call goabiinternal { i64, ptr } @runtime.interfaceSwitch(ptr @codegen..interfaceSwitch.0, ptr
-// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal { i64, ptr } @runtime.interfaceSwitch(ptr, ptr)
+// LLVM-DAG: call goabiinternal { i64, ptr } @"runtime.interfaceSwitch<builtin.{{[0-9]+}}>"(ptr @codegen..interfaceSwitch.0, ptr
 // LLVM-DAG: icmp eq ptr
 // LLVM-DAG: @"type:codegen.llvmSwitchValue"
-// LLVM-DAG: @"type:string"
+// LLVM-DAG: @"type:string<builtin.{{[0-9]+}}>"
 // LLVM-DAG: ret i64 -1
 // LLVM: !goobj.gotype = !{
 // LLVM-DAG: !{ptr @codegen..interfaceSwitch.0, ptr @

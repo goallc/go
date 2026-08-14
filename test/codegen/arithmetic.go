@@ -12,7 +12,7 @@ package codegen
 // LLVM-DAG: getelementptr i8, ptr {{%.*}}, i64 16
 // LLVM-DAG: sub i64
 // LLVM-DAG: store i64
-// LLVM-DAG: call goabiinternal void @runtime.goPanicIndex
+// LLVM-DAG: call goabiinternal void @"runtime.goPanicIndex<builtin.{{[0-9]+}}>"
 
 // This file contains codegen tests related to arithmetic
 // simplifications and optimizations on integer types.

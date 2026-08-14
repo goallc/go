@@ -59,6 +59,8 @@ func mkbuiltin(w io.Writer) {
 	}
 
 	decls := make(map[string]bool)
+	builtinIndex := 0
+	var lateBuiltins []int
 
 	fmt.Fprintf(w, "var builtins = [...]struct{ name string; abi int }{\n")
 	for _, decl := range f.Decls {
@@ -73,6 +75,7 @@ func mkbuiltin(w io.Writer) {
 			declName := pkg + "." + decl.Name.Name
 			decls[declName] = true
 			fmt.Fprintf(w, "{%q, 1},\n", declName) // functions are ABIInternal (1)
+			builtinIndex++
 		case *ast.GenDecl:
 			if decl.Tok == token.IMPORT {
 				continue
@@ -89,6 +92,7 @@ func mkbuiltin(w io.Writer) {
 					declName := pkg + "." + name.Name
 					decls[declName] = true
 					fmt.Fprintf(w, "{%q, 0},\n", declName) // variables are ABI0
+					builtinIndex++
 				}
 			}
 		default:
@@ -111,6 +115,16 @@ func mkbuiltin(w io.Writer) {
 			log.Fatalf("%q already added -- mkbuiltin.go out of sync?", name)
 		}
 		fmt.Fprintf(w, "{%q, %d},\n", name, b.abi)
+		if b.late {
+			lateBuiltins = append(lateBuiltins, builtinIndex)
+		}
+		builtinIndex++
+	}
+	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "var lateBuiltins = [...]bool{")
+	for _, i := range lateBuiltins {
+		fmt.Fprintf(w, "%d: true,\n", i)
 	}
 	fmt.Fprintln(w, "}")
 }
@@ -128,8 +142,8 @@ func enumerateBasicTypes() []extra {
 		"func(error) string"}
 	result := []extra{}
 	for _, n := range names {
-		result = append(result, extra{"type:" + n, 0})
-		result = append(result, extra{"type:*" + n, 0})
+		result = append(result, extra{name: "type:" + n, abi: 0})
+		result = append(result, extra{name: "type:*" + n, abi: 0})
 	}
 	return result
 }
@@ -137,47 +151,48 @@ func enumerateBasicTypes() []extra {
 type extra struct {
 	name string
 	abi  int
+	late bool
 }
 
 var fextras = [...]extra{
 	// compiler frontend inserted calls (sysfunc)
-	{"deferproc", 1},
-	{"deferprocStack", 1},
-	{"deferreturn", 1},
-	{"newproc", 1},
-	{"panicoverflow", 1},
-	{"sigpanic", 1},
+	{name: "deferproc", abi: 1},
+	{name: "deferprocStack", abi: 1},
+	{name: "deferreturn", abi: 1},
+	{name: "newproc", abi: 1},
+	{name: "panicoverflow", abi: 1},
+	{name: "sigpanic", abi: 1},
 
 	// compiler backend inserted calls
-	{"gcWriteBarrier1", 1},
-	{"gcWriteBarrier2", 1},
-	{"gcWriteBarrier3", 1},
-	{"gcWriteBarrier4", 1},
-	{"gcWriteBarrier5", 1},
-	{"gcWriteBarrier6", 1},
-	{"gcWriteBarrier7", 1},
-	{"gcWriteBarrier8", 1},
-	{"duffzero", 1},
-	{"duffcopy", 1},
+	{name: "gcWriteBarrier1", abi: 1, late: true},
+	{name: "gcWriteBarrier2", abi: 1, late: true},
+	{name: "gcWriteBarrier3", abi: 1, late: true},
+	{name: "gcWriteBarrier4", abi: 1, late: true},
+	{name: "gcWriteBarrier5", abi: 1, late: true},
+	{name: "gcWriteBarrier6", abi: 1, late: true},
+	{name: "gcWriteBarrier7", abi: 1, late: true},
+	{name: "gcWriteBarrier8", abi: 1, late: true},
+	{name: "duffzero", abi: 1},
+	{name: "duffcopy", abi: 1},
 
 	// assembler backend inserted calls
-	{"morestack", 0},        // asm function, ABI0
-	{"morestackc", 0},       // asm function, ABI0
-	{"morestack_noctxt", 0}, // asm function, ABI0
-	{"retpolineAX", 0},      // asm function, ABI0, amd64 only
-	{"retpolineCX", 0},      // asm function, ABI0, amd64 only
-	{"retpolineDX", 0},      // asm function, ABI0, amd64 only
-	{"retpolineBX", 0},      // asm function, ABI0, amd64 only
-	{"retpolineBP", 0},      // asm function, ABI0, amd64 only
-	{"retpolineSI", 0},      // asm function, ABI0, amd64 only
-	{"retpolineDI", 0},      // asm function, ABI0, amd64 only
-	{"retpolineR8", 0},      // asm function, ABI0, amd64 only
-	{"retpolineR9", 0},      // asm function, ABI0, amd64 only
-	{"retpolineR10", 0},     // asm function, ABI0, amd64 only
-	{"retpolineR11", 0},     // asm function, ABI0, amd64 only
-	{"retpolineR12", 0},     // asm function, ABI0, amd64 only
-	{"retpolineR13", 0},     // asm function, ABI0, amd64 only
-	{"retpolineR14", 0},     // asm function, ABI0, amd64 only
-	{"retpolineR15", 0},     // asm function, ABI0, amd64 only
-	{"tls_g", 0},            // asm variable, amd64 and 386 only
+	{name: "morestack", abi: 0, late: true},        // asm function, ABI0
+	{name: "morestackc", abi: 0, late: true},       // asm function, ABI0
+	{name: "morestack_noctxt", abi: 0, late: true}, // asm function, ABI0
+	{name: "retpolineAX", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineCX", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineDX", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineBX", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineBP", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineSI", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineDI", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineR8", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineR9", abi: 0},                  // asm function, ABI0, amd64 only
+	{name: "retpolineR10", abi: 0},                 // asm function, ABI0, amd64 only
+	{name: "retpolineR11", abi: 0},                 // asm function, ABI0, amd64 only
+	{name: "retpolineR12", abi: 0},                 // asm function, ABI0, amd64 only
+	{name: "retpolineR13", abi: 0},                 // asm function, ABI0, amd64 only
+	{name: "retpolineR14", abi: 0},                 // asm function, ABI0, amd64 only
+	{name: "retpolineR15", abi: 0},                 // asm function, ABI0, amd64 only
+	{name: "tls_g", abi: 0},                        // asm variable, amd64 and 386 only
 }

@@ -10,10 +10,10 @@
 package codegen
 
 // LLVM-DAG: define goabiinternal void @"codegen.(*T).f"(ptr %t)
-// LLVM-DAG: call goabiinternal void @runtime.memclrNoHeapPointers(ptr {{%.*}}, i64 80)
+// LLVM-DAG: call goabiinternal void @"runtime.memclrNoHeapPointers<builtin.{{[0-9]+}}>"(ptr {{%.*}}, i64 80)
 // LLVM-DAG: extractvalue { ptr, i64, i64 } {{%.*}}, 1
 // LLVM-DAG: shl i64 {{%.*}}, 3
-// LLVM-DAG: call goabiinternal void @runtime.memclrNoHeapPointers(ptr {{%.*}}, i64 {{%.*}})
+// LLVM-DAG: call goabiinternal void @"runtime.memclrNoHeapPointers<builtin.{{[0-9]+}}>"(ptr {{%.*}}, i64 {{%.*}})
 
 type T struct {
 	a *[10]int

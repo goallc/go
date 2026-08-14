@@ -14,6 +14,7 @@ import (
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
+	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
@@ -195,6 +196,10 @@ func TestLLVMCurrentGRegister(t *testing.T) {
 }
 
 func TestLLVMFunctionStorageName(t *testing.T) {
+	morestack, ok := goobj.BuiltinSymbolName("runtime.morestack", int(obj.ABI0))
+	if !ok {
+		t.Fatal("runtime.morestack ABI0 is absent from GoObj builtin table")
+	}
 	for _, test := range []struct {
 		name string
 		cc   llvm.CallConv
@@ -202,10 +207,93 @@ func TestLLVMFunctionStorageName(t *testing.T) {
 	}{
 		{"runtime.morestack", goABI0CallConv, "runtime.morestack<ABI0>"},
 		{"runtime.morestack", goABIInternalCallConv, "runtime.morestack"},
+		{morestack, goABI0CallConv, morestack + "<ABI0>"},
 	} {
 		if got := llvmFunctionStorageName(test.name, test.cc); got != test.want {
 			t.Errorf("llvmFunctionStorageName(%q, %d) = %q, want %q", test.name, test.cc, got, test.want)
 		}
+	}
+}
+
+func TestLLVMGoObjBuiltinReferenceName(t *testing.T) {
+	oldLinkshared := base.Ctxt.Flag_linkshared
+	base.Ctxt.Flag_linkshared = false
+	t.Cleanup(func() { base.Ctxt.Flag_linkshared = oldLinkshared })
+
+	s := base.Ctxt.LookupABI("runtime.panicdivide", obj.ABIInternal)
+	want, ok := goobj.BuiltinSymbolName(s.Name, int(s.ABI()))
+	if !ok {
+		t.Fatal("runtime.panicdivide is absent from GoObj builtin table")
+	}
+	if got := llvmGoObjReferenceName(s); got != want {
+		t.Fatalf("builtin reference name = %q, want %q", got, want)
+	}
+
+	oldLinkname := s.IsLinkname()
+	t.Cleanup(func() { s.Set(obj.AttrLinkname, oldLinkname) })
+	s.Set(obj.AttrLinkname, true)
+	if got := llvmGoObjReferenceName(s); got != want {
+		t.Fatalf("linknamed builtin reference name = %q, want builtin %q", got, want)
+	}
+	s.Set(obj.AttrLinkname, oldLinkname)
+	linkname := base.Ctxt.LookupABI("runtime.llvmLinknameOnly", obj.ABIInternal)
+	oldLinknameOnly := linkname.IsLinkname()
+	t.Cleanup(func() { linkname.Set(obj.AttrLinkname, oldLinknameOnly) })
+	linkname.Set(obj.AttrLinkname, true)
+	if got := llvmGoObjReferenceName(linkname); got != linkname.Name {
+		t.Fatalf("non-builtin linkname reference name = %q, want %q", got, linkname.Name)
+	}
+
+	base.Ctxt.Flag_linkshared = true
+	if got := llvmGoObjReferenceName(s); got != s.Name {
+		t.Fatalf("linkshared builtin reference name = %q, want %q", got, s.Name)
+	}
+}
+
+func TestEmitLateGoObjBuiltinDeclarations(t *testing.T) {
+	oldModule := CurrentModule
+	oldCompilerUsed := goObjCompilerUsed
+	oldCompilerUsedNames := goObjCompilerUsedNames
+	oldLinkshared := base.Ctxt.Flag_linkshared
+	module := GlobalCtxt.NewModule("late_goobj_builtins")
+	CurrentModule = module
+	goObjCompilerUsed = nil
+	goObjCompilerUsedNames = make(map[string]bool)
+	base.Ctxt.Flag_linkshared = false
+	t.Cleanup(func() {
+		base.Ctxt.Flag_linkshared = oldLinkshared
+		goObjCompilerUsedNames = oldCompilerUsedNames
+		goObjCompilerUsed = oldCompilerUsed
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+
+	emitLateGoObjBuiltinDeclarations()
+	lateCount := 0
+	for i := 0; i < goobj.NBuiltin(); i++ {
+		if !goobj.BuiltinIsLate(i) {
+			continue
+		}
+		lateCount++
+		name, abi := goobj.BuiltinName(i)
+		storageName, ok := goobj.BuiltinSymbolName(name, abi)
+		if !ok {
+			t.Fatalf("late builtin %s has no encoded name", name)
+		}
+		storageName = llvmFunctionStorageName(storageName, llvmCallConv(obj.ABI(abi)))
+		if fn := module.NamedFunction(storageName); fn.IsNil() {
+			t.Errorf("late builtin declaration %q is absent", storageName)
+		}
+	}
+	if got := len(goObjCompilerUsed); got != lateCount {
+		t.Fatalf("compiler-used late builtin count = %d, want %d", got, lateCount)
+	}
+	memmove, ok := goobj.BuiltinSymbolName("runtime.memmove", int(obj.ABIInternal))
+	if !ok {
+		t.Fatal("runtime.memmove is absent from GoObj builtin table")
+	}
+	if fn := module.NamedFunction(memmove); !fn.IsNil() {
+		t.Fatalf("ordinary builtin %q was declared eagerly", memmove)
 	}
 }
 

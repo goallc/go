@@ -4,7 +4,12 @@
 
 package goobj
 
-import "internal/buildcfg"
+import (
+	"internal/buildcfg"
+	"strconv"
+)
+
+const BuiltinSymbolSuffixPrefix = "<builtin."
 
 // Builtin (compiler-generated) function references appear
 // frequently. We assign special indices for them, so they
@@ -33,6 +38,24 @@ func BuiltinIdx(name string, abi int) int {
 		return -1
 	}
 	return i
+}
+
+// BuiltinSymbolName returns the LLVM declaration name for a predefined Go
+// symbol. The encoded index lets the GoObj writer recover PkgIdxBuiltin from
+// the final relocation without duplicating this table in LLVM.
+func BuiltinSymbolName(name string, abi int) (string, bool) {
+	i := BuiltinIdx(name, abi)
+	if i < 0 {
+		return name, false
+	}
+	return name + BuiltinSymbolSuffixPrefix + strconv.Itoa(i) + ">", true
+}
+
+// BuiltinIsLate reports whether LLVM's machine passes may introduce a
+// reference after ordinary IR call lowering. The classification is generated
+// beside builtins so the serialized index and the declaration stay in sync.
+func BuiltinIsLate(i int) bool {
+	return i >= 0 && i < len(lateBuiltins) && lateBuiltins[i]
 }
 
 //go:generate go run mkbuiltin.go

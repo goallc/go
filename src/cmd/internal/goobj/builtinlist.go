@@ -306,3 +306,17 @@ var builtins = [...]struct {
 	{"type:func(error) string", 0},
 	{"type:*func(error) string", 0},
 }
+
+var lateBuiltins = [...]bool{
+	234: true,
+	235: true,
+	236: true,
+	237: true,
+	238: true,
+	239: true,
+	240: true,
+	241: true,
+	244: true,
+	245: true,
+	246: true,
+}

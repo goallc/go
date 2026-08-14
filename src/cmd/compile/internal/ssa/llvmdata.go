@@ -13,9 +13,34 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/goallc/go-llvm"
 )
+
+// llvmGoObjReferenceName is the single naming boundary for undefined Go
+// symbols in LLVM IR. Go's symbol model remains unchanged; the LLVM-only
+// suffix tells the GoObj writer to serialize a surviving relocation through
+// the predefined builtin index table.
+func llvmGoObjReferenceName(s *obj.LSym) string {
+	if s == nil {
+		base.Fatalf("nil GoObj symbol reference")
+	}
+	if strings.Contains(s.Name, goobj.BuiltinSymbolSuffixPrefix) {
+		base.Fatalf("Go symbol name %q uses reserved LLVM builtin suffix", s.Name)
+	}
+	if base.Ctxt.Flag_linkshared {
+		return s.Name
+	}
+	if name, ok := goobj.BuiltinSymbolName(s.Name, int(s.ABI())); ok {
+		return name
+	}
+	// Linkname references currently retain their ordinary linker name. A
+	// runtime implementation may itself be linknamed while compiler-generated
+	// references to the same logical symbol still use the builtin table, so the
+	// builtin lookup above deliberately takes precedence over this attribute.
+	return s.Name
+}
 
 // emitGoObjImportMetadata carries the exact package path and linker
 // fingerprint already decoded by the Go importer. LLVM must not rediscover
@@ -43,23 +68,16 @@ func emitGoObjCgoModuleAsm() {
 	CurrentModule.SetInlineAsm(".goobj.cgo " + strconv.Quote(string(data)) + "\n")
 }
 
-// attachGoObjSymbolRef attaches the part of an undefined Go symbol's identity
-// that cannot be recovered from an LLVM relocation. The optimized relocation
-// stream still decides which declarations become GoObj references; the
-// attachment only supplies the imported package's symbol index or the builtin
-// index when such a relocation survives.
+// attachGoObjSymbolRef attaches the part of an undefined imported Go symbol's
+// identity that cannot be recovered from an LLVM relocation. Builtin identity
+// is carried by the declaration name instead.
 func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 	if value.IsNil() || s == nil {
 		base.Fatalf("invalid LLVM value in GoObj symbol reference")
 	}
 
-	if !base.Ctxt.Flag_linkshared && !s.IsLinkname() {
-		if idx := goobj.BuiltinIdx(s.Name, int(s.ABI())); idx >= 0 {
-			value.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.builtin"), GlobalCtxt.MDNode([]llvm.Metadata{
-				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(idx), false).ConstantAsMetadata(),
-			}))
-			return
-		}
+	if strings.Contains(value.Name(), goobj.BuiltinSymbolSuffixPrefix) {
+		return
 	}
 	// Linknamed symbols live in GoObj's non-package namespace even when the
 	// compiler learned about them through an imported package. Their export
@@ -86,15 +104,51 @@ func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 	}))
 }
 
-// attachGoObjABISymbolRef is for LLVM-generated runtime calls that do not
+func getOrInsertLLVMFunctionRef(s *obj.LSym, sig llvmFuncSignature, cc llvm.CallConv) llvm.Value {
+	if s == nil || llvmCallConv(s.ABI()) != cc {
+		base.Fatalf("invalid LLVM GoObj function reference")
+	}
+	value := getOrInsertLLVMFunction(llvmGoObjReferenceName(s), sig, cc)
+	attachGoObjSymbolRef(value, s)
+	return value
+}
+
+// getOrInsertLLVMABISymbolRef is for LLVM-generated runtime calls that do not
 // carry an SSA AuxCall. Use the compiler's ABI-aware symbol table so their
 // builtin/non-package classification stays identical to the native writer.
-func attachGoObjABISymbolRef(value llvm.Value, name string, abi obj.ABI) {
+func getOrInsertLLVMABISymbolRef(name string, abi obj.ABI, sig llvmFuncSignature, cc llvm.CallConv) llvm.Value {
 	s := base.Ctxt.LookupABI(name, abi)
 	if s == nil || s.Name != name || s.ABI() != abi {
 		base.Fatalf("invalid LLVM GoObj symbol model for %s", name)
 	}
-	attachGoObjSymbolRef(value, s)
+	return getOrInsertLLVMFunctionRef(s, sig, cc)
+}
+
+// emitLateGoObjBuiltinDeclarations emits only the declarations consumed by
+// LLVM machine passes. Ordinary builtin declarations are created lazily from
+// their exact SSA AuxCall signatures.
+func emitLateGoObjBuiltinDeclarations() {
+	if base.Ctxt.Flag_linkshared {
+		return
+	}
+	voidSig := llvmFuncSignature{
+		Type:                llvm.FunctionType(GlobalCtxt.VoidType(), nil, false),
+		ReturnType:          GlobalCtxt.VoidType(),
+		ClosureContextIndex: -1,
+	}
+	for i := 0; i < goobj.NBuiltin(); i++ {
+		if !goobj.BuiltinIsLate(i) {
+			continue
+		}
+		name, abiValue := goobj.BuiltinName(i)
+		storageName, ok := goobj.BuiltinSymbolName(name, abiValue)
+		if !ok {
+			base.Fatalf("late LLVM runtime helper %s is absent from GoObj builtin table", name)
+		}
+		abi := obj.ABI(abiValue)
+		fn := getOrInsertLLVMFunction(storageName, voidSig, llvmCallConv(abi))
+		preserveGoObjMetadataValues(fn)
+	}
 }
 
 // LowerGoObjData lowers compiler-emitted linker data into LLVM globals. The
@@ -271,13 +325,9 @@ func setGoObjPackageSymbolIndexMetadata(value llvm.Value, s *obj.LSym) {
 	if value.IsNil() || s == nil || s.PkgIdx != goobj.PkgIdxSelf || !s.Indexed() || s.SymIdx < 0 {
 		base.Fatalf("invalid LLVM GoObj package symbol index")
 	}
-	// Calls emitted before obj.NumberSyms may initially classify a runtime
-	// builtin as an undefined PkgIdxBuiltin reference. When compiling runtime,
-	// that same LLVM GlobalValue later becomes this package's definition.
-	// Definitions are addressed by their package symbol index, so remove the
-	// now-stale undefined-reference attachment before handing the module to the
-	// GoObj AsmPrinter.
-	value.EraseGlobalMetadata(GlobalCtxt.MDKindID("goobj.builtin"))
+	// An early imported declaration can later become a local definition through
+	// compiler-generated data. Definitions use their package symbol index, so
+	// discard the stale imported-reference attachment.
 	value.EraseGlobalMetadata(GlobalCtxt.MDKindID("goobj.import"))
 	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolIndexMD), GlobalCtxt.MDNode([]llvm.Metadata{
 		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(s.SymIdx), false).ConstantAsMetadata(),
@@ -310,6 +360,9 @@ func setGoObjContentHashMetadata(g llvm.Value, s *obj.LSym) {
 func llvmGoDataRef(s *obj.LSym) llvm.Value {
 	if s == nil {
 		base.Fatalf("nil Go data symbol in LLVM lowering")
+	}
+	if llvmGoObjReferenceName(s) != s.Name {
+		return llvmExternalDataRef(s, nil)
 	}
 	// FuncPCABI0 carries an ABI0 LSym through OpAddr, but bodyless assembly
 	// functions still have the unresolved Sxxx kind here. Recover the semantic
@@ -522,7 +575,7 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 	// example runtime.memequal64 in an equality closure), so do not rely on
 	// STEXT alone here.
 	if llvmGoFunctionSymbol(s) {
-		storageName := llvmFunctionStorageName(s.Name, llvmCallConv(s.ABI()))
+		storageName := llvmFunctionStorageName(llvmGoObjReferenceName(s), llvmCallConv(s.ABI()))
 		if f := CurrentModule.NamedFunction(storageName); !f.IsNil() {
 			attachGoObjSymbolRef(f, s)
 			return f
@@ -532,11 +585,12 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 		attachGoObjSymbolRef(f, s)
 		return f
 	}
-	if g := CurrentModule.NamedGlobal(s.Name); !g.IsNil() {
+	storageName := llvmGoObjReferenceName(s)
+	if g := CurrentModule.NamedGlobal(storageName); !g.IsNil() {
 		attachGoObjSymbolRef(g, s)
 		return g
 	}
-	g := llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), s.Name)
+	g := llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), storageName)
 	attachGoObjSymbolRef(g, s)
 	return g
 }

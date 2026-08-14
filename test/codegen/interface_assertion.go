@@ -20,8 +20,7 @@ func (v llvmAssertionValue) Value(delta int) int {
 // LLVM: @codegen..typeAssert.0 = internal global <{ ptr, ptr, [8 x i8] }>
 // LLVM-LABEL: define goabiinternal { { ptr, ptr }, i8 } @codegen.assertLLVMInterface(
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
-// LLVM: call goabiinternal ptr @runtime.typeAssert(ptr @codegen..typeAssert.0, ptr
-// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal ptr @runtime.typeAssert(ptr, ptr)
+// LLVM: call goabiinternal ptr @"runtime.typeAssert<builtin.{{[0-9]+}}>"(ptr @codegen..typeAssert.0, ptr
 // LLVM-LABEL: define goabiinternal { i64, i8 } @codegen.assertLLVMConcrete(
 // LLVM: extractvalue { ptr, ptr }
 // LLVM: icmp eq ptr
@@ -37,10 +36,8 @@ func assertLLVMInterface(v any) (llvmAssertionInterface, bool) {
 	return x, ok
 }
 
-// LLVM-DAG: call goabiinternal void @runtime.panicdottypeE(
-// LLVM-DAG: call goabiinternal void @runtime.panicnildottype(
-// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal void @runtime.panicdottypeE(ptr, ptr, ptr)
-// LLVM-DAG: declare !goobj.builtin !{{[0-9]+}} goabiinternal void @runtime.panicnildottype(ptr)
+// LLVM-DAG: call goabiinternal void @"runtime.panicdottypeE<builtin.{{[0-9]+}}>"(
+// LLVM-DAG: call goabiinternal void @"runtime.panicnildottype<builtin.{{[0-9]+}}>"(
 func mustLLVMConcrete(v any) llvmAssertionValue {
 	return v.(llvmAssertionValue)
 }

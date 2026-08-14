@@ -9,7 +9,7 @@ package codegen
 // LLVM-LABEL: define goabiinternal ptr @codegen.llvmWriteBarrierStore(
 // LLVM-SAME: ptr{{[^%]*}}%dst, ptr{{[^%]*}}%[[VALUE:[a-zA-Z0-9._]+]])
 // LLVM-SAME: #[[WBATTR:[0-9]+]] gc "goallc" {{.*}}{
-// LLVM: load i32, ptr @runtime.writeBarrier
+// LLVM: load i32, ptr @"runtime.writeBarrier<builtin.{{[0-9]+}}>"
 // LLVM: br i1
 // LLVM: call ptr @llvm.go.gc.write.barrier(i32 2)
 // LLVM: store ptr %[[VALUE]]

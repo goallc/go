@@ -7,10 +7,9 @@
 package codegen
 
 // LLVM-LABEL: define goabiinternal void @codegen.llvmNewproc(
-// LLVM: call goabiinternal void @runtime.newproc(ptr
-// LLVM-NOT: call goabiinternal void @runtime.newproc(i64
+// LLVM: call goabiinternal void @"runtime.newproc<builtin.{{[0-9]+}}>"(ptr
+// LLVM-NOT: call goabiinternal void @"runtime.newproc<builtin.{{[0-9]+}}>"(i64
 // LLVM: ret void
-// LLVM: declare !goobj.builtin !{{[0-9]+}} goabiinternal void @runtime.newproc(ptr)
 var llvmNewprocSink int
 
 func llvmNewproc(value int) {

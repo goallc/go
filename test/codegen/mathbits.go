@@ -1003,9 +1003,9 @@ func Div32(hi, lo, x uint32) (q, r uint32) {
 // LLVM-AMD64-LABEL: define goabiinternal { i64, i64 } @codegen.Div64(i64 %hi, i64 %lo, i64 %x)
 // LLVM-AMD64: icmp ne i64 %x, 0
 // LLVM-AMD64: icmp ult i64 %hi, %x
-// LLVM-AMD64-DAG: call goabiinternal void @runtime.panicdivide()
+// LLVM-AMD64-DAG: call goabiinternal void @"runtime.panicdivide<builtin.{{[0-9]+}}>"()
 // LLVM-AMD64-DAG: call { i64, i64 } @llvm.x86.go.udivrem.i128.i64(i64 %hi, i64 %lo, i64 %x)
-// LLVM-AMD64-DAG: call goabiinternal void @runtime.panicoverflow()
+// LLVM-AMD64-DAG: call goabiinternal void @"runtime.panicoverflow<builtin.{{[0-9]+}}>"()
 // LLVM-DAG: call i64 @llvm.cttz.i64(i64 %{{.*}}, i1 false)
 // LLVM-DAG: call i16 @llvm.ctpop.i16(i16 %{{.*}})
 func Div64(hi, lo, x uint64) (q, r uint64) {

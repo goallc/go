@@ -13,7 +13,7 @@ package codegen
 // LLVM-DAG: icmp eq i64 {{%.*}}, 7
 // LLVM-DAG: define goabiinternal void @codegen.idxInt8({ ptr, i64, i64 } %x
 // LLVM-DAG: icmp ult i64
-// LLVM-DAG: call goabiinternal void @runtime.goPanicIndex
+// LLVM-DAG: call goabiinternal void @"runtime.goPanicIndex<builtin.{{[0-9]+}}>"
 // LLVM-DAG: define goabiinternal { i64, i8 } @codegen.compMem3(ptr %x, ptr %y)
 // LLVM-DAG: icmp slt i64
 
