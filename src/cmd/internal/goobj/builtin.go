@@ -9,7 +9,10 @@ import (
 	"strconv"
 )
 
-const BuiltinSymbolSuffixPrefix = "<builtin."
+const (
+	BuiltinSymbolSuffixPrefix = "<builtin."
+	LinknameSymbolSuffix      = "<linkname>"
+)
 
 // Builtin (compiler-generated) function references appear
 // frequently. We assign special indices for them, so they

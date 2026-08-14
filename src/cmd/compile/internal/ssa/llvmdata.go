@@ -4,6 +4,7 @@ package ssa
 
 import (
 	"cmd/compile/internal/base"
+	"cmd/compile/internal/ir"
 	"cmd/compile/internal/typecheck"
 	"cmd/internal/goobj"
 	"cmd/internal/obj"
@@ -18,16 +19,55 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
+type llvmGoObjSymbolKey struct {
+	name string
+	abi  obj.ABI
+}
+
+var llvmGoObjLocalDefinitions map[llvmGoObjSymbolKey]bool
+
+func llvmGoObjSymbolKeyFor(s *obj.LSym) llvmGoObjSymbolKey {
+	return llvmGoObjSymbolKey{name: s.Name, abi: s.ABI()}
+}
+
+// initLLVMGoObjLocalDefinitions records the distinction needed only by
+// linkname: a declaration without a local definition is a pull, while a local
+// function or data definition is a push. Builtin references do not consult
+// this set.
+func initLLVMGoObjLocalDefinitions() {
+	llvmGoObjLocalDefinitions = make(map[llvmGoObjSymbolKey]bool)
+	for _, fn := range typecheck.Target.Funcs {
+		if fn == nil || fn.Nname == nil || len(fn.Body) == 0 {
+			continue
+		}
+		s := fn.LinksymABI(fn.ABI)
+		llvmGoObjLocalDefinitions[llvmGoObjSymbolKeyFor(s)] = true
+	}
+	for _, name := range typecheck.Target.Externs {
+		if name == nil || name.Op() != ir.ONAME || name.Class != ir.PEXTERN {
+			continue
+		}
+		s := name.Linksym()
+		llvmGoObjLocalDefinitions[llvmGoObjSymbolKeyFor(s)] = true
+	}
+}
+
+func llvmGoObjLinknameReference(s *obj.LSym) bool {
+	return s != nil && (s.IsLinkname() || s.IsLinknameStd()) &&
+		!llvmGoObjLocalDefinitions[llvmGoObjSymbolKeyFor(s)]
+}
+
 // llvmGoObjReferenceName is the single naming boundary for undefined Go
-// symbols in LLVM IR. Go's symbol model remains unchanged; the LLVM-only
-// suffix tells the GoObj writer to serialize a surviving relocation through
-// the predefined builtin index table.
+// symbols in LLVM IR. Go's symbol model remains unchanged; the LLVM-only name
+// records whether the GoObj writer must serialize a surviving relocation as a
+// builtin-index or linkname pull.
 func llvmGoObjReferenceName(s *obj.LSym) string {
 	if s == nil {
 		base.Fatalf("nil GoObj symbol reference")
 	}
-	if strings.Contains(s.Name, goobj.BuiltinSymbolSuffixPrefix) {
-		base.Fatalf("Go symbol name %q uses reserved LLVM builtin suffix", s.Name)
+	if strings.Contains(s.Name, goobj.BuiltinSymbolSuffixPrefix) ||
+		strings.Contains(s.Name, goobj.LinknameSymbolSuffix) {
+		base.Fatalf("Go symbol name %q uses reserved LLVM reference suffix", s.Name)
 	}
 	if base.Ctxt.Flag_linkshared {
 		return s.Name
@@ -35,10 +75,9 @@ func llvmGoObjReferenceName(s *obj.LSym) string {
 	if name, ok := goobj.BuiltinSymbolName(s.Name, int(s.ABI())); ok {
 		return name
 	}
-	// Linkname references currently retain their ordinary linker name. A
-	// runtime implementation may itself be linknamed while compiler-generated
-	// references to the same logical symbol still use the builtin table, so the
-	// builtin lookup above deliberately takes precedence over this attribute.
+	if llvmGoObjLinknameReference(s) {
+		return s.Name + goobj.LinknameSymbolSuffix
+	}
 	return s.Name
 }
 
@@ -69,21 +108,22 @@ func emitGoObjCgoModuleAsm() {
 }
 
 // attachGoObjSymbolRef attaches the part of an undefined imported Go symbol's
-// identity that cannot be recovered from an LLVM relocation. Builtin identity
-// is carried by the declaration name instead.
+// identity that cannot be recovered from an LLVM relocation. Builtin and
+// linkname identity is carried by the declaration name instead.
 func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 	if value.IsNil() || s == nil {
 		base.Fatalf("invalid LLVM value in GoObj symbol reference")
 	}
 
-	if strings.Contains(value.Name(), goobj.BuiltinSymbolSuffixPrefix) {
+	if strings.Contains(value.Name(), goobj.BuiltinSymbolSuffixPrefix) ||
+		strings.Contains(value.Name(), goobj.LinknameSymbolSuffix) {
 		return
 	}
 	// Linknamed symbols live in GoObj's non-package namespace even when the
 	// compiler learned about them through an imported package. Their export
 	// symbol index addresses that package's ordinary symbol block and must not
 	// be attached to the LLVM declaration as an imported reference.
-	if s.PkgIdx == goobj.PkgIdxNone || s.IsLinkname() {
+	if s.PkgIdx == goobj.PkgIdxNone || s.IsLinkname() || s.IsLinknameStd() {
 		return
 	}
 	localPkg := objabi.PathToPrefix(base.Ctxt.Pkgpath)
@@ -655,6 +695,9 @@ func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 	}
 	if s.IsLinkname() {
 		flag2 |= 1 << 4 // goobj.SymFlagLinkname
+	}
+	if s.IsLinknameStd() {
+		flag2 |= goobj.SymFlagLinknameStd
 	}
 	if s.ABIWrapper() {
 		flag2 |= 1 << 5 // goobj.SymFlagABIWrapper

@@ -193,38 +193,60 @@ func TestLLVMFunctionStorageName(t *testing.T) {
 	}
 }
 
-func TestLLVMGoObjBuiltinReferenceName(t *testing.T) {
+func TestLLVMGoObjReferenceNames(t *testing.T) {
 	oldLinkshared := base.Ctxt.Flag_linkshared
+	oldLocalDefinitions := llvmGoObjLocalDefinitions
 	base.Ctxt.Flag_linkshared = false
-	t.Cleanup(func() { base.Ctxt.Flag_linkshared = oldLinkshared })
+	llvmGoObjLocalDefinitions = make(map[llvmGoObjSymbolKey]bool)
+	t.Cleanup(func() {
+		base.Ctxt.Flag_linkshared = oldLinkshared
+		llvmGoObjLocalDefinitions = oldLocalDefinitions
+	})
 
-	s := base.Ctxt.LookupABI("runtime.panicdivide", obj.ABIInternal)
-	want, ok := goobj.BuiltinSymbolName(s.Name, int(s.ABI()))
+	builtin := base.Ctxt.LookupABI("runtime.panicdivide", obj.ABIInternal)
+	wantBuiltin, ok := goobj.BuiltinSymbolName(builtin.Name, int(builtin.ABI()))
 	if !ok {
 		t.Fatal("runtime.panicdivide is absent from GoObj builtin table")
 	}
-	if got := llvmGoObjReferenceName(s); got != want {
-		t.Fatalf("builtin reference name = %q, want %q", got, want)
+	if got := llvmGoObjReferenceName(builtin); got != wantBuiltin {
+		t.Fatalf("builtin reference name = %q, want %q", got, wantBuiltin)
 	}
 
-	oldLinkname := s.IsLinkname()
-	t.Cleanup(func() { s.Set(obj.AttrLinkname, oldLinkname) })
-	s.Set(obj.AttrLinkname, true)
-	if got := llvmGoObjReferenceName(s); got != want {
-		t.Fatalf("linknamed builtin reference name = %q, want builtin %q", got, want)
+	// Builtin and linkname are mutually exclusive reference encodings. The
+	// builtin table wins when an implementation also carries a linkname bit.
+	oldBuiltinLinkname := builtin.IsLinkname()
+	builtin.Set(obj.AttrLinkname, true)
+	t.Cleanup(func() { builtin.Set(obj.AttrLinkname, oldBuiltinLinkname) })
+	if got := llvmGoObjReferenceName(builtin); got != wantBuiltin {
+		t.Fatalf("linknamed builtin reference name = %q, want %q", got, wantBuiltin)
 	}
-	s.Set(obj.AttrLinkname, oldLinkname)
-	linkname := base.Ctxt.LookupABI("runtime.llvmLinknameOnly", obj.ABIInternal)
-	oldLinknameOnly := linkname.IsLinkname()
-	t.Cleanup(func() { linkname.Set(obj.AttrLinkname, oldLinknameOnly) })
+
+	linkname := base.Ctxt.LookupABI("runtime.llvmLinknamePull", obj.ABIInternal)
+	oldLinkname := linkname.IsLinkname()
 	linkname.Set(obj.AttrLinkname, true)
+	t.Cleanup(func() { linkname.Set(obj.AttrLinkname, oldLinkname) })
+	if got, want := llvmGoObjReferenceName(linkname), linkname.Name+goobj.LinknameSymbolSuffix; got != want {
+		t.Fatalf("linkname pull name = %q, want %q", got, want)
+	}
+	llvmGoObjLocalDefinitions[llvmGoObjSymbolKeyFor(linkname)] = true
 	if got := llvmGoObjReferenceName(linkname); got != linkname.Name {
-		t.Fatalf("non-builtin linkname reference name = %q, want %q", got, linkname.Name)
+		t.Fatalf("local linkname definition name = %q, want %q", got, linkname.Name)
 	}
 
+	linknameStd := base.Ctxt.LookupABI("runtime.llvmLinknameStdPull", obj.ABIInternal)
+	oldLinknameStd := linknameStd.IsLinknameStd()
+	linknameStd.Set(obj.AttrLinknameStd, true)
+	t.Cleanup(func() { linknameStd.Set(obj.AttrLinknameStd, oldLinknameStd) })
+	if got, want := llvmGoObjReferenceName(linknameStd), linknameStd.Name+goobj.LinknameSymbolSuffix; got != want {
+		t.Fatalf("linknamestd pull name = %q, want %q", got, want)
+	}
+
+	builtin.Set(obj.AttrLinkname, oldBuiltinLinkname)
 	base.Ctxt.Flag_linkshared = true
-	if got := llvmGoObjReferenceName(s); got != s.Name {
-		t.Fatalf("linkshared builtin reference name = %q, want %q", got, s.Name)
+	for _, s := range []*obj.LSym{builtin, linkname, linknameStd} {
+		if got := llvmGoObjReferenceName(s); got != s.Name {
+			t.Fatalf("linkshared reference name = %q, want %q", got, s.Name)
+		}
 	}
 }
 

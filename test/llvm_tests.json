@@ -55,6 +55,7 @@
       "codegen/llvm_trunc.go": "SSA-verified float64 truncation toward zero through the LLVM trunc intrinsic",
       "codegen/llvm_memops.go": "pointer-free zero and overlap-safe move intrinsics, runtime memequal, and native-int slice masks",
       "codegen/llvm_memory_order.go": "preserve Go SSA Memory-token order when LLVM emission precedes native scheduling",
+      "codegen/llvm_linkname.go": "external linkname pulls use a name suffix while local definitions and ABI wrappers remain canonical",
       "codegen/llvm_newproc.go": "pointer-typed funcval argument for the runtime.newproc raw ABI call",
       "codegen/llvm_nilcheck.go": "explicit branch to recoverable runtime.panicmem with stable continuation and optimized IR checks",
       "codegen/llvm_reflect_method.go": "reflect method calls preserve linker reachability flags in LLVM GoObj functions",
