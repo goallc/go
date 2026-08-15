@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"cmd/compile/internal/abi"
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/typecheck"
@@ -130,6 +131,58 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 
 	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("LLVM verifier rejected builtin calls with distinct signatures: %v\n%s", err, module.String())
+	}
+}
+
+func TestLLVMGoMemoryCarriersFollowABIAllocation(t *testing.T) {
+	config := abi.NewABIConfig(1, 0, 0, uint8(obj.ABIInternal))
+	intType := types.Types[types.TINT]
+	aux := StaticAuxCall(new(obj.LSym), config.ABIAnalyzeTypes(
+		[]*types.Type{intType, intType},
+		[]*types.Type{intType, intType},
+	))
+	sig := llvmSignature(aux)
+
+	memoryArgs := 0
+	for i, param := range sig.Params {
+		want := len(aux.ABIInfo().InParam(i).Registers) == 0 && aux.TypeOfArg(int64(i)).Size() != 0
+		if param.InMemory != want {
+			t.Errorf("argument %d memory carrier = %v, Go ABI allocation wants %v", i, param.InMemory, want)
+		}
+		if want {
+			memoryArgs++
+			if got := sig.Type.ParamTypes()[i].TypeKind(); got != llvm.PointerTypeKind {
+				t.Errorf("argument %d carrier kind = %v, want pointer", i, got)
+			}
+		}
+	}
+	if memoryArgs == 0 || memoryArgs == len(sig.Params) {
+		t.Fatalf("test requires mixed register and memory arguments, got %d of %d in memory", memoryArgs, len(sig.Params))
+	}
+
+	memoryResults := 0
+	for i, result := range sig.Results {
+		want := len(aux.ABIInfo().OutParam(i).Registers) == 0 && aux.TypeOfResult(int64(i)).Size() != 0
+		if result.InMemory != want {
+			t.Errorf("result %d memory carrier = %v, Go ABI allocation wants %v", i, result.InMemory, want)
+		}
+		if want {
+			memoryResults++
+		}
+	}
+	if memoryResults == 0 || memoryResults == len(sig.Results) {
+		t.Fatalf("test requires mixed register and memory results, got %d of %d in memory", memoryResults, len(sig.Results))
+	}
+
+	module := GlobalCtxt.NewModule("go_memory_carriers")
+	t.Cleanup(module.Dispose)
+	fn := llvm.AddFunction(module, "mixed", sig.Type)
+	configureLLVMFunction(fn, sig, goABIInternalCallConv)
+	ir := module.String()
+	for _, want := range []string{"preallocated(", "goret(", `"goretindex"=`} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("LLVM function does not contain %q:\n%s", want, ir)
+		}
 	}
 }
 

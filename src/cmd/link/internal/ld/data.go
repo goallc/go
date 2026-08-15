@@ -750,6 +750,7 @@ func ExtrelocSimple(ldr *loader.Loader, r loader.Reloc) loader.ExtReloc {
 	rs := r.Sym()
 	rr.Xsym = rs
 	rr.Xadd = r.Add()
+	rr.Off = r.Off()
 	rr.Type = r.Type()
 	rr.Size = r.Siz()
 	return rr
@@ -768,6 +769,7 @@ func ExtrelocViaOuterSym(ldr *loader.Loader, r loader.Reloc, s loader.Sym) loade
 		ldr.Errorf(s, "missing section for %s", ldr.SymName(rs))
 	}
 	rr.Xsym = rs
+	rr.Off = r.Off()
 	rr.Type = r.Type()
 	rr.Size = r.Siz()
 	return rr

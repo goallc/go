@@ -42,19 +42,22 @@ func llvmRegisterArgumentMemoryHome(x llvmArgumentStrings3) int {
 	return len(x.a) + len(x.b) + len(x.c)
 }
 
-// Non-trivial arrays are assigned wholly to the ABI stack. Their Go SSA
-// LocalAddr uses the same local-home initialization instead of reading an
-// uninitialized alloca.
+// Non-trivial arrays are assigned wholly to the ABI stack. The typed
+// preallocated carrier binds LocalAddr directly to that incoming home, without
+// constructing and initializing another local copy.
 //
-// LLVM-LABEL: define goabiinternal i64 @codegen.llvmStackArgumentMemoryHome([2 x { ptr, i64 }] %x)
-// LLVM: [[STACK_HOME:%.*]] = alloca [2 x { ptr, i64 }], align 8
-// LLVM: store [2 x { ptr, i64 }] %x, ptr [[STACK_HOME]], align 8
+// LLVM-LABEL: define goabiinternal i64 @codegen.llvmStackArgumentMemoryHome(ptr preallocated([2 x { ptr, i64 }]) align 8 %x)
+// LLVM-NOT: alloca
+// LLVM-NOT: store
+// LLVM: load { ptr, i64 }, ptr
+// LLVM: load { ptr, i64 }, ptr
 // LLVM: ret i64
 //
-// LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmStackArgumentMemoryHome([2 x { ptr, i64 }] %x)
+// LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmStackArgumentMemoryHome(ptr preallocated([2 x { ptr, i64 }]) align 8{{.*}} %x)
 // LLVM-OPT-NOT: alloca
-// LLVM-OPT: extractvalue [2 x { ptr, i64 }] %x, 0
-// LLVM-OPT: extractvalue [2 x { ptr, i64 }] %x, 1
+// LLVM-OPT-NOT: store
+// LLVM-OPT: load i64, ptr
+// LLVM-OPT: load i64, ptr
 // LLVM-OPT: ret i64
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmDirectRegisterArgument(i64 %x)

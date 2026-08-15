@@ -339,6 +339,36 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME GoALLCStatepoints.PreallocatedParamAttrRewrite
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/supported-param-attrs.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.PreallocatedParamAttrRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "ptr preallocated.*5 x ptr.* align 8 %home"
+  )
+
+  add_test(
+    NAME GoALLCStatepoints.GoRetResultAttrRewrite
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -goallc-pass-plugin-emit-ir
+      -filetype=null
+      -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/supported-param-attrs.ll"
+  )
+  set_tests_properties(GoALLCStatepoints.GoRetResultAttrRewrite PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "ptr goret.*5 x ptr.* align 8.*goretindex.*0.* %stack_result.address"
+  )
+
+  add_test(
     NAME GoALLCStatepoints.SupportedParamAttrsCodegen
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"

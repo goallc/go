@@ -34,7 +34,10 @@ func llvmDirectIfaceSink(llvmDirectIfaceNested) {}
 // LLVM: [[LEAF:%.*]] = insertvalue %codegen.llvmDirectIfaceLeaf undef, ptr [[DATA]], 0
 // LLVM: [[ARRAY:%.*]] = insertvalue [1 x %codegen.llvmDirectIfaceLeaf] undef, %codegen.llvmDirectIfaceLeaf [[LEAF]], 0
 // LLVM: [[NESTED:%.*]] = insertvalue %codegen.llvmDirectIfaceNested {{.*}}, [1 x %codegen.llvmDirectIfaceLeaf] [[ARRAY]], 2
-// LLVM: call goabiinternal void @codegen.llvmDirectIfaceSink(%codegen.llvmDirectIfaceNested [[NESTED]])
+// LLVM: [[SETUP:%.*]] = call token @llvm.call.preallocated.setup(i32 1)
+// LLVM: [[HOME:%.*]] = call ptr @llvm.call.preallocated.arg(token [[SETUP]], i32 0)
+// LLVM: store %codegen.llvmDirectIfaceNested [[NESTED]], ptr [[HOME]], align 8
+// LLVM: call goabiinternal void @codegen.llvmDirectIfaceSink(ptr preallocated(%codegen.llvmDirectIfaceNested) align 8 [[HOME]]) [ "preallocated"(token [[SETUP]]) ]
 func llvmDirectIfaceCall(x any) {
 	switch x := x.(type) {
 	case llvmDirectIfaceNested:

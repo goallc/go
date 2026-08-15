@@ -559,6 +559,34 @@ func elfreloc1(ctxt *ld.Link, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, 
 			ldstType = elf.R_AARCH64_LDST64_ABS_LO12_NC
 		}
 		out.Write64(uint64(ldstType) | uint64(elfsym)<<32)
+	case objabi.R_ARM64_PCREL:
+		if siz != 4 || r.Off < 0 || int64(r.Off)+4 > int64(len(ldr.Data(s))) {
+			return false
+		}
+		inst := ctxt.Arch.ByteOrder.Uint32(ldr.Data(s)[r.Off:])
+		kind, ok := classifyPCRelInstruction(inst)
+		if !ok {
+			ldr.Errorf(s, "unsupported instruction for %x R_ARM64_PCREL", inst)
+			return false
+		}
+		var relocType elf.R_AARCH64
+		switch kind {
+		case arm64PCRelADRP:
+			relocType = elf.R_AARCH64_ADR_PREL_PG_HI21
+		case arm64PCRelADD:
+			relocType = elf.R_AARCH64_ADD_ABS_LO12_NC
+		case arm64PCRelLDST8:
+			relocType = elf.R_AARCH64_LDST8_ABS_LO12_NC
+		case arm64PCRelLDST16:
+			relocType = elf.R_AARCH64_LDST16_ABS_LO12_NC
+		case arm64PCRelLDST32:
+			relocType = elf.R_AARCH64_LDST32_ABS_LO12_NC
+		case arm64PCRelLDST64:
+			relocType = elf.R_AARCH64_LDST64_ABS_LO12_NC
+		case arm64PCRelLDST128:
+			relocType = elf.R_AARCH64_LDST128_ABS_LO12_NC
+		}
+		out.Write64(uint64(relocType) | uint64(elfsym)<<32)
 
 	case objabi.R_ARM64_TLS_LE:
 		out.Write64(uint64(elf.R_AARCH64_TLSLE_MOVW_TPREL_G0) | uint64(elfsym)<<32)
@@ -587,6 +615,43 @@ func elfreloc1(ctxt *ld.Link, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, 
 // sign-extends from 21, 24-bit.
 func signext21(x int64) int64 { return x << (64 - 21) >> (64 - 21) }
 func signext24(x int64) int64 { return x << (64 - 24) >> (64 - 24) }
+
+type arm64PCRelInstruction uint8
+
+const (
+	arm64PCRelADRP arm64PCRelInstruction = iota
+	arm64PCRelADD
+	arm64PCRelLDST8
+	arm64PCRelLDST16
+	arm64PCRelLDST32
+	arm64PCRelLDST64
+	arm64PCRelLDST128
+)
+
+func classifyPCRelInstruction(inst uint32) (arm64PCRelInstruction, bool) {
+	switch {
+	case (inst>>24)&0x9f == 0x90:
+		return arm64PCRelADRP, true
+	case (inst>>24)&0x9f == 0x91:
+		return arm64PCRelADD, true
+	case (inst>>24)&0x3b == 0x39:
+		shift := inst >> 30
+		if shift == 0 && (inst>>20)&0x048 == 0x048 {
+			return arm64PCRelLDST128, true
+		}
+		switch shift {
+		case 0:
+			return arm64PCRelLDST8, true
+		case 1:
+			return arm64PCRelLDST16, true
+		case 2:
+			return arm64PCRelLDST32, true
+		case 3:
+			return arm64PCRelLDST64, true
+		}
+	}
+	return 0, false
+}
 
 func machoreloc1(arch *sys.Arch, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, r loader.ExtReloc, sectoff int64) bool {
 	var v uint32
@@ -646,6 +711,26 @@ func machoreloc1(arch *sys.Arch, out *ld.OutBuf, ldr *loader.Loader, s loader.Sy
 		}
 		v |= 1 << 24 // pc-relative bit
 		v |= ld.MACHO_ARM64_RELOC_BRANCH26 << 28
+	case objabi.R_ARM64_PCREL:
+		if siz != 4 || r.Off < 0 || int64(r.Off)+4 > int64(len(ldr.Data(s))) {
+			return false
+		}
+		inst := arch.ByteOrder.Uint32(ldr.Data(s)[r.Off:])
+		kind, ok := classifyPCRelInstruction(inst)
+		if !ok {
+			ldr.Errorf(s, "unsupported instruction for %x R_ARM64_PCREL", inst)
+			return false
+		}
+		if xadd != 0 {
+			out.Write32(uint32(sectoff))
+			out.Write32((ld.MACHO_ARM64_RELOC_ADDEND << 28) | (2 << 25) | uint32(xadd&0xffffff))
+		}
+		if kind == arm64PCRelADRP {
+			v |= 1 << 24
+			v |= ld.MACHO_ARM64_RELOC_PAGE21 << 28
+		} else {
+			v |= ld.MACHO_ARM64_RELOC_PAGEOFF12 << 28
+		}
 	case objabi.R_ADDRARM64,
 		objabi.R_ARM64_PCREL_LDST8,
 		objabi.R_ARM64_PCREL_LDST16,
@@ -795,6 +880,25 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		nExtReloc := 0
 		switch rt := r.Type(); rt {
 		default:
+		case objabi.R_ARM64_PCREL:
+			// PE currently resolves independent instruction relocations in
+			// the Go linker. ELF and Mach-O external links may move the final
+			// target section, so preserve each instruction relocation for the
+			// platform linker instead of baking in the preliminary layout.
+			if target.IsWindows() {
+				break
+			}
+			rs, off := ld.FoldSubSymbolOffset(ldr, rs)
+			xadd := r.Add() + off
+			rst := ldr.SymType(rs)
+			if rst != sym.SHOSTOBJ && rst != sym.SDYNIMPORT && ldr.SymSect(rs) == nil {
+				ldr.Errorf(s, "missing section for %s", ldr.SymName(rs))
+			}
+			nExtReloc = 1
+			if target.IsDarwin() && xadd != 0 {
+				nExtReloc = 2
+			}
+			return val, nExtReloc, isOk
 		case objabi.R_ARM64_GOTPCREL,
 			objabi.R_ARM64_PCREL_LDST8,
 			objabi.R_ARM64_PCREL_LDST16,
@@ -1127,6 +1231,10 @@ func archrelocvariant(*ld.Target, *loader.Loader, loader.Reloc, sym.RelocVariant
 
 func extreloc(target *ld.Target, ldr *loader.Loader, r loader.Reloc, s loader.Sym) (loader.ExtReloc, bool) {
 	switch rt := r.Type(); rt {
+	case objabi.R_ARM64_PCREL:
+		if !target.IsWindows() {
+			return ld.ExtrelocViaOuterSym(ldr, r, s), true
+		}
 	case objabi.R_ARM64_GOTPCREL,
 		objabi.R_ARM64_PCREL_LDST8,
 		objabi.R_ARM64_PCREL_LDST16,

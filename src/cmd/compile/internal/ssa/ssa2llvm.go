@@ -10,6 +10,7 @@ import (
 	"cmd/internal/src"
 	"fmt"
 	"internal/buildcfg"
+	"strconv"
 	"strings"
 
 	"github.com/goallc/go-llvm"
@@ -21,6 +22,7 @@ type LLVMFuncContext struct {
 	Locals            map[llvmLocalKey]llvmStackSlot
 	AddressedResults  map[ID][]llvmAddressedResult
 	ResultSlots       map[ID]llvm.Value
+	CallResultSlots   map[llvmCallResultKey]llvmStackSlot
 	ItabMethods       map[ID]bool
 	ClosureCodeLoads  map[ID]bool
 	DeferResults      map[llvmLocalKey]bool
@@ -39,6 +41,9 @@ type LLVMFuncContext struct {
 	b                 llvm.Builder
 	ReturnType        llvm.Type
 	ResultCount       int
+	ReturnCount       int
+	Params            []llvmParamSignature
+	Results           []llvmResultSignature
 }
 
 // SSA may clone an ir.Name while retaining the same logical source
@@ -59,6 +64,11 @@ type llvmAddressedResult struct {
 	Index int64
 	Slot  llvmStackSlot
 	Owner *Value
+}
+
+type llvmCallResultKey struct {
+	Call  ID
+	Index int64
 }
 
 // LLVM's GoABIInternal calling convention has numeric ID 22. Keep the
@@ -96,8 +106,25 @@ type llvmFuncSignature struct {
 	Type                llvm.Type
 	ReturnType          llvm.Type
 	ResultCount         int
+	ReturnCount         int
+	Params              []llvmParamSignature
+	Results             []llvmResultSignature
 	HasClosureContext   bool
 	ClosureContextIndex int
+}
+
+type llvmParamSignature struct {
+	ValueType llvm.Type
+	Alignment int
+	InMemory  bool
+}
+
+type llvmResultSignature struct {
+	ValueType   llvm.Type
+	Alignment   int
+	InMemory    bool
+	ReturnIndex int
+	ParamIndex  int
 }
 
 func llvmCallConv(which obj.ABI) llvm.CallConv {
@@ -165,15 +192,48 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 	}
 
 	params := make([]llvm.Type, 0, aux.NArgs())
+	paramSignatures := make([]llvmParamSignature, 0, aux.NArgs())
 	for i := int64(0); i < aux.NArgs(); i++ {
-		param := getLLVMABIType(aux.TypeOfArg(i))
-		params = append(params, param)
+		goType := aux.TypeOfArg(i)
+		valueType := getLLVMABIType(goType)
+		paramType := valueType
+		param := llvmParamSignature{ValueType: valueType}
+		assignment := aux.ABIInfo().InParam(int(i))
+		if len(assignment.Registers) == 0 && goType.Size() != 0 {
+			if goType.Alignment() <= 0 {
+				base.Fatalf("invalid alignment %d for stack argument %d of type %v", goType.Alignment(), i, goType)
+			}
+			param.InMemory = true
+			param.Alignment = int(goType.Alignment())
+			paramType = GlobalCtxt.PointerType(0)
+		}
+		params = append(params, paramType)
+		paramSignatures = append(paramSignatures, param)
 	}
 
 	results := make([]llvm.Type, 0, aux.NResults())
+	resultSignatures := make([]llvmResultSignature, 0, aux.NResults())
 	for i := int64(0); i < aux.NResults(); i++ {
-		result := getLLVMABIType(aux.TypeOfResult(i))
-		results = append(results, result)
+		goType := aux.TypeOfResult(i)
+		result := llvmResultSignature{
+			ValueType:   getLLVMABIType(goType),
+			ReturnIndex: -1,
+			ParamIndex:  -1,
+		}
+		assignment := aux.ABIInfo().OutParam(int(i))
+		if len(assignment.Registers) == 0 && goType.Size() != 0 {
+			if goType.Alignment() <= 0 {
+				base.Fatalf("invalid alignment %d for stack result %d of type %v", goType.Alignment(), i, goType)
+			}
+			result.InMemory = true
+			result.Alignment = int(goType.Alignment())
+			result.ParamIndex = len(params)
+			params = append(params, GlobalCtxt.PointerType(0))
+		} else {
+			result.ReturnIndex = len(results)
+			results = append(results, result.ValueType)
+		}
+		resultSignatures = append(resultSignatures, result)
 	}
 
 	var ret llvm.Type
@@ -188,7 +248,10 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 	return llvmFuncSignature{
 		Type:                llvm.FunctionType(ret, params, false),
 		ReturnType:          ret,
-		ResultCount:         len(results),
+		ResultCount:         len(resultSignatures),
+		ReturnCount:         len(results),
+		Params:              paramSignatures,
+		Results:             resultSignatures,
 		ClosureContextIndex: -1,
 	}
 }
@@ -210,6 +273,26 @@ func llvmNestAttribute() llvm.Attribute {
 	return GlobalCtxt.CreateEnumAttribute(kind, 0)
 }
 
+func llvmPreallocatedAttribute(t llvm.Type) llvm.Attribute {
+	kind := llvm.AttributeKindID("preallocated")
+	if kind == 0 {
+		base.Fatalf("LLVM does not provide the preallocated parameter attribute")
+	}
+	return GlobalCtxt.CreateTypeAttribute(kind, t)
+}
+
+func llvmGoRetAttribute(t llvm.Type) llvm.Attribute {
+	kind := llvm.AttributeKindID("goret")
+	if kind == 0 {
+		base.Fatalf("LLVM does not provide the goret parameter attribute")
+	}
+	return GlobalCtxt.CreateTypeAttribute(kind, t)
+}
+
+func llvmGoRetIndexAttribute(index int) llvm.Attribute {
+	return GlobalCtxt.CreateStringAttribute("goretindex", strconv.Itoa(index))
+}
+
 func llvmNullPointerIsValidAttribute() llvm.Attribute {
 	kind := llvm.AttributeKindID("null_pointer_is_valid")
 	if kind == 0 {
@@ -228,8 +311,23 @@ func llvmNoInlineAttribute() llvm.Attribute {
 
 func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallConv) {
 	fn.SetFunctionCallConv(cc)
-	if sig.ResultCount > 1 {
+	if sig.ReturnCount > 1 {
 		fn.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
+	}
+	for i, param := range sig.Params {
+		if !param.InMemory {
+			continue
+		}
+		fn.AddAttributeAtIndex(i+1, llvmPreallocatedAttribute(param.ValueType))
+		fn.Param(i).SetParamAlignment(param.Alignment)
+	}
+	for index, result := range sig.Results {
+		if !result.InMemory {
+			continue
+		}
+		fn.AddAttributeAtIndex(result.ParamIndex+1, llvmGoRetAttribute(result.ValueType))
+		fn.AddAttributeAtIndex(result.ParamIndex+1, llvmGoRetIndexAttribute(index))
+		fn.Param(result.ParamIndex).SetParamAlignment(result.Alignment)
 	}
 	if sig.HasClosureContext {
 		// LLVM parameter attribute indexes are one-based. The closure context
@@ -240,8 +338,23 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 }
 
 func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
-	if sig.ResultCount > 1 {
+	if sig.ReturnCount > 1 {
 		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
+	}
+	for i, param := range sig.Params {
+		if !param.InMemory {
+			continue
+		}
+		call.AddCallSiteAttribute(i+1, llvmPreallocatedAttribute(param.ValueType))
+		call.SetInstrParamAlignment(i+1, param.Alignment)
+	}
+	for index, result := range sig.Results {
+		if !result.InMemory {
+			continue
+		}
+		call.AddCallSiteAttribute(result.ParamIndex+1, llvmGoRetAttribute(result.ValueType))
+		call.AddCallSiteAttribute(result.ParamIndex+1, llvmGoRetIndexAttribute(index))
+		call.SetInstrParamAlignment(result.ParamIndex+1, result.Alignment)
 	}
 }
 
@@ -316,6 +429,19 @@ func (lfc *LLVMFuncContext) llvmLifetimeStart(slot llvmStackSlot) {
 		false,
 	)
 	fn := getOrInsertLLVMIntrinsic("llvm.lifetime.start.p0", sig)
+	lfc.b.CreateCall(sig, fn, []llvm.Value{slot.Value}, "")
+}
+
+func (lfc *LLVMFuncContext) llvmLifetimeEnd(slot llvmStackSlot) {
+	if slot.Value.IsAAllocaInst().IsNil() {
+		return
+	}
+	sig := llvm.FunctionType(
+		GlobalCtxt.VoidType(),
+		[]llvm.Type{GlobalCtxt.PointerType(0)},
+		false,
+	)
+	fn := getOrInsertLLVMIntrinsic("llvm.lifetime.end.p0", sig)
 	lfc.b.CreateCall(sig, fn, []llvm.Value{slot.Value}, "")
 }
 
@@ -1080,6 +1206,33 @@ func (lfc *LLVMFuncContext) llvmRuntimeMemmove(dst, src, length llvm.Value) llvm
 	return call
 }
 
+func (lfc *LLVMFuncContext) llvmCopyFixedMemory(dst, src llvm.Value, size int64, align int) llvm.Value {
+	lengthType := getLLVMType(types.Types[types.TUINTPTR])
+	length := llvm.ConstInt(lengthType, uint64(size), false)
+	if size > llvmInlineMemmoveLimit {
+		return lfc.llvmRuntimeMemmove(dst, src, length)
+	}
+	sig := llvm.FunctionType(
+		GlobalCtxt.VoidType(),
+		[]llvm.Type{dst.Type(), src.Type(), length.Type(), GlobalCtxt.Int1Type()},
+		false,
+	)
+	name := "llvm.memmove.p0.p0.i64"
+	if length.Type().IntTypeWidth() == 32 {
+		name = "llvm.memmove.p0.p0.i32"
+	}
+	fn := getOrInsertLLVMIntrinsic(name, sig)
+	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
+		dst,
+		src,
+		length,
+		llvm.ConstInt(GlobalCtxt.Int1Type(), 0, false),
+	}, "")
+	call.SetInstrParamAlignment(1, align)
+	call.SetInstrParamAlignment(2, align)
+	return call
+}
+
 func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
 	size, align := llvmMemoryOpInfo(v)
 	dst := lfc.llvmMemoryPointer(v, 0)
@@ -1130,6 +1283,7 @@ func (lfc *LLVMFuncContext) llvmMemEq(v *Value) llvm.Value {
 		Type:                llvm.FunctionType(boolType, []llvm.Type{left.Type(), right.Type(), uintptrType}, false),
 		ReturnType:          boolType,
 		ResultCount:         1,
+		ReturnCount:         1,
 		ClosureContextIndex: -1,
 	}
 	fn := getOrInsertLLVMABISymbolRef("runtime.memequal", obj.ABIInternal, sig, goABIInternalCallConv)
@@ -1552,11 +1706,116 @@ func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *
 	key := llvmLocalKeyForName(name)
 	for i, param := range lfc.F.OwnAux.ABIInfo().InParams() {
 		if param.Name != nil && llvmLocalKeyForName(param.Name) == key {
-			return lfc.LF.Param(i), lfc.F.OwnAux.TypeOfArg(int64(i))
+			value := lfc.LF.Param(i)
+			if lfc.Params[i].InMemory {
+				value = lfc.b.CreateLoad(lfc.Params[i].ValueType, value, name.Sym().Name+".memory")
+				value.SetAlignment(lfc.Params[i].Alignment)
+			}
+			return value, lfc.F.OwnAux.TypeOfArg(int64(i))
 		}
 	}
 	lfc.F.fe.Fatalf(name.Pos(), "could not find LLVM parameter for %v", name)
 	return llvm.Value{}, nil
+}
+
+func llvmMemoryParameterCount(sig llvmFuncSignature) int {
+	count := 0
+	for _, param := range sig.Params {
+		if param.InMemory {
+			count++
+		}
+	}
+	return count
+}
+
+func (lfc *LLVMFuncContext) llvmPreallocatedCallSetup(sig llvmFuncSignature) llvm.Value {
+	count := llvmMemoryParameterCount(sig)
+	if count == 0 {
+		return llvm.Value{}
+	}
+	fn := getLLVMIntrinsicDeclaration("llvm.call.preallocated.setup")
+	return lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{
+		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(count), false),
+	}, "preallocated.setup")
+}
+
+func (lfc *LLVMFuncContext) llvmPreallocatedCallArgument(v, argValue *Value, index, carrierIndex int, logical *types.Type, param llvmParamSignature, setup llvm.Value) llvm.Value {
+	if !param.InMemory || logical.Size() == 0 || setup.IsNil() {
+		v.Fatalf("argument %d is not a non-empty memory parameter", index)
+	}
+	fn := getLLVMIntrinsicDeclaration("llvm.call.preallocated.arg")
+	address := lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{
+		setup,
+		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(carrierIndex), false),
+	}, fmt.Sprintf("%s.arg%d.home", v, index))
+	address.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmPreallocatedAttribute(param.ValueType))
+
+	// Go SSA keeps non-SSA-able aggregate call arguments in memory and exposes
+	// the value through a Load or Dereference. Copy those bytes directly into
+	// the ABI-defined outgoing home instead of constructing a first-class value.
+	if types.Identical(argValue.Type, logical) &&
+		(argValue.Op == OpLoad || argValue.Op == OpDereference) && len(argValue.Args) != 0 {
+		source := lfc.GenLV(argValue.Args[0])
+		if source.Type().TypeKind() != llvm.PointerTypeKind {
+			v.Fatalf("memory argument %d has non-pointer source address", index)
+		}
+		lfc.llvmCopyFixedMemory(address, source, logical.Size(), param.Alignment)
+		return address
+	}
+
+	value := lfc.GenLV(argValue)
+	value = lfc.llvmValueToABI(v, value, argValue.Type, logical, param.ValueType, fmt.Sprintf("%s.arg%d", v, index))
+	if value.Type() != param.ValueType {
+		v.Fatalf("memory argument %d has incompatible LLVM value type", index)
+	}
+	store := lfc.b.CreateStore(value, address)
+	store.SetAlignment(param.Alignment)
+	return address
+}
+
+func (lfc *LLVMFuncContext) llvmMemoryResultCallArguments(v *Value, sig llvmFuncSignature, aux *AuxCall) []llvm.Value {
+	args := make([]llvm.Value, 0, sig.ResultCount-sig.ReturnCount)
+	for index, result := range sig.Results {
+		if !result.InMemory {
+			continue
+		}
+		slot, ok := lfc.CallResultSlots[llvmCallResultKey{Call: v.ID, Index: int64(index)}]
+		if !ok || !types.Identical(slot.Type, aux.TypeOfResult(int64(index))) {
+			v.Fatalf("memory result %d has no compatible caller-owned home", index)
+		}
+		// A call reinitializes its caller-owned result home. Keep future result
+		// homes out of earlier statepoints while allowing SelectN and
+		// SelectNAddr uses after this call to determine the actual live range.
+		lfc.llvmLifetimeStart(slot)
+		args = append(args, slot.Value)
+	}
+	return args
+}
+
+func (lfc *LLVMFuncContext) storeMemoryResult(v, value *Value, index int) {
+	result := lfc.Results[index]
+	if !result.InMemory || result.ParamIndex < 0 {
+		v.Fatalf("result %d is not assigned to memory", index)
+	}
+	logical := lfc.F.OwnAux.TypeOfResult(int64(index))
+	dst := lfc.LF.Param(result.ParamIndex)
+	if types.Identical(value.Type, logical) &&
+		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0 {
+		src := lfc.GenLV(value.Args[0])
+		if src.Type().TypeKind() != llvm.PointerTypeKind {
+			v.Fatalf("memory result %d has a non-pointer source address", index)
+		}
+		lfc.llvmCopyFixedMemory(dst, src, logical.Size(), result.Alignment)
+		return
+	}
+
+	lVal := lfc.GenLV(value)
+	lVal = lfc.llvmValueToABI(v, lVal, value.Type, logical, result.ValueType, fmt.Sprintf("%s.result%d", v, index))
+	if lVal.Type() != result.ValueType {
+		v.Fatalf("memory result %d has incompatible LLVM value type", index)
+	}
+	store := lfc.b.CreateStore(lVal, dst)
+	store.SetAlignment(result.Alignment)
 }
 
 func (lfc *LLVMFuncContext) registerArgument(v *Value) llvm.Value {
@@ -1913,19 +2172,38 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	// statepoints.
 	llvmGCLeaf := aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove ||
 		aux.Fn == ir.Syms.Memmove || aux.Fn == ir.Syms.Memequal
-	args := make([]llvm.Value, 0, aux.NArgs())
+	args := make([]llvm.Value, 0, len(sig.Type.ParamTypes()))
+	setup := lfc.llvmPreallocatedCallSetup(sig)
+	carrierIndex := 0
 	for i := int64(0); i < aux.NArgs(); i++ {
-		arg := lfc.GenLV(v.Args[i])
-		if arg.Type() != sig.Type.ParamTypes()[i] {
-			arg = lfc.llvmValueToABI(v, arg, v.Args[i].Type, aux.TypeOfArg(i), sig.Type.ParamTypes()[i], fmt.Sprintf("%s.arg%d", v, i))
+		var arg llvm.Value
+		if sig.Params[i].InMemory {
+			arg = lfc.llvmPreallocatedCallArgument(v, v.Args[i], int(i), carrierIndex, aux.TypeOfArg(i), sig.Params[i], setup)
+			carrierIndex++
+		} else {
+			arg = lfc.GenLV(v.Args[i])
+			if arg.Type() != sig.Type.ParamTypes()[i] {
+				arg = lfc.llvmValueToABI(v, arg, v.Args[i].Type, aux.TypeOfArg(i), sig.Type.ParamTypes()[i], fmt.Sprintf("%s.arg%d", v, i))
+			}
+		}
+		if got, want := arg.Type(), sig.Type.ParamTypes()[i]; got != want {
+			v.Fatalf("argument %d to %s has incompatible LLVM type", i, aux.Fn.Name)
 		}
 		args = append(args, arg)
 	}
+	args = append(args, lfc.llvmMemoryResultCallArguments(v, sig, aux)...)
 	name := v.String()
-	if sig.ResultCount == 0 {
+	if sig.ReturnCount == 0 {
 		name = ""
 	}
-	call := lfc.b.CreateCall(sig.Type, fn, args, name)
+	var call llvm.Value
+	if setup.IsNil() {
+		call = lfc.b.CreateCall(sig.Type, fn, args, name)
+	} else {
+		bundle := llvm.NewOperandBundle("preallocated", []llvm.Value{setup})
+		call = lfc.b.CreateCallWithOperandBundles(sig.Type, fn, args, []llvm.OperandBundle{bundle}, name)
+		bundle.Dispose()
+	}
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
 	lfc.materializeAddressedResults(v, call, aux)
@@ -1962,17 +2240,27 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 	if code.Type().TypeKind() != llvm.PointerTypeKind {
 		v.Fatalf("indirect callee has non-pointer LLVM type")
 	}
-	args := make([]llvm.Value, 0, aux.NArgs())
+	args := make([]llvm.Value, 0, len(sig.Type.ParamTypes()))
+	setup := lfc.llvmPreallocatedCallSetup(sig)
+	carrierIndex := 0
 	for i := int64(0); i < aux.NArgs(); i++ {
-		arg := lfc.GenLV(v.Args[argStart+int(i)])
-		if arg.Type() != sig.Type.ParamTypes()[i] {
-			arg = lfc.llvmValueToABI(v, arg, v.Args[argStart+int(i)].Type, aux.TypeOfArg(i), sig.Type.ParamTypes()[i], fmt.Sprintf("%s.arg%d", v, i))
+		argValue := v.Args[argStart+int(i)]
+		var arg llvm.Value
+		if sig.Params[i].InMemory {
+			arg = lfc.llvmPreallocatedCallArgument(v, argValue, int(i), carrierIndex, aux.TypeOfArg(i), sig.Params[i], setup)
+			carrierIndex++
+		} else {
+			arg = lfc.GenLV(argValue)
+			if arg.Type() != sig.Type.ParamTypes()[i] {
+				arg = lfc.llvmValueToABI(v, arg, argValue.Type, aux.TypeOfArg(i), sig.Type.ParamTypes()[i], fmt.Sprintf("%s.arg%d", v, i))
+			}
 		}
 		if got, want := arg.Type(), sig.Type.ParamTypes()[i]; got != want {
 			v.Fatalf("argument %d to indirect call has incompatible LLVM type", i)
 		}
 		args = append(args, arg)
 	}
+	args = append(args, lfc.llvmMemoryResultCallArguments(v, sig, aux)...)
 	if closureContext {
 		context := lfc.GenLV(v.Args[1])
 		if context.Type().TypeKind() != llvm.PointerTypeKind {
@@ -1981,10 +2269,17 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 		args = append(args, context)
 	}
 	name := v.String()
-	if sig.ResultCount == 0 {
+	if sig.ReturnCount == 0 {
 		name = ""
 	}
-	call := lfc.b.CreateCall(sig.Type, code, args, name)
+	var call llvm.Value
+	if setup.IsNil() {
+		call = lfc.b.CreateCall(sig.Type, code, args, name)
+	} else {
+		bundle := llvm.NewOperandBundle("preallocated", []llvm.Value{setup})
+		call = lfc.b.CreateCallWithOperandBundles(sig.Type, code, args, []llvm.OperandBundle{bundle}, name)
+		bundle.Dispose()
+	}
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
 	lfc.materializeAddressedResults(v, call, aux)
@@ -2002,13 +2297,18 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 // alignment while allowing ordinary LLVM promotion to remove unnecessary
 // homes.
 func (lfc *LLVMFuncContext) materializeAddressedResults(v *Value, call llvm.Value, aux *AuxCall) {
+	sig := llvmSignature(aux)
 	for _, result := range lfc.AddressedResults[v.ID] {
 		if result.Slot.Type.HasPointers() {
 			lfc.llvmLifetimeStart(result.Slot)
 		}
+		resultSig := sig.Results[result.Index]
+		if resultSig.InMemory || resultSig.ReturnIndex < 0 {
+			result.Owner.Fatalf("addressed register result was assigned to memory")
+		}
 		value := call
-		if aux.NResults() > 1 {
-			value = lfc.b.CreateExtractValue(call, int(result.Index), result.Owner.String()+".value")
+		if sig.ReturnCount > 1 {
+			value = lfc.b.CreateExtractValue(call, resultSig.ReturnIndex, result.Owner.String()+".value")
 		}
 		value = lfc.llvmValueFromABI(result.Owner, value, aux.TypeOfResult(result.Index), result.Slot.Type, result.Owner.String()+".reshape")
 		if got, want := value.Type(), getLLVMType(result.Slot.Type); got != want {
@@ -2553,10 +2853,21 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			case sel >= int(aux.NResults()):
 				// Selecting the trailing SSA memory dependency only forces the
 				// call to be emitted; it has no LLVM value.
-			case aux.NResults() == 1:
-				lVal = call
 			default:
-				lVal = lfc.b.CreateExtractValue(call, sel, v.String())
+				sig := llvmSignature(aux)
+				result := sig.Results[sel]
+				if result.InMemory {
+					slot, ok := lfc.CallResultSlots[llvmCallResultKey{Call: src.ID, Index: int64(sel)}]
+					if !ok {
+						v.Fatalf("memory result %d has no caller-owned home", sel)
+					}
+					lVal = lfc.b.CreateLoad(result.ValueType, slot.Value, v.String())
+					lVal.SetAlignment(result.Alignment)
+				} else if sig.ReturnCount == 1 {
+					lVal = call
+				} else {
+					lVal = lfc.b.CreateExtractValue(call, result.ReturnIndex, v.String())
+				}
 			}
 			if sel < int(aux.NResults()) {
 				lVal = lfc.llvmValueFromABI(v, lVal, aux.TypeOfResult(int64(sel)), v.Type, v.String()+".reshape")
@@ -2590,16 +2901,25 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			v.Fatalf("addressed call result has no LLVM memory home")
 		}
 	case OpMakeResult:
-		switch lfc.ResultCount {
+		direct := make([]llvm.Value, lfc.ReturnCount)
+		for i, result := range lfc.Results {
+			if result.InMemory {
+				lfc.storeMemoryResult(v, v.Args[i], i)
+				continue
+			}
+			direct[result.ReturnIndex] = lfc.llvmValueToABI(
+				v, lfc.GenLV(v.Args[i]), v.Args[i].Type,
+				lfc.F.OwnAux.TypeOfResult(int64(i)), result.ValueType,
+				fmt.Sprintf("%s.result%d", v, i),
+			)
+		}
+		switch lfc.ReturnCount {
 		case 0:
 		case 1:
-			lVal = lfc.GenLV(v.Args[0])
-			lVal = lfc.llvmValueToABI(v, lVal, v.Args[0].Type, lfc.F.OwnAux.TypeOfResult(0), lfc.ReturnType, v.String()+".result0")
+			lVal = direct[0]
 		default:
 			lVal = llvm.Undef(lfc.ReturnType)
-			for i := 0; i < lfc.ResultCount; i++ {
-				resultType := lfc.ReturnType.StructElementTypes()[i]
-				result := lfc.llvmValueToABI(v, lfc.GenLV(v.Args[i]), v.Args[i].Type, lfc.F.OwnAux.TypeOfResult(int64(i)), resultType, fmt.Sprintf("%s.result%d", v, i))
+			for i, result := range direct {
 				lVal = lfc.b.CreateInsertValue(lVal, result, i, "")
 			}
 			lVal.SetName(v.String())
@@ -2793,7 +3113,7 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 	defer lfc.b.ClearCurrentDebugLocation()
 	switch BB.Kind {
 	case BlockRet:
-		if lfc.ResultCount == 0 {
+		if lfc.ReturnCount == 0 {
 			lfc.b.CreateRetVoid()
 		} else {
 			lfc.b.CreateRet(lfc.GenLV(BB.Controls[0]))
@@ -2866,17 +3186,13 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 	if len(outParams) != lfc.ResultCount {
 		lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result count %d does not match LLVM signature result count %d", len(outParams), lfc.ResultCount)
 	}
-	results := make([]llvm.Value, len(outParams))
+	results := make([]llvm.Value, lfc.ReturnCount)
 	reshapeContext := &Value{Block: lfc.F.Entry, Pos: lfc.F.Entry.Pos}
 	for i, result := range outParams {
-		var abiType llvm.Type
-		if lfc.ResultCount == 1 {
-			abiType = lfc.ReturnType
-		} else {
-			abiType = lfc.ReturnType.StructElementTypes()[i]
-		}
+		resultSig := lfc.Results[i]
+		abiType := resultSig.ValueType
 		if result.Type.Size() == 0 {
-			results[i] = llvm.Undef(abiType)
+			results[resultSig.ReturnIndex] = llvm.Undef(abiType)
 			continue
 		}
 		if result.Name == nil {
@@ -2893,10 +3209,15 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 		if value.Type() != abiType {
 			lfc.F.fe.Fatalf(lfc.F.Entry.Pos, "open-coded defer result %d has incompatible LLVM ABI type", i)
 		}
-		results[i] = value
+		if resultSig.InMemory {
+			store := lfc.b.CreateStore(value, lfc.LF.Param(resultSig.ParamIndex))
+			store.SetAlignment(resultSig.Alignment)
+		} else {
+			results[resultSig.ReturnIndex] = value
+		}
 	}
 
-	switch len(results) {
+	switch lfc.ReturnCount {
 	case 0:
 		lfc.b.CreateRetVoid()
 	case 1:
@@ -2935,22 +3256,51 @@ func (lfc *LLVMFuncContext) emitTailCallReturn(b *Block) {
 	}
 
 	result := lfc.GenLV(call)
-	switch lfc.ResultCount {
+	calleeSig := llvmSignature(aux)
+	direct := make([]llvm.Value, lfc.ReturnCount)
+	for i, callerResult := range lfc.Results {
+		calleeResult := calleeSig.Results[i]
+		if callerResult.InMemory && calleeResult.InMemory {
+			src, ok := lfc.CallResultSlots[llvmCallResultKey{Call: call.ID, Index: int64(i)}]
+			if !ok {
+				call.Fatalf("memory result %d has no caller-owned home", i)
+			}
+			lfc.llvmCopyFixedMemory(lfc.LF.Param(callerResult.ParamIndex), src.Value,
+				lfc.F.OwnAux.TypeOfResult(int64(i)).Size(), callerResult.Alignment)
+			continue
+		}
+
+		var field llvm.Value
+		if calleeResult.InMemory {
+			slot, ok := lfc.CallResultSlots[llvmCallResultKey{Call: call.ID, Index: int64(i)}]
+			if !ok {
+				call.Fatalf("memory result %d has no caller-owned home", i)
+			}
+			field = lfc.b.CreateLoad(calleeResult.ValueType, slot.Value, fmt.Sprintf("%s.return%d.load", call, i))
+			field.SetAlignment(calleeResult.Alignment)
+		} else if calleeSig.ReturnCount == 1 {
+			field = result
+		} else {
+			field = lfc.b.CreateExtractValue(result, calleeResult.ReturnIndex, fmt.Sprintf("%s.return%d.extract", call, i))
+		}
+		field = lfc.llvmValueFromABI(call, field, aux.TypeOfResult(int64(i)), aux.TypeOfResult(int64(i)), fmt.Sprintf("%s.return%d.fromabi", call, i))
+		field = lfc.llvmValueToABI(call, field, aux.TypeOfResult(int64(i)), lfc.F.OwnAux.TypeOfResult(int64(i)), callerResult.ValueType, fmt.Sprintf("%s.return%d", call, i))
+		if callerResult.InMemory {
+			store := lfc.b.CreateStore(field, lfc.LF.Param(callerResult.ParamIndex))
+			store.SetAlignment(callerResult.Alignment)
+		} else {
+			direct[callerResult.ReturnIndex] = field
+		}
+	}
+
+	switch lfc.ReturnCount {
 	case 0:
 		lfc.b.CreateRetVoid()
 	case 1:
-		result = lfc.llvmValueFromABI(call, result, aux.TypeOfResult(0), aux.TypeOfResult(0), call.String()+".return.fromabi")
-		result = lfc.llvmValueToABI(call, result, aux.TypeOfResult(0), lfc.F.OwnAux.TypeOfResult(0), lfc.ReturnType, call.String()+".return")
-		if result.Type() != lfc.ReturnType {
-			call.Fatalf("tail-call result has incompatible LLVM return type")
-		}
-		lfc.b.CreateRet(result)
+		lfc.b.CreateRet(direct[0])
 	default:
 		ret := llvm.Undef(lfc.ReturnType)
-		for i := 0; i < lfc.ResultCount; i++ {
-			field := lfc.b.CreateExtractValue(result, i, fmt.Sprintf("%s.return%d.extract", call, i))
-			field = lfc.llvmValueFromABI(call, field, aux.TypeOfResult(int64(i)), aux.TypeOfResult(int64(i)), fmt.Sprintf("%s.return%d.fromabi", call, i))
-			field = lfc.llvmValueToABI(call, field, aux.TypeOfResult(int64(i)), lfc.F.OwnAux.TypeOfResult(int64(i)), lfc.ReturnType.StructElementTypes()[i], fmt.Sprintf("%s.return%d", call, i))
+		for i, field := range direct {
 			ret = lfc.b.CreateInsertValue(ret, field, i, fmt.Sprintf("%s.return%d.insert", call, i))
 		}
 		lfc.b.CreateRet(ret)
@@ -2989,6 +3339,7 @@ func LLVMCompile(f *Func) {
 		Locals:            map[llvmLocalKey]llvmStackSlot{},
 		AddressedResults:  map[ID][]llvmAddressedResult{},
 		ResultSlots:       map[ID]llvm.Value{},
+		CallResultSlots:   map[llvmCallResultKey]llvmStackSlot{},
 		ItabMethods:       map[ID]bool{},
 		ClosureCodeLoads:  map[ID]bool{},
 		DeferResults:      map[llvmLocalKey]bool{},
@@ -2999,6 +3350,9 @@ func LLVMCompile(f *Func) {
 		b:                 GlobalCtxt.NewBuilder(),
 		ReturnType:        sig.ReturnType,
 		ResultCount:       sig.ResultCount,
+		ReturnCount:       sig.ReturnCount,
+		Params:            sig.Params,
+		Results:           sig.Results,
 	}
 	defer FCtxt.b.Dispose()
 
@@ -3085,6 +3439,11 @@ func LLVMCompile(f *Func) {
 	for i, param := range inParams {
 		if param.Name != nil {
 			FCtxt.LF.Param(i).SetName(param.Name.Sym().Name)
+		}
+	}
+	for i, result := range sig.Results {
+		if result.InMemory {
+			FCtxt.LF.Param(result.ParamIndex).SetName(fmt.Sprintf(".result%d", i))
 		}
 	}
 	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, ""))
@@ -3185,6 +3544,31 @@ func LLVMCompile(f *Func) {
 			)
 			FCtxt.Locals[key] = llvmStackSlot{Value: value, Type: name.Type()}
 		}
+	}
+	// A non-empty parameter assigned wholly to the Go stack is represented as a
+	// typed LLVM preallocated pointer. That pointer is the parameter's ABI-defined
+	// incoming home, so bind addressable Go SSA uses to it directly. Register
+	// parameters retain the existing compiler-owned alloca/store path.
+	for i, param := range sig.Params {
+		if !param.InMemory {
+			continue
+		}
+		assignment := inParams[i]
+		if len(assignment.Registers) != 0 {
+			f.fe.Fatalf(f.Entry.Pos, "LLVM memory parameter %d was assigned Go registers", i)
+		}
+		if assignment.Name == nil {
+			continue
+		}
+		goType := f.OwnAux.TypeOfArg(int64(i))
+		if goType.Size() == 0 || !types.Identical(goType, assignment.Name.Type()) {
+			f.fe.Fatalf(assignment.Name.Pos(), "invalid Go type for LLVM memory parameter %v", assignment.Name)
+		}
+		key := llvmLocalKeyForName(assignment.Name)
+		if _, exists := FCtxt.Locals[key]; exists {
+			f.fe.Fatalf(assignment.Name.Pos(), "duplicate LLVM memory parameter home %v", assignment.Name)
+		}
+		FCtxt.Locals[key] = llvmStackSlot{Value: FCtxt.LF.Param(i), Type: assignment.Name.Type()}
 	}
 	isDeferResultLocal := func(name *ir.Name) bool {
 		return frontendFunc != nil && frontendFunc.HasDefer() &&
@@ -3298,16 +3682,38 @@ func LLVMCompile(f *Func) {
 			}
 		}
 	}
-	// SelectNAddr denotes an address into a call's outgoing result area. LLVM's
-	// Go calling convention reconstructs stack-assigned results as first-class
-	// return values, so reserve equivalent fixed entry-block homes before any
-	// call or phi emission. Multiple selectors of one call result share a slot,
-	// matching the aliasing of the native ABI result area.
-	type addressedResultKey struct {
-		Call  ID
-		Index int64
+	// Results that Go assigned to memory use caller-owned typed goret carriers.
+	// Reserve their stable destinations before call emission; ordinary SelectN
+	// loads from the same object that SelectNAddr exposes by address.
+	for _, BB := range f.Blocks {
+		for _, call := range BB.Values {
+			switch call.Op {
+			case OpStaticCall, OpStaticLECall, OpTailLECall,
+				OpClosureCall, OpClosureLECall,
+				OpInterCall, OpInterLECall, OpTailLECallInter:
+			default:
+				continue
+			}
+			aux := auxToCall(call.Aux)
+			callSig := llvmSignature(aux)
+			for index, result := range callSig.Results {
+				if !result.InMemory {
+					continue
+				}
+				resultType := aux.TypeOfResult(int64(index))
+				slot := llvmStackSlot{
+					Value: FCtxt.b.CreateAlloca(getLLVMType(resultType), fmt.Sprintf("%s.result%d.home", call, index)),
+					Type:  resultType,
+				}
+				slot.Value.SetAlignment(int(resultType.Alignment()))
+				FCtxt.CallResultSlots[llvmCallResultKey{Call: call.ID, Index: int64(index)}] = slot
+			}
+		}
 	}
-	addressedResultSlots := make(map[addressedResultKey]llvmStackSlot)
+
+	// SelectNAddr for a register result still needs an addressable local copy.
+	// Multiple selectors of one call result share the same slot.
+	addressedResultSlots := make(map[llvmCallResultKey]llvmStackSlot)
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
 			if v.Op != OpSelectNAddr || v.Uses == 0 {
@@ -3326,7 +3732,11 @@ func LLVMCompile(f *Func) {
 			if resultType.Alignment() <= 0 || !types.Identical(resultType, aux.TypeOfResult(index)) {
 				v.Fatalf("SelectNAddr result type %v does not match call result %v", resultType, aux.TypeOfResult(index))
 			}
-			key := addressedResultKey{Call: call.ID, Index: index}
+			key := llvmCallResultKey{Call: call.ID, Index: index}
+			if memorySlot, ok := FCtxt.CallResultSlots[key]; ok {
+				FCtxt.ResultSlots[v.ID] = memorySlot.Value
+				continue
+			}
 			slot, ok := addressedResultSlots[key]
 			if !ok {
 				slot = llvmStackSlot{
@@ -3382,11 +3792,10 @@ func LLVMCompile(f *Func) {
 			}
 		}
 	}
-	// Go's ABI assigns each parameter either wholly to registers or wholly to
-	// the stack. Give only parameters that already have an addressable Go SSA
-	// LocalAddr a complete LLVM memory home. Ordinary register parameters remain
-	// direct LLVM SSA values, while the backend remains responsible for the
-	// physical Go ABI assignment.
+	// Give addressable register parameters a complete LLVM memory home. Wholly
+	// stack-assigned parameters were bound directly to their typed preallocated
+	// fixed homes above, while the backend remains responsible for the physical
+	// Go ABI assignment.
 	//
 	// This intentionally differs from the native lowering, which stores each
 	// incoming register piece separately and addresses stack-assigned parameters
