@@ -3,8 +3,10 @@ target triple = "aarch64-unknown-linux-goobj"
 %stack_arg = type [5 x ptr]
 
 declare goabiinternal void @supported_callee(ptr)
-declare goabiinternal void @supported_byval_callee(
-    ptr byval(%stack_arg) align 8)
+declare token @llvm.call.preallocated.setup(i32)
+declare ptr @llvm.call.preallocated.arg(token, i32)
+declare goabiinternal void @supported_preallocated_callee(
+    ptr preallocated(%stack_arg) align 8)
 declare goabiinternal void @supported_goret_callee(
     ptr goret(%stack_arg) "goretindex"="0" align 8)
 
@@ -14,14 +16,16 @@ entry:
   ret void
 }
 
-define goabiinternal void @supported_byval_attr(ptr %argument) #0 gc "goallc" {
+define goabiinternal void @supported_preallocated_attr(ptr %argument) #0 gc "goallc" {
 entry:
-  %stack_arg = alloca %stack_arg, align 8
-  store %stack_arg zeroinitializer, ptr %stack_arg, align 8
-  %first = getelementptr inbounds %stack_arg, ptr %stack_arg, i32 0, i32 0
+  %setup = call token @llvm.call.preallocated.setup(i32 1)
+  %home = call ptr @llvm.call.preallocated.arg(token %setup, i32 0) preallocated(%stack_arg)
+  store %stack_arg zeroinitializer, ptr %home, align 8
+  %first = getelementptr inbounds %stack_arg, ptr %home, i32 0, i32 0
   store ptr %argument, ptr %first, align 8
-  call goabiinternal void @supported_byval_callee(
-      ptr byval(%stack_arg) align 8 %stack_arg)
+  call goabiinternal void @supported_preallocated_callee(
+      ptr preallocated(%stack_arg) align 8 %home)
+      ["preallocated"(token %setup)]
   ret void
 }
 

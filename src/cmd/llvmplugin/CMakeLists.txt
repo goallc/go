@@ -339,7 +339,7 @@ if(BUILD_TESTING)
   )
 
   add_test(
-    NAME GoALLCStatepoints.ByValParamAttrRewrite
+    NAME GoALLCStatepoints.PreallocatedParamAttrRewrite
     COMMAND
       "${GOALLC_LLC_EXECUTABLE}"
       "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
@@ -348,9 +348,9 @@ if(BUILD_TESTING)
       -o -
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/supported-param-attrs.ll"
   )
-  set_tests_properties(GoALLCStatepoints.ByValParamAttrRewrite PROPERTIES
+  set_tests_properties(GoALLCStatepoints.PreallocatedParamAttrRewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "ptr byval.*5 x ptr.* align 8 %stack_arg.address"
+      "ptr preallocated.*5 x ptr.* align 8 %home"
   )
 
   add_test(

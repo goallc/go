@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"internal/buildcfg"
 	"strconv"
+	"strings"
 
 	"github.com/goallc/go-llvm"
 )
@@ -115,7 +116,7 @@ type llvmFuncSignature struct {
 type llvmParamSignature struct {
 	ValueType llvm.Type
 	Alignment int
-	ByVal     bool
+	InMemory  bool
 }
 
 type llvmResultSignature struct {
@@ -202,7 +203,7 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 			if goType.Alignment() <= 0 {
 				base.Fatalf("invalid alignment %d for stack argument %d of type %v", goType.Alignment(), i, goType)
 			}
-			param.ByVal = true
+			param.InMemory = true
 			param.Alignment = int(goType.Alignment())
 			paramType = GlobalCtxt.PointerType(0)
 		}
@@ -272,10 +273,10 @@ func llvmNestAttribute() llvm.Attribute {
 	return GlobalCtxt.CreateEnumAttribute(kind, 0)
 }
 
-func llvmByValAttribute(t llvm.Type) llvm.Attribute {
-	kind := llvm.AttributeKindID("byval")
+func llvmPreallocatedAttribute(t llvm.Type) llvm.Attribute {
+	kind := llvm.AttributeKindID("preallocated")
 	if kind == 0 {
-		base.Fatalf("LLVM does not provide the byval parameter attribute")
+		base.Fatalf("LLVM does not provide the preallocated parameter attribute")
 	}
 	return GlobalCtxt.CreateTypeAttribute(kind, t)
 }
@@ -314,10 +315,10 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 		fn.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
 	for i, param := range sig.Params {
-		if !param.ByVal {
+		if !param.InMemory {
 			continue
 		}
-		fn.AddAttributeAtIndex(i+1, llvmByValAttribute(param.ValueType))
+		fn.AddAttributeAtIndex(i+1, llvmPreallocatedAttribute(param.ValueType))
 		fn.Param(i).SetParamAlignment(param.Alignment)
 	}
 	for index, result := range sig.Results {
@@ -341,10 +342,10 @@ func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
 		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
 	for i, param := range sig.Params {
-		if !param.ByVal {
+		if !param.InMemory {
 			continue
 		}
-		call.AddCallSiteAttribute(i+1, llvmByValAttribute(param.ValueType))
+		call.AddCallSiteAttribute(i+1, llvmPreallocatedAttribute(param.ValueType))
 		call.SetInstrParamAlignment(i+1, param.Alignment)
 	}
 	for index, result := range sig.Results {
@@ -1706,8 +1707,8 @@ func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *
 	for i, param := range lfc.F.OwnAux.ABIInfo().InParams() {
 		if param.Name != nil && llvmLocalKeyForName(param.Name) == key {
 			value := lfc.LF.Param(i)
-			if lfc.Params[i].ByVal {
-				value = lfc.b.CreateLoad(lfc.Params[i].ValueType, value, name.Sym().Name+".byval")
+			if lfc.Params[i].InMemory {
+				value = lfc.b.CreateLoad(lfc.Params[i].ValueType, value, name.Sym().Name+".memory")
 				value.SetAlignment(lfc.Params[i].Alignment)
 			}
 			return value, lfc.F.OwnAux.TypeOfArg(int64(i))
@@ -1717,49 +1718,59 @@ func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *
 	return llvm.Value{}, nil
 }
 
-func (lfc *LLVMFuncContext) llvmByValCallArgument(v, argValue *Value, index int, logical *types.Type, param llvmParamSignature) (llvm.Value, *llvmStackSlot) {
-	if !param.ByVal || logical.Size() == 0 {
-		v.Fatalf("argument %d is not a non-empty byval parameter", index)
+func llvmMemoryParameterCount(sig llvmFuncSignature) int {
+	count := 0
+	for _, param := range sig.Params {
+		if param.InMemory {
+			count++
+		}
 	}
+	return count
+}
+
+func (lfc *LLVMFuncContext) llvmPreallocatedCallSetup(sig llvmFuncSignature) llvm.Value {
+	count := llvmMemoryParameterCount(sig)
+	if count == 0 {
+		return llvm.Value{}
+	}
+	fn := getLLVMIntrinsicDeclaration("llvm.call.preallocated.setup")
+	return lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{
+		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(count), false),
+	}, "preallocated.setup")
+}
+
+func (lfc *LLVMFuncContext) llvmPreallocatedCallArgument(v, argValue *Value, index, carrierIndex int, logical *types.Type, param llvmParamSignature, setup llvm.Value) llvm.Value {
+	if !param.InMemory || logical.Size() == 0 || setup.IsNil() {
+		v.Fatalf("argument %d is not a non-empty memory parameter", index)
+	}
+	fn := getLLVMIntrinsicDeclaration("llvm.call.preallocated.arg")
+	address := lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{
+		setup,
+		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(carrierIndex), false),
+	}, fmt.Sprintf("%s.arg%d.home", v, index))
+	address.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmPreallocatedAttribute(param.ValueType))
 
 	// Go SSA keeps non-SSA-able aggregate call arguments in memory and exposes
-	// the value through a Load or Dereference. The LLVM byval carrier wants the
-	// address of those bytes, so preserve that address instead of constructing a
-	// huge first-class aggregate only to store it back to a temporary.
+	// the value through a Load or Dereference. Copy those bytes directly into
+	// the ABI-defined outgoing home instead of constructing a first-class value.
 	if types.Identical(argValue.Type, logical) &&
 		(argValue.Op == OpLoad || argValue.Op == OpDereference) && len(argValue.Args) != 0 {
-		address := lfc.GenLV(argValue.Args[0])
-		if address.Type().TypeKind() != llvm.PointerTypeKind {
-			v.Fatalf("byval argument %d has non-pointer source address", index)
+		source := lfc.GenLV(argValue.Args[0])
+		if source.Type().TypeKind() != llvm.PointerTypeKind {
+			v.Fatalf("memory argument %d has non-pointer source address", index)
 		}
-		return address, nil
+		lfc.llvmCopyFixedMemory(address, source, logical.Size(), param.Alignment)
+		return address
 	}
 
 	value := lfc.GenLV(argValue)
 	value = lfc.llvmValueToABI(v, value, argValue.Type, logical, param.ValueType, fmt.Sprintf("%s.arg%d", v, index))
 	if value.Type() != param.ValueType {
-		v.Fatalf("byval argument %d has incompatible LLVM value type", index)
+		v.Fatalf("memory argument %d has incompatible LLVM value type", index)
 	}
-
-	// A pure SSA value has no source address even though Go assigned the logical
-	// argument wholly to the stack. Materialize any such value in a fixed entry
-	// alloca; this is only how the unified byval carrier obtains an address, not
-	// a second ABI classification path.
-	entryBuilder := GlobalCtxt.NewBuilder()
-	defer entryBuilder.Dispose()
-	entry := lfc.LF.EntryBasicBlock()
-	if first := entry.FirstInstruction(); first.IsNil() {
-		entryBuilder.SetInsertPointAtEnd(entry)
-	} else {
-		entryBuilder.SetInsertPointBefore(first)
-	}
-	address := entryBuilder.CreateAlloca(param.ValueType, fmt.Sprintf("%s.arg%d.byval", v, index))
-	address.SetAlignment(param.Alignment)
-	slot := &llvmStackSlot{Value: address, Type: logical}
-	lfc.llvmLifetimeStart(*slot)
 	store := lfc.b.CreateStore(value, address)
 	store.SetAlignment(param.Alignment)
-	return address, slot
+	return address
 }
 
 func (lfc *LLVMFuncContext) llvmMemoryResultCallArguments(v *Value, sig llvmFuncSignature, aux *AuxCall) []llvm.Value {
@@ -2162,15 +2173,13 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	llvmGCLeaf := aux.Fn == ir.Syms.WBZero || aux.Fn == ir.Syms.WBMove ||
 		aux.Fn == ir.Syms.Memmove || aux.Fn == ir.Syms.Memequal
 	args := make([]llvm.Value, 0, len(sig.Type.ParamTypes()))
-	var byValTemps []llvmStackSlot
+	setup := lfc.llvmPreallocatedCallSetup(sig)
+	carrierIndex := 0
 	for i := int64(0); i < aux.NArgs(); i++ {
 		var arg llvm.Value
-		if sig.Params[i].ByVal {
-			var temp *llvmStackSlot
-			arg, temp = lfc.llvmByValCallArgument(v, v.Args[i], int(i), aux.TypeOfArg(i), sig.Params[i])
-			if temp != nil {
-				byValTemps = append(byValTemps, *temp)
-			}
+		if sig.Params[i].InMemory {
+			arg = lfc.llvmPreallocatedCallArgument(v, v.Args[i], int(i), carrierIndex, aux.TypeOfArg(i), sig.Params[i], setup)
+			carrierIndex++
 		} else {
 			arg = lfc.GenLV(v.Args[i])
 			if arg.Type() != sig.Type.ParamTypes()[i] {
@@ -2187,12 +2196,16 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	if sig.ReturnCount == 0 {
 		name = ""
 	}
-	call := lfc.b.CreateCall(sig.Type, fn, args, name)
+	var call llvm.Value
+	if setup.IsNil() {
+		call = lfc.b.CreateCall(sig.Type, fn, args, name)
+	} else {
+		bundle := llvm.NewOperandBundle("preallocated", []llvm.Value{setup})
+		call = lfc.b.CreateCallWithOperandBundles(sig.Type, fn, args, []llvm.OperandBundle{bundle}, name)
+		bundle.Dispose()
+	}
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
-	for _, slot := range byValTemps {
-		lfc.llvmLifetimeEnd(slot)
-	}
 	lfc.materializeAddressedResults(v, call, aux)
 	if llvmGCLeaf {
 		markLLVMGCLeafCall(call)
@@ -2228,16 +2241,14 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 		v.Fatalf("indirect callee has non-pointer LLVM type")
 	}
 	args := make([]llvm.Value, 0, len(sig.Type.ParamTypes()))
-	var byValTemps []llvmStackSlot
+	setup := lfc.llvmPreallocatedCallSetup(sig)
+	carrierIndex := 0
 	for i := int64(0); i < aux.NArgs(); i++ {
 		argValue := v.Args[argStart+int(i)]
 		var arg llvm.Value
-		if sig.Params[i].ByVal {
-			var temp *llvmStackSlot
-			arg, temp = lfc.llvmByValCallArgument(v, argValue, int(i), aux.TypeOfArg(i), sig.Params[i])
-			if temp != nil {
-				byValTemps = append(byValTemps, *temp)
-			}
+		if sig.Params[i].InMemory {
+			arg = lfc.llvmPreallocatedCallArgument(v, argValue, int(i), carrierIndex, aux.TypeOfArg(i), sig.Params[i], setup)
+			carrierIndex++
 		} else {
 			arg = lfc.GenLV(argValue)
 			if arg.Type() != sig.Type.ParamTypes()[i] {
@@ -2261,12 +2272,16 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 	if sig.ReturnCount == 0 {
 		name = ""
 	}
-	call := lfc.b.CreateCall(sig.Type, code, args, name)
+	var call llvm.Value
+	if setup.IsNil() {
+		call = lfc.b.CreateCall(sig.Type, code, args, name)
+	} else {
+		bundle := llvm.NewOperandBundle("preallocated", []llvm.Value{setup})
+		call = lfc.b.CreateCallWithOperandBundles(sig.Type, code, args, []llvm.OperandBundle{bundle}, name)
+		bundle.Dispose()
+	}
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
-	for _, slot := range byValTemps {
-		lfc.llvmLifetimeEnd(slot)
-	}
 	lfc.materializeAddressedResults(v, call, aux)
 	if closureContext {
 		call.AddCallSiteAttribute(sig.ClosureContextIndex+1, llvmNestAttribute())
@@ -3530,28 +3545,28 @@ func LLVMCompile(f *Func) {
 			FCtxt.Locals[key] = llvmStackSlot{Value: value, Type: name.Type()}
 		}
 	}
-	// A non-empty parameter assigned wholly to the Go stack is represented as
-	// a typed LLVM byval pointer. That pointer is the parameter's ABI-defined
+	// A non-empty parameter assigned wholly to the Go stack is represented as a
+	// typed LLVM preallocated pointer. That pointer is the parameter's ABI-defined
 	// incoming home, so bind addressable Go SSA uses to it directly. Register
 	// parameters retain the existing compiler-owned alloca/store path.
 	for i, param := range sig.Params {
-		if !param.ByVal {
+		if !param.InMemory {
 			continue
 		}
 		assignment := inParams[i]
 		if len(assignment.Registers) != 0 {
-			f.fe.Fatalf(f.Entry.Pos, "LLVM byval parameter %d was assigned Go registers", i)
+			f.fe.Fatalf(f.Entry.Pos, "LLVM memory parameter %d was assigned Go registers", i)
 		}
 		if assignment.Name == nil {
 			continue
 		}
 		goType := f.OwnAux.TypeOfArg(int64(i))
 		if goType.Size() == 0 || !types.Identical(goType, assignment.Name.Type()) {
-			f.fe.Fatalf(assignment.Name.Pos(), "invalid Go type for LLVM byval parameter %v", assignment.Name)
+			f.fe.Fatalf(assignment.Name.Pos(), "invalid Go type for LLVM memory parameter %v", assignment.Name)
 		}
 		key := llvmLocalKeyForName(assignment.Name)
 		if _, exists := FCtxt.Locals[key]; exists {
-			f.fe.Fatalf(assignment.Name.Pos(), "duplicate LLVM byval parameter home %v", assignment.Name)
+			f.fe.Fatalf(assignment.Name.Pos(), "duplicate LLVM memory parameter home %v", assignment.Name)
 		}
 		FCtxt.Locals[key] = llvmStackSlot{Value: FCtxt.LF.Param(i), Type: assignment.Name.Type()}
 	}
@@ -3778,9 +3793,9 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	// Give addressable register parameters a complete LLVM memory home. Wholly
-	// stack-assigned parameters were bound directly to their typed byval fixed
-	// homes above, while the backend remains responsible for the physical Go ABI
-	// assignment.
+	// stack-assigned parameters were bound directly to their typed preallocated
+	// fixed homes above, while the backend remains responsible for the physical
+	// Go ABI assignment.
 	//
 	// This intentionally differs from the native lowering, which stores each
 	// incoming register piece separately and addresses stack-assigned parameters

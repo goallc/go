@@ -35,7 +35,7 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-NOT: .address.relocated.merge
 
 ; IR-LABEL: define goabiinternal void @argument_aggregate_home_address_across_calls(
-; IR-SAME: ptr byval(%nested) align 8 %value
+; IR-SAME: ptr preallocated(%nested) align 8 %value
 ; IR: "deopt"({{.*}}ptr %value{{.*}}i64 48{{.*}}i64 6{{.*}}i64 41{{.*}}), "gc-live"(ptr %value)
 ; IR: call coldcc ptr @llvm.experimental.gc.relocate
 ; IR: "deopt"({{.*}}ptr %value{{.*}}i64 48{{.*}}i64 6{{.*}}i64 41{{.*}}), "gc-live"(ptr %value)
@@ -266,10 +266,11 @@ entry:
 }
 
 define goabiinternal void @argument_aggregate_home_address_across_calls(
-    ptr byval(%nested) align 8 %value) gc "goallc" {
+    ptr preallocated(%nested) align 8 %value) gc "goallc" {
 entry:
   ; A stack-assigned parameter is already one complete fixed incoming home.
-  ; Its typed byval layout supplies the entry and call-site argument bitmaps.
+  ; Its typed preallocated layout supplies the entry and call-site argument
+  ; bitmaps.
   call goabiinternal void @observe_stack_address(ptr %value)
   call goabiinternal void @safepoint()
   call goabiinternal void @observe_stack_address(ptr %value)

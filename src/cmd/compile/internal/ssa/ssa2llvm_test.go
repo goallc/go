@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"cmd/compile/internal/abi"
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/typecheck"
@@ -133,6 +134,58 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 	}
 }
 
+func TestLLVMGoMemoryCarriersFollowABIAllocation(t *testing.T) {
+	config := abi.NewABIConfig(1, 0, 0, uint8(obj.ABIInternal))
+	intType := types.Types[types.TINT]
+	aux := StaticAuxCall(new(obj.LSym), config.ABIAnalyzeTypes(
+		[]*types.Type{intType, intType},
+		[]*types.Type{intType, intType},
+	))
+	sig := llvmSignature(aux)
+
+	memoryArgs := 0
+	for i, param := range sig.Params {
+		want := len(aux.ABIInfo().InParam(i).Registers) == 0 && aux.TypeOfArg(int64(i)).Size() != 0
+		if param.InMemory != want {
+			t.Errorf("argument %d memory carrier = %v, Go ABI allocation wants %v", i, param.InMemory, want)
+		}
+		if want {
+			memoryArgs++
+			if got := sig.Type.ParamTypes()[i].TypeKind(); got != llvm.PointerTypeKind {
+				t.Errorf("argument %d carrier kind = %v, want pointer", i, got)
+			}
+		}
+	}
+	if memoryArgs == 0 || memoryArgs == len(sig.Params) {
+		t.Fatalf("test requires mixed register and memory arguments, got %d of %d in memory", memoryArgs, len(sig.Params))
+	}
+
+	memoryResults := 0
+	for i, result := range sig.Results {
+		want := len(aux.ABIInfo().OutParam(i).Registers) == 0 && aux.TypeOfResult(int64(i)).Size() != 0
+		if result.InMemory != want {
+			t.Errorf("result %d memory carrier = %v, Go ABI allocation wants %v", i, result.InMemory, want)
+		}
+		if want {
+			memoryResults++
+		}
+	}
+	if memoryResults == 0 || memoryResults == len(sig.Results) {
+		t.Fatalf("test requires mixed register and memory results, got %d of %d in memory", memoryResults, len(sig.Results))
+	}
+
+	module := GlobalCtxt.NewModule("go_memory_carriers")
+	t.Cleanup(module.Dispose)
+	fn := llvm.AddFunction(module, "mixed", sig.Type)
+	configureLLVMFunction(fn, sig, goABIInternalCallConv)
+	ir := module.String()
+	for _, want := range []string{"preallocated(", "goret(", `"goretindex"=`} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("LLVM function does not contain %q:\n%s", want, ir)
+		}
+	}
+}
+
 func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer
@@ -179,35 +232,6 @@ func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	}
 	if strings.Contains(used, "@test.ordinary.local") {
 		t.Fatalf("ordinary local GoObj data is unnecessarily compiler-used: %s", used)
-	}
-}
-
-func TestLLVMStaticCallMemoryResultsCompatibility(t *testing.T) {
-	config := abi.NewABIConfig(1, 0, 0, uint8(obj.ABIInternal))
-	intType := types.Types[types.TINT]
-	ptrType := types.Types[types.TUNSAFEPTR]
-	structType := types.NewStruct([]*types.Field{
-		types.NewField(src.NoXPos, nil, ptrType),
-		types.NewField(src.NoXPos, nil, intType),
-	})
-	types.CalcSize(structType)
-	makeAux := func(results ...*types.Type) *AuxCall {
-		return StaticAuxCall(new(obj.LSym), config.ABIAnalyzeTypes(nil, results))
-	}
-
-	// A caller's aggregate result and a callee's expanded fields may use the
-	// same register count, but once either side spills, goret needs identical
-	// logical result boundaries.
-	aggregate := makeAux(structType)
-	expanded := makeAux(ptrType, intType)
-	if llvmStaticCallMemoryResultsCompatible(aggregate, expanded, llvmSignature(aggregate), llvmSignature(expanded)) {
-		t.Fatal("differently grouped memory results reported compatible")
-	}
-
-	left := makeAux(ptrType, intType)
-	right := makeAux(ptrType, intType)
-	if !llvmStaticCallMemoryResultsCompatible(left, right, llvmSignature(left), llvmSignature(right)) {
-		t.Fatal("identical physical memory-result homes reported incompatible")
 	}
 }
 
