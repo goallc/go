@@ -45,6 +45,7 @@ type Relocs struct {
 type ExtReloc struct {
 	Xsym Sym
 	Xadd int64
+	Off  int32 // offset within the source symbol
 	Type objabi.RelocType
 	Size uint8
 }
