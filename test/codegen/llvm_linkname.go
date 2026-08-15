@@ -20,14 +20,18 @@ func llvmLinknameLocal() int {
 // LLVM: call goabiinternal i64 @"runtime.llvmLinknameExternal<linkname>"()
 // LLVM: declare goabiinternal i64 @"runtime.llvmLinknameExternal<linkname>"()
 // LLVM-NOT: @"runtime.llvmLinknameLocal<linkname>"
-// LLVM-LABEL: define weak goabi0 i64 @"runtime.llvmLinknameLocal<ABI0>"()
+// LLVM-LABEL: define weak goabi0 void @"runtime.llvmLinknameLocal<ABI0>"(
+// LLVM-SAME: ptr goret(i64) align 8 "goretindex"="0" [[RESULT:%.*]])
 // LLVM: call goabiinternal i64 @runtime.llvmLinknameLocal()
+// LLVM: store i64 {{%.*}}, ptr [[RESULT]], align 8
 // LLVM-LABEL: define goabiinternal i64 @runtime.llvmLinknameLocal()
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmLinknameCalls()
 // LLVM-OPT: call goabiinternal i64 @"runtime.llvmLinknameExternal<linkname>"()
 // LLVM-OPT: declare goabiinternal i64 @"runtime.llvmLinknameExternal<linkname>"()
 // LLVM-OPT-NOT: @"runtime.llvmLinknameLocal<linkname>"
-// LLVM-OPT-LABEL: define weak goabi0 i64 @"runtime.llvmLinknameLocal<ABI0>"()
+// LLVM-OPT-LABEL: define weak goabi0 void @"runtime.llvmLinknameLocal<ABI0>"(
+// LLVM-OPT-SAME: ptr goret(i64) align 8 "goretindex"="0" [[OPT_RESULT:%.*]])
+// LLVM-OPT: store i64 7, ptr [[OPT_RESULT]], align 8
 // LLVM-OPT-LABEL: define goabiinternal {{.*}}@runtime.llvmLinknameLocal()
 func llvmLinknameCalls() int {
 	return llvmLinknameExternal() + llvmLinknameLocal()
