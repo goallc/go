@@ -68,10 +68,10 @@
     },
     "blacklist": {
       "*": "package and its standard-library dependency closure have not yet been qualified through LLVM O2 compile, GoObj/archive, link, and package tests",
-      "archive/zip": "dependency closure includes compress/flate, whose LLVM SelectionDAG lowering is not yet qualified",
-      "compress/gzip": "dependency closure includes compress/flate, whose LLVM SelectionDAG lowering is not yet qualified",
-      "compress/zlib": "dependency closure includes compress/flate, whose LLVM SelectionDAG lowering is not yet qualified",
-      "compress/flate": "llc/GoObj: X86 and AArch64 SelectionDAG instruction-selection assertions"
+      "archive/zip": "dependency closure includes compress/flate, whose LLVM GoObj emission does not yet support private constants with relocations",
+      "compress/gzip": "dependency closure includes compress/flate, whose LLVM GoObj emission does not yet support private constants with relocations",
+      "compress/zlib": "dependency closure includes compress/flate, whose LLVM GoObj emission does not yet support private constants with relocations",
+      "compress/flate": "llc/GoObj: private constants with relocations are not supported on X86 or AArch64"
     },
     "platform_blacklist": {
       "linux/amd64": {
