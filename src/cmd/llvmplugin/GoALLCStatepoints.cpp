@@ -1408,15 +1408,27 @@ Error validateSafepoint(const SafepointRecord &Record) {
       return createStringError(
           std::errc::not_supported,
           "GoALLC statepoints require typed, aligned byval only on Go calls");
+    if (Call.paramHasAttr(I, Attribute::GoRet) &&
+        (!isGoCallingConv(Call.getCallingConv()) ||
+         !Call.getArgOperand(I)->getType()->isPointerTy() ||
+         !Call.getParamGoRetType(I) ||
+         !Call.getParamAttr(I, "goretindex").isValid() ||
+         !Call.getParamAlign(I)))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints require indexed, typed, aligned goret only on "
+          "Go calls");
     for (Attribute Attr : Call.getAttributes().getParamAttrs(I)) {
       // These non-ABI attributes remain valid after LLVM's generic
       // RewriteStatepointsForGC pass and are natively accepted by both the
       // statepoint verifier and SelectionDAG call lowering. O2 commonly
       // infers them on otherwise ordinary runtime calls. Keep ABI-affecting
-      // attributes fail closed except for nest and typed byval, whose Go ABI
-      // lowering is covered separately.
+      // attributes fail closed except for nest and the typed Go ABI memory
+      // carriers, whose lowering is covered separately.
       if (!Attr.hasAttribute(Attribute::Nest) &&
           !Attr.hasAttribute(Attribute::ByVal) &&
+          !Attr.hasAttribute(Attribute::GoRet) &&
+          !Attr.hasAttribute("goretindex") &&
           !Attr.hasAttribute(Attribute::Captures) &&
           !Attr.hasAttribute(Attribute::ReadNone) &&
           !Attr.hasAttribute(Attribute::ReadOnly) &&
@@ -1609,7 +1621,7 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
                          ArrayRef<SafepointRecord> Records) {
   // Each ordinary relocated pointer and each rematerialized fixed-object
   // derived address is a new reaching definition of its original SSA value.
-  // Static allocas and typed byval arguments are themselves fixed frame
+  // Static allocas and typed byval/goret arguments are themselves fixed frame
   // addresses: SelectionDAG rematerializes either from its frame index at each
   // use, so replacing the original IR value with a gc.relocate chain would
   // turn later statepoints into ordinary pointer spills.
@@ -1619,7 +1631,8 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
       auto *Relocate = cast<GCRelocateInst>(RelocateCall);
       Value *Original = Relocate->getDerivedPtr();
       auto *Arg = dyn_cast<Argument>(Original);
-      if (!isa<AllocaInst>(Original) && !(Arg && Arg->hasByValAttr()))
+      if (!isa<AllocaInst>(Original) &&
+          !(Arg && (Arg->hasByValAttr() || Arg->hasGoRetAttr())))
         Definitions[Original].push_back(RelocateCall);
     }
 

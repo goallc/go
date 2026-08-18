@@ -10,8 +10,8 @@ type llvmAddressedCallResult [20]int
 
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmReadAddressedCallResult(
 // LLVM: [[HOME:%[^ ]+\.home]] = alloca [20 x i64], align 8
-// LLVM: [[RESULT:%.*]] = call goabiinternal [20 x i64] @codegen.llvmMakeAddressedCallResult(i64 %seed)
-// LLVM-NEXT: store [20 x i64] [[RESULT]], ptr [[HOME]], align 8
+// LLVM: call goabiinternal void @codegen.llvmMakeAddressedCallResult(i64 %seed, ptr goret([20 x i64]) align 8 "goretindex"="0" [[HOME]])
+// LLVM-NOT: store [20 x i64]
 // LLVM: load i64, ptr
 // LLVM: ret i64
 //

@@ -116,6 +116,7 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 			Type:                llvm.FunctionType(result, nil, false),
 			ReturnType:          result,
 			ResultCount:         1,
+			ReturnCount:         1,
 			ClosureContextIndex: -1,
 		}
 	}

@@ -15,10 +15,11 @@ type llvmDereferenceLargeResult struct {
 	values [32]int
 }
 
-// LLVM-LABEL: define goabiinternal %codegen.llvmDereferenceLargeResult @codegen.llvmNamedLargeStackResult(
-// LLVM: call goabiinternal void @codegen.llvmFillNamedLargeStackResult(
-// LLVM: load %codegen.llvmDereferenceLargeResult, ptr {{%.*}}, align 8
-// LLVM: ret %codegen.llvmDereferenceLargeResult
+// LLVM-LABEL: define goabiinternal void @codegen.llvmNamedLargeStackResult(
+// LLVM-SAME: i64 %seed, ptr goret(%codegen.llvmDereferenceLargeResult) align 8 "goretindex"="0" [[LARGE_RESULT:%[^)]+]])
+// LLVM: call goabiinternal void @codegen.llvmFillNamedLargeStackResult(ptr [[LARGE_RESULT]], i64 %seed)
+// LLVM-NOT: memmove
+// LLVM: ret void
 //
 // LLVM-LABEL: define goabiinternal %codegen.llvmDereferenceAddressedResult @codegen.llvmNamedStackResult(
 // LLVM: call goabiinternal void @codegen.llvmFillNamedStackResult(

@@ -21,7 +21,10 @@ type pointerStackAggregate struct {
 	second *int
 }
 
+type memoryOnlyPointers [2]*int
+
 var values = [8]int{11, 13, 17, 19, 23, 29, 31, 37}
+var escapedMemoryOnlyResult *memoryOnlyPointers
 
 //go:noinline
 func checkpoint(pointer *int) {
@@ -88,6 +91,24 @@ func livePointerAggregateStackArgument(
 	return value.first, value.second, a0 + a13 + value.scalar
 }
 
+// memoryOnlyPointerResult has no direct LLVM return carrier: Go assigns an
+// array with more than one element wholly to memory. The GC call also keeps
+// both input pointers and the fixed goret result address live at a safepoint.
+//
+//go:noinline
+func memoryOnlyPointerResult(first, second *int) memoryOnlyPointers {
+	runtime.GC()
+	return memoryOnlyPointers{first, second}
+}
+
+// callMemoryOnlyPointerResult keeps the callee opaque so the LLVM path must
+// attach the same goret carrier to an indirect closure call.
+//
+//go:noinline
+func callMemoryOnlyPointerResult(fn func(*int, *int) memoryOnlyPointers, first, second *int) memoryOnlyPointers {
+	return fn(first, second)
+}
+
 // growPointer keeps an entry pointer live through both recursive stack growth
 // and a runtime GC.
 //
@@ -150,6 +171,41 @@ func initializedStackResult(pointer *int) (
 	r8, r9, r10, r11, r12, r13, r14, r15 = 8, 9, 10, 11, 12, 13, 14, 15
 	result = pointer
 	runtime.GC()
+	return
+}
+
+// deferredNamedStackResult forces result wholly into the caller-owned result
+// area after filling all sixteen arm64 integer result registers. The deferred
+// closure addresses and mutates the named result, so the LLVM path must use the
+// goret home itself rather than a callee alloca copied at return.
+//
+//go:noinline
+func deferredNamedStackResult(first, second *int) (
+	r0, r1, r2, r3, r4, r5, r6, r7 int,
+	r8, r9, r10, r11, r12, r13, r14, r15 int,
+	result memoryOnlyPointers,
+) {
+	result = memoryOnlyPointers{first, second}
+	defer func() {
+		result[0], result[1] = result[1], result[0]
+	}()
+	runtime.GC()
+	return
+}
+
+// escapedNamedStackResult keeps the address of a memory-assigned named result
+// after the call. The named result must therefore remain a heap object inside
+// the callee and be copied into the caller-owned goret home only at return.
+//
+//go:noinline
+func escapedNamedStackResult(first, second *int) (
+	r0, r1, r2, r3, r4, r5, r6, r7 int,
+	r8, r9, r10, r11, r12, r13, r14, r15 int,
+	result memoryOnlyPointers,
+) {
+	escapedMemoryOnlyResult = &result
+	result[0] = first
+	escapedMemoryOnlyResult[1] = second
 	return
 }
 
@@ -229,6 +285,16 @@ func requireAggregate(got stackAggregate, left, right int, pointer *int) {
 }
 
 func main() {
+	memoryOnly := memoryOnlyPointerResult(&values[2], &values[6])
+	runtime.GC()
+	requirePointer(memoryOnly[0], &values[2])
+	requirePointer(memoryOnly[1], &values[6])
+
+	indirectMemoryOnly := callMemoryOnlyPointerResult(memoryOnlyPointerResult, &values[1], &values[7])
+	runtime.GC()
+	requirePointer(indirectMemoryOnly[0], &values[1])
+	requirePointer(indirectMemoryOnly[1], &values[7])
+
 	got := mixedABI(
 		1, &values[0],
 		2, 3, 4, 5, 6, 7, 8,
@@ -311,6 +377,23 @@ func main() {
 		initialized := initializedStackResult(&values[2])
 	runtime.GC()
 	requirePointer(initialized, &values[2])
+
+	_, _, _, _, _, _, _, _,
+		_, _, _, _, _, _, _, _,
+		deferred := deferredNamedStackResult(&values[3], &values[5])
+	runtime.GC()
+	requirePointer(deferred[0], &values[5])
+	requirePointer(deferred[1], &values[3])
+
+	_, _, _, _, _, _, _, _,
+		_, _, _, _, _, _, _, _,
+		escaped := escapedNamedStackResult(&values[4], &values[6])
+	runtime.GC()
+	requirePointer(escaped[0], &values[4])
+	requirePointer(escaped[1], &values[6])
+	escapedMemoryOnlyResult[0] = &values[0]
+	requirePointer(escapedMemoryOnlyResult[0], &values[0])
+	requirePointer(escaped[0], &values[4])
 
 	_, _, _, _, _, _, _, _,
 		_, _, _, _, _, _, _,

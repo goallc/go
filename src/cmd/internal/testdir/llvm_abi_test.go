@@ -145,6 +145,8 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	}
 	for _, needle := range [][]byte{
 		[]byte("define goabiinternal"),
+		[]byte(" goret("),
+		[]byte(` "goretindex"="`),
 		[]byte(`"go_results_tuple"`),
 		[]byte(`gc "goallc"`),
 	} {
@@ -154,6 +156,62 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 	}
 	if bytes.Contains(ir, []byte(`"go-stack-growth-statepoint"`)) {
 		t.Fatal("GoALLC IR still contains the obsolete stack-growth attribute")
+	}
+	for _, tc := range []struct {
+		name      string
+		required  [][]byte
+		forbidden [][]byte
+	}{
+		{
+			name: "main.memoryOnlyPointerResult",
+			required: [][]byte{
+				[]byte(`ptr goret([2 x ptr]) align 8 "goretindex"="0" %.result0`),
+				[]byte(`getelementptr i8, ptr %.result0`),
+				[]byte(`store ptr %first`),
+				[]byte(`store ptr %second`),
+			},
+			forbidden: [][]byte{[]byte("alloca"), []byte("memmove")},
+		},
+		{
+			name: "main.initializedStackResult",
+			required: [][]byte{
+				[]byte(`ptr goret(ptr) align 8 "goretindex"="16" %.result16`),
+				[]byte(`store ptr %pointer, ptr %.result16`),
+			},
+			forbidden: [][]byte{[]byte("alloca"), []byte("memmove")},
+		},
+		{
+			name: "main.deferredNamedStackResult",
+			required: [][]byte{
+				[]byte(`ptr goret([2 x ptr]) align 8 "goretindex"="16" %.result16`),
+				[]byte(`getelementptr i8, ptr %.result16`),
+			},
+			forbidden: [][]byte{
+				[]byte("!goallc.defer_result"),
+				[]byte("memmove.p0.p0.i64(ptr align 8 %.result16"),
+				[]byte("%open.defer.result16"),
+			},
+		},
+		{
+			name: "main.escapedNamedStackResult",
+			required: [][]byte{
+				[]byte(`ptr goret([2 x ptr]) align 8 "goretindex"="16" %.result16`),
+				[]byte(`call goabiinternal ptr @runtime.mallocgcSmallScanNoHeaderSC`),
+				[]byte(`call void @llvm.memmove.p0.p0.i64(ptr align 8 %.result16`),
+			},
+		},
+	} {
+		body := llvmABIIRFunction(t, ir, tc.name)
+		for _, required := range tc.required {
+			if !bytes.Contains(body, required) {
+				t.Fatalf("%s does not contain %q\n%s", tc.name, required, body)
+			}
+		}
+		for _, forbidden := range tc.forbidden {
+			if bytes.Contains(body, forbidden) {
+				t.Fatalf("%s still contains %q\n%s", tc.name, forbidden, body)
+			}
+		}
 	}
 
 	opt := llvmToolPath(t, "opt", "GOALLC_OPT")
@@ -195,7 +253,8 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		`(?s)define goabiinternal \{ ptr, i64 \} @main\.liveScalarStackArgument.*?ptr byval\(ptr\) align 8 %pointer.*?load ptr, ptr %pointer.*?"gc-live"\(ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
 		`(?s)define goabiinternal \{ ptr, ptr, i64 \} @main\.livePointerSequenceStackArguments.*?ptr byval\(ptr\) align 8 %first.*?ptr byval\(ptr\) align 8 %second.*?load ptr, ptr %first.*?load ptr, ptr %second.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
 		`(?s)define goabiinternal \{ ptr, ptr, i64 \} @main\.livePointerAggregateStackArgument.*?ptr byval\(%main\.pointerStackAggregate\) align 8 %value.*?load %main\.pointerStackAggregate, ptr %value.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
-		`(?s)define goabiinternal \{ i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, ptr, ptr \} @main\.pointerAggregateBothOverflow.*?ptr byval\(%main\.pointerStackAggregate\) align 8 %value.*?load %main\.pointerStackAggregate, ptr %value.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
+		`(?s)define goabiinternal void @main\.callMemoryOnlyPointerResult\(ptr %fn, ptr %first, ptr %second, ptr goret\(\[2 x ptr\]\) align 8 "goretindex"="0" %\.result0\).*?@llvm\.experimental\.gc\.statepoint.*?ptr goret\(\[2 x ptr\]\) align 8 "goretindex"="0" %[[:alnum:]$._-]+, ptr nest %fn.*?"gc-live"\(ptr %\.result0, ptr %[[:alnum:]$._-]+\).*?ret void`,
+		`(?s)define goabiinternal \{ i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64 \} @main\.pointerAggregateBothOverflow.*?ptr byval\(%main\.pointerStackAggregate\) align 8 %value.*?ptr goret\(ptr\) align 8 "goretindex"="16" %\.result16.*?ptr goret\(ptr\) align 8 "goretindex"="17" %\.result17.*?load %main\.pointerStackAggregate, ptr %value.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %\.result17, ptr %[[:alnum:]$._-]+, ptr %\.result16\).*?gc\.relocate`,
 	} {
 		if !regexp.MustCompile(pattern).Match(rewrittenIR) {
 			t.Fatalf("rewritten GoALLC ABI IR does not match %q", pattern)
@@ -205,6 +264,17 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 		"liveScalarStackArgument", "livePointerSequenceStackArguments",
 		"livePointerAggregateStackArgument", "overflowResults",
 		"stackAggregateResult", "bothOverflow", "pointerAggregateBothOverflow")
+	checkLLVMABIStatepointGoRetAttrs(t, rewrittenIR, map[string][]string{
+		"memoryOnlyPointerResult":      {"0"},
+		"overflowResults":              {"16", "17"},
+		"initializedStackResult":       {"16"},
+		"deferredNamedStackResult":     {"16"},
+		"escapedNamedStackResult":      {"16"},
+		"stackAggregateResult":         {"15"},
+		"bothOverflow":                 {"16", "17"},
+		"pointerAggregateBothOverflow": {"16", "17"},
+		"stackResultsAfterGrowth":      {"16"},
+	})
 	runLLVMABICommand(t, rewrittenIR, opt,
 		"-load-pass-plugin="+plugin, "-passes=verify", "-disable-output", "-")
 
@@ -311,6 +381,13 @@ func runLLVMAArch64ABIDifferentialTest(t *testing.T, gorootTestDir string) {
 			name: "growPointer", args: 16, pointerBits: []int{0},
 			nativeArgsMaps:  [][]int{{0}, nil},
 			goallcArgsMaps:  [][]int{{0}, nil},
+			nativeStackMaps: []int32{-1, 0, -1},
+			goallcStackMaps: []int32{-1, 1, -1},
+		},
+		{
+			name: "memoryOnlyPointerResult", args: 32, pointerBits: []int{2, 3},
+			nativeArgsMaps:  [][]int{{2, 3}, nil},
+			goallcArgsMaps:  [][]int{{2, 3}, nil},
 			nativeStackMaps: []int32{-1, 0, -1},
 			goallcStackMaps: []int32{-1, 1, -1},
 		},
@@ -601,6 +678,20 @@ func llvmABIMachineFunction(t *testing.T, machineIR []byte, name string) []byte 
 	return body
 }
 
+func llvmABIIRFunction(t *testing.T, ir []byte, name string) []byte {
+	t.Helper()
+	start := regexp.MustCompile(`(?m)^define [^\n]*@` + regexp.QuoteMeta(name) + `\(`).FindIndex(ir)
+	if start == nil {
+		t.Fatalf("IR has no function %s", name)
+	}
+	body := ir[start[0]:]
+	if end := bytes.Index(body, []byte("\n}")); end >= 0 {
+		return body[:end+2]
+	}
+	t.Fatalf("IR definition for %s has no end", name)
+	return nil
+}
+
 func llvmABIPCTableRanges(symbol llvmABISymbol, kind string) []int32 {
 	for _, table := range symbol.Function.PCTables {
 		if table.Kind != kind {
@@ -797,6 +888,23 @@ func checkLLVMABIStatepointTupleAttrs(t *testing.T, ir []byte, callees ...string
 	}
 }
 
+func checkLLVMABIStatepointGoRetAttrs(t *testing.T, ir []byte, callees map[string][]string) {
+	t.Helper()
+	for callee, indexes := range callees {
+		call := regexp.MustCompile(`(?m)^.*@llvm\.experimental\.gc\.statepoint.*@main\.` +
+			regexp.QuoteMeta(callee) + `.*$`).Find(ir)
+		if call == nil {
+			t.Fatalf("rewritten IR has no statepoint call to main.%s", callee)
+		}
+		for _, index := range indexes {
+			pattern := `goret\([^)]*\) align [0-9]+ "goretindex"="` + regexp.QuoteMeta(index) + `"`
+			if !regexp.MustCompile(pattern).Match(call) {
+				t.Fatalf("statepoint call to main.%s lost goret index %s: %s", callee, index, call)
+			}
+		}
+	}
+}
+
 func checkLLVMABIAssembly(t *testing.T, native, goallc []byte) {
 	t.Helper()
 
@@ -839,8 +947,8 @@ func checkLLVMABIAssembly(t *testing.T, native, goallc []byte) {
 		`(?m)^main\.pointerAggregateBothOverflow:`,
 		`(?s)\bbl\s+main\.overflowResults.*?\bldp\s+x[0-9]+, x[0-9]+, \[sp, #8\]`,
 		`(?s)\bbl\s+main\.overflowResults.*?\b(?:mov|stp)\s+[^\n]*x15`,
-		`(?s)\bbl\s+main\.stackAggregateResult.*?\bldp\s+x[0-9]+, x[0-9]+, \[sp, #8\].*?\bmov\s+x[0-9]+, x15`,
-		`(?s)\bbl\s+main\.bothOverflow.*?\bldp\s+x[0-9]+, x[0-9]+, \[sp, #32\]`,
+		`(?s)\bbl\s+main\.stackAggregateResult.*?\b(?:ldp\s+x[0-9]+, x[0-9]+|ldur\s+q[0-9]+), \[sp, #8\].*?\bmov\s+x[0-9]+, x15`,
+		`(?s)\bbl\s+main\.bothOverflow.*?\bldr\s+x[0-9]+, \[sp, #32\].*?\bldr\s+x[0-9]+, \[sp, #40\]`,
 		`(?s)\bbl\s+main\.bothOverflow.*?\b(?:mov|stp)\s+[^\n]*x15`,
 	} {
 		if !regexp.MustCompile(pattern).Match(goallc) {
