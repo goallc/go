@@ -2,12 +2,16 @@
   "packages": {
     "whitelist": {
       "archive/tar": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
+      "archive/zip": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "bufio": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "bytes": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "cmp": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "container/heap": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "container/list": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "container/ring": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
+      "compress/flate": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
+      "compress/gzip": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
+      "compress/zlib": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "crypto/md5": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "crypto/rand": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "crypto/sha1": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
@@ -67,11 +71,7 @@
       "unicode/utf8": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests"
     },
     "blacklist": {
-      "*": "package and its standard-library dependency closure have not yet been qualified through LLVM O2 compile, GoObj/archive, link, and package tests",
-      "archive/zip": "dependency closure includes compress/flate, whose LLVM GoObj emission does not yet support private constants with relocations",
-      "compress/gzip": "dependency closure includes compress/flate, whose LLVM GoObj emission does not yet support private constants with relocations",
-      "compress/zlib": "dependency closure includes compress/flate, whose LLVM GoObj emission does not yet support private constants with relocations",
-      "compress/flate": "llc/GoObj: private constants with relocations are not supported on X86 or AArch64"
+      "*": "package and its standard-library dependency closure have not yet been qualified through LLVM O2 compile, GoObj/archive, link, and package tests"
     },
     "platform_blacklist": {
       "linux/amd64": {
