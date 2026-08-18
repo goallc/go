@@ -8,7 +8,6 @@ import (
 	"bytes"
 	stdcontext "context"
 	"encoding/json"
-	"fmt"
 	"internal/testenv"
 	"os"
 	"path/filepath"
@@ -228,32 +227,6 @@ func TestEffectiveLLVMStdlibTestSet(t *testing.T) {
 	}
 }
 
-func llvmStdlibDependencyPackages(t *testing.T, packages map[string]bool, name string) []string {
-	t.Helper()
-	cmd := testenv.Command(t, llvmStdlibGoTool(t), "list", "-deps", "-f={{.ImportPath}}", name)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOROOT="+testenv.GOROOT(t))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("list dependencies for standard library package %q: %v\n%s", name, err, out)
-	}
-	seen := make(map[string]bool)
-	var dependencies []string
-	for _, dependency := range strings.Fields(string(out)) {
-		if !packages[dependency] {
-			t.Fatalf("dependency-closure package %q has non-standard dependency %q", name, dependency)
-		}
-		if !seen[dependency] {
-			seen[dependency] = true
-			dependencies = append(dependencies, dependency)
-		}
-	}
-	if !seen[name] {
-		t.Fatalf("dependency closure for %q does not contain the package itself", name)
-	}
-	sort.Strings(dependencies)
-	return dependencies
-}
-
 func TestLLVMStdlib(t *testing.T) {
 	if os.Getenv(llvmStdlibPolicyEnv) != "1" {
 		t.Skipf("set %s=1 to run the LLVM standard library package policy", llvmStdlibPolicyEnv)
@@ -281,12 +254,6 @@ func TestLLVMStdlib(t *testing.T) {
 	sort.Strings(whitelist)
 	t.Logf("LLVM standard library dependency-closure policy: %d white, %d black (%d packages)", len(whitelist), len(packages)-len(whitelist), len(packages))
 
-	dependencyPackages := make(map[string][]string, len(whitelist))
-	for _, name := range whitelist {
-		dependencyPackages[name] = llvmStdlibDependencyPackages(t, packages, name)
-		t.Logf("LLVM stdlib dependency closure: package=%q packages=%d", name, len(dependencyPackages[name]))
-	}
-
 	knownBlacklist := make([]string, 0, len(set.Blacklist)-1)
 	for name := range set.Blacklist {
 		if name != "*" {
@@ -299,14 +266,14 @@ func TestLLVMStdlib(t *testing.T) {
 	}
 	t.Logf("LLVM stdlib blacklist result: NOT RUN remaining=%d reason=%q", len(packages)-len(whitelist)-len(knownBlacklist), set.Blacklist["*"])
 
-	// The target package, gcflags, and toolexec pipeline are part of cmd/go's
-	// action IDs, so one isolated cache can safely serve every package in this
-	// policy run. The toolchain, payload, and pass plugin remain fixed for the
-	// lifetime of the test process.
+	// The target package and toolexec pipeline are part of cmd/go's action IDs,
+	// so one isolated cache can safely serve every package in this policy run.
+	// A single all= pattern compiles the test package, generated test main, and
+	// complete dependency closure with LLVM. The toolchain, payload, and pass
+	// plugin remain fixed for the lifetime of the test process.
 	cache := t.TempDir()
 	for _, name := range whitelist {
 		t.Run(name, func(t *testing.T) {
-			compilePackages := dependencyPackages[name]
 			packageToolexec := toolexec
 			testTimeout := "2m"
 			processTimeout := 5 * time.Minute
@@ -323,6 +290,7 @@ func TestLLVMStdlib(t *testing.T) {
 				"-count=1",
 				"-timeout=" + testTimeout,
 				"-toolexec=" + packageToolexec,
+				"-gcflags=all=-enablellvm -llvmironly",
 			}
 			if name == "runtime" {
 				// LLVM GoObj does not yet emit the complete per-function
@@ -330,9 +298,6 @@ func TestLLVMStdlib(t *testing.T) {
 				// qualification currently covers code generation, GoObj,
 				// linking, and execution, but not debug information.
 				args = append(args, "-ldflags=-w")
-			}
-			for _, compilePackage := range compilePackages {
-				args = append(args, fmt.Sprintf("-gcflags=%s=-enablellvm -llvmironly", compilePackage))
 			}
 			args = append(args, name)
 			cmd := testenv.CommandContext(t, ctx, llvmStdlibGoTool(t), args...)
