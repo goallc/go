@@ -59,7 +59,6 @@
       "path/filepath": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "regexp": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "regexp/syntax": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
-      "runtime": "qualified through LLVM O2 compilation of its exact dependency closure, GoObj/archive, stripped link (-w), and runtime package tests with test scaffolding compiled natively; DWARF is not yet qualified",
       "sort": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "strconv": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "strings": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
@@ -69,6 +68,9 @@
       "unicode": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "unicode/utf16": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests",
       "unicode/utf8": "qualified through LLVM O2 compilation of its standard-library dependency closure, GoObj/archive, link, and package tests"
+    },
+    "graylist": {
+      "runtime": "complete LLVM O2 test build reaches execution, but runtime metadata semantics are not yet fully qualified: GCInfo, Callers/traceback arguments and wrappers, and unsafe-point checks fail"
     },
     "blacklist": {
       "*": "package and its standard-library dependency closure have not yet been qualified through LLVM O2 compile, GoObj/archive, link, and package tests"
