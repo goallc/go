@@ -1,11 +1,11 @@
 target triple = "x86_64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal ptr @pointer_slot(
-; IR: "deopt"(i64 7, i64 1195461697, i64 15, i64 1, i64 1095520067, i64 11, ptr %slot, i64 0, i64 8, i64 8, i64 8, i64 1, i64 64, i64 1, i64 1, i64 1095519299, i64 15)
+; IR: "deopt"(i64 7, i64 1195461697, i64 16, i64 1, i64 1095520067, i64 12, ptr %slot, i64 0, i64 8, i64 8, i64 8, i64 1, i64 1, i64 64, i64 1, i64 1, i64 1095519299, i64 16)
 ; IR-SAME: "gc-live"(ptr %slot)
 
 ; IR-LABEL: define goabiinternal ptr @nested_whole_aggregate(
-; IR: "deopt"(i64 1195461697, i64 15, i64 1, i64 1095520067, i64 11, ptr %slot, i64 0, i64 48, i64 8, i64 8, i64 6, i64 64, i64 1, i64 41, i64 1095519299, i64 15)
+; IR: "deopt"(i64 1195461697, i64 16, i64 1, i64 1095520067, i64 12, ptr %slot, i64 0, i64 48, i64 8, i64 8, i64 1, i64 6, i64 64, i64 1, i64 41, i64 1095519299, i64 16)
 
 ; IR-LABEL: define goabiinternal ptr @alloca_call_skip(
 ; IR: "deopt"({{.*}}i64 1095520067{{.*}}ptr %slot{{.*}}i64 1095519299
@@ -53,7 +53,7 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-NOT: store ptr {{.*}}, ptr %slot
 
 ; IR-LABEL: define goabiinternal void @alloca_marker_free_at_safepoint(
-; IR: i64 1095519299, i64 15), "gc-live"(ptr %pointer{{[,)]}}
+; IR: i64 1095519299, i64 16), "gc-live"(ptr %pointer{{[,)]}}
 ; IR: %pointer.relocated
 
 ; IR-LABEL: define goabiinternal ptr @alloca_high_bitmap_word(

@@ -174,7 +174,7 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		t.Fatalf("alloca deopt records=%d, want %d\n%s", got, want, rewrittenFunction)
 	}
 	if got, want := bytes.Count(rewrittenFunction,
-		[]byte("i64 40, i64 8, i64 8, i64 5, i64 64, i64 1, i64 29")), 4; got != want {
+		[]byte("i64 40, i64 8, i64 8, i64 1, i64 5, i64 64, i64 1, i64 29")), 4; got != want {
 		t.Fatalf("alloca bitmap payloads=%d, want %d\n%s", got, want, rewrittenFunction)
 	}
 	if got, want := bytes.Count(rewrittenFunction, []byte(`"gc-live"(ptr `)), 4; got != want {
@@ -341,7 +341,7 @@ func runLLVMAllocaStatepointTest(t *testing.T, gorootTestDir string) {
 		}
 	}
 
-	// A matching direct gc-live alloca expands the deopt layout into the
+	// The explicit contents-live bit expands the deopt layout into the
 	// callsite's LocalsPointerMaps. This fixture is live at every ordinary
 	// statepoint, so it does not need the fallback function-level StackObject.
 	// Native Go emits the equivalent pointer fields with a different frame-bit

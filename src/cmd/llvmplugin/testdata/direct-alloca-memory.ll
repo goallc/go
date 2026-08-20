@@ -4,13 +4,15 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR: @llvm.experimental.gc.statepoint
 ; IR: br label %entry.statepoint.cont
 ; IR: entry.statepoint.cont:
-; IR: %first.remat = getelementptr inbounds i8, ptr %slot, i64 16
-; IR: store <2 x ptr> %first.error, ptr %first.remat
+; IR: %slot.relocated{{[0-9]*}} = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: %first.remat.remat = getelementptr inbounds i8, ptr %slot.relocated{{[0-9]*}}, i64 16
+; IR: store <2 x ptr> %first.error, ptr %first.remat.remat
 ; IR: @llvm.experimental.gc.statepoint
 ; IR: br label %entry.statepoint.cont.statepoint.cont
 ; IR: entry.statepoint.cont.statepoint.cont:
-; IR: %second.remat = getelementptr inbounds i8, ptr %slot, i64 48
-; IR: store <2 x ptr> %second.error, ptr %second.remat
+; IR: %slot.relocated{{[0-9]*}} = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: %second.remat.remat = getelementptr inbounds i8, ptr %slot.relocated{{[0-9]*}}, i64 48
+; IR: store <2 x ptr> %second.error, ptr %second.remat.remat
 ; IR-NOT: %first.relocated.merge
 ; IR-NOT: %second.relocated.merge
 
@@ -19,10 +21,10 @@ target triple = "aarch64-unknown-linux-goobj"
 ; MIR-NOT: ADDXri %stack.0.slot
 ; MIR: STATEPOINT
 ; MIR: bb.1.entry.statepoint.cont:
-; MIR: STRQui {{.*}}, %stack.0.slot, 1 {{.*}}%ir.first.remat
+; MIR: STRQui {{.*}}{{%ir.first.remat.remat}}
 ; MIR: STATEPOINT
 ; MIR: bb.2.entry.statepoint.cont.statepoint.cont:
-; MIR: STRQui {{.*}}, %stack.0.slot, 3 {{.*}}%ir.second.remat
+; MIR: STRQui {{.*}}{{%ir.second.remat.remat}}
 
 declare goabiinternal void @safepoint()
 @error = external global <2 x ptr>
