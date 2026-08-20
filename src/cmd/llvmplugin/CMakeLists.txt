@@ -120,7 +120,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.Load PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "GoALLCStatepoints: ran pre-codegen pipeline for"
+      "GoALLCStatepoints: ran late pre-isel pipeline for"
   )
 
   add_test(
@@ -707,6 +707,22 @@ if(BUILD_TESTING)
     -mtriple=aarch64-unknown-linux-goobj
     -frame-pointer=all
   )
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.DirectAllocaMemoryRewrite
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/direct-alloca-memory.ll"
+    IR
+  )
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.DirectAllocaMemoryMIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/direct-alloca-memory.ll"
+    MIR
+    "${GOALLC_LLC_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -verify-machineinstrs
+    -stop-after=finalize-isel
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/direct-alloca-memory.ll"
+  )
   goallc_add_filecheck_test(
     GoALLCStatepoints.AllocaPointerRootsMIR
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-roots.ll"
@@ -972,7 +988,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.ConditionalPhiEdgeUseRewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "selected = phi ptr \\[ %p\\.relocated, %call \\]"
+      "selected = phi ptr \\[ %p\\.relocated, %call\\.statepoint\\.cont \\]"
   )
 
   add_test(

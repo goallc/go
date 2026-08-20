@@ -25,8 +25,8 @@ target triple = "x86_64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal ptr @alloca_gep_address_across_call(
 ; IR: "deopt"({{.*}}ptr %slot{{.*}}i64 16{{.*}}i64 2{{.*}}i64 2{{.*}}i64 1095519299
-; IR: %result = load ptr, ptr %field
-; IR-NOT: %field.remat
+; IR: %field.remat{{[0-9]*}} = getelementptr inbounds %pointer_field, ptr %slot
+; IR: %result = load ptr, ptr %field.remat{{[0-9]*}}
 ; IR-NOT: %field.relocated.merge
 
 ; IR-LABEL: define goabiinternal void @alloca_direct_address_across_calls()

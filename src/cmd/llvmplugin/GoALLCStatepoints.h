@@ -9,6 +9,7 @@
 
 namespace llvm {
 
+class Function;
 class Module;
 class TargetMachine;
 
@@ -17,6 +18,14 @@ namespace goallc {
 // Rewrites calls in Go ABI functions to statepoints using GoALLC's value
 // liveness and relocation policy.
 Error rewriteStatepoints(Module &M, TargetMachine &TM);
+
+// Performs the module-wide lowering that must precede per-function
+// statepoint rewriting but does not itself insert statepoints.
+Error prepareStatepointModule(Module &M);
+
+// Rewrites one Go ABI function to statepoints. This entry point is suitable
+// for a legacy FunctionPass immediately before instruction selection.
+Error rewriteStatepoints(Function &F, TargetMachine &TM);
 
 } // namespace goallc
 } // namespace llvm

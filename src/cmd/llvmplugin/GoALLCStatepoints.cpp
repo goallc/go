@@ -15,6 +15,7 @@
 #include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/GoCallingConv.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
@@ -139,6 +140,7 @@ enum class LivenessKind {
   PointerAggregates,
   RelocatablePointers,
   AllocaAddresses,
+  DirectAllocaAddresses,
   DerivedPointers,
 };
 
@@ -232,13 +234,10 @@ Value *rematerializableDerivedBase(Value *V) {
       rematerializableDerivedBase(static_cast<const Value *>(V)));
 }
 
-bool isDirectFrameAddressUse(const Use &U) {
+bool isDirectMemoryAddressUse(const Use &U) {
   auto *I = dyn_cast<Instruction>(U.getUser());
   if (!I)
     return false;
-  if (isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
-      isa<AddrSpaceCastInst>(I))
-    return true;
   if (auto *Load = dyn_cast<LoadInst>(I))
     return &U == &Load->getOperandUse(LoadInst::getPointerOperandIndex());
   if (auto *Store = dyn_cast<StoreInst>(I))
@@ -248,6 +247,16 @@ bool isDirectFrameAddressUse(const Use &U) {
   if (auto *CmpXchg = dyn_cast<AtomicCmpXchgInst>(I))
     return &U ==
            &CmpXchg->getOperandUse(AtomicCmpXchgInst::getPointerOperandIndex());
+  return false;
+}
+
+bool isDirectFrameAddressUse(const Use &U) {
+  auto *I = dyn_cast<Instruction>(U.getUser());
+  if (!I)
+    return false;
+  if (isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
+      isa<AddrSpaceCastInst>(I) || isDirectMemoryAddressUse(U))
+    return true;
   if (auto *Intrinsic = dyn_cast<IntrinsicInst>(I))
     return Intrinsic->isLifetimeStartOrEnd() ||
            Intrinsic->getIntrinsicID() == Intrinsic::fake_use ||
@@ -340,17 +349,25 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
     return isRelocatablePointerType(Ty) && !isStaticAllocaAddress(V) &&
            !rematerializableDerivedBase(V);
   case LivenessKind::AllocaAddresses:
-    // Direct memory operations retain their FrameIndex identity through
-    // SelectionDAG and must not enter relocation SSA. Under register pressure,
-    // a relocated address PHI can be spilled into an ordinary non-root slot;
-    // that cached address then points at the old Go stack after growth.
-    // canonicalizeDirectAllocaAddresses rebuilds every first-class use at its
-    // use point, so only those local values need address liveness here.
+    // Direct memory addresses must not enter relocation SSA. Under register
+    // pressure, a relocated address PHI can be spilled into an ordinary
+    // non-root slot; that cached address then points at the old Go stack after
+    // growth. canonicalizeDirectAllocaMemoryUses rebuilds every address that
+    // crosses an ordinary call at its terminal use, while
+    // canonicalizeDirectAllocaAddresses does the same for first-class uses.
+    // Only those first-class local values need relocation liveness here.
     return Ty->isPointerTy() && !isa<AllocaInst>(V) &&
            isStaticAllocaAddress(V) &&
            llvm::any_of(V->uses(), [](const Use &U) {
              return !isDirectFrameAddressUse(U);
            });
+  case LivenessKind::DirectAllocaAddresses:
+    // This temporary analysis class finds derived frame addresses whose direct
+    // memory uses cross an ordinary call. Those uses are rebuilt locally
+    // before statepoint rewriting and never enter relocation SSA.
+    return Ty->isPointerTy() && !isa<AllocaInst>(V) &&
+           isStaticAllocaAddress(V) &&
+           llvm::any_of(V->uses(), isDirectMemoryAddressUse);
   case LivenessKind::DerivedPointers:
     return rematerializableDerivedBase(V) != nullptr;
   }
@@ -461,6 +478,35 @@ ValueSet liveAtCall(CallInst &Call, LivenessData &Data, LivenessKind Kind) {
                Live, Kind);
   Live.remove(&Call);
   return Live;
+}
+
+void canonicalizeDirectAllocaMemoryUses(Function &F) {
+  LivenessData Data =
+      computeLiveness(F, LivenessKind::DirectAllocaAddresses);
+  ValueSet AddressesAcrossCalls;
+  for (Instruction &I : instructions(F)) {
+    auto *Call = dyn_cast<CallInst>(&I);
+    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call))
+      continue;
+    AddressesAcrossCalls.set_union(
+        liveAtCall(*Call, Data, LivenessKind::DirectAllocaAddresses));
+  }
+
+  for (Value *Address : AddressesAcrossCalls) {
+    AllocaInst *Base = rematerializableAllocaBase(Address);
+    assert(Base && "direct frame address has no static alloca base");
+    SmallVector<Use *, 8> MemoryUses;
+    for (Use &U : Address->uses())
+      if (isDirectMemoryAddressUse(U))
+        MemoryUses.push_back(&U);
+
+    for (Use *U : MemoryUses) {
+      auto *UsePoint = cast<Instruction>(U->getUser());
+      Value *UseAddress =
+          rematerializeAddress(Address, Base, Base, UsePoint);
+      U->set(UseAddress);
+    }
+  }
 }
 
 Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
@@ -1590,6 +1636,22 @@ void eraseOriginalCalls(ArrayRef<SafepointRecord> Records) {
   }
 }
 
+void splitStatepointContinuations(ArrayRef<SafepointRecord> Records) {
+  // Do this only after every call has been rewritten and erased, so CFG
+  // mutation cannot affect the liveness sets consumed by rewriteCall. Keep
+  // each statepoint and all values derived from its token in distinct basic
+  // blocks: SelectionDAG performs local CSE while lowering one block, and the
+  // explicit edge puts gc.result and gc.relocate in a fresh local CSE scope.
+  for (const SafepointRecord &Record : Records) {
+    Instruction *Continuation = Record.Statepoint->getNextNode();
+    assert(Continuation && "statepoint must have a continuation instruction");
+    BasicBlock *StatepointBlock = Record.Statepoint->getParent();
+    StatepointBlock->splitBasicBlock(
+        Continuation->getIterator(),
+        StatepointBlock->getName() + ".statepoint.cont");
+  }
+}
+
 Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
                             Instruction *InsertBefore) {
   SmallVector<Instruction *, 4> Chain;
@@ -1755,6 +1817,13 @@ Error rewriteFunction(Function &F) {
   if (Error Err =
           canonicalizeDirectAllocaAddresses(F, DT, WholeLifetimeAllocas))
     return Err;
+  // Static alloca-derived values that reach only load/store/atomic pointer
+  // operands intentionally stay out of relocation SSA. Rebuild every such
+  // terminal use when its address is live across an ordinary call. After all
+  // calls become statepoints, splitStatepointContinuations places each rebuilt
+  // use in the continuation block, preventing SelectionDAG from carrying its
+  // pre-growth address across the statepoint.
+  canonicalizeDirectAllocaMemoryUses(F);
   Expected<std::optional<OpenDeferInfo>> OpenDeferOrErr =
       collectOpenDeferInfo(F);
   if (!OpenDeferOrErr)
@@ -1877,6 +1946,13 @@ Error rewriteFunction(Function &F) {
       return Err;
   }
   eraseOriginalCalls(Records);
+  splitStatepointContinuations(Records);
+  // splitStatepointContinuations changes the CFG after liveness and
+  // object-activity analysis.
+  // repairRelocationSSA uses this tree to promote its temporary merge slots,
+  // so rebuild it before running PromoteMemToReg on the new continuation
+  // blocks.
+  DT.recalculate(F);
   repairRelocationSSA(F, DT, Records);
   return Error::success();
 }
@@ -1963,16 +2039,26 @@ Error lowerPointerAddressObservations(Module &M) {
 
 } // namespace
 
-Error goallc::rewriteStatepoints(Module &M, TargetMachine &) {
+Error goallc::prepareStatepointModule(Module &M) {
   if (Error Err = lowerPointerAddressObservations(M))
     return Err;
   if (Error Err = materializeFunctionMarkerRelocs(M))
     return Err;
+  return Error::success();
+}
+
+Error goallc::rewriteStatepoints(Function &F, TargetMachine &) {
+  if (F.isDeclaration() || !isGoCallingConv(F.getCallingConv()) || !F.hasGC() ||
+      F.getGC() != GoALLCGCName)
+    return Error::success();
+  return rewriteFunction(F);
+}
+
+Error goallc::rewriteStatepoints(Module &M, TargetMachine &TM) {
+  if (Error Err = prepareStatepointModule(M))
+    return Err;
   for (Function &F : M) {
-    if (F.isDeclaration() || !isGoCallingConv(F.getCallingConv()) ||
-        !F.hasGC() || F.getGC() != GoALLCGCName)
-      continue;
-    if (Error Err = rewriteFunction(F))
+    if (Error Err = rewriteStatepoints(F, TM))
       return Err;
   }
   if (verifyModule(M, &errs()))

@@ -12,7 +12,7 @@ target triple = "aarch64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal i8 @conditional_derived(
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %base)
-; IR: %derived.relocated.merge{{.*}} = phi ptr [ %derived.remat, %call ], [ %derived, %skip ]
+; IR: %derived.relocated.merge{{.*}} = phi ptr [ %derived.remat, %call.statepoint.cont ], [ %derived, %skip ]
 
 ; IR-LABEL: define goabiinternal <2 x ptr> @derived_vector(
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(<2 x ptr> %base)
