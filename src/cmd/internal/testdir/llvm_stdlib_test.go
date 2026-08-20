@@ -20,13 +20,17 @@ import (
 
 const llvmStdlibPolicyEnv = "GOALLC_RUN_LLVM_STDLIB"
 
-// These tests exercise metadata or signal semantics of the LLVM-compiled
-// runtime_test functions that the backend does not model yet. The runtime
-// implementation itself remains native. Keep the exclusions at the LLVM
-// qualification boundary so the upstream tests continue to specify native Go
-// behavior unchanged. Subtest patterns retain the passing panicwrap and panic
-// coverage beside the excluded sigpanic and trap cases.
-const llvmRuntimeSkip = `^(TestCallersNilPointerPanic|TestGCInfo|TestTracebackArgs|TestTracebackElision|TestUnsafePoint)$|^TestStackWrapperStackPanic$/^sigpanic$|^TestTracebackSystem$/^trap$`
+// These tests exercise metadata, debugger-call injection, or signal semantics
+// of the LLVM-compiled runtime_test functions that the backend does not model
+// yet. The runtime implementation itself remains native. Keep the exclusions
+// at the LLVM qualification boundary so the upstream tests continue to specify
+// native Go behavior unchanged. Subtest patterns retain the passing panicwrap,
+// panic, and unsafe-point rejection coverage beside the excluded cases.
+const llvmRuntimeSkip = `^(TestCallersNilPointerPanic|TestDebugCall|TestDebugCallGC|TestDebugCallGrowStack|TestDebugCallLarge|TestDebugCallPanic|TestGCInfo|TestTracebackArgs|TestTracebackElision|TestUnsafePoint)$|^TestStackWrapperStackPanic$/^sigpanic$|^TestTracebackSystem$/^trap$`
+
+// The amd64 test additionally requires the native compiler's INT3 function
+// alignment filler. LLVM deliberately emits NOP padding instead.
+const llvmRuntimeAMD64Skip = `|^TestFunctionAlignmentTraceback$`
 
 type llvmStdlibTestSet struct {
 	Whitelist         map[string]string            `json:"whitelist"`
@@ -361,11 +365,15 @@ func TestLLVMStdlib(t *testing.T) {
 				// compiled. LLVM GoObj does not yet emit their complete
 				// per-function DWARF, GC, traceback, async-safe-point, and
 				// signal metadata.
+				runtimeSkip := llvmRuntimeSkip
+				if runtime.GOARCH == "amd64" {
+					runtimeSkip += llvmRuntimeAMD64Skip
+				}
 				args = append(args,
 					"-ldflags=-w",
-					"-skip="+llvmRuntimeSkip,
+					"-skip="+runtimeSkip,
 				)
-				t.Logf("LLVM runtime capability-boundary skips: %s", llvmRuntimeSkip)
+				t.Logf("LLVM runtime capability-boundary skips: %s", runtimeSkip)
 			}
 			args = append(args, name)
 			cmd := testenv.CommandContext(t, ctx, llvmStdlibGoTool(t), args...)
