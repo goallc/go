@@ -30,6 +30,7 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CheckedArithmetic.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #include <limits>
@@ -140,7 +141,6 @@ enum class LivenessKind {
   PointerAggregates,
   RelocatablePointers,
   AllocaAddresses,
-  DirectAllocaAddresses,
   DerivedPointers,
 };
 
@@ -361,8 +361,8 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
     // Direct memory addresses must not enter relocation SSA. Under register
     // pressure, a relocated address PHI can be spilled into an ordinary
     // non-root slot; that cached address then points at the old Go stack after
-    // growth. canonicalizeDirectAllocaMemoryUses rebuilds every address that
-    // crosses an ordinary call at its terminal use, while
+    // growth. canonicalizeDirectAllocaMemoryUses rebuilds every terminal
+    // memory address at its use, while
     // canonicalizeDirectAllocaAddresses does the same for first-class uses.
     // Only those first-class local values need relocation liveness here.
     return Ty->isPointerTy() && !isa<AllocaInst>(V) &&
@@ -370,13 +370,6 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
            llvm::any_of(V->uses(), [](const Use &U) {
              return !isDirectFrameAddressUse(U);
            });
-  case LivenessKind::DirectAllocaAddresses:
-    // This temporary analysis class finds derived frame addresses whose direct
-    // memory uses cross an ordinary call. Those uses are rebuilt locally
-    // before statepoint rewriting and never enter relocation SSA.
-    return Ty->isPointerTy() && !isa<AllocaInst>(V) &&
-           isStaticAllocaAddress(V) &&
-           llvm::any_of(V->uses(), isDirectMemoryAddressUse);
   case LivenessKind::DerivedPointers:
     return rematerializableDerivedBase(V) != nullptr;
   }
@@ -490,29 +483,30 @@ ValueSet liveAtCall(CallInst &Call, LivenessData &Data, LivenessKind Kind) {
 }
 
 void canonicalizeDirectAllocaMemoryUses(Function &F) {
-  LivenessData Data = computeLiveness(F, LivenessKind::DirectAllocaAddresses);
-  ValueSet AddressesAcrossCalls;
+  // CodeGenPrepare can create a shared large-offset GEP near an alloca and
+  // express several later memory addresses relative to that GEP. Looking only
+  // at whether the terminal address itself crosses a call misses this shape:
+  // the terminal GEP can be local to its use block while its shared ancestor
+  // still carries a pre-growth stack address across a statepoint. Rebuild the
+  // complete alloca-derived chain at every terminal memory use. This also
+  // prevents SelectionDAG from importing any shared ancestor into the use
+  // block as a long-lived virtual register that register allocation may spill.
+  SmallVector<std::pair<Value *, Use *>, 32> MemoryUses;
   for (Instruction &I : instructions(F)) {
-    auto *Call = dyn_cast<CallInst>(&I);
-    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call))
+    if (isa<AllocaInst>(I) || !isStaticAllocaAddress(&I))
       continue;
-    AddressesAcrossCalls.set_union(
-        liveAtCall(*Call, Data, LivenessKind::DirectAllocaAddresses));
+    for (Use &U : I.uses())
+      if (isDirectMemoryAddressUse(U))
+        MemoryUses.push_back({&I, &U});
   }
 
-  for (Value *Address : AddressesAcrossCalls) {
+  for (auto [Address, U] : MemoryUses) {
     AllocaInst *Base = rematerializableAllocaBase(Address);
     assert(Base && "direct frame address has no static alloca base");
-    SmallVector<Use *, 8> MemoryUses;
-    for (Use &U : Address->uses())
-      if (isDirectMemoryAddressUse(U))
-        MemoryUses.push_back(&U);
-
-    for (Use *U : MemoryUses) {
-      auto *UsePoint = cast<Instruction>(U->getUser());
-      Value *UseAddress = rematerializeAddress(Address, Base, Base, UsePoint);
-      U->set(UseAddress);
-    }
+    auto *UsePoint = cast<Instruction>(U->getUser());
+    Value *UseAddress = rematerializeAddress(Address, Base, Base, UsePoint);
+    U->set(UseAddress);
+    RecursivelyDeleteTriviallyDeadInstructions(Address);
   }
 }
 

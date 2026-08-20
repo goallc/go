@@ -46,8 +46,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-LABEL: define goabiinternal void @partially_stored_pointer_alloca(
 ; IR: call void @llvm.lifetime.start
 ; IR-NEXT: call void @llvm.memset.inline
-; IR-NEXT: %first.field = getelementptr
-; IR-NEXT: store ptr %first
+; IR-NEXT: %first.field.remat = getelementptr
+; IR-NEXT: store ptr %first, ptr %first.field.remat
 ; IR: @llvm.experimental.gc.statepoint
 
 ; IR-LABEL: define goabiinternal void @phi_edge_pointer_alloca(
