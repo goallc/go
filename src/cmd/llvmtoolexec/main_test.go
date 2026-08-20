@@ -384,6 +384,31 @@ func TestCompileInvocationClassification(t *testing.T) {
 	}
 }
 
+func TestCodegenLLCArgsDisableUnsafeMachinePasses(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		enableLSR bool
+		want      string
+	}{
+		{
+			name: "defaults",
+			want: "-load-pass-plugin=plugin -trap-unreachable -disable-machine-cse -disable-lsr -filetype=obj input.ll -o output.o",
+		},
+		{
+			name:      "LSR opt-in",
+			enableLSR: true,
+			want:      "-load-pass-plugin=plugin -trap-unreachable -disable-machine-cse -filetype=obj input.ll -o output.o",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := strings.Join(codegenLLCArgs("plugin", "input.ll", "output.o", test.enableLSR), " ")
+			if got != test.want {
+				t.Fatalf("codegenLLCArgs() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestNativePackageOverride(t *testing.T) {
 	packages := stringSetFlag{"runtime_test": {}}
 	args := []string{

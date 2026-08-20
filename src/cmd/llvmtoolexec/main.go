@@ -130,22 +130,7 @@ func main() {
 		llcInput = optimizedIRPath
 	}
 	objPath := filepath.Join(filepath.Dir(output), "llvm-goobj.o")
-	llcArgs := []string{
-		"-load-pass-plugin=" + pluginPath,
-		"-trap-unreachable",
-	}
-	// LSR can turn an address rooted at a pointer-containing alloca into a
-	// loop-carried derived pointer. The late statepoint pass relocates that
-	// scalar address, but does not yet recover the base alloca's per-call
-	// contents liveness through the recurrence. Keep LSR opt-in until that
-	// provenance is represented in GoObj pointer maps. The current end-to-end
-	// reproducer runs TestTokenStringAllocations before TestTokenAccessors in
-	// encoding/json/jsontext; it remains a known failure even with LSR disabled,
-	// so the switch also keeps the next analysis free of this transformation.
-	if !*enableLSR {
-		llcArgs = append(llcArgs, "-disable-lsr")
-	}
-	llcArgs = append(llcArgs, "-filetype=obj", llcInput, "-o", objPath)
+	llcArgs := codegenLLCArgs(pluginPath, llcInput, objPath, *enableLSR)
 	run(llc, llcArgs...)
 	// cmd/link identifies the package linker object by this archive member
 	// name. Unlike the mixed native/LLVM path, this is the sole linker member.
@@ -163,6 +148,34 @@ func main() {
 			}
 		}
 	}
+}
+
+func codegenLLCArgs(pluginPath, inputPath, outputPath string, enableLSR bool) []string {
+	args := []string{
+		"-load-pass-plugin=" + pluginPath,
+		"-trap-unreachable",
+		// MachineCSE runs after SelectionDAG has lowered statepoints. It can CSE
+		// a post-statepoint frame-index LEA with an earlier LEA, extending the
+		// earlier virtual register's live range across statepoints whose gc-live
+		// operands have already been fixed. This breaks x86 code even without a
+		// Go stack move (go/printer TestFiles/alignment.input is the reproducer).
+		// Keep it disabled until frame-index expressions are invalidated at
+		// statepoints, or the post-statepoint rematerialization is made opaque to
+		// MachineCSE.
+		"-disable-machine-cse",
+	}
+	// LSR can turn an address rooted at a pointer-containing alloca into a
+	// loop-carried derived pointer. The late statepoint pass relocates that
+	// scalar address, but does not yet recover the base alloca's per-call
+	// contents liveness through the recurrence. Keep LSR opt-in until that
+	// provenance is represented in GoObj pointer maps. The current end-to-end
+	// reproducer runs TestTokenStringAllocations before TestTokenAccessors in
+	// encoding/json/jsontext; it remains a known failure even with LSR disabled,
+	// so the switch also keeps the next analysis free of this transformation.
+	if !enableLSR {
+		args = append(args, "-disable-lsr")
+	}
+	return append(args, "-filetype=obj", inputPath, "-o", outputPath)
 }
 
 func resolveOpt(llc, configured string) (string, error) {
