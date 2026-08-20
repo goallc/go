@@ -20,9 +20,10 @@ import (
 
 const llvmStdlibPolicyEnv = "GOALLC_RUN_LLVM_STDLIB"
 
-// These tests exercise runtime metadata or signal semantics that the LLVM
-// backend does not model yet. Keep the exclusions at the LLVM qualification
-// boundary so the upstream runtime tests continue to specify native Go
+// These tests exercise metadata or signal semantics of the LLVM-compiled
+// runtime_test functions that the backend does not model yet. The runtime
+// implementation itself remains native. Keep the exclusions at the LLVM
+// qualification boundary so the upstream tests continue to specify native Go
 // behavior unchanged. Subtest patterns retain the passing panicwrap and panic
 // coverage beside the excluded sigpanic and trap cases.
 const llvmRuntimeSkip = `^(TestCallersNilPointerPanic|TestGCInfo|TestTracebackArgs|TestTracebackElision|TestUnsafePoint)$|^TestStackWrapperStackPanic$/^sigpanic$|^TestTracebackSystem$/^trap$`
@@ -290,7 +291,7 @@ func TestLLVMStdlib(t *testing.T) {
 	validateLLVMStdlibPolicy(t, packages, policySet)
 	set := effectiveLLVMStdlibTestSet(policySet, platform)
 	configureLLVMTestToolchain(t)
-	toolexec := llvmToolexec(t, "default<O2>")
+	toolexec := llvmExecutionToolexec(t, "default<O2>")
 
 	whitelist := make([]string, 0, len(set.Whitelist))
 	for name := range set.Whitelist {
@@ -322,7 +323,8 @@ func TestLLVMStdlib(t *testing.T) {
 	// The target package and toolexec pipeline are part of cmd/go's action IDs,
 	// so one isolated cache can safely serve every package in this policy run.
 	// A single all= pattern compiles the test package, generated test main, and
-	// complete dependency closure with LLVM. The toolchain, payload, and pass
+	// dependency closure with LLVM except for runtime, which is forced to the
+	// native backend by the execution toolexec. The toolchain, payload, and pass
 	// plugin remain fixed for the lifetime of the test process.
 	cache := t.TempDir()
 	type llvmStdlibCandidate struct {
@@ -339,6 +341,7 @@ func TestLLVMStdlib(t *testing.T) {
 	for _, candidate := range candidates {
 		name := candidate.name
 		t.Run(name, func(t *testing.T) {
+			t.Logf("LLVM execution capability boundary: native package=%q", llvmNativeRuntimePackage)
 			testTimeout := "2m"
 			processTimeout := 5 * time.Minute
 			if name == "runtime" {
@@ -354,10 +357,10 @@ func TestLLVMStdlib(t *testing.T) {
 				"-gcflags=all=-enablellvm -llvmironly",
 			}
 			if name == "runtime" {
-				// LLVM GoObj does not yet emit the complete per-function
-				// DWARF carrier set expected by the Go linker. Runtime
-				// qualification currently covers code generation, GoObj,
-				// linking, and execution, but not debug information.
+				// runtime_test and the generated test harness are still LLVM
+				// compiled. LLVM GoObj does not yet emit their complete
+				// per-function DWARF, GC, traceback, async-safe-point, and
+				// signal metadata.
 				args = append(args,
 					"-ldflags=-w",
 					"-skip="+llvmRuntimeSkip,

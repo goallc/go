@@ -30,6 +30,11 @@ const llvmDefaultCaseTimeoutSeconds = 60
 
 const llvmBlacklistReasonRequirement = "timeout, OOM, unsupported defer/recover, or slow CI case"
 
+// Runtime itself remains on the native backend for execution tests. LLVM may
+// still compile the target package, generated test main, and the rest of the
+// dependency closure selected by all= gcflags.
+const llvmNativeRuntimePackage = "runtime"
+
 func llvmCaseTimeoutSeconds(recipeTimeout int) int {
 	if recipeTimeout == 0 || recipeTimeout > llvmDefaultCaseTimeoutSeconds {
 		return llvmDefaultCaseTimeoutSeconds
@@ -138,7 +143,7 @@ func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
 	for name := range runtimeCandidates {
 		mode.cases[name] = llvmTestCase{suite: "runtime", class: classifyLLVMTest(t, policy.Runtime, name)}
 	}
-	mode.toolexec = llvmToolexec(t, "default<O2>")
+	mode.toolexec = llvmExecutionToolexec(t, "default<O2>")
 	return mode
 }
 
@@ -315,7 +320,7 @@ func runLLVMGetGABI0FailClosedTest(t *testing.T) {
 
 func runLLVMCompileOnlyRegression(t *testing.T, gorootTestDir, name string) {
 	t.Helper()
-	toolexec := llvmToolexec(t, "")
+	toolexec := llvmExecutionToolexec(t, "")
 	exe := filepath.Join(t.TempDir(), "test.exe")
 	cmd := exec.Command(goTool, "build",
 		"-gcflags=all="+os.Getenv("GO_GCFLAGS"),
@@ -887,6 +892,10 @@ func runLLVMWriteBarrierIRTests(t *testing.T) {
 
 func llvmToolexec(t *testing.T, optPasses string) string {
 	return llvmToolexecWithNativePackages(t, optPasses)
+}
+
+func llvmExecutionToolexec(t *testing.T, optPasses string) string {
+	return llvmToolexecWithNativePackages(t, optPasses, llvmNativeRuntimePackage)
 }
 
 func llvmToolexecWithNativePackages(t *testing.T, optPasses string, nativePackages ...string) string {
