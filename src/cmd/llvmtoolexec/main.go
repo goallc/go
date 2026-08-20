@@ -56,6 +56,7 @@ var (
 	optPath        = flag.String("opt", os.Getenv("GOALLC_OPT"), "path to opt")
 	optPasses      = flag.String("opt-passes", "", "optional LLVM optimization pipeline to run before llc")
 	passPluginPath = flag.String("pass-plugin", os.Getenv("GOALLC_PASS_PLUGIN"), "path to the GoALLC LLVM pass plugin (default next to llc)")
+	enableLSR      = flag.Bool("enable-lsr", false, "enable LLVM loop strength reduction (experimental with Go stack pointer maps)")
 	keepIR         = flag.Bool("keep-ir", false, "keep the compiler-generated .ll sidecar")
 	nativePackages stringSetFlag
 )
@@ -79,7 +80,7 @@ func main() {
 		// Version probes do not carry per-package gcflags. Conservatively include
 		// the LLVM backend in the wrapper identity so an LLVM action can never
 		// reuse an object cached for a different payload.
-		printToolIdentity(tool, args, *llcPath, *optPath, *optPasses, *passPluginPath)
+		printToolIdentity(tool, args, *llcPath, *optPath, *optPasses, *passPluginPath, *enableLSR)
 		return
 	}
 	if !hasLLVMCompileFlags(args) {
@@ -120,17 +121,31 @@ func main() {
 		if err != nil {
 			fatalf("%v", err)
 		}
-		run(opt, "-passes="+*optPasses, "-S", irPath, "-o", optimizedIRPath)
+		optArgs := []string{"-passes=" + *optPasses}
+		if !*enableLSR {
+			optArgs = append(optArgs, "-disable-lsr")
+		}
+		optArgs = append(optArgs, "-S", irPath, "-o", optimizedIRPath)
+		run(opt, optArgs...)
 		llcInput = optimizedIRPath
 	}
 	objPath := filepath.Join(filepath.Dir(output), "llvm-goobj.o")
 	llcArgs := []string{
 		"-load-pass-plugin=" + pluginPath,
 		"-trap-unreachable",
-		"-filetype=obj",
-		llcInput,
-		"-o", objPath,
 	}
+	// LSR can turn an address rooted at a pointer-containing alloca into a
+	// loop-carried derived pointer. The late statepoint pass relocates that
+	// scalar address, but does not yet recover the base alloca's per-call
+	// contents liveness through the recurrence. Keep LSR opt-in until that
+	// provenance is represented in GoObj pointer maps. The current end-to-end
+	// reproducer runs TestTokenStringAllocations before TestTokenAccessors in
+	// encoding/json/jsontext; it remains a known failure even with LSR disabled,
+	// so the switch also keeps the next analysis free of this transformation.
+	if !*enableLSR {
+		llcArgs = append(llcArgs, "-disable-lsr")
+	}
+	llcArgs = append(llcArgs, "-filetype=obj", llcInput, "-o", objPath)
 	run(llc, llcArgs...)
 	// cmd/link identifies the package linker object by this archive member
 	// name. Unlike the mixed native/LLVM path, this is the sole linker member.
@@ -280,7 +295,7 @@ func hasLLVMCompileFlags(args []string) bool {
 // may select an LLVM compile action. The native compiler identity alone is
 // insufficient because llc and the pass plugin also determine the archive
 // written by this wrapper.
-func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses, configuredPlugin string) {
+func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses, configuredPlugin string, enableLSR bool) {
 	llc, err := resolveLLC(llc)
 	if err != nil {
 		fatalf("%v", err)
@@ -327,6 +342,8 @@ func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses
 	identityInput = append(identityInput, optPasses...)
 	identityInput = append(identityInput, "\x00native-packages="...)
 	identityInput = append(identityInput, nativePackages.String()...)
+	identityInput = append(identityInput, "\x00enable-lsr="...)
+	identityInput = strconv.AppendBool(identityInput, enableLSR)
 	identity, err := backendIdentity(identityInput, append([]string{wrapper}, backendFiles...)...)
 	if err != nil {
 		fatalf("computing backend identity: %v", err)
