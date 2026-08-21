@@ -1,5 +1,14 @@
 target triple = "x86_64-unknown-linux-goobj"
 
+; The late rewrite changes the CFG and deliberately preserves neither the
+; dominator tree nor alias analysis. SelectionDAG's normal analysis requirements
+; must rebuild both after the rewrite rather than consume pre-rewrite state.
+; ANALYSIS-INVALIDATION: GoALLC late statepoints
+; ANALYSIS-INVALIDATION: Dominator Tree Construction
+; ANALYSIS-INVALIDATION-NEXT: Basic Alias Analysis (stateless AA impl)
+; ANALYSIS-INVALIDATION-NEXT: Function Alias Analysis Results
+; ANALYSIS-INVALIDATION: X86 DAG->DAG Instruction Selection
+
 ; The plugin owns the Machine StackMaps to GoObj bridge. The entry STACKMAP
 ; supplies map 0, while the statepoint supplies the live locals map selected at
 ; the ordinary call. The morestack path returns to the entry map.

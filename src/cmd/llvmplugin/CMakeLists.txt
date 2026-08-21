@@ -123,6 +123,19 @@ if(BUILD_TESTING)
       "GoALLCStatepoints: ran late pre-isel pipeline for"
   )
 
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.AnalysisInvalidation
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/statepoint.ll"
+    ANALYSIS-INVALIDATION
+    "${GOALLC_LLC_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -mtriple=x86_64-unknown-linux-gnu
+    -debug-pass=Structure
+    -filetype=null
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/statepoint.ll"
+  )
+
   add_test(
     NAME GoALLCStatepoints.Rewrite
     COMMAND

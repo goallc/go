@@ -4,13 +4,10 @@
 
 #include "GoALLCPreCodeGen.h"
 #include "GoALLCStatepoints.h"
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/CodeGen/StackProtector.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/Config/llvm-config.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
@@ -79,13 +76,6 @@ public:
       return true;
     }
 
-    // SelectionDAG is a MachineFunctionPass that consumes legacy function AA
-    // through an on-the-fly bridge. That bridge cannot schedule a fresh
-    // AAResultsWrapperPass after this last-minute IR transform. BasicAA does
-    // not cache query results, so preserve its aggregation after repairing the
-    // mutable dominator tree it references.
-    getAnalysis<DominatorTreeWrapperPass>().getDomTree().recalculate(F);
-
     if (ReportInvocation)
       errs() << "GoALLCStatepoints: ran late pre-isel pipeline for "
              << F.getName() << '\n';
@@ -93,11 +83,12 @@ public:
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<AAResultsWrapperPass>();
-    AU.addPreserved<DominatorTreeWrapperPass>();
-    AU.addPreserved<AAResultsWrapperPass>();
-    AU.addPreserved<BasicAAWrapperPass>();
+    // rewriteStatepoints changes both instructions and the CFG. Let the legacy
+    // pass manager invalidate and rebuild CFG-dependent analyses before
+    // instruction selection instead of carrying pre-rewrite DT/AA state across
+    // this pass. The rewrite does not add or remove assumptions, and its
+    // temporary allocas are promoted before returning, so the already-computed
+    // stack-protector layout remains valid.
     AU.addPreserved<AssumptionCacheTracker>();
     AU.addPreserved<StackProtector>();
   }
