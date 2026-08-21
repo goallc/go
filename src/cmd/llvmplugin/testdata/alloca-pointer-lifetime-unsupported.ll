@@ -32,7 +32,6 @@ target triple = "x86_64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal void @preinitialized_pointer_alloca(
 ; IR: call void @llvm.lifetime.start
-; IR-NEXT: %slot.address = getelementptr
 ; IR-NEXT: call void @llvm.memset.inline
 ; IR-NOT: call void @llvm.memset.inline
 ; IR: @llvm.experimental.gc.statepoint

@@ -26,6 +26,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Statepoint.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CheckedArithmetic.h"
@@ -144,6 +145,18 @@ enum class LivenessKind {
   DerivedPointers,
 };
 
+// Classify how a frame-derived address participates in IR. Address derivations
+// and bookkeeping remain structurally tied to the frame object. Terminal
+// memory uses can be rebuilt immediately at the access. Every other use treats
+// the address as an ordinary SSA pointer value and needs relocation liveness.
+enum class FrameAddressUseKind {
+  Derivation,
+  TerminalMemory,
+  LifetimeOrDebug,
+  FakeUse,
+  FirstClass,
+};
+
 bool isGoCallingConv(CallingConv::ID CC) {
   return CC == CallingConv::GoABIInternal || CC == CallingConv::GoABI0;
 }
@@ -165,6 +178,11 @@ bool isRelocatablePointerType(Type *Ty) {
     return true;
   auto *VT = dyn_cast<FixedVectorType>(Ty);
   return VT && VT->getElementType()->isPointerTy();
+}
+
+bool isDirectFrameAddressDerivation(const Instruction &I) {
+  return isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
+         isa<AddrSpaceCastInst>(I);
 }
 
 const AllocaInst *rematerializableAllocaBase(const Value *V) {
@@ -234,34 +252,43 @@ Value *rematerializableDerivedBase(Value *V) {
       rematerializableDerivedBase(static_cast<const Value *>(V)));
 }
 
-bool isDirectMemoryAddressUse(const Use &U) {
+FrameAddressUseKind classifyFrameAddressUse(const Use &U) {
   auto *I = dyn_cast<Instruction>(U.getUser());
   if (!I)
-    return false;
+    return FrameAddressUseKind::FirstClass;
+  if (isDirectFrameAddressDerivation(*I))
+    return FrameAddressUseKind::Derivation;
   if (auto *Load = dyn_cast<LoadInst>(I))
-    return &U == &Load->getOperandUse(LoadInst::getPointerOperandIndex());
+    return &U == &Load->getOperandUse(LoadInst::getPointerOperandIndex())
+               ? FrameAddressUseKind::TerminalMemory
+               : FrameAddressUseKind::FirstClass;
   if (auto *Store = dyn_cast<StoreInst>(I))
-    return &U == &Store->getOperandUse(StoreInst::getPointerOperandIndex());
+    return &U == &Store->getOperandUse(StoreInst::getPointerOperandIndex())
+               ? FrameAddressUseKind::TerminalMemory
+               : FrameAddressUseKind::FirstClass;
   if (auto *RMW = dyn_cast<AtomicRMWInst>(I))
-    return &U == &RMW->getOperandUse(AtomicRMWInst::getPointerOperandIndex());
+    return &U == &RMW->getOperandUse(AtomicRMWInst::getPointerOperandIndex())
+               ? FrameAddressUseKind::TerminalMemory
+               : FrameAddressUseKind::FirstClass;
   if (auto *CmpXchg = dyn_cast<AtomicCmpXchgInst>(I))
-    return &U ==
-           &CmpXchg->getOperandUse(AtomicCmpXchgInst::getPointerOperandIndex());
-  return false;
-}
-
-bool isDirectFrameAddressUse(const Use &U) {
-  auto *I = dyn_cast<Instruction>(U.getUser());
-  if (!I)
-    return false;
-  if (isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
-      isa<AddrSpaceCastInst>(I) || isDirectMemoryAddressUse(U))
-    return true;
-  if (auto *Intrinsic = dyn_cast<IntrinsicInst>(I))
-    return Intrinsic->isLifetimeStartOrEnd() ||
-           Intrinsic->getIntrinsicID() == Intrinsic::fake_use ||
-           isa<DbgInfoIntrinsic>(Intrinsic);
-  return false;
+    return &U == &CmpXchg->getOperandUse(
+                     AtomicCmpXchgInst::getPointerOperandIndex())
+               ? FrameAddressUseKind::TerminalMemory
+               : FrameAddressUseKind::FirstClass;
+  if (auto *Mem = dyn_cast<MemIntrinsic>(I)) {
+    if (U.get() == Mem->getRawDest())
+      return FrameAddressUseKind::TerminalMemory;
+    if (auto *Transfer = dyn_cast<MemTransferInst>(Mem);
+        Transfer && U.get() == Transfer->getRawSource())
+      return FrameAddressUseKind::TerminalMemory;
+  }
+  if (auto *Intrinsic = dyn_cast<IntrinsicInst>(I)) {
+    if (Intrinsic->isLifetimeStartOrEnd() || isa<DbgInfoIntrinsic>(Intrinsic))
+      return FrameAddressUseKind::LifetimeOrDebug;
+    if (Intrinsic->getIntrinsicID() == Intrinsic::fake_use)
+      return FrameAddressUseKind::FakeUse;
+  }
+  return FrameAddressUseKind::FirstClass;
 }
 
 Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
@@ -281,7 +308,7 @@ Error canonicalizeDirectAllocaAddresses(
     SmallVector<Use *, 8> FirstClassUses;
     SmallVector<IntrinsicInst *, 4> LifetimeStarts;
     for (Use &U : Address->uses())
-      if (!isDirectFrameAddressUse(U))
+      if (classifyFrameAddressUse(U) == FrameAddressUseKind::FirstClass)
         FirstClassUses.push_back(&U);
     if (FirstClassUses.empty())
       continue;
@@ -352,14 +379,15 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
     // Direct memory addresses must not enter relocation SSA. Under register
     // pressure, a relocated address PHI can be spilled into an ordinary
     // non-root slot; that cached address then points at the old Go stack after
-    // growth. canonicalizeDirectAllocaMemoryUses rebuilds every terminal
-    // memory address at its use, while
-    // canonicalizeDirectAllocaAddresses does the same for first-class uses.
-    // Only those first-class local values need relocation liveness here.
+    // growth. rematerializeDirectFixedFrameMemoryUses rebuilds every terminal
+    // memory address at its use, while canonicalizeDirectAllocaAddresses does
+    // the same for first-class uses. Only those first-class local values need
+    // relocation liveness here.
     return Ty->isPointerTy() && !isa<AllocaInst>(V) &&
            isStaticAllocaAddress(V) &&
            llvm::any_of(V->uses(), [](const Use &U) {
-             return !isDirectFrameAddressUse(U);
+             return classifyFrameAddressUse(U) ==
+                    FrameAddressUseKind::FirstClass;
            });
   case LivenessKind::DerivedPointers:
     return rematerializableDerivedBase(V) != nullptr;
@@ -471,34 +499,6 @@ ValueSet liveAtCall(CallInst &Call, LivenessData &Data, LivenessKind Kind) {
                Live, Kind);
   Live.remove(&Call);
   return Live;
-}
-
-void canonicalizeDirectAllocaMemoryUses(Function &F) {
-  // CodeGenPrepare can create a shared large-offset GEP near an alloca and
-  // express several later memory addresses relative to that GEP. Looking only
-  // at whether the terminal address itself crosses a call misses this shape:
-  // the terminal GEP can be local to its use block while its shared ancestor
-  // still carries a pre-growth stack address across a statepoint. Rebuild the
-  // complete alloca-derived chain at every terminal memory use. This also
-  // prevents SelectionDAG from importing any shared ancestor into the use
-  // block as a long-lived virtual register that register allocation may spill.
-  SmallVector<std::pair<Value *, Use *>, 32> MemoryUses;
-  for (Instruction &I : instructions(F)) {
-    if (isa<AllocaInst>(I) || !isStaticAllocaAddress(&I))
-      continue;
-    for (Use &U : I.uses())
-      if (isDirectMemoryAddressUse(U))
-        MemoryUses.push_back({&I, &U});
-  }
-
-  for (auto [Address, U] : MemoryUses) {
-    AllocaInst *Base = rematerializableAllocaBase(Address);
-    assert(Base && "direct frame address has no static alloca base");
-    auto *UsePoint = cast<Instruction>(U->getUser());
-    Value *UseAddress = rematerializeAddress(Address, Base, Base, UsePoint);
-    U->set(UseAddress);
-    RecursivelyDeleteTriviallyDeadInstructions(Address);
-  }
 }
 
 Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
@@ -858,50 +858,46 @@ bool addressNeedsStackObject(Value &Base) {
     Value *Address = Worklist.pop_back_val();
     if (!Seen.insert(Address).second)
       continue;
-    for (User *U : Address->users()) {
-      auto *I = dyn_cast<Instruction>(U);
+    for (Use &U : Address->uses()) {
+      auto *I = dyn_cast<Instruction>(U.getUser());
       if (!I)
         return true;
 
-      if (isa<PHINode>(I) || isa<SelectInst>(I) || isa<FreezeInst>(I))
-        // A merged/frozen address is tracked as an independent scalar root.
-        // It needs StackObject metadata so the runtime can discover and scan
-        // the alloca dynamically when that root points into this frame.
-        return true;
-      if (isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
-          isa<AddrSpaceCastInst>(I)) {
+      switch (classifyFrameAddressUse(U)) {
+      case FrameAddressUseKind::Derivation:
         if (!I->getType()->isPointerTy())
           return true;
         Worklist.push_back(I);
         continue;
-      }
-      if (auto *Load = dyn_cast<LoadInst>(I)) {
-        if (Load->getPointerOperand() != Address || Load->isAtomic() ||
-            Load->isVolatile())
-          return true;
-        continue;
-      }
-      if (auto *Store = dyn_cast<StoreInst>(I)) {
-        if (Store->getPointerOperand() != Address ||
-            Store->getValueOperand() == Address || Store->isAtomic() ||
-            Store->isVolatile())
-          return true;
-        continue;
-      }
-      if (isa<ICmpInst>(I))
-        continue;
-      if (auto *Intrinsic = dyn_cast<IntrinsicInst>(I)) {
-        if (Intrinsic->isLifetimeStartOrEnd() ||
-            Intrinsic->getIntrinsicID() == Intrinsic::fake_use ||
-            isa<DbgInfoIntrinsic>(Intrinsic) || isa<MemIntrinsic>(Intrinsic))
+      case FrameAddressUseKind::TerminalMemory:
+        if (auto *Load = dyn_cast<LoadInst>(I)) {
+          if (Load->isAtomic() || Load->isVolatile())
+            return true;
           continue;
+        }
+        if (auto *Store = dyn_cast<StoreInst>(I)) {
+          if (Store->isAtomic() || Store->isVolatile())
+            return true;
+          continue;
+        }
+        if (isa<MemIntrinsic>(I))
+          continue;
+        // Atomic read-modify-write operations expose the frame object.
+        return true;
+      case FrameAddressUseKind::LifetimeOrDebug:
+      case FrameAddressUseKind::FakeUse:
+        continue;
+      case FrameAddressUseKind::FirstClass:
+        if (isa<ICmpInst>(I))
+          continue;
+        // A merged/frozen address is tracked as an independent scalar root.
+        // It needs StackObject metadata so the runtime can discover and scan
+        // the alloca dynamically when that root points into this frame.
+        // Passing, storing, returning, converting, inline asm, and every other
+        // ordinary SSA use likewise make the address observable.
         return true;
       }
-      // Passing the address to even a captures(none), readonly, or GC-leaf
-      // call makes memory observable during the call. Storing/returning it,
-      // ptrtoint, inline asm, and every unknown use are likewise stack-object
-      // cases.
-      return true;
+      llvm_unreachable("unknown frame address use kind");
     }
   }
   return false;
@@ -936,12 +932,6 @@ Error collectPointerAllocaLifetimeMarkers(
   return Error::success();
 }
 
-bool isPointerAddressDerivation(const Instruction &I) {
-  return isa<GetElementPtrInst>(I) || isa<BitCastInst>(I) ||
-         isa<AddrSpaceCastInst>(I) || isa<PHINode>(I) || isa<SelectInst>(I) ||
-         isa<FreezeInst>(I);
-}
-
 void collectPointerAllocaAddressUses(PointerAllocaRecord &Record) {
   SmallVector<Value *, 16> Worklist{Record.Alloca};
   SmallPtrSet<Value *, 16> SeenAddresses;
@@ -950,13 +940,14 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record) {
     Value *Address = Worklist.pop_back_val();
     if (!SeenAddresses.insert(Address).second)
       continue;
-    for (User *U : Address->users()) {
-      auto *I = dyn_cast<Instruction>(U);
+    for (Use &U : Address->uses()) {
+      auto *I = dyn_cast<Instruction>(U.getUser());
       if (!I) {
         Record.ActivityUnclear = true;
         continue;
       }
-      if (isPointerAddressDerivation(*I)) {
+      FrameAddressUseKind Kind = classifyFrameAddressUse(U);
+      if (Kind == FrameAddressUseKind::Derivation) {
         if (!I->getType()->isPointerTy()) {
           Record.ActivityUnclear = true;
           continue;
@@ -969,10 +960,13 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record) {
           Worklist.push_back(I);
         continue;
       }
-      if (auto *Intrinsic = dyn_cast<IntrinsicInst>(I)) {
-        if (Intrinsic->isLifetimeStartOrEnd() || isa<DbgInfoIntrinsic>(I))
-          continue;
-      }
+      if (Kind == FrameAddressUseKind::LifetimeOrDebug)
+        continue;
+      if (Kind == FrameAddressUseKind::FirstClass &&
+          isa<PHINode, SelectInst, FreezeInst>(I))
+        // A merged/frozen address is an independent scalar root. Its liveness
+        // does not make every possible incoming alloca's contents active.
+        continue;
       if (SeenUses.insert(I).second)
         Record.AddressUses.push_back(I);
     }
@@ -1676,15 +1670,15 @@ Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
   return NewOperand;
 }
 
-void rebuildDirectFixedFrameMemoryUsesFromRelocates(
+void rematerializeDirectFixedFrameMemoryUses(
     Function &F, DominatorTree &DT, ArrayRef<SafepointRecord> Records) {
-  // canonicalizeDirectAllocaMemoryUses gives every terminal memory operation
-  // its own local address expression. After the continuations have been
-  // split, rebuild that expression once more from the latest dominating
-  // gc.relocate of the fixed frame base. Direct uses of typed byval/goret homes
-  // need the same treatment. Merely rebuilding from the original base still
-  // lets SelectionDAG reuse a pre-statepoint address register; using the
-  // relocate forces FrameIndexRemat in the continuation block.
+  // CodeGenPrepare can share one large-offset GEP between several later memory
+  // accesses. After statepoint continuations have been split, rebuild the
+  // complete address chain at every terminal access so SelectionDAG cannot
+  // carry a pre-growth physical stack address into the continuation block. Use
+  // the latest dominating relocate when the fixed frame base is GC-live; a
+  // non-pointer frame object has no relocate and is rebuilt from its original
+  // FrameIndex base. Typed byval/goret homes follow the same rule.
   SmallVector<std::pair<Value *, Value *>, 32> Addresses;
   for (Instruction &I : instructions(F))
     if (isStaticAllocaAddress(&I))
@@ -1693,17 +1687,19 @@ void rebuildDirectFixedFrameMemoryUsesFromRelocates(
     if (Arg.hasByValAttr() || Arg.hasGoRetAttr())
       Addresses.push_back({&Arg, &Arg});
 
+  SmallVector<WeakTrackingVH, 32> DeadAddresses;
+
   for (const auto &AddressAndBase : Addresses) {
     Value *Address = AddressAndBase.first;
     Value *Base = AddressAndBase.second;
     SmallVector<Use *, 8> MemoryUses;
     for (Use &U : Address->uses())
-      if (isDirectMemoryAddressUse(U))
+      if (classifyFrameAddressUse(U) == FrameAddressUseKind::TerminalMemory)
         MemoryUses.push_back(&U);
 
     for (Use *U : MemoryUses) {
       auto *UsePoint = cast<Instruction>(U->getUser());
-      CallInst *RelocatedBase = nullptr;
+      Value *CurrentBase = Base;
       for (const SafepointRecord &Record : Records) {
         auto Relocate = llvm::find_if(Record.Relocates, [&](CallInst *Call) {
           return cast<GCRelocateInst>(Call)->getDerivedPtr() == Base;
@@ -1711,19 +1707,29 @@ void rebuildDirectFixedFrameMemoryUsesFromRelocates(
         if (Relocate == Record.Relocates.end() ||
             !DT.dominates(*Relocate, UsePoint))
           continue;
-        if (!RelocatedBase || DT.dominates(RelocatedBase, *Relocate))
-          RelocatedBase = *Relocate;
+        if (CurrentBase == Base || DT.dominates(CurrentBase, *Relocate))
+          CurrentBase = *Relocate;
       }
-      if (!RelocatedBase)
+
+      if (Address == Base && CurrentBase == Base)
         continue;
 
-      Value *UseAddress = Address == Base
-                              ? static_cast<Value *>(RelocatedBase)
-                              : rematerializeAddress(Address, Base,
-                                                     RelocatedBase, UsePoint);
+      Value *UseAddress =
+          Address == Base
+              ? CurrentBase
+              : rematerializeAddress(Address, Base, CurrentBase, UsePoint);
       U->set(UseAddress);
     }
+    if (!MemoryUses.empty())
+      if (auto *I = dyn_cast<Instruction>(Address); I && !isa<AllocaInst>(I))
+        DeadAddresses.push_back(I);
   }
+
+  // Delete from leaves toward their bases. Weak handles make recursive deletion
+  // safe even when removing one terminal chain also removes a shared ancestor.
+  for (WeakTrackingVH &Handle : llvm::reverse(DeadAddresses))
+    if (auto *I = dyn_cast_or_null<Instruction>(Handle))
+      RecursivelyDeleteTriviallyDeadInstructions(I);
 }
 
 void repairRelocationSSA(Function &F, DominatorTree &DT,
@@ -1864,13 +1870,6 @@ Error rewriteFunction(Function &F) {
   if (Error Err =
           canonicalizeDirectAllocaAddresses(F, DT, WholeLifetimeAllocas))
     return Err;
-  // Static alloca-derived values that reach only load/store/atomic pointer
-  // operands intentionally stay out of relocation SSA. Rebuild every such
-  // terminal use when its address is live across an ordinary call. After all
-  // calls become statepoints, splitStatepointContinuations places each rebuilt
-  // use in the continuation block, preventing SelectionDAG from carrying its
-  // pre-growth address across the statepoint.
-  canonicalizeDirectAllocaMemoryUses(F);
   Expected<std::optional<OpenDeferInfo>> OpenDeferOrErr =
       collectOpenDeferInfo(F);
   if (!OpenDeferOrErr)
@@ -2006,7 +2005,7 @@ Error rewriteFunction(Function &F) {
   // latter promotes temporary merge slots, so rebuild it for the new
   // continuation blocks.
   DT.recalculate(F);
-  rebuildDirectFixedFrameMemoryUsesFromRelocates(F, DT, Records);
+  rematerializeDirectFixedFrameMemoryUses(F, DT, Records);
   repairRelocationSSA(F, DT, Records);
   return Error::success();
 }
