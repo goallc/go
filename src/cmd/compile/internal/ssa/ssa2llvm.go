@@ -2369,7 +2369,22 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	}
 	savedBlock := lfc.b.GetInsertBlock()
 	savedLocation := lfc.b.CurrentDebugLocationMetadata()
-	if v.Block != nil {
+	if v.Op == OpSP {
+		// CompileBlock leaves SP lazy because LocalAddr uses it only as a
+		// generic-SSA addressing token. A real consumer may request SP after
+		// the entry block already has a terminator, so insert its definition at
+		// the stable beginning of the entry rather than at the block end.
+		entry := lfc.BBs[lfc.F.Entry.ID]
+		before := entry.FirstInstruction()
+		for !before.IsNil() && !before.IsAPHINode().IsNil() {
+			before = llvm.NextInstruction(before)
+		}
+		if before.IsNil() {
+			lfc.b.SetInsertPointAtEnd(entry)
+		} else {
+			lfc.b.SetInsertPointBefore(before)
+		}
+	} else if v.Block != nil {
 		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
 	lfc.setDebugLocation(v.Pos)
@@ -3070,6 +3085,9 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 	lfc.b.SetInsertPointAtEnd(lfc.BBs[BB.ID])
 	lfc.b.ClearCurrentDebugLocation()
 	for _, v := range values {
+		if v.Op == OpSP {
+			continue
+		}
 		lfc.GenLV(v)
 	}
 	lfc.setDebugLocation(BB.Pos)

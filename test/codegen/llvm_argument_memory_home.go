@@ -12,12 +12,24 @@ type llvmArgumentStrings3 struct {
 
 type llvmArgumentStringArray [2]string
 
+// The slice move-to-heap check compares a pointer against the active frame and
+// is a real SP value use. Keep materializing stackaddress for that path even
+// though LocalAddr-only functions below do not need it.
+//
+// LLVM-LABEL: define goabiinternal { ptr, i64, i64 } @codegen.llvmMoveToHeapUsesStackAddress(i64 %n)
+// LLVM: [[SP:%.*]] = call ptr @llvm.stackaddress.p0()
+// LLVM-NEXT: {{%.*}} = call i64 @llvm.go.pointer.address.i64.p0(ptr [[SP]])
+// LLVM-OPT-LABEL: define goabiinternal { ptr, i64, i64 } @codegen.llvmMoveToHeapUsesStackAddress(i64 %n)
+// LLVM-OPT: [[SP_OPT:%.*]] = {{.*}}call ptr @llvm.stackaddress.p0()
+// LLVM-OPT-NEXT: {{%.*}} = {{.*}}call i64 @llvm.go.pointer.address.i64.p0(ptr [[SP_OPT]])
+
 // llvmArgumentStrings3 fits wholly in the ABIInternal integer-register budget
 // but is too large for Go SSA's aggregate-value limit. LLVM gives only this
 // memory-backed parameter a complete local home instead of reconstructing its
 // individual ABI register pieces from the aggregate formal parameter.
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmRegisterArgumentMemoryHome(%codegen.llvmArgumentStrings3 %x)
+// LLVM-NOT: llvm.stackaddress
 // LLVM: [[HOME:%.*]] = alloca %codegen.llvmArgumentStrings3, align 8
 // LLVM: store %codegen.llvmArgumentStrings3 %x, ptr [[HOME]], align 8
 // LLVM: load ptr, ptr [[HOME]], align 8
@@ -25,6 +37,7 @@ type llvmArgumentStringArray [2]string
 // LLVM: ret i64
 //
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmRegisterArgumentMemoryHome(%codegen.llvmArgumentStrings3 %x)
+// LLVM-OPT-NOT: llvm.stackaddress
 // LLVM-OPT-NOT: alloca
 // LLVM-OPT-NOT: load
 // LLVM-OPT-NOT: store
@@ -89,4 +102,12 @@ func llvmForwardStackArgumentMemory(x llvmArgumentStringArray) int {
 // LLVM: ret i64
 func llvmDirectRegisterArgument(x int) int {
 	return x + 1
+}
+
+func llvmMoveToHeapUsesStackAddress(n int) []int {
+	var values []int
+	for i := 0; i < n; i++ {
+		values = append(values, i)
+	}
+	return values
 }
