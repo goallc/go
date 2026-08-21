@@ -520,9 +520,20 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 	runLLVMABICommand(t, nil, opt, "-passes=verify", "-disable-output", goallcIR)
 	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
 	plugin := llvmABIPassPlugin(t, llc)
+	// Keep direct llc invocations aligned with cmd/llvmtoolexec. In particular,
+	// result-slot addresses after statepoints must not be CSE'd with addresses
+	// materialized before the statepoint.
+	llcCodegenArgs := func(args ...string) []string {
+		return append([]string{
+			"-load-pass-plugin=" + plugin,
+			"-trap-unreachable",
+			"-disable-machine-cse",
+			"-disable-lsr",
+		}, args...)
+	}
 	rewrittenIR := runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-goallc-pass-plugin-emit-ir",
-		"-filetype=null", "-o", "-", goallcIR)
+		llcCodegenArgs("-goallc-pass-plugin-emit-ir",
+			"-filetype=null", "-o", "-", goallcIR)...)
 	for _, pattern := range []string{
 		`(?s)define goabiinternal ptr @p\.liveScalarStackArgument.*?ptr byval\(ptr\) align 8 %pointer.*?load ptr, ptr %pointer.*?"gc-live"\(ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
 		`(?s)define goabiinternal \{ ptr, ptr \} @p\.liveAggregateStackArgument.*?ptr byval\(%p\.pointerAggregate\) align 8 %value.*?load %p\.pointerAggregate, ptr %value.*?"gc-live"\(ptr %[[:alnum:]$._-]+, ptr %[[:alnum:]$._-]+\).*?gc\.relocate`,
@@ -540,8 +551,8 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 		"-o", optimizedGoallcIR)
 
 	machineIR := runLLVMABICommand(t, nil, llc,
-		"-load-pass-plugin="+plugin, "-stop-after=prolog-epilog",
-		"-o", "-", optimizedGoallcIR)
+		llcCodegenArgs("-stop-after=prolog-epilog",
+			"-o", "-", optimizedGoallcIR)...)
 	morestackName, ok := goobj.BuiltinSymbolName("runtime.morestack_noctxt", 0)
 	if !ok {
 		t.Fatal("runtime.morestack_noctxt ABI0 is absent from the builtin table")
@@ -576,20 +587,19 @@ func runLLVMAMD64ArgsPointerMapDifferentialTest(t *testing.T, gorootTestDir stri
 		}
 	}
 
-	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
-		"-filetype=obj", optimizedGoallcIR, "-o", goallcObject)
+	runLLVMABICommand(t, nil, llc,
+		llcCodegenArgs("-filetype=obj", optimizedGoallcIR, "-o", goallcObject)...)
 	// Check the instructions from the GoObj artifact used below, rather than
 	// llc's diagnostic assembly-text output.
 	goallcDisassembly := runLLVMABICommand(t, nil, goTool, "tool", "objdump", goallcObject)
 	for _, pattern := range []string{
-		`(?s)TEXT p\.initializedPointerResult.*?MOVQ\s+AX, 0x48\(BP\)`,
-		`(?s)TEXT p\.partiallyInitializedAggregateResult.*?MOVQ\s+CX, 0x40\(BP\)`,
-		`(?s)TEXT p\.partiallyInitializedAggregateResult.*?MOVQ\s+AX, 0x50\(BP\)`,
+		`(?s)TEXT p\.initializedPointerResult.*?R_CALL:p\.safepoint.*?MOVQ\s+0\(SP\), AX.*?LEAQ\s+0x48\(BP\), CX.*?MOVQ\s+AX, 0\(CX\)`,
+		`(?s)TEXT p\.partiallyInitializedAggregateResult.*?R_CALL:p\.safepoint.*?R_CALL:p\.safepoint.*?MOVQ\s+0x8\(SP\), AX.*?LEAQ\s+0x40\(BP\), CX.*?MOVQ\s+0\(SP\), DX.*?MOVQ\s+DX, 0\(CX\).*?MOVQ\s+AX, 0x10\(CX\)`,
 		`(?s)TEXT p\.liveScalarStackArgument.*?R_CALL:p\.safepoint.*?MOVQ\s+0\(SP\), AX`,
 		`(?s)TEXT p\.liveAggregateStackArgument.*?R_CALL:p\.safepoint.*?MOVQ\s+0x8\(SP\), BX.*?MOVQ\s+0\(SP\), AX`,
 	} {
 		if !regexp.MustCompile(pattern).Match(goallcDisassembly) {
-			t.Fatalf("GoALLC amd64 object disassembly does not match %q", pattern)
+			t.Fatalf("GoALLC amd64 object disassembly does not match %q\n%s", pattern, goallcDisassembly)
 		}
 	}
 
