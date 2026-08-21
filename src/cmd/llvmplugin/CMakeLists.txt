@@ -389,7 +389,7 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/typed-byval.ll"
   )
   goallc_add_ir_filecheck_test(
-    GoALLCStatepoints.CallOnlyPointersNotLive
+    GoALLCStatepoints.IndirectCallRewrite
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/indirect-callee.ll"
     IR
   )

@@ -198,15 +198,6 @@ bool isStaticAllocaAddress(const Value *V) {
   return rematerializableAllocaBase(V) != nullptr;
 }
 
-bool isCallTargetOnlyPointer(const Value *V) {
-  if (!V->getType()->isPointerTy() || V->use_empty())
-    return false;
-  return llvm::all_of(V->uses(), [](const Use &U) {
-    const auto *Call = dyn_cast<CallBase>(U.getUser());
-    return Call && Call->isCallee(&U);
-  });
-}
-
 const Value *rematerializableDerivedBase(const Value *V) {
   if (!isRelocatablePointerType(V->getType()) || isStaticAllocaAddress(V))
     return nullptr;
@@ -356,7 +347,7 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
     return !isRelocatablePointerType(Ty) && containsPointer(Ty);
   case LivenessKind::RelocatablePointers:
     return isRelocatablePointerType(Ty) && !isStaticAllocaAddress(V) &&
-           !rematerializableDerivedBase(V) && !isCallTargetOnlyPointer(V);
+           !rematerializableDerivedBase(V);
   case LivenessKind::AllocaAddresses:
     // Direct memory addresses must not enter relocation SSA. Under register
     // pressure, a relocated address PHI can be spilled into an ordinary

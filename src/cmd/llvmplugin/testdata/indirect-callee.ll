@@ -7,8 +7,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: ret void
 ; IR-LABEL: define goabiinternal void @reused_indirect_callee(
 ; IR: @llvm.experimental.gc.statepoint
-; IR-NOT: "gc-live"
-; IR-NOT: @llvm.experimental.gc.relocate
+; IR-SAME: [ "gc-live"(ptr
+; IR: @llvm.experimental.gc.relocate
 ; IR: ret void
 ; IR-LABEL: define goabiinternal void @call_only_pointer_argument(
 ; IR: @llvm.experimental.gc.statepoint
