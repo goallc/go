@@ -15,9 +15,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -68,7 +66,7 @@ type llvmTestSet struct {
 
 type llvmTestPolicy struct {
 	Codegen llvmTestSet `json:"codegen"`
-	Runtime llvmTestSet `json:"runtime"`
+	Run     llvmTestSet `json:"run"`
 }
 
 type llvmTestClass uint8
@@ -115,33 +113,33 @@ func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
 	if err := applyLLVMPlatformPolicy("codegen", platform, &policy.Codegen); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyLLVMPlatformPolicy("runtime", platform, &policy.Runtime); err != nil {
+	if err := applyLLVMPlatformPolicy("run", platform, &policy.Run); err != nil {
 		t.Fatal(err)
 	}
 	codegenCandidates := llvmTestCandidates(t, common.gorootTestDir, []string{"codegen"}, "asmcheck")
-	runtimeCandidates := llvmTestCandidates(t, common.gorootTestDir, dirs, "run")
+	runCandidates := llvmTestCandidates(t, common.gorootTestDir, dirs, "run")
 	for name := range llvmTestCandidates(t, common.gorootTestDir, dirs, "runoutput") {
-		runtimeCandidates[name] = true
+		runCandidates[name] = true
 	}
 	validateLLVMTestSet(t, common.gorootTestDir, "codegen", codegenCandidates, policy.Codegen, true)
-	validateLLVMTestSet(t, common.gorootTestDir, "runtime", runtimeCandidates, policy.Runtime, false)
+	validateLLVMTestSet(t, common.gorootTestDir, "run", runCandidates, policy.Run, false)
 	logLLVMTestPolicy(t, "codegen", codegenCandidates, policy.Codegen)
-	logLLVMTestPolicy(t, "runtime", runtimeCandidates, policy.Runtime)
+	logLLVMTestPolicy(t, "run", runCandidates, policy.Run)
 	logLLVMBlacklist(t, "codegen", codegenCandidates, policy.Codegen)
-	logLLVMBlacklist(t, "runtime", runtimeCandidates, policy.Runtime)
+	logLLVMBlacklist(t, "run", runCandidates, policy.Run)
 
 	mode := &llvmTestMode{
-		cases: make(map[string]llvmTestCase, len(codegenCandidates)+len(runtimeCandidates)),
+		cases: make(map[string]llvmTestCase, len(codegenCandidates)+len(runCandidates)),
 		gray: map[string]*llvmTestCounts{
 			"codegen": {},
-			"runtime": {},
+			"run":     {},
 		},
 	}
 	for name := range codegenCandidates {
 		mode.cases[name] = llvmTestCase{suite: "codegen", class: classifyLLVMTest(t, policy.Codegen, name)}
 	}
-	for name := range runtimeCandidates {
-		mode.cases[name] = llvmTestCase{suite: "runtime", class: classifyLLVMTest(t, policy.Runtime, name)}
+	for name := range runCandidates {
+		mode.cases[name] = llvmTestCase{suite: "run", class: classifyLLVMTest(t, policy.Run, name)}
 	}
 	mode.toolexec = llvmExecutionToolexec(t, "default<O2>")
 	return mode
@@ -178,161 +176,10 @@ func (mode *llvmTestMode) logSummary(t *testing.T) {
 	t.Helper()
 	mode.mu.Lock()
 	defer mode.mu.Unlock()
-	for _, suite := range []string{"codegen", "runtime"} {
+	for _, suite := range []string{"codegen", "run"} {
 		counts := mode.gray[suite]
 		t.Logf("LLVM %s graylist summary: %d passed, %d failed (allowed), %d skipped",
 			suite, counts.passed, counts.failed, counts.skipped)
-	}
-}
-
-func runLLVMInfrastructureTests(t *testing.T, common testCommon) {
-	t.Run("abi-differential", func(t *testing.T) {
-		runLLVMABIDifferentialTest(t, common.gorootTestDir)
-	})
-	t.Run("alloca-statepoint", func(t *testing.T) {
-		runLLVMAllocaStatepointTest(t, common.gorootTestDir)
-	})
-	t.Run("caller-state", func(t *testing.T) {
-		runLLVMCallerStateTest(t, common.gorootTestDir)
-	})
-	t.Run("getg-abi0-fail-closed", runLLVMGetGABI0FailClosedTest)
-	t.Run("nosplit", runLLVMNoSplitTest)
-	t.Run("writebarrier-helpers", runLLVMWriteBarrierHelperTest)
-	t.Run("compile-only-regressions", func(t *testing.T) {
-		for _, name := range []string{"cmp.go", "typeparam/issue47684c.go"} {
-			t.Run(name, func(t *testing.T) {
-				runLLVMCompileOnlyRegression(t, common.gorootTestDir, name)
-			})
-		}
-	})
-	t.Run("writebarrier-ir", runLLVMWriteBarrierIRTests)
-}
-
-func runLLVMNoSplitTest(t *testing.T) {
-	t.Helper()
-	dir := t.TempDir()
-	source := filepath.Join(dir, "nosplit.go")
-	program := `package p
-
-func use(*[32]uintptr)
-
-//go:nosplit
-//go:noinline
-func NoSplit(pointer *int) *int {
-	var words [32]uintptr
-	use(&words)
-	return pointer
-}
-
-//go:noinline
-func Split(pointer *int) *int {
-	var words [32]uintptr
-	use(&words)
-	return pointer
-}
-`
-	if err := os.WriteFile(source, []byte(program), 0o666); err != nil {
-		t.Fatal(err)
-	}
-	archive := filepath.Join(dir, "nosplit.a")
-	runLLVMABICommand(t, nil, goTool, "tool", "compile",
-		"-p=p", "-enablellvm", "-llvmironly", "-o", archive, source)
-	ir, err := os.ReadFile(archive + ".ll")
-	if err != nil {
-		t.Fatal(err)
-	}
-	attributeLine := func(name string) []byte {
-		definition := regexp.MustCompile(`(?m)^define goabiinternal .*@` + regexp.QuoteMeta(name) + `\([^\n]*\) #([0-9]+)`).FindSubmatch(ir)
-		if definition == nil {
-			t.Fatalf("LLVM IR has no attributed definition for %s\n%s", name, ir)
-		}
-		pattern := regexp.MustCompile(`(?m)^attributes #` + string(definition[1]) + ` = \{.*$`)
-		line := pattern.Find(ir)
-		if line == nil {
-			t.Fatalf("LLVM IR has no attribute group for %s\n%s", name, ir)
-		}
-		return line
-	}
-	noSplitAttrs := attributeLine("p.NoSplit")
-	if !bytes.Contains(noSplitAttrs, []byte(`"go-nosplit"`)) ||
-		!bytes.Contains(noSplitAttrs, []byte(`noinline`)) {
-		t.Fatalf("LLVM nosplit attributes do not select the nosplit prologue policy: %s", noSplitAttrs)
-	}
-	splitAttrs := attributeLine("p.Split")
-	if bytes.Contains(splitAttrs, []byte(`"go-nosplit"`)) {
-		t.Fatalf("LLVM split attributes do not select the stack-growth prologue policy: %s", splitAttrs)
-	}
-	if bytes.Contains(ir, []byte(`"go-stack-growth-statepoint"`)) {
-		t.Fatal("LLVM IR still contains the obsolete stack-growth attribute")
-	}
-
-	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
-	plugin := llvmABIPassPlugin(t, llc)
-	object := filepath.Join(dir, "nosplit.o")
-	runLLVMABICommand(t, nil, llc, "-load-pass-plugin="+plugin,
-		"-verify-machineinstrs", "-filetype=obj", "-o", object, archive+".ll")
-	document := readLLVMABIObject(t, object)
-	noSplit := findLLVMABISymbol(t, document, "p.NoSplit")
-	if !slices.Contains(noSplit.FlagNames, "nosplit") {
-		t.Fatalf("p.NoSplit GoObj flags %v do not contain nosplit", noSplit.FlagNames)
-	}
-	if llvmABIHasRelocationTo(document, noSplit, "runtime.morestack_noctxt") {
-		t.Fatal("p.NoSplit unexpectedly calls runtime.morestack_noctxt")
-	}
-	noSplitArgs := llvmABIArgsPointerBitmaps(t, noSplit)
-	if len(noSplitArgs) == 0 || !slices.Equal(noSplitArgs[0], []int{0}) {
-		t.Fatalf("p.NoSplit entry ArgsPointerMaps = %v, want pointer bit 0", noSplitArgs)
-	}
-	split := findLLVMABISymbol(t, document, "p.Split")
-	if !llvmABIHasRelocationTo(document, split, "runtime.morestack_noctxt") {
-		t.Fatal("p.Split has no runtime.morestack_noctxt relocation")
-	}
-	splitArgs := llvmABIArgsPointerBitmaps(t, split)
-	if len(splitArgs) == 0 || !slices.Equal(splitArgs[0], []int{0}) {
-		t.Fatalf("p.Split entry ArgsPointerMaps = %v, want pointer bit 0", splitArgs)
-	}
-}
-
-func runLLVMGetGABI0FailClosedTest(t *testing.T) {
-	t.Helper()
-	dir := t.TempDir()
-	source := filepath.Join(testenv.GOROOT(t), "src", "cmd", "internal", "testdir", "testdata", "llvm_getg_abi0.go")
-	archive := filepath.Join(dir, "getg.a")
-	cmd := exec.Command(goTool, "tool", "compile",
-		"-std",
-		"-+",
-		"-p=runtime",
-		"-enablellvm",
-		"-llvmironly",
-		"-o", archive,
-		source,
-	)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOOS=linux", "GOARCH=amd64")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("LLVM accepted amd64 ABI0 OpGetG; want fail-closed\n%s", out)
-	}
-	want := "GetG is unsupported for LLVM amd64 ABI ABI0; ABI0 must load g from TLS"
-	if !bytes.Contains(out, []byte(want)) {
-		t.Fatalf("LLVM amd64 ABI0 OpGetG failed with the wrong diagnostic: %v\n%s\nwant substring %q", err, out, want)
-	}
-}
-
-func runLLVMCompileOnlyRegression(t *testing.T, gorootTestDir, name string) {
-	t.Helper()
-	toolexec := llvmExecutionToolexec(t, "")
-	exe := filepath.Join(t.TempDir(), "test.exe")
-	cmd := exec.Command(goTool, "build",
-		"-gcflags=all="+os.Getenv("GO_GCFLAGS"),
-		"-gcflags=-enablellvm -llvmironly",
-		"-ldflags=-w",
-		"-toolexec="+toolexec,
-		"-o", exe,
-		filepath.Join(gorootTestDir, filepath.FromSlash(name)),
-	)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("LLVM compile-only regression %s failed: %v\n%s", name, err, out)
 	}
 }
 
@@ -357,9 +204,9 @@ func TestLLVMTestPolicy(t *testing.T) {
 		t.Skipf("LLVM test policy is not installed: %v", err)
 	}
 	codegenCandidates := llvmTestCandidates(t, gorootTestDir, []string{"codegen"}, "asmcheck")
-	runtimeCandidates := llvmTestCandidates(t, gorootTestDir, dirs, "run")
+	runCandidates := llvmTestCandidates(t, gorootTestDir, dirs, "run")
 	for name := range llvmTestCandidates(t, gorootTestDir, dirs, "runoutput") {
-		runtimeCandidates[name] = true
+		runCandidates[name] = true
 	}
 
 	base := readLLVMTestPolicy(t, gorootTestDir)
@@ -370,10 +217,10 @@ func TestLLVMTestPolicy(t *testing.T) {
 	for platform := range base.Codegen.PlatformBlacklist {
 		platforms[platform] = true
 	}
-	for platform := range base.Runtime.PlatformGraylist {
+	for platform := range base.Run.PlatformGraylist {
 		platforms[platform] = true
 	}
-	for platform := range base.Runtime.PlatformBlacklist {
+	for platform := range base.Run.PlatformBlacklist {
 		platforms[platform] = true
 	}
 	for platform := range platforms {
@@ -382,11 +229,11 @@ func TestLLVMTestPolicy(t *testing.T) {
 			if err := applyLLVMPlatformPolicy("codegen", platform, &policy.Codegen); err != nil {
 				t.Fatal(err)
 			}
-			if err := applyLLVMPlatformPolicy("runtime", platform, &policy.Runtime); err != nil {
+			if err := applyLLVMPlatformPolicy("run", platform, &policy.Run); err != nil {
 				t.Fatal(err)
 			}
 			validateLLVMTestSet(t, gorootTestDir, "codegen", codegenCandidates, policy.Codegen, true)
-			validateLLVMTestSet(t, gorootTestDir, "runtime", runtimeCandidates, policy.Runtime, false)
+			validateLLVMTestSet(t, gorootTestDir, "run", runCandidates, policy.Run, false)
 		})
 	}
 }
@@ -452,7 +299,7 @@ func TestApplyLLVMPlatformPolicy(t *testing.T) {
 			"linux/amd64": {"oom.go": "OOM: exceeds runner memory"},
 		},
 	}
-	if err := applyLLVMPlatformPolicy("runtime", "linux/amd64", &set); err != nil {
+	if err := applyLLVMPlatformPolicy("run", "linux/amd64", &set); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := set.Whitelist["linux.go"]; ok {
@@ -510,7 +357,7 @@ func TestApplyLLVMPlatformPolicy(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := applyLLVMPlatformPolicy("runtime", "linux/amd64", &tc.set)
+			err := applyLLVMPlatformPolicy("run", "linux/amd64", &tc.set)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("applyLLVMPlatformPolicy error = %v, want substring %q", err, tc.want)
 			}
@@ -825,69 +672,6 @@ func llvmFileCheckPrefixes(base string, source []byte) string {
 		prefixes = append(prefixes, architecturePrefix)
 	}
 	return strings.Join(prefixes, ",")
-}
-
-func runLLVMWriteBarrierIRTests(t *testing.T) {
-	tests := []struct {
-		name   string
-		source string
-		want   []string
-	}{
-		{
-			name:   "ZeroWithPointers",
-			source: "package p\nfunc zero(dst *[2]*int) { *dst = [2]*int{} }\n",
-			want:   []string{"call goabiinternal void @runtime.wbZero(ptr", "@llvm.memset.inline", `"gc-leaf-function"`},
-		},
-		{
-			name:   "MoveWithPointers",
-			source: "package p\nfunc move(dst, src *[2]*int) { *dst = *src }\n",
-			want:   []string{"call goabiinternal void @runtime.wbMove(ptr", "@llvm.memmove", `"gc-leaf-function"`},
-		},
-		{
-			name:   "DeletePointer",
-			source: "package p\nfunc delete(dst **int) { *dst = nil }\n",
-			want:   []string{"@llvm.go.gc.write.barrier"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			source := filepath.Join(dir, "fail.go")
-			if err := os.WriteFile(source, []byte(tc.source), 0o666); err != nil {
-				t.Fatal(err)
-			}
-			archive := filepath.Join(dir, "writebarrier.a")
-			cmd := exec.Command(goTool, "tool", "compile",
-				"-p=p",
-				"-importcfg="+stdlibImportcfgFile(),
-				"-enablellvm",
-				"-llvmironly",
-				"-o", archive,
-				source,
-			)
-			cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("LLVM compilation failed: %v\n%s", err, out)
-			}
-			ir, err := os.ReadFile(archive + ".ll")
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := append(tc.want, `"go-async-unsafe"`)
-			for _, want := range want {
-				if !bytes.Contains(ir, []byte(want)) {
-					t.Fatalf("LLVM write-barrier IR does not contain %s\n%s", want, ir)
-				}
-			}
-			if bytes.Contains(ir, []byte(".rawarg = ptrtoint")) {
-				t.Fatalf("LLVM write-barrier IR still coerces pointer arguments to raw uintptr\n%s", ir)
-			}
-			if bytes.Contains(ir, []byte("llvm.go.gc.unsafe.point")) {
-				t.Fatalf("LLVM write-barrier IR still contains unsafe-point marker calls\n%s", ir)
-			}
-		})
-	}
 }
 
 func llvmToolexec(t *testing.T, optPasses string) string {

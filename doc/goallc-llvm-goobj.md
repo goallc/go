@@ -186,7 +186,7 @@ goroutine、defer 或 panic unwind。
 - LLVM `goobj-dynamic-alloca.ll`：两个已支持 GoObj target 上的动态 alloca
   fail-fast。
 
-本阶段验证基线为 41/41 LLVM codegen whitelist 通过，runtime whitelist
+本阶段验证基线为 41/41 LLVM codegen whitelist 通过，run whitelist
 18/20 通过。剩余 `llvm_interface_assertion.go` 和
 `llvm_interface_conversion.go` 失败来自既有 panic/traceback unwind 限制，
 不是 closure ABI、alloca 或 GoObj relocation mismatch。
@@ -644,8 +644,8 @@ GoALLC 不维护一套与 Go 仓库重复的测试源码。LLVM 测试由
 `cmd/internal/testdir` 发现并复用 `$GOROOT/test` 中已有的测试：
 
 - codegen 候选是 `test/codegen` 下 recipe 为 `// asmcheck` 的文件；
-- runtime 候选是 testdir 原本扫描目录中 recipe 为 `// run` 的文件；
-- `test/llvm_tests.json` 分别维护 codegen 和 runtime 的白名单、灰名单与黑名单；
+- run 候选是 testdir 原本扫描目录中 recipe 为 `// run` 的文件；
+- `test/llvm_tests.json` 分别维护 codegen 和 run 的白名单、灰名单与黑名单；
 - codegen source 出现 `// LLVM-OPT` directive 时，runner 还会执行
   `opt -passes=default<O2>`，并用 `LLVM-OPT` prefix 检查优化后的 IR；
 - 白名单是当前必须通过的用例，任何失败都会使 CI 失败；
@@ -690,9 +690,9 @@ FileCheck --check-prefix=LLVM test/codegen/example.go < package.a.ll
 `FileCheck` 的选择顺序为 `GOALLC_FILECHECK`、
 `$GOALLC_LLVM_DIR/bin/FileCheck`、`$GOROOT/llvm/bin/FileCheck`。
 
-### LLVM runtime 检查
+### LLVM run 检查
 
-runtime 白名单和灰名单都不增加新的 recipe，也不复制测试源码。runner 仍解析原文件的
+run 白名单和灰名单都不增加新的 recipe，也不复制测试源码。runner 仍解析原文件的
 `// run` 参数、build constraint、超时和期望输出。LLVM 的 `TestLLVM` 薄入口复用
 原 `Test` 的 `test.run()`，只在原有 `go run` 命令上增加 `-toolexec` 和
 `-ldflags=-w`；`cmd/llvmtoolexec` 选择命令行 `main` package 并替换其对象：

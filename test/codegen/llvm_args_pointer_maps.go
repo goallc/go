@@ -1,12 +1,28 @@
-// compile
+// asmcheck
 
 // Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file is compiled directly by the LLVM ArgsPointerMaps differential
-// test. Keep the native Go and GoALLC inputs identical.
-package p
+package codegen
+
+// LLVM-LABEL: define goabiinternal {{.*}} @codegen.partiallyInitializedAggregateResult(
+// LLVM-SAME: ptr goret(%codegen.pointerAggregate) align 8 "goretindex"="15" %.result15)
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM: store %codegen.pointerAggregate {{%.*}}, ptr %.result15
+// LLVM-LABEL: define goabiinternal {{.*}} @codegen.initializedPointerResult(
+// LLVM-SAME: ptr goret(ptr) align 8 "goretindex"="16" %.result16)
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM: store ptr %pointer, ptr %.result16
+// LLVM-LABEL: define goabiinternal { ptr, ptr } @codegen.liveAggregateStackArgument(
+// LLVM-SAME: ptr byval(%codegen.pointerAggregate) align 8 %value)
+// LLVM: load %codegen.pointerAggregate, ptr %value
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM-LABEL: define goabiinternal ptr @codegen.liveScalarStackArgument(
+// LLVM-SAME: ptr byval(ptr) align 8 %pointer)
+// LLVM: load ptr, ptr %pointer
+// LLVM: call goabiinternal void @codegen.safepoint()
 
 type pointerAggregate struct {
 	first  *int

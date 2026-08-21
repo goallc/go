@@ -1,12 +1,29 @@
-// compile
+// asmcheck
 
 // Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file is compiled from the same source by the native Go and GoALLC
-// alloca-statepoint metadata test.
-package p
+package codegen
+
+// LLVM-LABEL: define goabiinternal i64 @codegen.localAcrossSafepoints(
+// LLVM: alloca %codegen.pointerLocal, align 8
+// LLVM: call void @llvm.lifetime.start.p0(ptr
+// LLVM: call void @llvm.memset.inline.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 40
+// LLVM: call goabiinternal void @codegen.mutateLocal(
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM-LABEL: define goabiinternal void @codegen.stackParameterAcrossSafepoints(
+// LLVM-SAME: ptr byval([2 x ptr]) align 8 %value)
+// LLVM-NOT: alloca [2 x ptr]
+// LLVM: call goabiinternal void @codegen.mutatePointerArray(ptr %value)
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM: call goabiinternal void @codegen.mutatePointerArray(ptr %value)
+// LLVM-LABEL: define goabiinternal void @codegen.parameterAcrossSafepoints(
+// LLVM-SAME: ptr byval(%codegen.pointerLocal) align 8 %value)
+// LLVM-NOT: alloca %codegen.pointerLocal
+// LLVM: call goabiinternal void @codegen.mutateLocal(ptr %value, i8 0)
+// LLVM: call goabiinternal void @codegen.safepoint()
+// LLVM: call goabiinternal void @codegen.mutateLocal(ptr %value, i8 1)
 
 type pointerLocal struct {
 	first  *int

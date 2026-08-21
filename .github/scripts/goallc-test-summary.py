@@ -8,12 +8,12 @@ from pathlib import Path
 
 
 GRAY_RESULT = re.compile(
-    r"LLVM (codegen|runtime) graylist result: (PASS|FAIL \(allowed\)|SKIP)"
+    r"LLVM (codegen|run) graylist result: (PASS|FAIL \(allowed\)|SKIP)"
 )
-POLICY = re.compile(r"LLVM (codegen|runtime) policy: (.*)")
-GRAY_SUMMARY = re.compile(r"LLVM (codegen|runtime) graylist summary: (.*)")
+POLICY = re.compile(r"LLVM (codegen|run) policy: (.*)")
+GRAY_SUMMARY = re.compile(r"LLVM (codegen|run) graylist summary: (.*)")
 BLACK_RESULT = re.compile(
-    r'LLVM (codegen|runtime) blacklist result: NOT RUN test="([^"]+)" reason="([^"]+)"'
+    r'LLVM (codegen|run) blacklist result: NOT RUN test="([^"]+)" reason="([^"]+)"'
 )
 
 
@@ -96,7 +96,7 @@ def main():
 
     if policies:
         lines.extend(["### Policy", "", "| Suite | Classification |", "| --- | --- |"])
-        for suite in ("codegen", "runtime"):
+        for suite in ("codegen", "run"):
             if suite in policies:
                 lines.append(f"| {suite} | {markdown(policies[suite])} |")
         lines.append("")
@@ -126,7 +126,7 @@ def main():
 
     if gray_summaries:
         lines.extend(["### Graylist", ""])
-        for suite in ("codegen", "runtime"):
+        for suite in ("codegen", "run"):
             if suite in gray_summaries:
                 lines.append(f"- {suite}: {markdown(gray_summaries[suite])}")
         lines.append("")

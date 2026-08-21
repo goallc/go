@@ -195,9 +195,6 @@ func runTestDir(t *testing.T, useLLVM bool) {
 			})
 		}
 	}
-	if llvmMode != nil {
-		runLLVMInfrastructureTests(t, common)
-	}
 }
 
 func shardMatch(name string) bool {

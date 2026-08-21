@@ -4,9 +4,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file is also compiled directly by the LLVM ABI differential test. Keep
-// every ABI case in this one source so the native and GoALLC objects cannot
-// silently drift apart.
+// Keep the ABI cases together so the ordinary testdir run exercises their
+// stack-growth and GC behavior in one executable.
 package main
 
 import "runtime"
@@ -157,9 +156,7 @@ func overflowResults(p0, p15, p16, p17 *int) (
 
 // initializedStackResult uses all sixteen arm64 integer result registers before
 // a caller-owned pointer result slot. Its source assignment precedes the
-// safepoint, but either backend may defer the physical result-slot store. The
-// differential test therefore checks the emitted maps rather than assuming
-// that this slot is already a root.
+// safepoint, but the backend may defer the physical result-slot store.
 //
 //go:noinline
 func initializedStackResult(pointer *int) (

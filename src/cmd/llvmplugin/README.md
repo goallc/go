@@ -356,23 +356,13 @@ Build the canonical `cmd/objview` from this checkout and pass
 `-DGOALLC_OBJVIEW_EXECUTABLE=/path/to/objview` at configure time. This enables
 the structured multiple-call test, which verifies both numbered PCDATA tables,
 the map selected at each CALL, and the corresponding locals pointer bitmaps.
-The Go test fixture
-`src/cmd/internal/testdir/testdata/llvm_args_pointer_maps.mir` additionally
-forces an entry input home and an ordinary stack-result root into different
-ArgsPointerMaps entries, then checks their exact objview bitmaps and
-`PCDATA_StackMapIndex` sequence. The identical-source Go fixture
-`test/abi/llvm_args_pointer_maps.go` separately forces a scalar pointer and a
-three-word pointer aggregate onto the incoming stack. It checks native
-assembly stack loads, scalar-only rewritten `gc-live`/`gc.relocate`, alloca
-memory roots with no synthetic statepoint spill, and exact Args/Locals/PCDATA
-objview data.
-The executable identical-source fixture `test/abi/llvm_args_results.go` repeats
-those checks with `runtime.GC` for a scalar stack pointer, two pointer stack
-arguments separated by a scalar, a pointer-containing stack aggregate, and the
-same aggregate combined with overflowing pointer results. The caller checks
-pointer identity, pointee values, and scalar payloads after another GC; the ABI
-differential still asserts the exact native and GoALLC metadata and MIR for
-these functions.
+The Go codegen fixtures `test/codegen/llvm_args_pointer_maps.go` and
+`test/codegen/llvm_alloca_statepoint.go` check the frontend's typed stack homes
+and pointer-containing allocas. The executable `test/abi/llvm_args_results.go`
+and `test/llvm_alloca_statepoint_gc.go` fixtures exercise those contracts across
+stack growth and `runtime.GC`. Exact rewritten IR, MIR, Args/Locals pointer
+maps, and `PCDATA_StackMapIndex` remain fixture-local checks in this plugin's
+test suite.
 
 The installed file is `lib/GoALLCStatepoints.dylib` on Darwin or
 `lib/GoALLCStatepoints.so` on Linux. Do not build the plugin against a different

@@ -33,6 +33,9 @@
       "codegen/known_bits.go": "phi-carried known-bit masking and boolean control flow",
       "codegen/logic.go": "integer logic and conditional control flow",
       "codegen/llvm_argument_memory_home.go": "direct register arguments and local homes for memory-backed register aggregates",
+      "codegen/llvm_alloca_statepoint.go": "address-taken pointer locals and typed byval parameter homes in frontend LLVM IR",
+      "codegen/llvm_args_pointer_maps.go": "typed byval stack inputs and goret stack results across frontend safepoints",
+      "codegen/llvm_caller_state.go": "caller PC and caller SP lowering through target-specific LLVM intrinsics",
       "codegen/_cgo_llvm_unsafe_args.go": "ABI0 cgo unsafe arguments use the modeled contiguous parameter and result frame",
       "codegen/llvm_data_sections.go": "preserve data, bss, noptrdata, and noptrbss identities in LLVM IR",
       "codegen/llvm_defer.go": "open-coded stack defers plus classic loop defer registration and recovery entries",
@@ -89,7 +92,7 @@
       }
     }
   },
-  "runtime": {
+  "run": {
     "whitelist": {
       "64bit.go": "generated 64-bit arithmetic regression qualified through LLVM O2 generation, compile, link, and execution",
       "bom.go": "generated upstream regression repeatedly qualified through LLVM compile, link, and execution",
