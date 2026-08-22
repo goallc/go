@@ -351,7 +351,9 @@ metadata 和类型描述符生成。
 `cmd/dist` 还用一个恒为 true 的 `buildGoallc` 强制所有工具走 external
 link。这是早期 bring-up 手段，后续应缩小到真正依赖 LLVM 的 compiler
 阶段和受支持平台。`cmd/dist` 现在根据参数自行注入
-`llvm23,dynamicllvm` 或 `llvm23,staticllvm`；bootstrap 仍使用
+`llvm23,dynamicllvm`，或静态模式所需的
+`llvm23,staticllvm,goallcplugin`；`goallcplugin` 是隔离项目插件静态链接
+参数的内部标签，用户仍只需指定 `-llvm-link=static`。bootstrap 仍使用
 `compiler_bootstrap` stub。LLVM 的 include 和 link 参数只存在于
 binding 的代码配置中，不与普通 cgo 构建的外部环境变量混用。
 

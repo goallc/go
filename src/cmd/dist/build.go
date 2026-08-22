@@ -1408,6 +1408,9 @@ func toolenv() []string {
 		env = append(env, "CGO_ENABLED=0")
 	}
 	goallcTags := "llvm" + goallcLLVMVersion + "," + goallcLLVMLink + "llvm"
+	if goallcLLVMLink == "static" {
+		goallcTags += ",goallcplugin"
+	}
 	goFlags = append(goFlags, "-tags="+goallcTags)
 	if isRelease || os.Getenv("GO_BUILDER_NAME") != "" {
 		// Add -trimpath for reproducible builds of releases.

@@ -1,8 +1,11 @@
-//go:build staticllvm
+//go:build staticllvm && goallcplugin
 
 package llvm
 
 /*
+#cgo darwin LDFLAGS: -L${SRCDIR}/llvm/lib -lGoALLCStatepointsStatic
+#cgo linux LDFLAGS: -L${SRCDIR}/llvm/lib -Wl,--whole-archive -lGoALLCStatepointsStatic -Wl,--no-whole-archive
+
 #include "llvm-c/Core.h"
 #include "llvm-c/Error.h"
 #include "llvm-c/TargetMachine.h"
