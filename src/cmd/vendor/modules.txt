@@ -1,4 +1,4 @@
-# github.com/goallc/go-llvm v0.0.0-20260822143651-d24971f61aca
+# github.com/goallc/go-llvm v0.0.0-20260822150046-31c2b7bab962
 ## explicit; go 1.24
 github.com/goallc/go-llvm
 # github.com/google/pprof v0.0.0-20260507013755-92041b743c96
