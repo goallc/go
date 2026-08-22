@@ -142,10 +142,8 @@ func (lfc *LLVMFuncContext) expandNilCheckIntrinsics() {
 		// frame is suspended, so it remains an ordinary non-leaf call for
 		// statepoint and stack-map construction.
 		//
-		// A recovered panic resumes in the caller, never after this call. Keep
-		// the conservative continuation edge until a future noreturn form can
-		// also guarantee a valid call return PC and PCSP range.
-		b.CreateBr(continueBlock)
+		// A recovered panic resumes in the caller, never after this call.
+		b.CreateUnreachable()
 		b.ClearCurrentDebugLocation()
 
 		lfc.replacePhiPredecessor(before, continueBlock)

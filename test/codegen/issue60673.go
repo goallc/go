@@ -9,7 +9,7 @@ package codegen
 // LLVM-LABEL: define goabiinternal void @codegen.g(ptr %p)
 // LLVM: icmp eq ptr %p, null
 // LLVM: call goabiinternal void @runtime.panicmem()
-// LLVM: br label %{{.*}}.notnil
+// LLVM-NEXT: unreachable
 // LLVM: load i32, ptr %p, align 4
 // LLVM: call goabiinternal void @codegen.f(i32 {{%.*}})
 // LLVM-LABEL: define goabiinternal void @codegen.f(i32 %x)

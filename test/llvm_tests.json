@@ -61,7 +61,7 @@
       "codegen/llvm_memory_order.go": "preserve Go SSA Memory-token order when LLVM emission precedes native scheduling",
       "codegen/llvm_linkname.go": "external linkname pulls use a name suffix while local definitions and ABI wrappers remain canonical",
       "codegen/llvm_newproc.go": "pointer-typed funcval argument for the runtime.newproc raw ABI call",
-      "codegen/llvm_nilcheck.go": "explicit branch to recoverable runtime.panicmem with stable continuation and optimized IR checks",
+      "codegen/llvm_nilcheck.go": "explicit branch to recoverable runtime.panicmem with an unreachable panic block and optimized IR checks",
       "codegen/llvm_reflect_method.go": "reflect method calls preserve linker reachability flags in LLVM GoObj functions",
       "codegen/llvm_slice_ptr_unchecked.go": "unchecked slice data pointer extraction preserves nil without nonnull assumptions",
       "codegen/llvm_tailcall.go": "static and interface LE tail calls lowered to statepoint-compatible call and return IR",

@@ -15,18 +15,19 @@ package codegen
 // LLVM: phi i64
 // LLVM: icmp eq ptr %p, null
 // LLVM: call goabiinternal void @runtime.panicmem()
+// LLVM-NEXT: unreachable
 // LLVM: declare goabiinternal void @runtime.panicmem()
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckTwice(ptr %p, ptr %q)
 // LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: icmp eq ptr %p, null
 // LLVM: call goabiinternal void @runtime.panicmem()
-// LLVM: br label %[[FIRST_CONT:nilcheck\.notnil[0-9]*]]
-// LLVM: [[FIRST_CONT]]:
-// LLVM: icmp eq ptr %q, null
+// LLVM-NEXT: unreachable
+// LLVM: [[FIRST_CONT:nilcheck\.notnil[0-9]*]]:
+// LLVM-NEXT: icmp eq ptr %q, null
 // LLVM: call goabiinternal void @runtime.panicmem()
-// LLVM: br label %[[SECOND_CONT:nilcheck\.notnil[0-9]*]]
-// LLVM: [[SECOND_CONT]]:
+// LLVM-NEXT: unreachable
+// LLVM: [[SECOND_CONT:nilcheck\.notnil[0-9]*]]:
 // LLVM: load i64, ptr %p
 // LLVM: load i64, ptr %q
 //
@@ -36,7 +37,7 @@ package codegen
 // LLVM-NEXT: br i1 [[ISNIL]], label %[[NIL:.*\.nil]], label %[[CONT:.*\.notnil]]
 // LLVM: [[NIL]]:
 // LLVM-NEXT: call goabiinternal void @runtime.panicmem()
-// LLVM-NEXT: br label %[[CONT]]
+// LLVM-NEXT: unreachable
 // LLVM: [[CONT]]:
 // LLVM-NOT: load volatile i8
 // LLVM-NOT: !goallc.nilcheck
@@ -51,7 +52,7 @@ package codegen
 // LLVM-OPT: br i1 {{%.*}}, label %[[OPTNIL:[^,]+]], label %[[OPTCONT:[^,]+]], !dbg
 // LLVM-OPT: [[OPTNIL]]:
 // LLVM-OPT-NEXT: call goabiinternal void @runtime.panicmem()
-// LLVM-OPT-NEXT: br label %[[OPTCONT]]
+// LLVM-OPT-NEXT: unreachable
 // LLVM-OPT: [[OPTCONT]]:
 // LLVM-OPT-NOT: load volatile i8
 // LLVM-OPT-NOT: !goallc.nilcheck

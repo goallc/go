@@ -11,7 +11,7 @@ package codegen
 // LLVM: icmp eq ptr %p, null
 // LLVM: br i1 {{%.*}}, label %{{.*}}.nil, label %{{.*}}.notnil
 // LLVM: call goabiinternal void @runtime.panicmem()
-// LLVM: br label %{{.*}}.notnil
+// LLVM-NEXT: unreachable
 // LLVM: store i64 %y, ptr %p, align 4
 
 func f(x, y int, p *int) {
