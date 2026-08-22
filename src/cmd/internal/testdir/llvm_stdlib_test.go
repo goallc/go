@@ -355,7 +355,6 @@ func TestLLVMStdlib(t *testing.T) {
 				testTimeout = "5m"
 				processTimeout = 15 * time.Minute
 			}
-			ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), processTimeout)
 			args := []string{
 				"test",
 				// The outer semaphore supplies package-level build parallelism.
@@ -381,16 +380,31 @@ func TestLLVMStdlib(t *testing.T) {
 				t.Logf("LLVM runtime capability-boundary skips: %s", runtimeSkip)
 			}
 			args = append(args, name)
-			cmd := testenv.CommandContext(t, ctx, llvmStdlibGoTool(t), args...)
-			cmd.Env = append(os.Environ(),
-				"GOENV=off",
-				"GOFLAGS=",
-				"GOROOT="+testenv.GOROOT(t),
-				"GOCACHE="+cache,
-			)
-			out, err := cmd.CombinedOutput()
-			ctxErr := ctx.Err()
-			cancel()
+			run := func() ([]byte, error, error) {
+				ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), processTimeout)
+				defer cancel()
+				cmd := testenv.CommandContext(t, ctx, llvmStdlibGoTool(t), args...)
+				cmd.Env = append(os.Environ(),
+					"GOENV=off",
+					"GOFLAGS=",
+					"GOROOT="+testenv.GOROOT(t),
+					"GOCACHE="+cache,
+				)
+				out, err := cmd.CombinedOutput()
+				return out, err, ctx.Err()
+			}
+			out, err, ctxErr := run()
+			retried := false
+			// TestQueryRowClosingStmt/default intermittently returns sql.ErrNoRows
+			// on linux/amd64 in both this branch and the old-backend main baseline.
+			// Require one complete clean package rerun while keeping database/sql
+			// in the mandatory whitelist.
+			if err != nil && ctxErr == nil && platform == "linux/amd64" && name == "database/sql" &&
+				bytes.Contains(out, []byte("TestQueryRowClosingStmt")) && bytes.Contains(out, []byte("sql: no rows in result set")) {
+				t.Logf("LLVM stdlib whitelist result: RETRY known-flaky package=%q initial=%v\n%s", name, err, out)
+				out, err, ctxErr = run()
+				retried = true
+			}
 			if err != nil {
 				if candidate.class == llvmStdlibGray {
 					if ctxErr != nil {
@@ -407,6 +421,8 @@ func TestLLVMStdlib(t *testing.T) {
 			}
 			if candidate.class == llvmStdlibGray {
 				t.Logf("LLVM stdlib graylist result: PASS package=%q", name)
+			} else if retried {
+				t.Logf("LLVM stdlib whitelist result: PASS after retry package=%q", name)
 			} else {
 				t.Logf("LLVM stdlib whitelist result: PASS package=%q", name)
 			}
