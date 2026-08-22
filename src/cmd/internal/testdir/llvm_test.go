@@ -28,11 +28,6 @@ const llvmDefaultCaseTimeoutSeconds = 60
 
 const llvmBlacklistReasonRequirement = "timeout, OOM, unsupported defer/recover, or slow CI case"
 
-// Runtime itself remains on the native backend for execution tests. LLVM may
-// still compile the target package, generated test main, and the rest of the
-// dependency closure selected by all= gcflags.
-const llvmNativeRuntimePackage = "runtime"
-
 func llvmCaseTimeoutSeconds(recipeTimeout int) int {
 	if recipeTimeout == 0 || recipeTimeout > llvmDefaultCaseTimeoutSeconds {
 		return llvmDefaultCaseTimeoutSeconds
@@ -141,8 +136,30 @@ func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
 	for name := range runCandidates {
 		mode.cases[name] = llvmTestCase{suite: "run", class: classifyLLVMTest(t, policy.Run, name)}
 	}
-	mode.toolexec = llvmExecutionToolexec(t, "default<O2>")
+	mode.toolexec = llvmToolexec(t, "default<O2>")
+	warmLLVMExecutionRuntime(t, mode.toolexec, "")
 	return mode
+}
+
+func warmLLVMExecutionRuntime(t *testing.T, toolexec, cache string) {
+	t.Helper()
+	t.Log("warming the LLVM-compiled runtime before parallel execution tests")
+	cmd := testenv.Command(t, goTool, "install",
+		"-toolexec="+toolexec,
+		"-gcflags=all=-enablellvm -llvmironly",
+		"runtime",
+	)
+	cmd.Env = append(os.Environ(),
+		"GOENV=off",
+		"GOFLAGS=",
+		"GOROOT="+testenv.GOROOT(t),
+	)
+	if cache != "" {
+		cmd.Env = append(cmd.Env, "GOCACHE="+cache)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("warming LLVM runtime: %v\n%s", err, out)
+	}
 }
 
 func (mode *llvmTestMode) recordResult(t *testing.T, tc llvmTestCase, runErr error) {
@@ -675,14 +692,6 @@ func llvmFileCheckPrefixes(base string, source []byte) string {
 }
 
 func llvmToolexec(t *testing.T, optPasses string) string {
-	return llvmToolexecWithNativePackages(t, optPasses)
-}
-
-func llvmExecutionToolexec(t *testing.T, optPasses string) string {
-	return llvmToolexecWithNativePackages(t, optPasses, llvmNativeRuntimePackage)
-}
-
-func llvmToolexecWithNativePackages(t *testing.T, optPasses string, nativePackages ...string) string {
 	t.Helper()
 	wrapper := llvmToolexecPath(t)
 
@@ -696,9 +705,6 @@ func llvmToolexecWithNativePackages(t *testing.T, optPasses string, nativePackag
 	if optPasses != "" {
 		opt := llvmToolPath(t, "opt", "GOALLC_OPT")
 		args = append(args, "-opt="+opt, "-opt-passes="+optPasses)
-	}
-	for _, name := range nativePackages {
-		args = append(args, "-native-package="+name)
 	}
 	value, err := quoted.Join(args)
 	if err != nil {

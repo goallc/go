@@ -510,11 +510,13 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
 并保留最早失败边界或“尚未资格化”的原因。CI 整个任务共享一个隔离
 `GOCACHE`；目标包、`-gcflags` 和 toolexec pipeline 都进入 cmd/go action ID，
 因此包和构建模式仍使用不同缓存条目。工具链、payload 或同一路径下的外部 pass
-plugin 发生变化时必须换新缓存。任务使用 `default<O2>` 和本节“只编译入口标准库
-包”的 `-gcflags` 范围，因此普通依赖、`runtime` 和 `testing` 仍由原生 backend
-编译。每个白名单包会在三个独立的 `go test -count=1` 进程中连续运行，三次共享
-编译缓存但任一次失败都会使白名单门禁失败；这个任务不能用来声称依赖闭包或完整
-闭包已经使用 LLVM。
+plugin 发生变化时必须换新缓存。任务使用 `default<O2>` 和
+`-gcflags='all=-enablellvm -llvmironly'`，因此目标包、测试入口、`runtime`、`testing`
+及完整依赖闭包都由 LLVM backend 编译。每个白名单包会在独立的
+`go test -count=1` 进程中运行并共享编译缓存。runner 先预热 LLVM runtime，再按
+`NumCPU()/2` 并行运行 package；每个 cmd/go 使用 `-p=1` 仅限制 package 构建并发，
+不会改变测试二进制的 `GOMAXPROCS` 或 `-test.parallel`。任一白名单包失败都会使
+门禁失败。
 
 本地使用与 CI 相同的策略运行器：
 

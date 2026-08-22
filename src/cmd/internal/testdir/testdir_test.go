@@ -512,8 +512,15 @@ func (ctxt *context) match(name string) bool {
 // This must match the flags used for building the standard library,
 // or else the commands will rebuild any needed packages (like runtime)
 // over and over.
-func (test) goGcflags() string {
-	return "-gcflags=all=" + os.Getenv("GO_GCFLAGS")
+func (t test) goGcflags() string {
+	flags := os.Getenv("GO_GCFLAGS")
+	if t.llvm != nil {
+		if flags != "" {
+			flags += " "
+		}
+		flags += "-enablellvm -llvmironly"
+	}
+	return "-gcflags=all=" + flags
 }
 
 func (test) goGcflagsIsEmpty() bool {
@@ -622,6 +629,16 @@ func TestAppendBuildFlag(t *testing.T) {
 				t.Fatalf("appendBuildFlag(%q, %q, %q, %q) = %q, want %q", tc.flags, tc.flag, tc.initial, tc.extra, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGoGcflags(t *testing.T) {
+	t.Setenv("GO_GCFLAGS", "-N")
+	if got, want := (test{}).goGcflags(), "-gcflags=all=-N"; got != want {
+		t.Fatalf("native goGcflags() = %q, want %q", got, want)
+	}
+	if got, want := (test{llvm: new(llvmTestMode)}).goGcflags(), "-gcflags=all=-N -enablellvm -llvmironly"; got != want {
+		t.Fatalf("LLVM goGcflags() = %q, want %q", got, want)
 	}
 }
 
@@ -763,7 +780,6 @@ func (t test) run() error {
 		// blacklisting. An explicit shorter timeout remains authoritative.
 		tim = llvmCaseTimeoutSeconds(tim)
 		if action == "run" || action == "runoutput" {
-			flags = appendBuildFlag(flags, "gcflags", os.Getenv("GO_GCFLAGS"), "-enablellvm", "-llvmironly")
 			flags = appendBuildFlag(flags, "ldflags", "", "-w")
 			flags = append(flags, "-toolexec="+t.llvm.toolexec)
 		}

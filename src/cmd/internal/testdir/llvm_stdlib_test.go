@@ -21,11 +21,10 @@ import (
 const llvmStdlibPolicyEnv = "GOALLC_RUN_LLVM_STDLIB"
 
 // These tests exercise metadata, debugger-call injection, or signal semantics
-// of the LLVM-compiled runtime_test functions that the backend does not model
-// yet. The runtime implementation itself remains native. Keep the exclusions
-// at the LLVM qualification boundary so the upstream tests continue to specify
-// native Go behavior unchanged. Subtest patterns retain the passing panicwrap,
-// panic, and unsafe-point rejection coverage beside the excluded cases.
+// that the LLVM backend does not model yet. Keep the exclusions at the LLVM
+// qualification boundary so the upstream tests continue to specify native Go
+// behavior unchanged. Subtest patterns retain the passing panicwrap, panic,
+// and unsafe-point rejection coverage beside the excluded cases.
 const llvmRuntimeSkip = `^(TestCallersNilPointerPanic|TestDebugCall|TestDebugCallGC|TestDebugCallGrowStack|TestDebugCallLarge|TestDebugCallPanic|TestGCInfo|TestTracebackArgs|TestTracebackElision|TestUnsafePoint)$|^TestStackWrapperStackPanic$/^sigpanic$|^TestTracebackSystem$/^trap$`
 
 // The amd64 test additionally requires the native compiler's INT3 function
@@ -295,7 +294,7 @@ func TestLLVMStdlib(t *testing.T) {
 	validateLLVMStdlibPolicy(t, packages, policySet)
 	set := effectiveLLVMStdlibTestSet(policySet, platform)
 	configureLLVMTestToolchain(t)
-	toolexec := llvmExecutionToolexec(t, "default<O2>")
+	toolexec := llvmToolexec(t, "default<O2>")
 
 	whitelist := make([]string, 0, len(set.Whitelist))
 	for name := range set.Whitelist {
@@ -326,11 +325,11 @@ func TestLLVMStdlib(t *testing.T) {
 
 	// The target package and toolexec pipeline are part of cmd/go's action IDs,
 	// so one isolated cache can safely serve every package in this policy run.
-	// A single all= pattern compiles the test package, generated test main, and
-	// dependency closure with LLVM except for runtime, which is forced to the
-	// native backend by the execution toolexec. The toolchain, payload, and pass
-	// plugin remain fixed for the lifetime of the test process.
+	// A single all= pattern compiles the test package, generated test main,
+	// runtime, and the complete dependency closure with LLVM. The toolchain,
+	// payload, and pass plugin remain fixed for the lifetime of the test process.
 	cache := t.TempDir()
+	warmLLVMExecutionRuntime(t, toolexec, cache)
 	type llvmStdlibCandidate struct {
 		name  string
 		class llvmStdlibClass
@@ -342,27 +341,35 @@ func TestLLVMStdlib(t *testing.T) {
 	for _, name := range graylist {
 		candidates = append(candidates, llvmStdlibCandidate{name: name, class: llvmStdlibGray})
 	}
+	parallelism := max(1, runtime.NumCPU()/2)
+	limit := make(chan struct{}, parallelism)
+	t.Logf("LLVM standard library package parallelism: %d (%d CPUs)", parallelism, runtime.NumCPU())
 	for _, candidate := range candidates {
 		name := candidate.name
 		t.Run(name, func(t *testing.T) {
-			t.Logf("LLVM execution capability boundary: native package=%q", llvmNativeRuntimePackage)
+			t.Parallel()
+			limit <- struct{}{}
+			defer func() { <-limit }()
 			testTimeout := "2m"
 			processTimeout := 5 * time.Minute
 			if name == "runtime" {
 				testTimeout = "5m"
-				processTimeout = 8 * time.Minute
+				processTimeout = 15 * time.Minute
 			}
 			ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), processTimeout)
 			args := []string{
 				"test",
+				// The outer semaphore supplies package-level build parallelism.
+				// -p does not change GOMAXPROCS or -test.parallel in the test
+				// binary, so runtime concurrency remains fully exercised.
+				"-p=1",
 				"-count=1",
 				"-timeout=" + testTimeout,
 				"-toolexec=" + toolexec,
 				"-gcflags=all=-enablellvm -llvmironly",
 			}
 			if name == "runtime" {
-				// runtime_test and the generated test harness are still LLVM
-				// compiled. LLVM GoObj does not yet emit their complete
+				// LLVM GoObj does not yet emit complete
 				// per-function DWARF, GC, traceback, async-safe-point, and
 				// signal metadata.
 				runtimeSkip := llvmRuntimeSkip
