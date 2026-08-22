@@ -93,6 +93,7 @@ const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolIndexMD = "goobj.symbol.index"
 const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
+const goObjDebugInlineAnchorBundle = "goobj.debug.inline.anchor"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
@@ -1080,6 +1081,20 @@ func (lfc *LLVMFuncContext) cgoUnsafeArgAddress(name *ir.Name, llvmName string) 
 func markLLVMGCLeafCall(call llvm.Value) {
 	attr := GlobalCtxt.CreateStringAttribute(goGCLeafFunctionAttr, "")
 	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, attr)
+}
+
+func (lfc *LLVMFuncContext) llvmInlineAnchor() llvm.Value {
+	// OpInlMark is the structural position of a Go inline entry. Preserve that
+	// position through generic LLVM optimization without tying the marker to a
+	// source line or extending the lifetime of an ordinary SSA value. Identical
+	// sideeffect markers may coalesce when their surrounding code coalesces; the
+	// late plugin turns each survivor into a zero-byte machine placement marker.
+	fn := getLLVMIntrinsicDeclaration("llvm.sideeffect")
+	bundle := llvm.NewOperandBundle(goObjDebugInlineAnchorBundle, nil)
+	call := lfc.b.CreateCallWithOperandBundles(
+		fn.GlobalValueType(), fn, nil, []llvm.OperandBundle{bundle}, "")
+	bundle.Dispose()
+	return call
 }
 
 func llvmMemoryOpInfo(v *Value) (int64, int) {
@@ -2410,9 +2425,11 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }
 	arg1 := func() llvm.Value { return lfc.GenLV(v.Args[1]) }
 	switch v.Op {
-	case OpInitMem, OpSB, OpInlMark, OpWBend:
+	case OpInitMem, OpSB, OpWBend:
 		// LLVM models memory ordering through instruction dependencies, not an
 		// explicit SSA memory value. SB is only an address-space token here.
+	case OpInlMark:
+		lVal = lfc.llvmInlineAnchor()
 	case OpSP:
 		// Unlike SB, SP can participate in integer expressions such as the
 		// caller-frame-size calculation emitted for GetCallerSP.

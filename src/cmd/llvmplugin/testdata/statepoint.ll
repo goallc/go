@@ -25,10 +25,15 @@ target triple = "x86_64-unknown-linux-goobj"
 declare goabiinternal void @callee()
 declare goabiinternal void @leaf_callee() #0
 declare goabiinternal ptr @make_pointer()
+declare void @llvm.sideeffect()
 
 define goabiinternal i64 @pointer_live_across_call(ptr %p) gc "goallc" {
 entry:
   call goabiinternal void @callee()
+  ; The inline anchor must stay an intrinsic until statepoint liveness has
+  ; consumed this block. InlineAsm callees are pointer-typed non-constants and
+  ; would otherwise be added to the preceding call's gc-live bundle.
+  call void @llvm.sideeffect() [ "goobj.debug.inline.anchor"() ]
   %value = load i64, ptr %p, align 8
   ret i64 %value
 }

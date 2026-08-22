@@ -4,6 +4,7 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -22,6 +23,111 @@
 using namespace llvm;
 
 namespace {
+
+constexpr uint64_t GoObjInlineAnchorCookie = 0x476f414c4c43494eULL;
+
+bool isInlinePlacementMarker(const MachineInstr &MI) {
+  if (!MI.isInlineAsm())
+    return false;
+  const MDNode *Loc = MI.getLocCookieMD();
+  const auto *Cookie =
+      Loc && Loc->getNumOperands() != 0
+          ? mdconst::dyn_extract<ConstantInt>(Loc->getOperand(0))
+          : nullptr;
+  return Cookie && Cookie->getZExtValue() == GoObjInlineAnchorCookie;
+}
+
+bool isSameInlineFrame(const DILocation *Loc, const DILocation *CallSite) {
+  if (!Loc || !CallSite)
+    return false;
+  // Match the structural parent frame, not file/line coordinates. Optimizers
+  // may clone or rewrite DILocations while preserving this inline context.
+  const DISubprogram *LocSP = Loc->getScope()->getSubprogram();
+  const DISubprogram *CallSiteSP = CallSite->getScope()->getSubprogram();
+  return LocSP == CallSiteSP && Loc->getInlinedAt() == CallSite->getInlinedAt();
+}
+
+bool markerPrecedesSurvivingChild(const MachineInstr &Marker) {
+  const DILocation *MarkerLoc = Marker.getDebugLoc().get();
+  if (!MarkerLoc)
+    return false;
+  const MachineBasicBlock &MBB = *Marker.getParent();
+  for (auto It = std::next(Marker.getIterator()); It != MBB.end(); ++It) {
+    if (isInlinePlacementMarker(*It))
+      break;
+    if (It->isMetaInstruction())
+      continue;
+    for (const DILocation *Loc = It->getDebugLoc().get();
+         Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
+      if (isSameInlineFrame(MarkerLoc, Loc->getInlinedAt()))
+        return true;
+  }
+  return false;
+}
+
+MachineInstr *
+findPlacementMarker(const SmallVectorImpl<MachineInstr *> &Markers,
+                    const DILocation *InlineFrame,
+                    const SmallPtrSetImpl<MachineInstr *> &ClaimedMarkers,
+                    const SmallPtrSetImpl<MachineInstr *> &UsedMarkers) {
+  MachineInstr *Best = nullptr;
+  unsigned BestPriority = 5;
+  for (MachineInstr *Candidate : Markers) {
+    const bool SameFrame =
+        isSameInlineFrame(Candidate->getDebugLoc().get(), InlineFrame);
+    const bool Claimed = ClaimedMarkers.contains(Candidate);
+    const bool Used = UsedMarkers.contains(Candidate);
+    unsigned Priority = 4;
+    if (SameFrame) {
+      if (Used)
+        Priority = 2;
+      else if (Claimed)
+        Priority = 1;
+      else
+        Priority = 0;
+    } else if (!Claimed && !Used) {
+      Priority = 3;
+    }
+    if (Priority < BestPriority) {
+      Best = Candidate;
+      BestPriority = Priority;
+    }
+  }
+  return Best;
+}
+
+struct InlineInsertionPoint {
+  MachineBasicBlock *Block = nullptr;
+  MachineBasicBlock::iterator At;
+};
+
+InlineInsertionPoint fallbackInlineInsertionPoint(MachineFunction &MF) {
+  // A source inline edge with no surviving placement marker cannot describe
+  // an executable child range. Keep that compatibility fallback beside a
+  // normal return, before frame teardown, instead of fabricating a child at
+  // the function entry.
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+      if (!MI.isReturn())
+        continue;
+      auto At = MI.getIterator();
+      while (At != MBB.begin()) {
+        auto Prev = std::prev(At);
+        if (!Prev->isMetaInstruction() &&
+            !Prev->getFlag(MachineInstr::FrameDestroy))
+          break;
+        At = Prev;
+      }
+      return {&MBB, At};
+    }
+  }
+
+  for (MachineBasicBlock &MBB : llvm::reverse(MF))
+    for (MachineInstr &MI : llvm::reverse(MBB))
+      if (!MI.isMetaInstruction() && !isInlinePlacementMarker(MI))
+        return {&MBB, MI.getIterator()};
+  return {};
+}
 
 struct CanonicalInlineSite {
   const DILocation *Original = nullptr;
@@ -127,6 +233,16 @@ public:
     const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
     CanonicalSites.clear();
 
+    SmallVector<MachineInstr *, 8> PlacementMarkers;
+    SmallPtrSet<MachineInstr *, 8> ClaimedPlacementMarkers;
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (isInlinePlacementMarker(MI)) {
+          PlacementMarkers.push_back(&MI);
+          if (markerPrecedesSurvivingChild(MI))
+            ClaimedPlacementMarkers.insert(&MI);
+        }
+
     // LLVM may merge instructions from distinct frontend inline frames (for
     // example, SLP-vectorizing adjacent stores) and retain only one debug
     // location. Materialize a source NOP for each required inline edge that no
@@ -135,41 +251,49 @@ public:
     DenseSet<const DILocation *> SurvivingCallsites;
     for (MachineBasicBlock &MBB : MF)
       for (MachineInstr &MI : MBB)
-        if (!MI.isMetaInstruction())
+        if (!MI.isMetaInstruction() && !isInlinePlacementMarker(MI))
           for (const DILocation *Loc = MI.getDebugLoc().get();
                Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
             SurvivingCallsites.insert(Loc->getInlinedAt());
 
     bool Changed = false;
     if (!MF.empty()) {
-      MachineBasicBlock *InsertBlock = nullptr;
-      MachineBasicBlock::iterator InsertAt;
-      for (MachineBasicBlock &MBB : MF) {
-        auto It = MBB.begin();
-        while (It != MBB.end() && (It->isMetaInstruction() ||
-                                   It->getFlag(MachineInstr::FrameSetup)))
-          ++It;
-        if (It != MBB.end()) {
-          InsertBlock = &MBB;
-          InsertAt = It;
-          break;
-        }
-      }
+      SmallPtrSet<MachineInstr *, 8> UsedPlacementMarkers;
+      InlineInsertionPoint CompatibilityFallback;
       for (const DILocation *Loc : requiredInlineLocations(MF)) {
         const DILocation *Innermost = Loc->getInlinedAt();
         if (SurvivingCallsites.contains(Innermost))
           continue;
-        if (!InsertBlock)
-          report_fatal_error("GoALLC required inline location has no "
-                             "post-prologue insertion point");
-        TII.insertNoop(*InsertBlock, InsertAt);
-        MachineInstr &Marker = *std::prev(InsertAt);
+
+        MachineInstr *Placement =
+            findPlacementMarker(PlacementMarkers, Innermost,
+                                ClaimedPlacementMarkers, UsedPlacementMarkers);
+
+        InlineInsertionPoint Insert;
+        if (Placement) {
+          UsedPlacementMarkers.insert(Placement);
+          Insert = {Placement->getParent(), Placement->getIterator()};
+        } else {
+          if (!CompatibilityFallback.Block)
+            CompatibilityFallback = fallbackInlineInsertionPoint(MF);
+          Insert = CompatibilityFallback;
+        }
+        if (!Insert.Block)
+          report_fatal_error(
+              "GoALLC required inline location has no insertion point");
+        TII.insertNoop(*Insert.Block, Insert.At);
+        MachineInstr &Marker = *std::prev(Insert.At);
         Marker.setDebugLoc(DebugLoc(Loc));
         for (const DILocation *Site = Loc; Site && Site->getInlinedAt();
              Site = Site->getInlinedAt())
           SurvivingCallsites.insert(Site->getInlinedAt());
         Changed = true;
       }
+    }
+
+    for (MachineInstr *Marker : PlacementMarkers) {
+      Marker->eraseFromParent();
+      Changed = true;
     }
 
     // Normalize complete inline chains before inspecting them. This keeps the

@@ -63,7 +63,23 @@ target triple = "x86_64-unknown-linux-goobj"
 ; DEBUG-X86:        "parent_pc": 8
 ; DEBUG-AARCH64:    "parent_pc": 12
 
+; DEBUG-LABEL:      "name": "main.erased",
+; DEBUG:            "start_line": 100,
+; DEBUG:            "inline_tree": [
+; DEBUG:            "parent": -1,
+; DEBUG:            "line": 101,
+; DEBUG:            "name": "main.erasedMid",
+; DEBUG-NOT:        "parent_pc": 0
+; DEBUG:            "parent_pc":
+; DEBUG:            "parent": 0,
+; DEBUG:            "line": 111,
+; DEBUG:            "name": "main.erasedInner",
+; DEBUG-NOT:        "parent_pc": 0
+; DEBUG:            "parent_pc":
+
 @main.sink = global i64 0
+
+declare void @llvm.sideeffect()
 
 define goabiinternal i64 @main.outer(i64 %x) !dbg !10 {
 entry:
@@ -120,6 +136,9 @@ entry:
 ; missing nested inline edge without constraining IR optimization.
 define goabiinternal void @main.erased() !dbg !19 {
 entry:
+  store volatile i64 0, ptr @main.sink, !dbg !65
+  call void @llvm.sideeffect() [ "goobj.debug.inline.anchor"() ], !dbg !65
+  call void @llvm.sideeffect() [ "goobj.debug.inline.anchor"() ], !dbg !61
   ret void, !dbg !65
 }
 
