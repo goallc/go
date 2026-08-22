@@ -106,6 +106,7 @@
       "fixedbugs/issue7867.go": "generated upstream regression repeatedly qualified through LLVM compile, link, and execution",
       "fixedbugs/issue9604b.go": "generated conversion regression qualified through byte-identical LLVM O2 generation, compile, link, and execution on Linux/amd64",
       "mergemul.go": "generated upstream regression repeatedly qualified through LLVM compile, link, and execution",
+      "llvm_native_open_defer.go": "native open-defer metadata remains available when LLVM IR is emitted alongside native code",
       "reflectmethod4.go": "dynamic reflect.Value.Method calls retain exported methods through GoObj linking and execution",
       "reflectmethod5.go": "reflected method values with zero-sized receivers cross statepoints without consuming ABI registers",
       "reflectmethod6.go": "reflected method-by-name values with zero-sized receivers cross statepoints without consuming ABI registers",

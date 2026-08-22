@@ -595,7 +595,10 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 
 	fe.AllocFrame(s.f)
 
-	if len(s.openDefers) != 0 && !base.Flag.EnableLLVM {
+	// -enablellvm without -llvmironly emits LLVM IR alongside an ordinary
+	// native object. Keep the native open-defer metadata in that mode; only the
+	// IR-only pipeline delegates it to LLVM's statepoint/GoObj lowering.
+	if len(s.openDefers) != 0 && !base.Flag.LLVMIROnly {
 		s.emitOpenDeferInfo()
 	}
 
