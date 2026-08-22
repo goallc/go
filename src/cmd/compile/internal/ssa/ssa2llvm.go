@@ -86,6 +86,7 @@ const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
 const goPointerAddressObservation = "llvm.go.pointer.address"
+const goPointerFromAddress = "llvm.go.pointer.from.address"
 const goDeferResultMD = "goallc.defer_result"
 const goOpenDeferBitsMD = "goallc.open_defer_bits"
 const goOpenDeferSlotsMD = "goallc.open_defer_slots"
@@ -1043,6 +1044,17 @@ func (lfc *LLVMFuncContext) observePointerAddress(pointer llvm.Value, resultType
 		goPointerAddressObservation, resultType, pointer.Type())
 	sig := fn.GlobalValueType()
 	return lfc.b.CreateCall(sig, fn, []llvm.Value{pointer}, name)
+}
+
+func (lfc *LLVMFuncContext) pointerFromAddress(address llvm.Value, resultType llvm.Type, name string) llvm.Value {
+	// Keep a pointer reconstructed from uintptr visible through LLVM
+	// optimization. The statepoint plugin lowers this to inttoptr immediately
+	// before computing pointer liveness, so a stack-growing call can relocate
+	// the reconstructed pointer when it remains live across the call.
+	fn := getLLVMIntrinsicDeclaration(
+		goPointerFromAddress, resultType, address.Type())
+	sig := fn.GlobalValueType()
+	return lfc.b.CreateCall(sig, fn, []llvm.Value{address}, name)
 }
 
 func (lfc *LLVMFuncContext) cgoUnsafeArgAddress(name *ir.Name, llvmName string) llvm.Value {
@@ -2757,7 +2769,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		case lVal.Type().TypeKind() == llvm.IntegerTypeKind &&
 			lVal.Type().IntTypeWidth() == types.PtrSize*8 &&
 			want.TypeKind() == llvm.PointerTypeKind:
-			lVal = lfc.b.CreateIntToPtr(lVal, want, v.String()+".coerce")
+			lVal = lfc.pointerFromAddress(lVal, want, v.String()+".coerce")
 		default:
 			v.Fatalf("%s changes machine representation", v.Op)
 		}

@@ -14,6 +14,8 @@ import "unsafe"
 // LLVM-SAME: #[[SPLITATTRS:[0-9]+]] gc "goallc"
 // LLVM-LABEL: define goabiinternal ptr @codegen.goABINoSplit(
 // LLVM-SAME: #[[NOSPLITATTRS:[0-9]+]] gc "goallc"
+// LLVM-LABEL: define goabiinternal ptr @codegen.goPointerFromAddress(
+// LLVM: call ptr @llvm.go.pointer.from.address.p0.i64(i64 %address)
 // LLVM-LABEL: define goabiinternal i64 @codegen.goPointerAddress(
 // LLVM: call i64 @llvm.go.pointer.address.i64.p0(ptr %pointer)
 // LLVM-LABEL: define goabiinternal ptr @"codegen.(*goABIEntryReceiver).entryArgs"(
@@ -43,6 +45,10 @@ func (receiver *goABIEntryReceiver) entryArgs(scalar int) *goABIEntryReceiver {
 
 func goPointerAddress(pointer unsafe.Pointer) uintptr {
 	return uintptr(pointer)
+}
+
+func goPointerFromAddress(address uintptr) unsafe.Pointer {
+	return unsafe.Pointer(address)
 }
 
 //go:noescape
