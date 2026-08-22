@@ -55,6 +55,10 @@ static GCMetadataPrinterRegistry::Add<GoALLCStackMapPrinter>
     GoALLCStackMapPrinterRegistration("goallc",
                                       "GoALLC GoObj Machine StackMaps bridge");
 
+// The statically linked compiler calls this anchor so the archive linker pulls
+// in this translation unit and runs the GCMetadataPrinter registration above.
+void linkGoALLCStackMapPrinter() {}
+
 bool GoALLCStackMapPrinter::emitStackMaps(StackMaps &SM, AsmPrinter &AP) {
   // Other object formats continue to use LLVM's standard stackmap format.
   if (!AP.OutContext.isGoObj())

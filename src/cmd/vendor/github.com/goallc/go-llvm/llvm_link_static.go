@@ -3,9 +3,9 @@
 package llvm
 
 /*
-#cgo darwin LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lxml2
+#cgo darwin LDFLAGS: -L${SRCDIR}/llvm/lib -lGoALLCStatepointsStatic -L${SRCDIR} -lLLVMGoALLC -lm -lz -lxml2
 #cgo darwin pkg-config: libzstd
-#cgo linux LDFLAGS: -L${SRCDIR} -lLLVMGoALLC -lm -lz -lzstd -lxml2 -ldl -lpthread -lrt
+#cgo linux LDFLAGS: -L${SRCDIR}/llvm/lib -Wl,--whole-archive -lGoALLCStatepointsStatic -Wl,--no-whole-archive -L${SRCDIR} -lLLVMGoALLC -lm -lz -lzstd -lxml2 -ldl -lpthread -lrt
 */
 import "C"
 

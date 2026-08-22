@@ -44,17 +44,28 @@ const (
 
 func dumpobj() {
 	if base.Flag.EnableLLVM {
-		err := ssa.Output(base.Flag.LowerO + ".ll")
-		if err != nil {
-			fmt.Printf("error while Output file %s: %v\n", base.Flag.LinkObj+".bc", err)
-			base.ErrorExit()
-		}
-		if base.Flag.LLVMIROnly {
+		if base.Flag.LLVMExternal {
+			if err := ssa.Output(base.Flag.LowerO + ".ll"); err != nil {
+				fmt.Printf("error writing LLVM IR %s: %v\n", base.Flag.LowerO+".ll", err)
+				base.ErrorExit()
+			}
 			// Keep import data available for downstream Go compilation. The
 			// toolexec wrapper appends the GoObj linker member produced by llc.
 			dumpobj1(base.Flag.LowerO, modeCompilerObj)
 			return
 		}
+		linkerObj, err := ssa.EmitLLVMGoObj(base.Flag.LowerO)
+		if err != nil {
+			fmt.Printf("error generating LLVM GoObj: %v\n", err)
+			base.ErrorExit()
+		}
+		if base.Flag.LinkObj == "" {
+			dumpobjWithLLVM(base.Flag.LowerO, modeCompilerObj|modeLinkerObj, linkerObj)
+			return
+		}
+		dumpobj1(base.Flag.LowerO, modeCompilerObj)
+		dumpobjWithLLVM(base.Flag.LinkObj, modeLinkerObj, linkerObj)
+		return
 	}
 	if base.Flag.LinkObj == "" {
 		dumpobj1(base.Flag.LowerO, modeCompilerObj|modeLinkerObj)
@@ -65,6 +76,10 @@ func dumpobj() {
 }
 
 func dumpobj1(outfile string, mode int) {
+	dumpobjWithLLVM(outfile, mode, nil)
+}
+
+func dumpobjWithLLVM(outfile string, mode int, llvmLinkerObj []byte) {
 	bout, err := bio.Create(outfile)
 	if err != nil {
 		base.FlushErrors()
@@ -81,7 +96,11 @@ func dumpobj1(outfile string, mode int) {
 	}
 	if mode&modeLinkerObj != 0 {
 		start := startArchiveEntry(bout)
-		dumpLinkerObj(bout)
+		if llvmLinkerObj != nil {
+			bout.Write(llvmLinkerObj)
+		} else {
+			dumpLinkerObj(bout)
+		}
 		finishArchiveEntry(bout, start, "_go_.o")
 	}
 

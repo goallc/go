@@ -84,8 +84,11 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 
 	base.DebugSSA = ssa.PhaseOption
 	base.ParseFlags()
-	if base.Flag.LLVMIROnly && !base.Flag.EnableLLVM {
-		base.Fatalf("-llvmironly requires -enablellvm")
+	if base.Flag.LLVMExternal && !base.Flag.EnableLLVM {
+		base.Fatalf("-llvm-external-codegen requires -enablellvm")
+	}
+	if !base.Flag.EnableLLVM && (base.Flag.LLVMKeepIR || base.Flag.LLVMOptPasses != "default<O2>") {
+		base.Fatalf("LLVM backend options require -enablellvm")
 	}
 
 	if flagGCStart := base.Debug.GCStart; flagGCStart > 0 || // explicit flags overrides environment variable disable of GC boost
@@ -379,11 +382,12 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 		staticinit.AddKeepRelocations()
 	}
 
-	// Write object data to disk. In LLVM-IR-only mode dumpdata still prepares
-	// reflect/type linker data as LSyms, but LLVM lowers that closure into the
-	// IR consumed by llc; the archive itself retains only compiler export data.
+	// Write object data to disk. When LLVM replaces native code generation,
+	// dumpdata still prepares reflect/type linker data as LSyms, but LLVM lowers
+	// that closure into the module consumed either in-process or by the retained
+	// external-codegen/toolexec path.
 	base.Timer.Start("be", "dumpobj")
-	if base.Flag.LLVMIROnly {
+	if base.Flag.EnableLLVM {
 		dumpdata()
 		ssa.LowerGoObjData()
 		// Assign the same package, content-addressable, and non-package
@@ -402,7 +406,7 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 		dumpasmhdr()
 	}
 
-	if !base.Flag.LLVMIROnly {
+	if !base.Flag.EnableLLVM {
 		ssagen.CheckLargeStacks()
 		typecheck.CheckFuncStack()
 	}

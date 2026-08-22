@@ -1,8 +1,9 @@
 # GoALLC：LLVM IR 到 GoObj 的开发链路
 
-本文记录当前已合入的、用于开发 Go SSA 到 LLVM lowering 的最小端到端
-链路。它让一个简单 Go package 经由 LLVM IR、`llc` 和 GoObj 进入正常的
-Go package archive，最终仍由社区 Go linker 链接。
+本文记录 Go SSA 到 LLVM lowering 的端到端链路。默认路径在 `cmd/compile`
+进程内完成 LLVM IR 优化、GoALLC pre-codegen pipeline 和 GoObj 生成，再复用
+compiler 原有的 Go package archive writer；不会把 IR 写成文本，也不启动
+`opt`、`llc` 或 `toolexec`。原外部链路继续保留用于 A/B 调试和独立工具检查。
 
 这是一条受限的开发路径，不是社区 Go 后端的替代品。完整的项目背景、构建
 基线和更早的试验记录见 [../GOALLC.md](../GOALLC.md)。
@@ -10,25 +11,29 @@ Go package archive，最终仍由社区 Go linker 链接。
 ## 数据流
 
 ```text
-go build -toolexec=llvmtoolexec
-  -> llvmtoolexec 拦截选中的 compile 调用
-  -> compile -enablellvm -llvmironly
-       -> __.PKGDEF + <archive>.ll
-  -> llc -load-pass-plugin=<GoALLCStatepoints> -filetype=obj <archive>.ll
-       -> Go 仓库维护的 pre-codegen pipeline
-       -> LLVM GoObj
-  -> cmd/internal/archive 将 GoObj 追加为 _go_.o
+go build -gcflags=all=-enablellvm
+  -> compile 构造内存中的 LLVM Module
+  -> Module::RunPasses（默认 default<O2>）
+  -> 调用进程内 GoALLCStatepoints pre-codegen callback
+  -> TargetMachine::EmitToMemoryBuffer
+  -> compiler archive writer 写入 __.PKGDEF 和唯一的 _go_.o
   -> cmd/link 读取 __.PKGDEF 和 _go_.o
 ```
 
-`-llvmironly` 必须和 `-enablellvm` 一起使用。它使 `compile` 在写出 LLVM
-IR 和 Go archive 的 `__.PKGDEF` 后结束，不再生成原生 linker object。因而
-对被替换的 package 而言，archive 中唯一的 `_go_.o` 必须是 `llc` 生成的
-GoObj；`__.PKGDEF` 仍完全由 Go compiler 生成并位于 archive 的第一个成员。
+`-enablellvm` 现在选择进程内 LLVM backend。`__.PKGDEF` 仍完全由 Go compiler
+生成并位于 archive 的第一个成员；LLVM 返回的内存 object 直接成为唯一的
+`_go_.o`。`-linkobj` 拆分输出也沿用原 compiler 语义。
+
+`-llvm-keep-ir` 只控制诊断输出：进程内 backend 仍完整生成 GoObj，同时保留
+`<archive>.ll` 和 `<archive>.opt.ll`。指定 `cmd/llvmtoolexec` 时，wrapper 会在
+调用 compiler 时增加内部 `-llvm-external-codegen` 协议，使 compiler 写出
+`<archive>.ll` 和只含 export data 的 archive，再交给独立 `opt`/`llc`。原生
+backend 对照使用一次不带 `-enablellvm` 的独立构建，不在同一 compiler invocation
+中同时生成 native object 和 LLVM IR。
 
 ## 类型描述符和只读数据
 
-`-llvmironly` 不会跳过 compiler 的 `dumpdata` 准备阶段。`reflectdata` 仍按
+进程内 backend 和外部 codegen 协议都不会跳过 compiler 的 `dumpdata` 准备阶段。`reflectdata` 仍按
 原生 compiler 的方式在 `base.Ctxt.Data` 中生成最终的 `obj.LSym` 布局；随后
 LLVM lowering 从带有 `TypeInfo` 的 runtime type descriptor roots 出发，收集
 仅由这些 roots 的 relocation 可达的数据闭包，并将其 lower 为 LLVM constant
@@ -218,27 +223,29 @@ target triple = "aarch64-apple-darwin-goobj"
 | 10 | experiment metadata node；其中每个 operand 是一个 experiment 名称 |
 
 experiments 不使用逗号分隔字符串，其他字段也不拼接成 Go textual object
-header。`llc` 在建立 code-generation pipeline 前读取并严格校验这些字段，
-然后把它们传给 GoObj writer。没有 `!goobj.config` 的普通 GoObj IR 仍可使用
+header。进程内 binding 和保留的 `llc` driver 都会在建立 code-generation
+pipeline 前读取并严格校验这些字段，然后把它们传给 GoObj writer。没有
+`!goobj.config` 的普通 GoObj IR 仍可使用
 既有 `-goobj-*` command-line 选项作为兼容回退。
 
 对应 LLVM 测试为
 `llvm/test/CodeGen/AArch64/goobj-ir-config.ll`。LLVM 侧实现位于
 `llvm/tools/llc/llc.cpp`、`llvm/lib/CodeGen/CodeGenTargetMachineImpl.cpp`
-和 `llvm/lib/MC/GoObjObjectWriter.cpp`。
+和 `llvm/lib/MC/GoObjObjectWriter.cpp`；进程内解码入口位于 vendored
+`go-llvm/SupportBindings.cpp`。
 
-## toolexec wrapper
+## 保留的外部 toolexec 调试链路
 
-`cmd/llvmtoolexec` 只处理实际参数中同时启用了 `-enablellvm` 和
-`-llvmironly` 的 `compile`，其余 compile 和其他 Go tool 调用原样透传。它：
+`cmd/llvmtoolexec` 只处理实际参数中启用了 `-enablellvm` 的 `compile`，其余
+compile 和其他 Go tool 调用原样透传。它：
 
-1. 原样调用 compiler，由 compiler 写出仅包含 export data 的 archive 和
-   对应 `.ll` sidecar；
+1. 调用 compiler 时增加内部 `-llvm-external-codegen`，由 compiler 写出仅包含
+   export data 的 archive 和对应 `.ll` sidecar；
 2. 调用
    `llc -load-pass-plugin=<GoALLCStatepoints> -filetype=obj`；GoObj 固定以
-   CALL 起点记录 statepoint。插件的
-   pre-codegen callback 是当前外部链路与未来 compiler 进程内 LLVM
-   集成共用的 pass pipeline 入口，wrapper 不在命令行中重建 pipeline；
+   CALL 起点记录 statepoint。插件的 pre-codegen callback 与 compiler
+   进程内 LLVM backend 共用同一个 pass pipeline 入口，wrapper 不在命令行中
+   重建 pipeline；
 3. 使用 `cmd/internal/archive` 打开 compiler archive，并将对象以 `_go_.o`
    追加进去；
 4. 默认删除 IR 和临时 object，`-keep-ir` 可保留 IR 供检查。
@@ -248,10 +255,10 @@ header。使用 Go 自己的 archive writer 可保证 `__.PKGDEF` 保持第一�
 避免 BSD `ar` 插入 `__.SYMDEF` 后破坏 `cmd/link` 的读取约定。
 
 package 的选择完全由 cmd/go 已有的 `-gcflags` 规则完成。无 pattern 的
-`-gcflags='-enablellvm -llvmironly'` 只作用于命令行 package；需要选择某个依赖时使用
-`-gcflags='example.com/project/internal/foo=-enablellvm -llvmironly'`。wrapper 不维护另一套
+`-gcflags='-enablellvm'` 只作用于命令行 package；需要选择某个依赖时使用
+`-gcflags='example.com/project/internal/foo=-enablellvm'`。wrapper 不维护另一套
 package 匹配规则，也不根据 `TOOLEXEC_IMPORTPATH` 猜测选择结果。实际 compile
-缺少任一 LLVM flag 时完全透传。由于 compiler 的 `-V=full` probe 不携带
+缺少 `-enablellvm` 时完全透传。由于 compiler 的 `-V=full` probe 不携带
 package gcflags，wrapper 的 compiler identity 始终纳入 LLVM backend；这样
 LLVM payload 或 plugin 变化时不会复用旧的 LLVM archive，代价是同一 wrapper
 下的原生 compile 也会保守地失效缓存。
@@ -282,8 +289,9 @@ CFG 逆向数据流活跃性分析，为普通调用分配稳定 callsite ID，�
 `gc.statepoint` / `gc.relocate`，并识别 `gc-leaf-function`。受管指针分类当前
 对 LLVM `ptr` 保守，不依赖 addrspace；活跃的 `alloca` 地址及其派生指针也
 进入 `gc-live`，不在 IR 层提前猜测其最终机器位置。第一阶段对 live pointer
-aggregate、`invoke`、`musttail` 和非 leaf inline asm fail closed。未来
-compile 进程内集成 LLVM 时直接复用该 core 入口，不经过 plugin adapter。
+aggregate、`invoke`、`musttail` 和非 leaf inline asm fail closed。默认
+compile 已在进程内加载 plugin adapter 并调用同一 pre-codegen callback；core
+与 adapter 的分离继续支持独立单测和以后进一步静态集成。
 
 机器位置不通过修改 LLVM 通用 `StackMaps.cpp` 截获。SSA→LLVM IR 前端为 Go ABI
 函数声明 `gc "goallc"`；GoObj Go 函数默认采用原生 Go 的可扩栈策略，只有
@@ -364,7 +372,8 @@ cd "$GOROOT/src"
 安装结果为 Darwin 上的
 `$LLVM_PAYLOAD/lib/GoALLCStatepoints.dylib` 或 Linux 上的
 `$LLVM_PAYLOAD/lib/GoALLCStatepoints.so`。不要用其他 LLVM 安装构建后再复制
-产物；pass plugin 的 C++ ABI 必须和负责加载它的 `llc` 精确匹配。
+产物；pass plugin 的 C++ ABI 必须和 compiler 所链接及 `llc` 所使用的 LLVM
+payload 精确匹配。
 
 ## 最小使用方式
 
@@ -373,35 +382,57 @@ cd "$GOROOT/src"
 
 ```sh
 cd /path/to/simple-main-package
-TOOLDIR=$("$GOROOT/bin/go" env GOTOOLDIR)
 "$GOROOT/bin/go" build \
-  -toolexec="$TOOLDIR/llvmtoolexec" \
-  -gcflags='-enablellvm -llvmironly' \
+  -gcflags='all=-enablellvm' \
   -o app .
 ./app
 ```
 
-也可以用 `"$GOROOT/bin/go" tool -n llvmtoolexec` 查看安装路径。需要覆盖 payload
-或保留 IR 时，把参数放进同一个 `-toolexec` 值：
+进程内参数与保留的 wrapper 参数边界如下：
+
+| 旧 `llvmtoolexec` 参数 | 进程内 compiler 参数 | 行为 |
+| --- | --- | --- |
+| `-opt-passes` | `-llvm-opt-passes` | 默认 `default<O2>`；`none` 跳过 IR 优化 |
+| `-keep-ir` | `-llvm-keep-ir` | 保留 `<archive>.ll` 和 `<archive>.opt.ll` |
+| 固定 llc 参数 | 无需指定 | 同样启用 `-trap-unreachable`、`-disable-machine-cse` 和默认的 `-disable-lsr` |
+| `-llc` / `-opt` / `-pass-plugin` | 仅外部模式 | 进程内固定使用 toolchain payload 或静态链接实现 |
+| `-enable-lsr` | 仅外部模式 | 进程内固定禁用尚不安全的 LSR |
+| `-native-package` | `-gcflags` package pattern | 只给需要 LLVM 的 package 传 `-enablellvm` |
+
+例如保留进程内优化前后的 IR：
 
 ```sh
 "$GOROOT/bin/go" build \
-  -toolexec="'$GOROOT/pkg/tool/darwin_arm64/llvmtoolexec' '-llc=/path with spaces/llc' -keep-ir" \
-  -gcflags='-enablellvm -llvmironly' \
+  -gcflags='all=-enablellvm -llvm-keep-ir' \
   .
 ```
-
-这里使用 cmd/go 的 quoted command syntax，因此 wrapper flags 和带空格路径不会
-被 shell 或 cmd/go 二次拆错。`-keep-ir` 留下的 IR 路径为 compile 输出 archive
-路径加 `.ll` 后缀。同时带有两个 LLVM flags 的真实 compile 缺少 `llc`/plugin
-时仍然 fail closed；非 compile 或缺少任一 flag 的 compile 透明透传。
 
 例如只让一个依赖走 LLVM，可使用：
 
 ```sh
 "$GOROOT/bin/go" build \
-  -toolexec="$TOOLDIR/llvmtoolexec" \
-  -gcflags='example.com/project/internal/foo=-enablellvm -llvmironly' \
+  -gcflags='example.com/project/internal/foo=-enablellvm' \
+  .
+```
+
+反过来，若大部分 package 走 LLVM、少数 package 保留原生 backend，可利用
+`-gcflags` 的“最后一个匹配规则生效”语义表达旧 `-native-package`：
+
+```sh
+"$GOROOT/bin/go" build \
+  -gcflags='all=-enablellvm' \
+  -gcflags='runtime=' \
+  .
+```
+
+需要与旧链路对比时只需增加 `-toolexec`，package 仍使用同一个
+`-enablellvm` 选择：
+
+```sh
+TOOLDIR=$("$GOROOT/bin/go" env GOTOOLDIR)
+"$GOROOT/bin/go" build \
+  -toolexec="$TOOLDIR/llvmtoolexec -opt-passes=default<O2> -keep-ir" \
+  -gcflags='all=-enablellvm' \
   .
 ```
 
@@ -409,22 +440,24 @@ TOOLDIR=$("$GOROOT/bin/go" env GOTOOLDIR)
 
 ```sh
 cd "$GOROOT/src"
-go test cmd/llvmtoolexec cmd/go/internal/work cmd/dist
+go test cmd/internal/llvmbackend cmd/llvmtoolexec cmd/go/internal/work cmd/dist
 
 cd /path/to/llvm-project
 llvm/cmake-build-debug/bin/llvm-lit -sv \
   llvm/test/CodeGen/AArch64/goobj-ir-config.ll
 ```
 
-此外应以一个简单 `main` package 执行真实的 `go build -toolexec`，并运行产物。
-这同时验证 compiler archive、IR metadata、`llc`、GoObj archive member 和
-`cmd/link` 的接口。
+此外应以一个简单 `main` package 分别执行进程内 `go build` 和保留的
+`go build -toolexec`，并运行两个产物。前者验证内存 IR、进程内 plugin/codegen、
+compiler archive writer 和 linker；后者保留外部工具链的 A/B 证据。
 
 ## 标准库的分层构建和测试
 
 扩大到标准库时必须记录 LLVM 实际覆盖的依赖范围。以下三种命令不能混称为
 “标准库使用 LLVM”。每次使用新的 `GOCACHE`，避免上一层生成的 archive 掩盖
-本层的编译边界；`-x -work` 和 wrapper 的 `-keep-ir` 可在调查失败时追加。
+本层的编译边界；`-x -work` 和 compiler 的 `-llvm-keep-ir` 可在调查失败时追加。
+本节各层默认只传 `-enablellvm`。需要和外部 pipeline 做对比时，使用前文保留的
+toolexec 命令，并保持相同的 package pattern。
 
 公共设置如下。`LLVM_ROOT` 必须是构建 toolchain 时使用的项目 payload；正式
 Linux 资格还必须核对 release manifest 的 revision 和 `llvm_dirty=false`。
@@ -433,8 +466,6 @@ Darwin 本地 dirty payload 只能记为开发验证。
 ```sh
 GOROOT=/path/to/goallc-go-worktree
 LLVM_ROOT=/path/to/goallc-llvm-payload
-TOOLDIR=$("$GOROOT/bin/go" env GOTOOLDIR)
-TOOLEXEC="$TOOLDIR/llvmtoolexec -opt-passes=default<O2>"
 PKG=unicode/utf16
 ```
 
@@ -444,8 +475,7 @@ PKG=unicode/utf16
 CACHE=$(mktemp -d)
 env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
   "$GOROOT/bin/go" test -count=1 -timeout=2m \
-  -toolexec="$TOOLEXEC" \
-  -gcflags="$PKG=-enablellvm -llvmironly" \
+  -gcflags="$PKG=-enablellvm" \
   "$PKG"
 ```
 
@@ -470,7 +500,7 @@ LLVM_GCFLAGS=()
 while IFS= read -r dep; do
   test -n "$dep" || continue
   if ! grep -Fxq "$dep" "$RUNTIME_DEPS"; then
-    LLVM_GCFLAGS+=("-gcflags=$dep=-enablellvm -llvmironly")
+    LLVM_GCFLAGS+=("-gcflags=$dep=-enablellvm")
   fi
 done < <(
   env GOROOT="$GOROOT" GOCACHE="$CACHE" \
@@ -481,7 +511,6 @@ done < <(
 
 env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
   "$GOROOT/bin/go" test -count=1 -timeout=2m \
-  -toolexec="$TOOLEXEC" \
   "${LLVM_GCFLAGS[@]}" \
   "$PKG"
 ```
@@ -495,8 +524,7 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
 CACHE=$(mktemp -d)
 env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
   "$GOROOT/bin/go" test -count=1 -timeout=2m \
-  -toolexec="$TOOLEXEC" \
-  -gcflags='all=-enablellvm -llvmironly' \
+  -gcflags='all=-enablellvm' \
   "$PKG"
 ```
 
@@ -508,10 +536,10 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
 `test/llvm_stdlib_packages.json` 单独管理入口包层次的标准库白名单和黑名单。
 精确白名单优先于 `*` 黑名单；白名单包是 CI 的 required tests，黑名单包不运行，
 并保留最早失败边界或“尚未资格化”的原因。CI 整个任务共享一个隔离
-`GOCACHE`；目标包、`-gcflags` 和 toolexec pipeline 都进入 cmd/go action ID，
-因此包和构建模式仍使用不同缓存条目。工具链、payload 或同一路径下的外部 pass
-plugin 发生变化时必须换新缓存。任务使用 `default<O2>` 和
-`-gcflags='all=-enablellvm -llvmironly'`，因此目标包、测试入口、`runtime`、`testing`
+`GOCACHE`；目标包、`-gcflags` 和 compiler backend identity 都进入 cmd/go action
+ID，因此包和构建模式仍使用不同缓存条目。工具链、payload 或同一路径下的 pass
+plugin 发生变化时会使 LLVM action 失效。任务使用 `default<O2>` 和
+`-gcflags='all=-enablellvm'`，因此目标包、测试入口、`runtime`、`testing`
 及完整依赖闭包都由 LLVM backend 编译。每个白名单包会在独立的
 `go test -count=1` 进程中运行并共享编译缓存。runner 先预热 LLVM runtime，再按
 `NumCPU()/2` 并行运行 package；每个 cmd/go 使用 `-p=1` 仅限制 package 构建并发，
@@ -613,12 +641,10 @@ TLS 读取 g，并在 ABIInternal/ABI0 跨越处显式修复 R14；LLVM 尚未�
 形成对照；这只是分类命令，不能作为 O2 资格结果：
 
 ```sh
-TOOLEXEC_NOOPT="$TOOLDIR/llvmtoolexec"
 CACHE=$(mktemp -d)
 env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
   "$GOROOT/bin/go" test -count=1 -timeout=2m \
-  -toolexec="$TOOLEXEC_NOOPT" \
-  -gcflags="$PKG=-enablellvm -llvmironly" \
+  -gcflags="$PKG=-enablellvm -llvm-opt-passes=none" \
   "$PKG"
 ```
 
@@ -628,7 +654,7 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
 
 - `frontend`：compile 在产生可用 IR 前拒绝 SSA op、ABI 或 closure 模型；
 - `opt/statepoint`：IR verifier、O2 pipeline、statepoint plugin 或 GC liveness 失败；
-- `llc/GoObj`：机器 lowering、GoObj symbol/relocation/aux data 与 frontend 契约不符；
+- `codegen/GoObj`：机器 lowering、GoObj symbol/relocation/aux data 与 frontend 契约不符；
 - `archive/link`：archive member、重复定义、relocation distance 或 Go linker 失败；
 - `runtime semantics`：成功链接后出现错误结果、panic、崩溃、死锁或 race；
 - `environment/timeout`：payload、loader、cache、宿主资源或独立超时问题。
@@ -648,8 +674,8 @@ GoALLC 不维护一套与 Go 仓库重复的测试源码。LLVM 测试由
 - codegen 候选是 `test/codegen` 下 recipe 为 `// asmcheck` 的文件；
 - run 候选是 testdir 原本扫描目录中 recipe 为 `// run` 的文件；
 - `test/llvm_tests.json` 分别维护 codegen 和 run 的白名单、灰名单与黑名单；
-- codegen source 出现 `// LLVM-OPT` directive 时，runner 还会执行
-  `opt -passes=default<O2>`，并用 `LLVM-OPT` prefix 检查优化后的 IR；
+- codegen source 出现 `// LLVM-OPT` directive 时，runner 会读取进程内
+  `default<O2>` pipeline 留下的 `.opt.ll`，并用 `LLVM-OPT` prefix 检查；
 - 白名单是当前必须通过的用例，任何失败都会使 CI 失败；
 - 灰名单是可以执行但尚未要求通过的用例，runner 会记录每个失败和汇总，
   并为每个用例明确输出 `PASS`、`FAIL (allowed)` 或 `SKIP`，但不会因此使
@@ -677,13 +703,15 @@ codegen 白名单文件直接在原 Go 源码中使用 LLVM `FileCheck` 指令�
 // LLVM-DAG: srem i64
 ```
 
-runner 使用 `compile -enablellvm -llvmironly` 生成 `.ll`，然后执行：
+runner 使用 `compile -enablellvm -llvm-keep-ir` 完整生成 GoObj archive，并读取
+compiler 留下的优化前 `.ll`：
 
 ```sh
 FileCheck --check-prefix=LLVM test/codegen/example.go < package.a.ll
 ```
 
-因此 codegen 测试只检查 LLVM IR，不调用 `llc`、不链接也不运行。可使用
+这条命令已经在 compiler 内完成优化、callback 和 codegen，但 codegen 测试只对
+保留的 LLVM IR 做断言，不链接或运行 archive。可使用
 `LLVM:`、`LLVM-LABEL:`、`LLVM-DAG:`、`LLVM-NOT:` 等标准 FileCheck
 指令。原有 asmcheck parser 会忽略这些独立注释行，社区 Go 的机器码检查仍
 按原方式运行。每个 codegen 白名单文件至少要包含一条 `// LLVM...`
@@ -696,21 +724,21 @@ FileCheck --check-prefix=LLVM test/codegen/example.go < package.a.ll
 
 run 白名单和灰名单都不增加新的 recipe，也不复制测试源码。runner 仍解析原文件的
 `// run` 参数、build constraint、超时和期望输出。LLVM 的 `TestLLVM` 薄入口复用
-原 `Test` 的 `test.run()`，只在原有 `go run` 命令上增加 `-toolexec` 和
-`-ldflags=-w`；`cmd/llvmtoolexec` 选择命令行 `main` package 并替换其对象：
+原 `Test` 的 `test.run()`，在原有 `go run` 命令上增加 `-gcflags=all=-enablellvm`
+和 `-ldflags=-w`：
 
 ```text
 原有 // run 用例
-  -> go run -toolexec="llvmtoolexec ..." <原 recipe 文件和参数>
-  -> compile -enablellvm -llvmironly
-  -> opt -passes=default<O2>
-  -> llc 生成 _go_.o
+  -> go run -gcflags=all=-enablellvm <原 recipe 文件和参数>
+  -> compile 内存 IR + default<O2>
+  -> 进程内 plugin callback + TargetMachine codegen
+  -> compiler archive writer 写入 _go_.o
   -> cmd/link
   -> 运行并沿用原 testdir 输出检查
 ```
 
-`llc` 的选择顺序为 `GOALLC_LLC`、`$GOALLC_LLVM_DIR/bin/llc`、
-`$GOROOT/llvm/bin/llc`。
+运行检查只把 toolchain 记录的 LLVM payload 交给 compiler，不显式选择 plugin、
+`opt`、`llc` 或 toolexec。IR/codegen 检查仅额外从同一 payload 解析 FileCheck。
 
 ### 扩大覆盖范围
 

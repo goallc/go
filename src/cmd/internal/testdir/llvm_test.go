@@ -6,7 +6,6 @@ package testdir_test
 
 import (
 	"bytes"
-	"cmd/internal/quoted"
 	"encoding/json"
 	"fmt"
 	"go/build/constraint"
@@ -21,8 +20,6 @@ import (
 	"sync"
 	"testing"
 )
-
-const llvmTestToolexecEnv = "GOALLC_TEST_TOOLEXEC"
 
 const llvmDefaultCaseTimeoutSeconds = 60
 
@@ -85,10 +82,9 @@ type llvmTestCounts struct {
 }
 
 type llvmTestMode struct {
-	cases    map[string]llvmTestCase
-	toolexec string
-	mu       sync.Mutex
-	gray     map[string]*llvmTestCounts
+	cases map[string]llvmTestCase
+	mu    sync.Mutex
+	gray  map[string]*llvmTestCounts
 }
 
 func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
@@ -136,17 +132,15 @@ func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
 	for name := range runCandidates {
 		mode.cases[name] = llvmTestCase{suite: "run", class: classifyLLVMTest(t, policy.Run, name)}
 	}
-	mode.toolexec = llvmToolexec(t, "default<O2>")
-	warmLLVMExecutionRuntime(t, mode.toolexec, "")
+	warmLLVMExecutionRuntime(t, "")
 	return mode
 }
 
-func warmLLVMExecutionRuntime(t *testing.T, toolexec, cache string) {
+func warmLLVMExecutionRuntime(t *testing.T, cache string) {
 	t.Helper()
 	t.Log("warming the LLVM-compiled runtime before parallel execution tests")
 	cmd := testenv.Command(t, goTool, "install",
-		"-toolexec="+toolexec,
-		"-gcflags=all=-enablellvm -llvmironly",
+		"-gcflags=all=-enablellvm",
 		"runtime",
 	)
 	cmd.Env = append(os.Environ(),
@@ -624,7 +618,7 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 		"-p=codegen",
 		"-importcfg="+stdlibImportcfgFile(),
 		"-enablellvm",
-		"-llvmironly",
+		"-llvm-keep-ir",
 		"-c=16",
 		"-o", archive,
 		source,
@@ -638,13 +632,6 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 	if err != nil {
 		return err
 	}
-	opt := llvmToolPath(t, "opt", "GOALLC_OPT")
-	cmd = exec.Command(opt, "-passes=verify", "-disable-output")
-	cmd.Stdin = bytes.NewReader(irBytes)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("LLVM verifier failed: %v\n%s", err, out)
-	}
 	fileCheck := llvmToolPath(t, "FileCheck", "GOALLC_FILECHECK")
 	cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM", src), source)
 	cmd.Stdin = bytes.NewReader(irBytes)
@@ -656,14 +643,9 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 	if !bytes.Contains(src, []byte("// LLVM-OPT")) {
 		return nil
 	}
-	cmd = exec.Command(opt, "-passes=default<O2>", "-S")
-	cmd.Stdin = bytes.NewReader(irBytes)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	optimizedIR, err := cmd.Output()
+	optimizedIR, err := os.ReadFile(archive + ".opt.ll")
 	if err != nil {
-		return fmt.Errorf("LLVM optimization failed: %v\n%s", err, stderr.Bytes())
+		return err
 	}
 	cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-OPT", src), source)
 	cmd.Stdin = bytes.NewReader(optimizedIR)
@@ -691,38 +673,7 @@ func llvmFileCheckPrefixes(base string, source []byte) string {
 	return strings.Join(prefixes, ",")
 }
 
-func llvmToolexec(t *testing.T, optPasses string) string {
-	t.Helper()
-	wrapper := llvmToolexecPath(t)
-
-	llc := llvmToolPath(t, "llc", "GOALLC_LLC")
-	plugin := llvmPassPluginPath(t)
-	args := []string{
-		wrapper,
-		"-llc=" + llc,
-		"-pass-plugin=" + plugin,
-	}
-	if optPasses != "" {
-		opt := llvmToolPath(t, "opt", "GOALLC_OPT")
-		args = append(args, "-opt="+opt, "-opt-passes="+optPasses)
-	}
-	value, err := quoted.Join(args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
-}
-
-type llvmTestToolchain struct {
-	root      string
-	llc       string
-	opt       string
-	fileCheck string
-	plugin    string
-	wrapper   string
-}
-
-func configureLLVMTestToolchain(t *testing.T) llvmTestToolchain {
+func configureLLVMTestToolchain(t *testing.T) {
 	t.Helper()
 	root, configured := llvmTestPayloadRoot(t)
 	if root == "" {
@@ -739,29 +690,16 @@ func configureLLVMTestToolchain(t *testing.T) llvmTestToolchain {
 		t.Fatalf("selected LLVM payload prefix mismatch: root %q, llvm-config --prefix %q", root, prefix)
 	}
 
-	tools := llvmTestToolchain{
-		root:      root,
-		llc:       llvmPayloadTool(t, root, "llc", "GOALLC_LLC"),
-		opt:       llvmPayloadTool(t, root, "opt", "GOALLC_OPT"),
-		fileCheck: llvmPayloadTool(t, root, "FileCheck", "GOALLC_FILECHECK"),
-		plugin:    llvmPayloadPlugin(t, root),
-		wrapper:   buildLLVMTestToolexec(t),
-	}
-
-	// Freeze every consumer to the validated payload. In particular, do not let
-	// an individual subtest silently fall back to a stale GOROOT/llvm tree.
-	t.Setenv("GOALLC_LLVM_DIR", tools.root)
-	t.Setenv("GOALLC_LLC", tools.llc)
-	t.Setenv("GOALLC_OPT", tools.opt)
-	t.Setenv("GOALLC_FILECHECK", tools.fileCheck)
-	t.Setenv("GOALLC_PASS_PLUGIN", tools.plugin)
-	t.Setenv(llvmTestToolexecEnv, tools.wrapper)
-	t.Logf("LLVM test toolchain: go=%s wrapper=%s payload=%s llc=%s opt=%s FileCheck=%s plugin=%s runtime-pipeline=default<O2>",
-		goTool, tools.wrapper, tools.root, tools.llc, tools.opt, tools.fileCheck, tools.plugin)
+	// Freeze the compiler to the validated payload. Individual tests do not
+	// select opt, llc, a pass plugin, or toolexec; cmd/compile owns the complete
+	// optimization and code-generation pipeline. Codegen IR assertions resolve
+	// FileCheck lazily from this same payload.
+	t.Setenv("GOALLC_LLVM_DIR", root)
+	t.Logf("LLVM test toolchain: go=%s payload=%s in-process-pipeline=default<O2>",
+		goTool, root)
 	if configured != "" {
 		t.Logf("LLVM payload selected by %s", configured)
 	}
-	return tools
 }
 
 func llvmTestPayloadRoot(t *testing.T) (root, configured string) {
@@ -769,11 +707,6 @@ func llvmTestPayloadRoot(t *testing.T) (root, configured string) {
 	if value := strings.TrimSpace(os.Getenv("GOALLC_LLVM_DIR")); value != "" {
 		return llvmAbsolutePath(t, value, "GOALLC_LLVM_DIR"), "GOALLC_LLVM_DIR"
 	}
-	if value := strings.TrimSpace(os.Getenv("GOALLC_LLC")); value != "" {
-		llc := llvmRegularFile(t, value, "GOALLC_LLC", true)
-		return filepath.Dir(filepath.Dir(llc)), "GOALLC_LLC"
-	}
-
 	goroot := testenv.GOROOT(t)
 	payloadConfig := filepath.Join(goroot, "pkg", "goallc-llvm-payload")
 	if data, err := os.ReadFile(payloadConfig); err == nil {
@@ -810,46 +743,6 @@ func llvmPayloadTool(t *testing.T, root, name, envName string) string {
 func llvmPayloadExecutable(t *testing.T, root, name string) string {
 	t.Helper()
 	return llvmRegularFile(t, filepath.Join(root, "bin", name), "LLVM payload", true)
-}
-
-func llvmPayloadPlugin(t *testing.T, root string) string {
-	t.Helper()
-	name := "GoALLCStatepoints.so"
-	if runtime.GOOS == "darwin" {
-		name = "GoALLCStatepoints.dylib"
-	}
-	expected := llvmRegularFile(t, filepath.Join(root, "lib", name), "LLVM payload", false)
-	if value := strings.TrimSpace(os.Getenv("GOALLC_PASS_PLUGIN")); value != "" {
-		configured := llvmRegularFile(t, value, "GOALLC_PASS_PLUGIN", false)
-		if !sameLLVMTestFile(configured, expected) {
-			t.Fatalf("GOALLC_PASS_PLUGIN=%q does not belong to selected LLVM payload %q (expected %q)", configured, root, expected)
-		}
-	}
-	return expected
-}
-
-func llvmToolexecPath(t *testing.T) string {
-	t.Helper()
-	if value := strings.TrimSpace(os.Getenv(llvmTestToolexecEnv)); value != "" {
-		return llvmRegularFile(t, value, llvmTestToolexecEnv, true)
-	}
-	out, err := exec.Command(goTool, "tool", "-n", "llvmtoolexec").CombinedOutput()
-	if err != nil {
-		t.Fatalf("resolving llvmtoolexec from selected Go tool %q: %v\n%s", goTool, err, out)
-	}
-	return llvmRegularFile(t, strings.TrimSpace(string(out)), "go tool llvmtoolexec", true)
-}
-
-func buildLLVMTestToolexec(t *testing.T) string {
-	t.Helper()
-	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
-	cmd := exec.Command(goTool, "build", "-o", wrapper, "cmd/llvmtoolexec")
-	cmd.Dir = testenv.GOROOT(t)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building llvmtoolexec from the selected Go checkout: %v\n%s", err, out)
-	}
-	return llvmRegularFile(t, wrapper, "fresh llvmtoolexec", true)
 }
 
 func llvmCommandOutput(t *testing.T, name string, args ...string) string {
@@ -907,13 +800,4 @@ func llvmToolPath(t *testing.T, name, envName string) string {
 		t.Skipf("%s is unavailable; set GOALLC_LLVM_DIR or build Go with -llvm-dir", name)
 	}
 	return llvmPayloadTool(t, root, name, envName)
-}
-
-func llvmPassPluginPath(t *testing.T) string {
-	t.Helper()
-	root, _ := llvmTestPayloadRoot(t)
-	if root == "" {
-		t.Skip("GoALLC pass plugin is unavailable; set GOALLC_LLVM_DIR or build Go with -llvm-dir")
-	}
-	return llvmPayloadPlugin(t, root)
 }

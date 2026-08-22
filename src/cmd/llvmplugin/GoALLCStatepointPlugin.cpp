@@ -4,6 +4,10 @@
 
 #include "GoALLCPreCodeGen.h"
 #include "GoALLCStatepoints.h"
+#include "llvm-c/Core.h"
+#include "llvm-c/Error.h"
+#include "llvm-c/TargetMachine.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/CodeGen/StackProtector.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -17,7 +21,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/Plugins/PassPlugin.h"
+#include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/RegisterTargetPassConfigCallback.h"
@@ -26,6 +32,7 @@
 using namespace llvm;
 
 Pass *createGoALLCInlineAnchorPass();
+void linkGoALLCStackMapPrinter();
 
 namespace {
 
@@ -42,8 +49,16 @@ cl::opt<bool>
            cl::desc("Emit IR after the GoALLC pre-codegen pipeline and stop"),
            cl::init(false));
 
+void registerGoALLCTargetPasses();
+
 bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
                            raw_pwrite_stream &) {
+  // A dynamically loaded plugin runs its static constructors immediately
+  // before this callback. A plugin linked into compile, however, may run them
+  // before LLVM has initialized its callback registry. Register lazily from
+  // the common callback so both linkage modes observe the same lifetime.
+  registerGoALLCTargetPasses();
+
   // Keep the early callback only as an IR-emission test facility. Production
   // compilation performs only module-wide preparation here, then rewrites
   // each function from GoALLCPreISelPass after standard codegen IR preparation.
@@ -150,19 +165,37 @@ static RegisterPass<GoALLCPreISelPass>
     RegisterGoALLCPreISelPass("goallc-late-statepoints",
                               "GoALLC late statepoints", false, false);
 
-RegisterTargetPassConfigCallback RegisterGoALLCTargetPasses(
-    [](TargetMachine &TM, PassManagerBase &, TargetPassConfig *TPC) {
-      if (!TPC)
-        return;
+void registerGoALLCTargetPasses() {
+  static RegisterTargetPassConfigCallback Registration(
+      [](TargetMachine &TM, PassManagerBase &, TargetPassConfig *TPC) {
+        if (!TPC)
+          return;
 
-      TPC->addPreISelPass(
-          [TMPtr = &TM]() { return new GoALLCPreISelPass(*TMPtr); });
-      if (TM.getTargetTriple().isOSBinFormatGoObj())
-        TPC->addPreBranchRelaxationPass(
-            []() { return createGoALLCInlineAnchorPass(); });
-    });
+        TPC->addPreISelPass(
+            [TMPtr = &TM]() { return new GoALLCPreISelPass(*TMPtr); });
+        if (TM.getTargetTriple().isOSBinFormatGoObj())
+          TPC->addPreBranchRelaxationPass(
+              []() { return createGoALLCInlineAnchorPass(); });
+      });
+  (void)Registration;
+}
 
 } // namespace
+
+extern "C" LLVMErrorRef
+LLVMGoALLCRunPreCodeGen(LLVMModuleRef ModuleRef,
+                        LLVMTargetMachineRef TargetMachineRef,
+                        LLVMCodeGenFileType FileType) {
+  linkGoALLCStackMapPrinter();
+  SmallVector<char, 0> CallbackOutput;
+  raw_svector_ostream OS(CallbackOutput);
+  Module &M = *unwrap(ModuleRef);
+  TargetMachine &TM = *reinterpret_cast<TargetMachine *>(TargetMachineRef);
+  if (runPreCodeGenCallback(M, TM, static_cast<CodeGenFileType>(FileType), OS))
+    return LLVMCreateStringError(
+        "linked GoALLC plugin stopped the in-process code-generation pipeline");
+  return LLVMErrorSuccess;
+}
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {

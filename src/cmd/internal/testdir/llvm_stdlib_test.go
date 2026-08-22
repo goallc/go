@@ -294,7 +294,6 @@ func TestLLVMStdlib(t *testing.T) {
 	validateLLVMStdlibPolicy(t, packages, policySet)
 	set := effectiveLLVMStdlibTestSet(policySet, platform)
 	configureLLVMTestToolchain(t)
-	toolexec := llvmToolexec(t, "default<O2>")
 
 	whitelist := make([]string, 0, len(set.Whitelist))
 	for name := range set.Whitelist {
@@ -323,13 +322,13 @@ func TestLLVMStdlib(t *testing.T) {
 	}
 	t.Logf("LLVM stdlib blacklist result: NOT RUN remaining=%d reason=%q", len(packages)-len(whitelist)-len(graylist)-len(knownBlacklist), set.Blacklist["*"])
 
-	// The target package and toolexec pipeline are part of cmd/go's action IDs,
+	// The target package and in-process LLVM pipeline are part of cmd/go's action IDs,
 	// so one isolated cache can safely serve every package in this policy run.
 	// A single all= pattern compiles the test package, generated test main,
-	// runtime, and the complete dependency closure with LLVM. The toolchain,
-	// payload, and pass plugin remain fixed for the lifetime of the test process.
+	// runtime, and the complete dependency closure with LLVM. The compiler and
+	// its recorded payload remain fixed for the lifetime of the test process.
 	cache := t.TempDir()
-	warmLLVMExecutionRuntime(t, toolexec, cache)
+	warmLLVMExecutionRuntime(t, cache)
 	type llvmStdlibCandidate struct {
 		name  string
 		class llvmStdlibClass
@@ -365,8 +364,7 @@ func TestLLVMStdlib(t *testing.T) {
 				"-p=1",
 				"-count=1",
 				"-timeout=" + testTimeout,
-				"-toolexec=" + toolexec,
-				"-gcflags=all=-enablellvm -llvmironly",
+				"-gcflags=all=-enablellvm",
 			}
 			if name == "runtime" {
 				// LLVM GoObj does not yet emit complete

@@ -128,8 +128,10 @@ type CmdFlags struct {
 	WB                 bool         "help:\"enable write barrier\"" // TODO: remove
 	PgoProfile         string       "help:\"read profile or pre-process profile from `file`\""
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
-	EnableLLVM         bool         "help:\"enable llvm backend\""
-	LLVMIROnly         bool         "help:\"emit LLVM IR and stop before native code generation (requires -enablellvm)\""
+	EnableLLVM         bool         "help:\"compile with the in-process LLVM backend\""
+	LLVMExternal       bool         "flag:\"llvm-external-codegen\" help:\"emit LLVM IR and export data for the llvmtoolexec external codegen pipeline (requires -enablellvm)\""
+	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep pre-optimization and optimized LLVM IR beside the output archive\""
+	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline used by the in-process backend\""
 	// Configuration derived from flags; not a flag itself.
 	Cfg struct {
 		Embed struct { // set by -embedcfg
@@ -178,7 +180,8 @@ func ParseFlags() {
 	Flag.Shared = &Ctxt.Flag_shared
 	Flag.WB = true
 	Flag.EnableLLVM = false
-	Flag.LLVMIROnly = false
+	Flag.LLVMExternal = false
+	Flag.LLVMOptPasses = "default<O2>"
 
 	Debug.ConcurrentOk = true
 	Debug.CompressInstructions = 1

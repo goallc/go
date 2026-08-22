@@ -302,11 +302,11 @@ const maxStackSize = 1 << 30
 // worker indicates which of the backend workers is doing the processing.
 func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
 	f := buildssa(fn, worker, inline.IsPgoHotFunc(fn, profile) || inline.HasPgoHotInline(fn))
-	if base.Flag.EnableLLVM && base.Flag.LLVMIROnly {
-		// The LLVM-only pipeline ends at IR emission. In particular, do not
-		// enter genssa: ssa.Compile has already emitted LLVM IR, while genssa
-		// consumes native register-allocation state and emits the _go_.o
-		// member that llc is replacing.
+	if base.Flag.EnableLLVM {
+		// Both the in-process backend and the retained external-codegen/toolexec path
+		// replace native code generation. ssa.Compile has already emitted LLVM
+		// IR; genssa would consume native register-allocation state and emit a
+		// second _go_.o member.
 		// TODO(goallc): Enforce runtime //go:nowritebarrier(rec) against the
 		// finalized LLVM IR call graph in an LLVM pass. Do not approximate it
 		// by scanning SSA after LLVM IR emission.

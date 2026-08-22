@@ -24,3 +24,7 @@ func FinalizeGoObjSymbolMetadata() {
 func Output(fileName string) error {
 	return nil
 }
+
+func EmitLLVMGoObj(outputFile string) ([]byte, error) {
+	return nil, nil
+}

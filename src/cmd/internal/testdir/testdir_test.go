@@ -518,7 +518,7 @@ func (t test) goGcflags() string {
 		if flags != "" {
 			flags += " "
 		}
-		flags += "-enablellvm -llvmironly"
+		flags += "-enablellvm"
 	}
 	return "-gcflags=all=" + flags
 }
@@ -597,23 +597,23 @@ func TestAppendBuildFlag(t *testing.T) {
 			flag:    "gcflags",
 			initial: "-N",
 			flags:   []string{"-race", "-gcflags=all=-d=checkptr=0"},
-			extra:   []string{"-enablellvm", "-llvmironly"},
-			want:    []string{"-race", "-gcflags=all=-d=checkptr=0", "-gcflags=-d=checkptr=0 -enablellvm -llvmironly"},
+			extra:   []string{"-enablellvm"},
+			want:    []string{"-race", "-gcflags=all=-d=checkptr=0", "-gcflags=-d=checkptr=0 -enablellvm"},
 		},
 		{
 			name:  "update separate unpatterned argument",
 			flag:  "gcflags",
 			flags: []string{"-gcflags", "-l=4"},
-			extra: []string{"-enablellvm", "-llvmironly"},
-			want:  []string{"-gcflags", "-l=4 -enablellvm -llvmironly"},
+			extra: []string{"-enablellvm"},
+			want:  []string{"-gcflags", "-l=4 -enablellvm"},
 		},
 		{
 			name:    "preserve dependency rule",
 			flag:    "gcflags",
 			flags:   []string{"-gcflags=runtime=-l"},
 			initial: "-N",
-			extra:   []string{"-enablellvm", "-llvmironly"},
-			want:    []string{"-gcflags=runtime=-l", "-gcflags=-N -enablellvm -llvmironly"},
+			extra:   []string{"-enablellvm"},
+			want:    []string{"-gcflags=runtime=-l", "-gcflags=-N -enablellvm"},
 		},
 		{
 			name:  "update unpatterned ldflags",
@@ -637,7 +637,7 @@ func TestGoGcflags(t *testing.T) {
 	if got, want := (test{}).goGcflags(), "-gcflags=all=-N"; got != want {
 		t.Fatalf("native goGcflags() = %q, want %q", got, want)
 	}
-	if got, want := (test{llvm: new(llvmTestMode)}).goGcflags(), "-gcflags=all=-N -enablellvm -llvmironly"; got != want {
+	if got, want := (test{llvm: new(llvmTestMode)}).goGcflags(), "-gcflags=all=-N -enablellvm"; got != want {
 		t.Fatalf("LLVM goGcflags() = %q, want %q", got, want)
 	}
 }
@@ -781,7 +781,6 @@ func (t test) run() error {
 		tim = llvmCaseTimeoutSeconds(tim)
 		if action == "run" || action == "runoutput" {
 			flags = appendBuildFlag(flags, "ldflags", "", "-w")
-			flags = append(flags, "-toolexec="+t.llvm.toolexec)
 		}
 	}
 	if action == "errorcheck" {

@@ -185,16 +185,15 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 ## LLVM 测试工具选择
 
 `cmd/internal/testdir` 的 LLVM 测试在开始运行测试策略前只选择一次 payload，顺序为
-显式的 `GOALLC_LLVM_DIR`、由 `GOALLC_LLC` 推导的根目录、`make.bash` 写入的
-`$GOROOT/pkg/goallc-llvm-payload`，最后才是兼容入口 `$GOROOT/llvm`。选定后，
-`llc`、`opt`、`FileCheck`、`llvm-config` 和 pass plugin 必须全部来自这个 payload；
-单项环境变量如果指向另一棵 LLVM 会作为基础设施错误立即失败，不再静默回退。
+显式的 `GOALLC_LLVM_DIR`、`make.bash` 写入的
+`$GOROOT/pkg/goallc-llvm-payload`，最后才是兼容入口 `$GOROOT/llvm`。测试框架只把
+该根目录交给 compiler，不再解析或注入 `llc`、`opt`、pass plugin 或 toolexec。
 
-测试启动日志会打印 Go、payload、LLVM 工具、plugin 和优化 pipeline 的绝对路径。
-`llvmtoolexec` 从当前 Go checkout 临时构建，避免复用 `$GOROOT/pkg/tool` 中的旧
-wrapper。白名单和灰名单的 runtime 用例都使用 `default<O2>`，并由 wrapper 按
-`command-line-arguments` 包选择 LLVM lowering；用例 recipe 自己的 `-gcflags`
-保持原样，不会覆盖或关闭 LLVM 编译。
+测试启动日志只打印 Go、payload 和进程内优化 pipeline。白名单、灰名单和标准库
+runtime 用例只通过 `-gcflags=all=-enablellvm` 选择 LLVM；codegen 用例也运行完整
+进程内 pipeline，并以 `-llvm-keep-ir` 读取 compiler 留下的优化前/后 IR。
+`FileCheck` 是唯一额外测试工具，其选择仍被约束在同一 payload；外部
+`llvmtoolexec` 仅在自身的独立回归测试中使用。
 
 ## plugin 的构建与缓存
 
@@ -247,11 +246,21 @@ GOALLC_PASS_PLUGIN="$PLUGIN" \
 
 ## Go action cache
 
-LLVM 模式下，原生 `compile -V=full` 不足以标识最终 object。`llvmtoolexec` 只对
-带 `-enablellvm` 的 compile action，把 wrapper、`llc`、可选 `opt`、pass
-pipeline、plugin 和动态 `libLLVM` 的内容加入 tool identity。因此在相同路径
-替换 LLVM 或 plugin 会使 LLVM package 失效重编；没有启用 LLVM 的 package
-保持原生 Go cache key。
+LLVM 模式下，`cmd/go` 使用带 `-enablellvm` 的 `compile -V=full` probe。
+compiler 把自身 build ID、与 payload 同步安装的
+plugin artifact，以及 payload 中存在的动态 `libLLVM` 内容合入 tool identity；
+optimization pipeline 等 compiler flags 仍由普通 action input 标识。因此在
+相同路径替换 LLVM 或 plugin 会使 LLVM package 失效重编，没有启用 LLVM 的
+package 保持原生 Go cache key。静态模式的 plugin 和 LLVM archive 本身还会直接
+参与 compiler 链接。
+
+仓库根目录不提交 `VERSION`。开发工具链由 Git revision 生成带 `devel` 的版本，
+普通 compiler action 使用真实 binary build ID；LLVM action 在此基础上再合入
+上述运行时 artifacts。固定 `VERSION` 会让 fork 被误识别为 release compiler，
+从而可能只用不变的版本字符串判断工具身份。
+
+保留的 `llvmtoolexec` 外部模式继续由 wrapper 对 `llc`、可选 `opt`、pipeline、
+plugin 和 `libLLVM` 建立独立 identity，便于与进程内结果做可靠 A/B。
 
 不要用 `go clean -cache` 掩盖身份错误。只有在排查 action-cache 实现本身时才做
 clean-cache A/B 对比。
@@ -273,6 +282,8 @@ GOALLC_CCACHE=/path/to/ccache \
 `llvm-config --link-static --libfiles` 聚合它们。`-lm`、`-lz`、`-lzstd`、
 `-lxml2` 等平台 system libraries 不复制进 aggregate，而由 go-llvm 的平台
 LDFLAGS 在最终链接时解析，因此 Linux 仍需安装相应 development package。
+GoALLC plugin 同时构建为 `libGoALLCStatepointsStatic.a` 并直接链接进
+`cmd/compile`；静态模式不会再加载 plugin DSO。
 `llvm-config` 返回未知 system library，或最终链接找不到依赖时必须失败，不能退回
 系统 LLVM。
 

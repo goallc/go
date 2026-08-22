@@ -39,6 +39,18 @@ func LoadLibraryPermanently(lib string) error {
 	return nil
 }
 
+// ConfigureGoObjFromModule decodes !goobj.config metadata into the GoObj
+// writer configuration consumed by the target code-generation pipeline.
+func ConfigureGoObjFromModule(m Module) error {
+	err := C.LLVMConfigureGoObjFromModule(m.C)
+	if err == nil {
+		return nil
+	}
+	cstr := C.LLVMGetErrorMessage(err)
+	defer C.LLVMDisposeErrorMessage(cstr)
+	return errors.New(C.GoString(cstr))
+}
+
 // Parse the given arguments using the LLVM command line parser.
 // See llvm::cl::ParseCommandLineOptions.
 func ParseCommandLineOptions(args []string, overview string) {

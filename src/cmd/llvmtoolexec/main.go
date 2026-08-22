@@ -4,10 +4,10 @@
 
 // llvm-toolexec is a go build -toolexec wrapper that replaces selected Go
 // compiler actions with objects produced by llc from compiler LLVM IR. An
-// action is selected when both -enablellvm and -llvmironly are present in its
-// compiler flags. The compiler still writes __.PKGDEF, so dependents retain
-// normal Go export-data handling; it intentionally writes no native machine
-// code.
+// action is selected when -enablellvm is present in its compiler flags. The
+// wrapper adds cmd/compile's internal -llvm-external-codegen protocol flag, so
+// the compiler writes LLVM IR and __.PKGDEF but no linker object. Dependents
+// retain normal Go export-data handling, and llc supplies the sole _go_.o.
 package main
 
 import (
@@ -108,7 +108,7 @@ func main() {
 	if !ok || output == "" {
 		fatalf("compile invocation has no -o output")
 	}
-	run(tool, args...)
+	run(tool, withLLVMExternalCodegen(args)...)
 
 	irPath := output + ".ll"
 	if _, err := os.Stat(irPath); err != nil {
@@ -301,7 +301,14 @@ func isCompileAction(args []string) bool {
 }
 
 func hasLLVMCompileFlags(args []string) bool {
-	return boolToolFlag(args, "-enablellvm") && boolToolFlag(args, "-llvmironly")
+	return boolToolFlag(args, "-enablellvm")
+}
+
+func withLLVMExternalCodegen(args []string) []string {
+	if boolToolFlag(args, "-llvm-external-codegen") {
+		return args
+	}
+	return append([]string{"-llvm-external-codegen"}, args...)
 }
 
 // printToolIdentity implements the toolexec -V=full protocol when this wrapper
@@ -326,6 +333,10 @@ func printToolIdentity(tool string, args []string, llc, configuredOpt, optPasses
 	}
 
 	cmd := exec.Command(tool, args...)
+	// This retained wrapper owns the external llc/plugin identity below. Avoid
+	// asking cmd/compile to resolve and hash its in-process backend as well;
+	// the wrapper may deliberately point at a different debug plugin.
+	cmd.Env = append(os.Environ(), "GOALLC_EXTERNAL_BACKEND=1")
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
@@ -506,7 +517,7 @@ func withoutLLVMCompileFlags(args []string) []string {
 	native := make([]string, 0, len(args))
 	for _, arg := range args {
 		if arg == "-enablellvm" || strings.HasPrefix(arg, "-enablellvm=") ||
-			arg == "-llvmironly" || strings.HasPrefix(arg, "-llvmironly=") {
+			arg == "-llvm-external-codegen" || strings.HasPrefix(arg, "-llvm-external-codegen=") {
 			continue
 		}
 		native = append(native, arg)

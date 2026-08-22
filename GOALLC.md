@@ -1,8 +1,15 @@
 # GoALLC 项目现状、架构与后续基线
 
-更新日期：2026-07-27
+更新日期：2026-08-22
 
-> 2026-07-27 更新：`compile -enablellvm -llvmironly`、`cmd/llvmtoolexec`
+> 2026-08-22 更新：`compile -enablellvm` 已改为进程内完成 IR 优化、
+> GoALLC plugin pre-codegen callback、LLVM codegen 和 GoObj archive 写入。
+> 日常使用只需 `-gcflags=all=-enablellvm`，不再需要 `-toolexec`。
+> `cmd/llvmtoolexec` 仍保留用于 A/B 调试与独立工具检查；它复用同一个
+> `-enablellvm` 选择，内部让 compiler 停止在 IR。参数边界见
+> [doc/goallc-llvm-goobj.md](doc/goallc-llvm-goobj.md#最小使用方式)。
+
+> 2026-07-27 更新：compiler IR-only 协议、`cmd/llvmtoolexec`
 > 和 LLVM 的 GoObj metadata consumer 已经打通一条仅面向简单 package 的
 > 自动链路。具体的输入/输出契约、运行方法和当前限制见
 > [doc/goallc-llvm-goobj.md](doc/goallc-llvm-goobj.md)。本文后续章节保留了
@@ -18,17 +25,15 @@ GoALLC 的目标是在尽量保持社区 Go 前端、语言语义、运行时、
 1. 在社区 Go 编译器中引入 Go LLVM binding，并实现一版 Go SSA 到
    LLVM IR 的原型 lowering。
 2. 在 LLVM 中实现 Go ABI 和 GoObj（Go gc 工具链对象格式）的初步支持。
-3. 通过 `go build -toolexec` 把 LLVM IR 生成的 GoObj 追加到 Go package
-   archive，并交给社区 Go linker 完成链接。
+3. 在 `cmd/compile` 进程内把 LLVM IR 优化并生成 GoObj，复用 compiler 的
+   archive writer 打包，再交给社区 Go linker 完成链接。
 
 当前成果是一个有真实端到端验证的原型，但还不是可以替代社区 Go 后端的
 完整编译器。特别需要区分：
 
-- Go SSA lowering 分支目前输出 LLVM IR sidecar，同时仍继续运行原生 Go
-  后端；
+- 默认 LLVM lowering 不落盘 IR，也不运行原生 Go backend；
 - LLVM 的端到端 GoObj 测试目前主要消费手写 `.ll`；
-- 两条路径尚未接成“Go SSA -> LLVM IR -> LLVM CodeGen -> GoObj -> Go
-  archive”的自动生产链路。
+- 外部 IR/`opt`/`llc` 路径作为诊断链路继续保留。
 
 ## 2. 仓库与分支基线
 
@@ -275,9 +280,12 @@ LLVM 主题分支已经实现：
 
 ### 5.1 Go SSA path 仍是受限原型
 
-- 单独使用 `-enablellvm` 时仍会继续运行原生 backend，并额外写出 `.ll`；
-- `-enablellvm -llvmironly` 可停止在 LLVM IR，由 `cmd/llvmtoolexec`
-  调用 `llc`、追加唯一的 `_go_.o` 并进入正常 Go linker；
+- 单独使用 `-enablellvm` 时在 compiler 进程内优化 IR、运行 plugin 和
+  TargetMachine codegen，并直接写入唯一的 `_go_.o`；
+- 指定 `cmd/llvmtoolexec` 时，wrapper 会让 compiler 停止在 LLVM IR，再调用
+  独立 `opt`/`llc`，作为 A/B 调试链路；用户仍只传 `-enablellvm`；
+- `-llvm-keep-ir` 可保留进程内优化前后的 IR；原生与 LLVM object 的对比使用
+  两次独立构建，不再在一次 compiler invocation 中运行两个 backend；
 - 当前 wrapper 通常只选择简单的 `main` package，不能把完整标准库切换到
   LLVM；
 - Go branch 已增加复用 `test/codegen` 和现有 `// run` 用例的白/灰/黑名单
@@ -324,7 +332,8 @@ metadata 和类型描述符生成。
 
 当前可工作的集成组合是：
 
-- Go checkout：官方 `release-branch.go1.27` 的 `go1.27rc2`；
+- Go checkout：`goallc/go` 的 `go1.27.master` 开发分支；根目录不提交
+  `VERSION`，工具版本和 compiler build ID 从 Git revision 生成；
 - bootstrap Go：Go 1.26.5；
 - vendored/standalone binding：显式选择 `llvm23`；
 - LLVM source/build：23.1.0git；
@@ -332,7 +341,8 @@ metadata 和类型描述符生成。
 - LLVM API 默认版本为 23，也可用 `-llvm-version` 显式指定；
 - 默认通过 payload 中的 `libLLVM` 动态链接；`-llvm-link=static` 让
   `cmd/dist` 使用 payload 的
-  `llvm-config` 与 `llvm-ar` 生成 binding 本地的 `libLLVMGoALLC.a`。
+  `llvm-config` 与 `llvm-ar` 生成 binding 本地的 `libLLVMGoALLC.a`，并把
+  `libGoALLCStatepointsStatic.a` 直接链接进 compiler。
 
 当前 LLVM 由 macOS 26 SDK 构建，而 Go 1.27 工具链默认链接目标为 macOS
 16，因此链接时会产生 deployment-target 警告。构建和 smoke test
@@ -364,8 +374,8 @@ binding 的代码配置中，不与普通 cgo 构建的外部环境变量混用�
 - 更新后的 binding 已同步到 Go vendor，`goallc_ext.go` 不再是 vendor
   私有差异；
 - Go 三阶段工具链在默认动态模式和 `-llvm-link=static` 模式下均构建
-  成功，`bin/go version` 为
-  `go1.27rc2 darwin/arm64`，`compile -h` 包含 `-enablellvm`；
+  成功，`bin/go version` 使用带 revision 的 development version，
+  `compile -h` 包含 `-enablellvm`；
 - `go test cmd/dist`、`go test cmd/compile/internal/ssa cmd/objview` 通过；
 - 最小 `Add(int64, int64)` 包经 `compile -enablellvm` 同时生成 Go archive
   和 LLVM IR，后者通过 LLVM 23 `opt -passes=verify`。
@@ -497,9 +507,9 @@ ID、`gc.statepoint` / `gc.relocate` 和 GC leaf 识别。当前 pointer 分类�
 pointer-containing alloca 则在 LLVM 优化后按实际 use graph 分为两类，并统一
 通过带 kind 的 deopt 布局协议进入 `LocalsPointerMaps`，只有地址可观察对象额外
 生成 `FUNCDATA_StackObjects`。live aggregate、EH invoke、
-musttail 等未覆盖形态会 fail closed。未来
-`cmd/compile` 通过 API 进程内集成 LLVM 时复用同一 core，而不依赖 `llc`
-plugin adapter。
+musttail 等未覆盖形态会 fail closed。默认 `cmd/compile` 已在进程内加载 plugin
+adapter（动态模式）或调用链接实现（静态模式），并执行同一 pre-codegen
+callback；core 的独立入口继续用于测试和演进。
 
 Machine StackMaps 通过插件注册的 `GCMetadataPrinter::emitStackMaps` 接入：
 插件读取 LLVM 已生成的通用机器位置记录并桥接到 GoObj writer，LLVM

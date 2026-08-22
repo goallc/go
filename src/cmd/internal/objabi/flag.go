@@ -204,6 +204,15 @@ func AddVersionFlag() {
 
 var buildID string // filled in by linker
 
+var versionFlagFullHook func(buildID string) string
+
+// SetVersionFlagFullHook lets a tool include additional backend components in
+// its full identity. The hook returns a complete suffix including the buildID
+// field.
+func SetVersionFlagFullHook(hook func(buildID string) string) {
+	versionFlagFullHook = hook
+}
+
 type versionFlag struct{}
 
 func (versionFlag) IsBoolFlag() bool { return true }
@@ -229,7 +238,9 @@ func (versionFlag) Set(s string) error {
 	// build ID of the binary, so that if the compiler is changed and
 	// rebuilt, we notice and rebuild all packages.
 	if s == "full" {
-		if strings.Contains(buildcfg.Version, "devel") {
+		if versionFlagFullHook != nil {
+			p += versionFlagFullHook(buildID)
+		} else if strings.Contains(buildcfg.Version, "devel") {
 			p += " buildID=" + buildID
 		}
 	}

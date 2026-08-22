@@ -7,9 +7,12 @@ lives in the Go repository: LLVM only supplies the generic `llc`
 `GoALLCStatepointPlugin.cpp` adapts that callback to
 `goallc::runPreCodeGenPipeline`. GoALLC transformations belong in
 `GoALLCPreCodeGen.cpp` or other sources in this directory, not in the LLVM
-repository. The core entry point is separate from the plugin adapter so a
-future in-process `cmd/compile` integration can call the same pipeline without
-going through `llc`.
+repository. The core entry point remains separate from the plugin adapter.
+The default `cmd/compile -enablellvm` path invokes the same pre-codegen callback
+in-process before constructing LLVM code generation. Dynamic LLVM builds load
+the module from the selected payload; static LLVM builds call the linked
+implementation directly. The retained `llvmtoolexec` path reaches it through
+`llc`.
 
 The SSA-to-LLVM lowering owns the function-level contract: Go ABI definitions
 carry `gc "goallc"`, and only source-level exceptions to the native Go stack

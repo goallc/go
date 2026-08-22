@@ -19,8 +19,9 @@ import (
 )
 
 type goallcPluginStamp struct {
-	Input  string `json:"input"`
-	Plugin string `json:"plugin"`
+	Input        string `json:"input"`
+	Plugin       string `json:"plugin"`
+	StaticPlugin string `json:"static_plugin"`
 }
 
 func goallcPassPluginFilename(goos string) string {
@@ -51,14 +52,15 @@ func writeGoallcLLVMPayloadConfig() {
 	}
 }
 
-// ensureGoallcPassPlugin keeps the Go-owned pass plugin in the selected LLVM
-// payload synchronized with its sources and the exact llc that loads it.
+// ensureGoallcPassPlugin keeps the shared and static forms of the Go-owned pass
+// plugin synchronized with the selected LLVM payload.
 func ensureGoallcPassPlugin() {
 	sourceDir := pathf("%s/src/cmd/llvmplugin", goroot)
 	buildDir := pathf("%s/pkg/goallc-llvmplugin", goroot)
 	llc := pathf("%s/bin/llc", goallcLLVMDir)
 	llvmConfig := pathf("%s/bin/llvm-config", goallcLLVMDir)
 	destination := pathf("%s/lib/%s", goallcLLVMDir, goallcPassPluginFilename(gohostos))
+	staticDestination := pathf("%s/lib/libGoALLCStatepointsStatic.a", goallcLLVMDir)
 	stampPath := pathf("%s/goallc-plugin.stamp", buildDir)
 
 	buildModeOutput, err := exec.Command(llvmConfig, "--build-mode").Output()
@@ -94,7 +96,9 @@ func ensureGoallcPassPlugin() {
 	}
 	if stamp, err := readGoallcPluginStamp(stampPath); err == nil && stamp.Input == input {
 		if plugin, err := goallcFileSHA256(destination); err == nil && plugin == stamp.Plugin {
-			return
+			if staticPlugin, err := goallcFileSHA256(staticDestination); err == nil && staticPlugin == stamp.StaticPlugin {
+				return
+			}
 		}
 	}
 
@@ -115,24 +119,32 @@ func ensureGoallcPassPlugin() {
 	cmakeArgs = append(cmakeArgs, configuration...)
 	cmakeArgs = append(cmakeArgs, goallcCMakeLauncherArgs()...)
 	run("", ShowOutput|CheckExit, cmakeArgs...)
-	run("", ShowOutput|CheckExit, "cmake", "--build", buildDir, "--target", "GoALLCStatepoints")
+	run("", ShowOutput|CheckExit, "cmake", "--build", buildDir, "--target", "GoALLCStatepoints", "GoALLCStatepointsStatic")
 
 	built := pathf("%s/%s", buildDir, goallcPassPluginFilename(gohostos))
 	if err := installGoallcPluginAtomically(built, destination); err != nil {
 		fatalf("installing GoALLC pass plugin: %v", err)
 	}
+	staticBuilt := pathf("%s/libGoALLCStatepointsStatic.a", buildDir)
+	if err := installGoallcPluginAtomically(staticBuilt, staticDestination); err != nil {
+		fatalf("installing static GoALLC pass plugin: %v", err)
+	}
 	plugin, err := goallcFileSHA256(destination)
 	if err != nil {
 		fatalf("hashing installed GoALLC pass plugin: %v", err)
 	}
-	if err := writeGoallcPluginStamp(stampPath, goallcPluginStamp{Input: input, Plugin: plugin}); err != nil {
+	staticPlugin, err := goallcFileSHA256(staticDestination)
+	if err != nil {
+		fatalf("hashing installed static GoALLC pass plugin: %v", err)
+	}
+	if err := writeGoallcPluginStamp(stampPath, goallcPluginStamp{Input: input, Plugin: plugin, StaticPlugin: staticPlugin}); err != nil {
 		fatalf("writing GoALLC pass plugin stamp: %v", err)
 	}
 }
 
 func goallcPluginInputID(sourceDir, llc, llvmConfig string, configuration []string, runtimeLibraries ...string) (string, error) {
 	h := sha256.New()
-	io.WriteString(h, "goallc pass plugin input v3\x00")
+	io.WriteString(h, "goallc pass plugin input v4\x00")
 	for _, setting := range configuration {
 		io.WriteString(h, "configuration\x00"+setting+"\x00")
 	}
@@ -312,7 +324,7 @@ func readGoallcPluginStamp(path string) (goallcPluginStamp, error) {
 	if err := json.Unmarshal(data, &stamp); err != nil {
 		return stamp, err
 	}
-	if stamp.Input == "" || stamp.Plugin == "" {
+	if stamp.Input == "" || stamp.Plugin == "" || stamp.StaticPlugin == "" {
 		return stamp, fmt.Errorf("incomplete stamp")
 	}
 	return stamp, nil

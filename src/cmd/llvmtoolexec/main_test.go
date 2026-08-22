@@ -70,7 +70,7 @@ func TestLLVMReflectMethodReachability(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
+		"-gcflags="+packagePath+"=-enablellvm",
 		"-ldflags=-w",
 		"-o", executable,
 		packageArg,
@@ -87,7 +87,7 @@ func TestLLVMReflectMethodReachability(t *testing.T) {
 	listFixture := testenv.Command(
 		t, goTool, "list", "-export", "-f={{.Export}}",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
+		"-gcflags="+packagePath+"=-enablellvm",
 		packageArg,
 	)
 	listFixture.Dir = root
@@ -176,7 +176,7 @@ func TestLLVMImportedPackageReferences(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
+		"-gcflags="+packagePath+"=-enablellvm",
 		"-o", executable,
 		packageArg,
 	)
@@ -195,7 +195,7 @@ func TestLLVMImportedPackageReferences(t *testing.T) {
 	listFixture := testenv.Command(
 		t, goTool, "list", "-export", "-f={{.Export}}",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
+		"-gcflags="+packagePath+"=-enablellvm",
 		packageArg,
 	)
 	listFixture.Dir = root
@@ -369,18 +369,30 @@ func TestCompileInvocationClassification(t *testing.T) {
 	if !isCompileAction([]string{"-p=main", "-o", "out.a", "main.go"}) {
 		t.Fatal("compile with output was not recognized")
 	}
-	if !hasLLVMCompileFlags([]string{"-enablellvm", "-llvmironly"}) {
-		t.Fatal("complete LLVM compiler flags were not recognized")
+	if !hasLLVMCompileFlags([]string{"-enablellvm"}) {
+		t.Fatal("LLVM compiler selection was not recognized")
 	}
 	for _, args := range [][]string{
-		{"-enablellvm"},
-		{"-llvmironly"},
-		{"-enablellvm", "-llvmironly=false"},
-		{"-enablellvm=false", "-llvmironly"},
+		nil,
+		{"-enablellvm=false"},
 	} {
 		if hasLLVMCompileFlags(args) {
-			t.Fatalf("incomplete LLVM compiler flags %q were recognized", args)
+			t.Fatalf("disabled LLVM compiler flags %q were recognized", args)
 		}
+	}
+}
+
+func TestWithLLVMExternalCodegen(t *testing.T) {
+	args := []string{"-enablellvm", "-o", "out.a"}
+	got := withLLVMExternalCodegen(args)
+	if !boolToolFlag(got, "-llvm-external-codegen") {
+		t.Fatalf("external codegen protocol was not added: %q", got)
+	}
+	if got[0] != "-llvm-external-codegen" {
+		t.Fatalf("external codegen protocol must precede source arguments: %q", got)
+	}
+	if boolToolFlag(args, "-llvm-external-codegen") {
+		t.Fatalf("withLLVMExternalCodegen modified its input: %q", args)
 	}
 }
 
@@ -412,7 +424,7 @@ func TestCodegenLLCArgsDisableUnsafeMachinePasses(t *testing.T) {
 func TestNativePackageOverride(t *testing.T) {
 	packages := stringSetFlag{"runtime_test": {}}
 	args := []string{
-		"-p", "runtime_test", "-enablellvm", "-llvmironly=true",
+		"-p", "runtime_test", "-enablellvm", "-llvm-external-codegen=true",
 		"-o", "out.a", "callers_test.go",
 	}
 	if !useNativeCompiler(args, packages) {
@@ -425,7 +437,7 @@ func TestNativePackageOverride(t *testing.T) {
 	if got, ok := toolFlag(native, "-p"); !ok || got != "runtime_test" {
 		t.Fatalf("native override changed package flag to %q, %v", got, ok)
 	}
-	if useNativeCompiler([]string{"-p=runtime", "-enablellvm", "-llvmironly"}, packages) {
+	if useNativeCompiler([]string{"-p=runtime", "-enablellvm", "-llvm-external-codegen"}, packages) {
 		t.Fatal("native package override matched a different package")
 	}
 }
@@ -706,7 +718,7 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags=-enablellvm -llvmironly",
+		"-gcflags=-enablellvm",
 		"-ldflags=-w -debugnosplit",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/indirect",
@@ -730,7 +742,7 @@ func TestLLVMIndirectCallStackCheck(t *testing.T) {
 	source := filepath.Join(root, "src", "cmd", "llvmtoolexec", "testdata", "indirect", "main.go")
 	compileFixture := testenv.Command(
 		t, goTool, "tool", "compile",
-		"-p=main", "-enablellvm", "-llvmironly",
+		"-p=main", "-enablellvm", "-llvm-external-codegen",
 		"-o", archive, source,
 	)
 	if out, err := compileFixture.CombinedOutput(); err != nil {
@@ -775,7 +787,7 @@ func TestLLVMPCLNInlineTraceback(t *testing.T) {
 	// Verify the source-semantic graph independently of final code layout.
 	archive := filepath.Join(t.TempDir(), "pclninline.a")
 	compile := testenv.Command(t, goTool, "tool", "compile",
-		"-p=main", "-enablellvm", "-llvmironly", "-o", archive, source)
+		"-p=main", "-enablellvm", "-llvm-external-codegen", "-o", archive, source)
 	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compiling PCLN inline fixture to LLVM IR: %v\n%s", err, out)
 	}
@@ -815,7 +827,7 @@ func TestLLVMPCLNInlineTraceback(t *testing.T) {
 	executable := filepath.Join(t.TempDir(), "pclninline")
 	buildFixture := testenv.Command(t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags="+packagePath+"=-enablellvm -llvmironly",
+		"-gcflags="+packagePath+"=-enablellvm",
 		"-ldflags=-w",
 		"-o", executable,
 		"./src/"+packagePath,
@@ -881,7 +893,7 @@ func TestLLVMInitTaskOrder(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags=cmd/llvmtoolexec/testdata/inittask=-enablellvm -llvmironly",
+		"-gcflags=cmd/llvmtoolexec/testdata/inittask=-enablellvm",
 		"-ldflags=-w",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/inittask",
@@ -924,7 +936,7 @@ func TestLLVMExplicitNilCheckRuntime(t *testing.T) {
 	buildFixture := testenv.Command(
 		t, goTool, "build",
 		"-toolexec="+toolexec,
-		"-gcflags=cmd/llvmtoolexec/testdata/nilcheck/p=-enablellvm -llvmironly",
+		"-gcflags=cmd/llvmtoolexec/testdata/nilcheck/p=-enablellvm",
 		"-ldflags=-w",
 		"-o", executable,
 		"./src/cmd/llvmtoolexec/testdata/nilcheck",
@@ -956,7 +968,7 @@ func TestLLVMExplicitNilCheckGoObj(t *testing.T) {
 	compileFixture := testenv.Command(
 		t, goTool, "tool", "compile",
 		"-p=cmd/llvmtoolexec/testdata/nilcheckobj",
-		"-enablellvm", "-llvmironly",
+		"-enablellvm", "-llvm-external-codegen",
 		"-o", archive, source,
 	)
 	if out, err := compileFixture.CombinedOutput(); err != nil {

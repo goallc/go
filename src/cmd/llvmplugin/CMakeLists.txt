@@ -20,7 +20,7 @@ include(AddLLVM)
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
-add_llvm_pass_plugin(GoALLCStatepoints
+set(GOALLC_STATEPOINT_SOURCES
   GoALLCStackMapPrinter.cpp
   GoALLCInlineAnchors.cpp
   GoALLCPreCodeGen.cpp
@@ -28,7 +28,11 @@ add_llvm_pass_plugin(GoALLCStatepoints
   GoALLCStatepointPlugin.cpp
 )
 
-set_target_properties(GoALLCStatepoints PROPERTIES
+add_llvm_pass_plugin(GoALLCStatepoints ${GOALLC_STATEPOINT_SOURCES})
+add_library(GoALLCStatepointsStatic STATIC ${GOALLC_STATEPOINT_SOURCES})
+llvm_update_compile_flags(GoALLCStatepointsStatic)
+
+set_target_properties(GoALLCStatepoints GoALLCStatepointsStatic PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS NO

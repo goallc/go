@@ -148,12 +148,12 @@ func (b *Builder) toolID(name string) string {
 	return b.toolIDWithArgs(name, name, nil)
 }
 
-// compileToolID returns the compiler identity for gcflags. llvmtoolexec uses
-// -enablellvm as the single source of truth for selecting LLVM compilation,
-// so its version probe must carry that flag too. Other compiler invocations
-// retain the standard tool ID and do not depend on the external backend.
+// compileToolID returns the compiler identity for gcflags. The LLVM compiler
+// version probe carries the backend selection so cmd/compile can include its
+// LLVM and pass-plugin artifacts in the identity. llvmtoolexec consumes the
+// same probe for the retained external debug pipeline.
 func (b *Builder) compileToolID(gcflags []string) string {
-	if len(cfg.BuildToolexec) == 0 || !boolToolFlag(gcflags, "-enablellvm") {
+	if !boolToolFlag(gcflags, "-enablellvm") {
 		return b.toolID("compile")
 	}
 	return b.toolIDWithArgs("compile", "compile\x00enablellvm", []string{"-enablellvm"})

@@ -771,9 +771,8 @@ func (lfc *LLVMFuncContext) prefetch(v *Value, locality uint64) llvm.Value {
 	lfc.GenLV(v.Args[1])
 
 	i32 := GlobalCtxt.Int32Type()
-	sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{address.Type(), i32, i32, i32}, false)
-	fn := getOrInsertLLVMIntrinsic("llvm.prefetch", sig)
-	return lfc.b.CreateCall(sig, fn, []llvm.Value{
+	fn := getLLVMIntrinsicDeclaration("llvm.prefetch", address.Type())
+	return lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{
 		address,
 		llvm.ConstInt(i32, 0, false),        // read
 		llvm.ConstInt(i32, locality, false), // 3 = keep, 0 = non-temporal
@@ -983,9 +982,8 @@ func (lfc *LLVMFuncContext) callerPC(v *Value) llvm.Value {
 
 	ptr := GlobalCtxt.PointerType(0)
 	i32 := GlobalCtxt.Int32Type()
-	sig := llvm.FunctionType(ptr, []llvm.Type{i32}, false)
-	fn := getOrInsertLLVMIntrinsic("llvm.returnaddress", sig)
-	pc := lfc.b.CreateCall(sig, fn, []llvm.Value{llvm.ConstInt(i32, 0, false)}, v.String()+".ptr")
+	fn := getLLVMIntrinsicDeclaration("llvm.returnaddress", ptr)
+	pc := lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{llvm.ConstInt(i32, 0, false)}, v.String()+".ptr")
 	want := getLLVMType(v.Type)
 	if want.TypeKind() != llvm.IntegerTypeKind || want.IntTypeWidth() != int(lfc.F.Config.PtrSize*8) {
 		v.Fatalf("GetCallerPC has incompatible LLVM result type")
@@ -997,20 +995,19 @@ func (lfc *LLVMFuncContext) callerSP(v *Value) llvm.Value {
 	lfc.LF.AddFunctionAttr(llvmNoInlineAttribute())
 
 	ptr := GlobalCtxt.PointerType(0)
-	sig := llvm.FunctionType(ptr, nil, false)
 	var sp llvm.Value
 	switch lfc.F.Config.arch {
 	case "arm64":
 		// AArch64 implements sponentry as a fixed frame object at offset zero,
 		// which remains the entry SP after fixed or dynamically chosen frames.
-		fn := getOrInsertLLVMIntrinsic("llvm.sponentry", sig)
-		sp = lfc.b.CreateCall(sig, fn, nil, v.String()+".ptr")
+		fn := getLLVMIntrinsicDeclaration("llvm.sponentry", ptr)
+		sp = lfc.b.CreateCall(fn.GlobalValueType(), fn, nil, v.String()+".ptr")
 	case "amd64", "386":
 		// On x86 the call instruction stores the return PC immediately below
 		// the caller's SP. addressofreturnaddress is frame-layout aware, unlike
 		// reading SP and adding the current frame size.
-		fn := getOrInsertLLVMIntrinsic("llvm.addressofreturnaddress", sig)
-		returnSlot := lfc.b.CreateCall(sig, fn, nil, v.String()+".returnslot")
+		fn := getLLVMIntrinsicDeclaration("llvm.addressofreturnaddress", ptr)
+		returnSlot := lfc.b.CreateCall(fn.GlobalValueType(), fn, nil, v.String()+".returnslot")
 		offset := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(lfc.F.Config.PtrSize), false)
 		sp = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), returnSlot, []llvm.Value{offset}, v.String()+".ptr")
 	default:
@@ -3970,6 +3967,7 @@ var CurrentModule llvm.Module
 var type2lTypes = map[*types.Type]llvm.Type{}
 var goObjConfigWritten bool
 var goObjImportsWritten bool
+var llvmModuleFinalized bool
 var currentLLVMDataLowerer *llvmDataLowerer
 var goObjCompilerUsed []llvm.Value
 var goObjCompilerUsedNames map[string]bool
@@ -4110,6 +4108,7 @@ func InitModule(pkg *types.Pkg) {
 	CurrentModule.SetTarget(goObjTargetTriple())
 	goObjConfigWritten = false
 	goObjImportsWritten = false
+	llvmModuleFinalized = false
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
 	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
@@ -4174,7 +4173,10 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 	CurrentModule.AddNamedMetadataOperand("goobj.config", config)
 }
 
-func Output(fileName string) error {
+func finalizeLLVMModule() {
+	if llvmModuleFinalized {
+		return
+	}
 	if !goObjConfigWritten {
 		addGoObjConfigMetadata(types.LocalPkg)
 		goObjConfigWritten = true
@@ -4185,5 +4187,10 @@ func Output(fileName string) error {
 		goObjImportsWritten = true
 	}
 	finalizeLLVMDebugInfo()
+	llvmModuleFinalized = true
+}
+
+func Output(fileName string) error {
+	finalizeLLVMModule()
 	return llvm.LLVMPrintModuleToFile(CurrentModule, fileName)
 }

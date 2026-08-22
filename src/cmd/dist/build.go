@@ -1868,6 +1868,7 @@ var goallcLLVMStaticComponents = []string{
 	"irreader",
 	"linker",
 	"passes",
+	"plugins",
 	"all-targets",
 	"executionengine",
 	"mcjit",
