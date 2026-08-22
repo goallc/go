@@ -1206,7 +1206,8 @@
         "fixedbugs/issue9604b.go": "slow: #108 fixes byte-identical generation, but LLVM O2 compilation of the generated entry still exceeds the one-minute per-case budget on Darwin/arm64"
       },
       "linux/amd64": {
-        "fixedbugs/issue20780b.go": "timeout: exceeds the one-minute LLVM CI per-case budget on Linux/amd64"
+        "fixedbugs/issue20780b.go": "timeout: exceeds the one-minute LLVM CI per-case budget on Linux/amd64",
+        "fixedbugs/issue36516.go": "slow: full-LLVM race build exceeds the one-minute CI per-case budget on Linux/amd64"
       }
     }
   }
