@@ -216,6 +216,71 @@ bool isStaticAllocaAddress(const Value *V) {
   return rematerializableAllocaBase(V) != nullptr;
 }
 
+// Return the fixed frame object denoted by Root when every value in its
+// forwarding closure is exactly that object's address. Unlike
+// rematerializableAllocaBase, this recognizes the zero-offset pointer leaves
+// introduced while scalarizing aggregates and their statepoint relocation
+// PHIs. Non-zero address arithmetic and merges of different objects are not
+// frame-base identities.
+Value *fixedFrameIdentityBase(Value *Root) {
+  SmallVector<Value *, 8> Worklist{Root};
+  SmallPtrSet<Value *, 8> Visited;
+  Value *Base = nullptr;
+
+  while (!Worklist.empty()) {
+    Value *V = Worklist.pop_back_val();
+    if (!Visited.insert(V).second)
+      continue;
+
+    if (auto *Phi = dyn_cast<PHINode>(V)) {
+      Worklist.append(Phi->incoming_values().begin(),
+                      Phi->incoming_values().end());
+      continue;
+    }
+    if (auto *Relocate = dyn_cast<GCRelocateInst>(V)) {
+      Worklist.push_back(Relocate->getDerivedPtr());
+      continue;
+    }
+    if (auto *Extract = dyn_cast<ExtractValueInst>(V)) {
+      if (Value *Inserted = FindInsertedValue(Extract->getAggregateOperand(),
+                                              Extract->getIndices())) {
+        Worklist.push_back(Inserted);
+        continue;
+      }
+    }
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(V);
+        GEP && GEP->hasAllZeroIndices()) {
+      Worklist.push_back(GEP->getPointerOperand());
+      continue;
+    }
+    if (auto *Cast = dyn_cast<CastInst>(V);
+        Cast && Cast->isNoopCast(Cast->getDataLayout())) {
+      Worklist.push_back(Cast->getOperand(0));
+      continue;
+    }
+
+    Value *Candidate = nullptr;
+    if (auto *Alloca = dyn_cast<AllocaInst>(V)) {
+      if (!Alloca->isStaticAlloca())
+        return nullptr;
+      Candidate = Alloca;
+    } else if (auto *Arg = dyn_cast<Argument>(V)) {
+      if (!Arg->hasByValAttr() && !Arg->hasGoRetAttr())
+        return nullptr;
+      Candidate = Arg;
+    } else {
+      return nullptr;
+    }
+
+    if (Base && Base != Candidate)
+      return nullptr;
+    Base = Candidate;
+  }
+
+  // Reject an unanchored forwarding cycle.
+  return Base;
+}
+
 const Value *rematerializableDerivedBase(const Value *V) {
   if (!isRelocatablePointerType(V->getType()) || isStaticAllocaAddress(V))
     return nullptr;
@@ -1678,10 +1743,13 @@ void rematerializeDirectFixedFrameMemoryUses(
   // CodeGenPrepare can share one large-offset GEP between several later memory
   // accesses. After statepoint continuations have been split, rebuild the
   // complete address chain at every terminal access so SelectionDAG cannot
-  // carry a pre-growth physical stack address into the continuation block. Use
-  // the latest dominating relocate when the fixed frame base is GC-live; a
-  // non-pointer frame object has no relocate and is rebuilt from its original
-  // FrameIndex base. Typed byval/goret homes follow the same rule.
+  // carry a pre-growth physical stack address into the continuation block.
+  // Model the original fixed base and all of its relocates as reaching
+  // definitions of one temporary slot. PromoteMemToReg then constructs the
+  // current base at CFG joins, including loop backedges where no relocate
+  // statically dominates the header. Typed byval/goret homes follow the same
+  // rule. A fixed object without relocates is rebuilt directly from its
+  // original FrameIndex base.
   SmallVector<std::pair<Value *, Value *>, 32> Addresses;
   for (Instruction &I : instructions(F))
     if (isStaticAllocaAddress(&I))
@@ -1689,6 +1757,40 @@ void rematerializeDirectFixedFrameMemoryUses(
   for (Argument &Arg : F.args())
     if (Arg.hasByValAttr() || Arg.hasGoRetAttr())
       Addresses.push_back({&Arg, &Arg});
+
+  MapVector<Value *, SmallVector<CallInst *, 4>> RelocatesByBase;
+  for (const SafepointRecord &Record : Records)
+    for (CallInst *RelocateCall : Record.Relocates) {
+      auto *Relocate = cast<GCRelocateInst>(RelocateCall);
+      if (Value *Base = fixedFrameIdentityBase(Relocate->getDerivedPtr()))
+        RelocatesByBase[Base].push_back(RelocateCall);
+    }
+
+  const DataLayout &DL = F.getDataLayout();
+  MapVector<Value *, AllocaInst *> BaseSlots;
+  SmallVector<AllocaInst *, 8> PromotableAllocas;
+  auto GetBaseSlot = [&](Value *Base) {
+    if (AllocaInst *Slot = BaseSlots.lookup(Base))
+      return Slot;
+
+    StringRef Name = Base->hasName() ? Base->getName() : "frame";
+    auto *Slot = new AllocaInst(Base->getType(), DL.getAllocaAddrSpace(),
+                                (Name + ".relocated.merge").str(),
+                                F.getEntryBlock().getFirstNonPHIIt());
+    BaseSlots[Base] = Slot;
+    PromotableAllocas.push_back(Slot);
+
+    auto *Initial =
+        new StoreInst(Base, Slot, false, DL.getABITypeAlign(Base->getType()));
+    if (auto *Definition = dyn_cast<Instruction>(Base))
+      Initial->insertAfter(Definition->getIterator());
+    else
+      Initial->insertAfter(Slot->getIterator());
+
+    for (CallInst *Relocate : RelocatesByBase.lookup(Base))
+      new StoreInst(Relocate, Slot, std::next(Relocate->getIterator()));
+    return Slot;
+  };
 
   SmallVector<WeakTrackingVH, 32> DeadAddresses;
 
@@ -1703,16 +1805,12 @@ void rematerializeDirectFixedFrameMemoryUses(
     for (Use *U : MemoryUses) {
       auto *UsePoint = cast<Instruction>(U->getUser());
       Value *CurrentBase = Base;
-      for (const SafepointRecord &Record : Records) {
-        auto Relocate = llvm::find_if(Record.Relocates, [&](CallInst *Call) {
-          return cast<GCRelocateInst>(Call)->getDerivedPtr() == Base;
-        });
-        if (Relocate == Record.Relocates.end() ||
-            !DT.dominates(*Relocate, UsePoint))
-          continue;
-        if (CurrentBase == Base || DT.dominates(CurrentBase, *Relocate))
-          CurrentBase = *Relocate;
-      }
+      if (RelocatesByBase.contains(Base))
+        CurrentBase = new LoadInst(Base->getType(), GetBaseSlot(Base),
+                                   Base->hasName()
+                                       ? Base->getName() + ".relocated.current"
+                                       : "frame.relocated.current",
+                                   UsePoint->getIterator());
 
       if (Address == Base && CurrentBase == Base)
         continue;
@@ -1733,6 +1831,9 @@ void rematerializeDirectFixedFrameMemoryUses(
   for (WeakTrackingVH &Handle : llvm::reverse(DeadAddresses))
     if (auto *I = dyn_cast_or_null<Instruction>(Handle))
       RecursivelyDeleteTriviallyDeadInstructions(I);
+
+  if (!PromotableAllocas.empty())
+    PromoteMemToReg(PromotableAllocas, DT);
 }
 
 void repairRelocationSSA(Function &F, DominatorTree &DT,

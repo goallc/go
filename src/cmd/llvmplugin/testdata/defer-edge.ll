@@ -5,9 +5,10 @@ target triple = "x86_64-unknown-linux-goobj"
 ; OBJVIEW-TEXT-NEXT: {{.*}}ordinary safepoint{{.*}}map[{{[0-9]+}}]
 
 ; OBJVIEW-TEXT-LABEL: TEXT defer_result(SB)
-; The third local slot is the ordinary %pointer GC spill; %result itself is a
-; rematerialized frame address and does not contribute a pointer-map bit.
-; OBJVIEW-TEXT: FUNCDATA_LocalsPointerMaps count=3 bits=3 map[0]=000 map[1]=110 map[2]=100
+; The local pointer bits describe the contents of %result and the ordinary
+; %pointer GC spill. The %result frame address is rematerialized and does not
+; require another spill or pointer-map bit.
+; OBJVIEW-TEXT: FUNCDATA_LocalsPointerMaps count=3 bits=2 map[0]=00 map[1]=11 map[2]=10
 ; OBJVIEW-TEXT-NOT: FUNCDATA_StackObjects
 ; OBJVIEW-TEXT: R_CALL:runtime.deferproc
 ; OBJVIEW-TEXT-NEXT: {{.*}}ordinary safepoint{{.*}}map[1]{{.*}}LocalsPointerMaps=11
