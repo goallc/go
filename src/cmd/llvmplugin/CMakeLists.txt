@@ -283,10 +283,10 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/open-defer.ll"
   )
 
-  goallc_add_failure_filecheck_test(
-    GoALLCStatepoints.OpenDeferIncompleteFails
-    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/open-defer-incomplete.ll"
-    ERROR
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.OpenDeferElided
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/open-defer-elided.ll"
+    OPEN-DEFER-ELIDED
   )
 
   goallc_add_filecheck_test(

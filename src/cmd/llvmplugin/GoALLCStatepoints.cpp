@@ -837,10 +837,17 @@ Expected<std::optional<OpenDeferInfo>> collectOpenDeferInfo(Function &F) {
 
   if (!Info.Bits && !Info.Slots)
     return std::optional<OpenDeferInfo>();
-  if (!Info.Bits || !Info.Slots)
-    return createStringError(
-        std::errc::invalid_argument,
-        "GoALLC open-coded defer function is missing frame state metadata");
+  if (!Info.Bits || !Info.Slots) {
+    // The frontend emits both objects, but optimization can delete every defer
+    // registration path and scalarize the remaining zero-only slots alloca.
+    // The replacement alloca does not inherit custom metadata. With no complete
+    // optimized frame state left to encode, discard the surviving marker too.
+    if (Info.Bits)
+      Info.Bits->setMetadata(GoOpenDeferBitsMD, nullptr);
+    if (Info.Slots)
+      Info.Slots->setMetadata(GoOpenDeferSlotsMD, nullptr);
+    return std::optional<OpenDeferInfo>();
+  }
 
   Info.Bits->setMetadata(GoOpenDeferBitsMD, nullptr);
   Info.Slots->setMetadata(GoOpenDeferSlotsMD, nullptr);
