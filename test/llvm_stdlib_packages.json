@@ -41,7 +41,6 @@
       "crypto/subtle": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "crypto/x509": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "crypto/x509/pkix": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
-      "database/sql": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "database/sql/driver": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "debug/buildinfo": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "debug/dwarf": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
@@ -133,6 +132,9 @@
       "unicode/utf8": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "unique": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "weak": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests"
+    },
+    "graylist": {
+      "database/sql": "advisory while TestQueryRowClosingStmt/default intermittently returns sql.ErrNoRows on linux/amd64"
     },
     "blacklist": {
       "*": "package and its complete standard-library dependency closure including runtime have not yet been qualified through LLVM O2 compile, GoObj/archive, link, and package tests"
