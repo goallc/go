@@ -4110,6 +4110,9 @@ func InitModule(pkg *types.Pkg) {
 
 	CurrentModule = GlobalCtxt.NewModule(pkg.Path)
 	CurrentModule.SetTarget(goObjTargetTriple())
+	if dataLayout := goObjDataLayout(buildcfg.GOOS, buildcfg.GOARCH); dataLayout != "" {
+		CurrentModule.SetDataLayout(dataLayout)
+	}
 	goObjConfigWritten = false
 	goObjImportsWritten = false
 	llvmModuleFinalized = false
@@ -4119,6 +4122,18 @@ func InitModule(pkg *types.Pkg) {
 	initLLVMGoObjLocalDefinitions()
 	emitLateGoObjBuiltinDeclarations()
 	initLLVMDebugInfo(pkg)
+}
+
+// goObjDataLayout records target layout constraints that differ from LLVM's
+// generic target defaults. Go amd64 stack frames are aligned to 8 bytes and
+// cannot dynamically realign the stack. SROA may introduce v128 allocas from
+// 8-byte-aligned Go aggregates, so keep their ABI and preferred alignment at
+// the alignment the GoObj frame lowering supports.
+func goObjDataLayout(goos, goarch string) string {
+	if goos == "linux" && goarch == "amd64" {
+		return "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-v128:64:64-n8:16:32:64-S64"
+	}
+	return ""
 }
 
 // goObjTargetTriple identifies the GoObj target that llc should use when it
