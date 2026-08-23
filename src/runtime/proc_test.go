@@ -449,17 +449,22 @@ func TestPingPongHog(t *testing.T) {
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
 	done := make(chan bool)
 	hogChan, lightChan := make(chan bool), make(chan bool)
-	hogCount, lightCount := 0, 0
+	var hogCount, lightCount atomic.Int64
 
-	run := func(limit int, counter *int, wake chan bool) {
+	run := func(limit int, counter *atomic.Int64, wake chan bool) {
 		for {
 			select {
 			case <-done:
 				return
 
 			case <-wake:
+				// Keep every iteration observable to the compiler. Otherwise,
+				// an optimizing compiler can replace this loop with a single
+				// addition, eliminating the CPU-bound work this test relies on.
+				// Atomic adds don't explicitly yield, so progress still requires
+				// preemption.
 				for i := 0; i < limit; i++ {
-					*counter++
+					counter.Add(1)
 				}
 				wake <- true
 			}
@@ -483,6 +488,7 @@ func TestPingPongHog(t *testing.T) {
 	close(done)
 	<-hogChan
 	<-lightChan
+	hog, light := hogCount.Load(), lightCount.Load()
 
 	// Check that hogCount and lightCount are within a factor of
 	// 20, which indicates that both pairs of goroutines handed off
@@ -491,8 +497,8 @@ func TestPingPongHog(t *testing.T) {
 	// scheduler isn't working right, the gap should be ~1000X
 	// (was 5, increased to 20, see issue 52207).
 	const factor = 20
-	if hogCount/factor > lightCount || lightCount/factor > hogCount {
-		t.Fatalf("want hogCount/lightCount in [%v, %v]; got %d/%d = %g", 1.0/factor, factor, hogCount, lightCount, float64(hogCount)/float64(lightCount))
+	if hog/factor > light || light/factor > hog {
+		t.Fatalf("want hogCount/lightCount in [%v, %v]; got %d/%d = %g", 1.0/factor, factor, hog, light, float64(hog)/float64(light))
 	}
 }
 
