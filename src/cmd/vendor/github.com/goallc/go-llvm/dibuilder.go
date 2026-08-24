@@ -645,8 +645,22 @@ func (d *DIBuilder) InsertValueAtEnd(v Value, diVarInfo, expr Metadata, l DebugL
 	C.LLVMGoDIBuilderInsertDbgValueRecordAtEnd(d.ref, v.C, diVarInfo.C, expr.C, loc, bb.C)
 }
 
+// InsertDeclareAtEnd describes a variable whose value lives in storage. The
+// caller must only use it for a real semantic home.
+func (d *DIBuilder) InsertDeclareAtEnd(storage Value, diVarInfo, expr Metadata, l DebugLoc, bb BasicBlock) {
+	loc := C.LLVMDIBuilderCreateDebugLocation(
+		d.m.Context().C, C.uint(l.Line), C.uint(l.Col), l.Scope.C, l.InlinedAt.C)
+	C.LLVMGoDIBuilderInsertDeclareRecordAtEnd(d.ref, storage.C, diVarInfo.C, expr.C, loc, bb.C)
+}
+
 func (v Value) SetSubprogram(sp Metadata) {
 	C.LLVMSetSubprogram(v.C, sp.C)
+}
+
+// ReplaceSubprogramType upgrades an abstract subprogram after its complete
+// source signature becomes available.
+func (md Metadata) ReplaceSubprogramType(t Metadata) {
+	C.LLVMDISubprogramReplaceType(md.C, t.C)
 }
 
 func (v Value) Subprogram() (md Metadata) {

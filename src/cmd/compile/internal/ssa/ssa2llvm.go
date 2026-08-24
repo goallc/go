@@ -4102,6 +4102,7 @@ func LLVMCompile(f *Func) {
 			FCtxt.ResultSlots[v.ID] = slot.Value
 		}
 	}
+	FCtxt.emitDebugVariables()
 	for _, slot := range parameterLifetimeSlots {
 		FCtxt.llvmLifetimeStart(slot)
 	}

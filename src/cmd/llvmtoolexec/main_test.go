@@ -7,11 +7,16 @@ package main
 import (
 	"bytes"
 	"cmd/internal/archive"
+	"debug/dwarf"
+	"debug/elf"
+	"debug/macho"
 	"encoding/json"
 	"internal/testenv"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,8 +40,14 @@ type importObjviewObject struct {
 		Class string `json:"class"`
 	} `json:"references"`
 	Symbols []struct {
+		Index       uint32   `json:"index"`
 		Name        string   `json:"name"`
+		Kind        string   `json:"kind"`
 		FlagNames   []string `json:"flag_names"`
+		Auxiliaries []struct {
+			Type   string              `json:"type"`
+			Target importObjviewTarget `json:"target"`
+		} `json:"aux"`
 		Relocations []struct {
 			Size   uint8               `json:"size"`
 			Type   string              `json:"type"`
@@ -801,7 +812,7 @@ func TestLLVMPCLNInlineTraceback(t *testing.T) {
 	}
 	for _, want := range []string{
 		"DICompileUnit(language: DW_LANG_Go",
-		"emissionKind: LineTablesOnly",
+		"emissionKind: FullDebug",
 		"!goobj.debug.funcs",
 		"inlinedAt:",
 	} {
@@ -868,6 +879,360 @@ func TestLLVMPCLNInlineTraceback(t *testing.T) {
 			t.Fatalf("inline frames are out of order:\n%s", output)
 		}
 		last = location[0]
+	}
+}
+
+func TestLLVMDWARFDebugInfo(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("final executable inspection currently uses debug/macho")
+	}
+	llc := os.Getenv("GOALLC_LLC")
+	opt := os.Getenv("GOALLC_OPT")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || opt == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC, GOALLC_OPT, and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	packagePath := "cmd/llvmtoolexec/testdata/dwarfdebug"
+	packageArg := "./src/" + packagePath
+	source := filepath.Join(root, "src", packagePath, "main.go")
+
+	// Verify the frontend's source-semantic graph independently of final layout.
+	archive := filepath.Join(t.TempDir(), "dwarfdebug.a")
+	compile := testenv.Command(t, goTool, "tool", "compile",
+		"-p=main", "-enablellvm", "-llvm-external-codegen", "-o", archive, source)
+	if out, err := compile.CombinedOutput(); err != nil {
+		t.Fatalf("compiling DWARF fixture to LLVM IR: %v\n%s", err, out)
+	}
+	ir, err := os.ReadFile(archive + ".ll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"DICompileUnit(language: DW_LANG_Go",
+		"emissionKind: FullDebug",
+		"DICompositeType(tag: DW_TAG_structure_type, name: \"main.pair\"",
+		"DILocalVariable(name: \"local\"",
+		"#dbg_declare",
+		"!goobj.debug.vars",
+		"inlinedAt:",
+	} {
+		if !bytes.Contains(ir, []byte(want)) {
+			t.Fatalf("LLVM debug metadata does not contain %q:\n%s", want, ir)
+		}
+	}
+	verify := testenv.Command(t, opt, "-passes=verify", "-disable-output", archive+".ll")
+	if out, err := verify.CombinedOutput(); err != nil {
+		t.Fatalf("verifying DWARF fixture LLVM IR: %v\n%s", err, out)
+	}
+
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+		"-opt=" + opt,
+		"-opt-passes=default<O2>",
+	}, " ")
+	cache := t.TempDir()
+	executable := filepath.Join(t.TempDir(), "dwarfdebug")
+	buildFixture := testenv.Command(t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		"-ldflags=-compressdwarf=false",
+		"-o", executable, packageArg)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(), "GOCACHE="+cache)
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building DWARF fixture: %v\n%s", err, out)
+	}
+	if out, err := testenv.Command(t, executable).CombinedOutput(); err != nil {
+		t.Fatalf("running DWARF fixture: %v\n%s", err, out)
+	}
+
+	listFixture := testenv.Command(t, goTool, "list", "-export", "-f={{.Export}}",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm", packageArg)
+	listFixture.Dir = root
+	listFixture.Env = append(os.Environ(), "GOCACHE="+cache)
+	archiveOutput, err := listFixture.CombinedOutput()
+	if err != nil {
+		t.Fatalf("locating DWARF fixture archive: %v\n%s", err, archiveOutput)
+	}
+	object := readImportObjview(t, goTool, strings.TrimSpace(string(archiveOutput)))
+	carrierKinds := make(map[string]int)
+	relocationTypes := make(map[string]int)
+	mainHasInfo, mainHasLines := false, false
+	for _, symbol := range object.Symbols {
+		if strings.HasPrefix(symbol.Name, ".debug_") {
+			t.Errorf("ordinary LLVM DWARF section leaked into GoObj: %s", symbol.Name)
+		}
+		carrierKinds[symbol.Kind]++
+		for _, reloc := range symbol.Relocations {
+			relocationTypes[reloc.Type]++
+		}
+		if symbol.Name == "main.main" {
+			for _, aux := range symbol.Auxiliaries {
+				switch aux.Type {
+				case "dwarf_info":
+					mainHasInfo = true
+				case "dwarf_lines":
+					mainHasLines = true
+				}
+			}
+		}
+	}
+	for _, kind := range []string{"SDWARFFCN", "SDWARFABSFCN", "SDWARFLINES"} {
+		if carrierKinds[kind] == 0 {
+			t.Errorf("GoObj has no %s carrier: %v", kind, carrierKinds)
+		}
+	}
+	if !mainHasInfo || !mainHasLines {
+		t.Errorf("main.main DWARF aux = info:%v lines:%v", mainHasInfo, mainHasLines)
+	}
+	for _, typ := range []string{"R_ADDR", "R_DWARFSECREF", "R_USETYPE"} {
+		if relocationTypes[typ] == 0 {
+			t.Errorf("GoObj DWARF has no %s relocation: %v", typ, relocationTypes)
+		}
+	}
+
+	machoFile, err := macho.Open(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer machoFile.Close()
+	dwarfData, err := machoFile.DWARF()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkDwarfDebugFixture(t, dwarfData)
+}
+
+func TestLLVMDWARF5DebugInfo(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	opt := os.Getenv("GOALLC_OPT")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || opt == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC, GOALLC_OPT, and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	packagePath := "cmd/llvmtoolexec/testdata/dwarfdebug"
+	packageArg := "./src/" + packagePath
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+		"-opt=" + opt,
+		"-opt-passes=default<O2>",
+	}, " ")
+	cache := t.TempDir()
+	buildEnv := append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "GOCACHE="+cache)
+	executable := filepath.Join(t.TempDir(), "dwarfdebug-linux")
+	buildFixture := testenv.Command(t, goTool, "build",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		"-ldflags=-compressdwarf=false",
+		"-o", executable, packageArg)
+	buildFixture.Dir = root
+	buildFixture.Env = buildEnv
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building Linux DWARF5 fixture: %v\n%s", err, out)
+	}
+
+	listFixture := testenv.Command(t, goTool, "list", "-export", "-f={{.Export}}",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm", packageArg)
+	listFixture.Dir = root
+	listFixture.Env = buildEnv
+	archiveOutput, err := listFixture.CombinedOutput()
+	if err != nil {
+		t.Fatalf("locating Linux DWARF5 fixture archive: %v\n%s", err, archiveOutput)
+	}
+	object := readImportObjview(t, goTool, strings.TrimSpace(string(archiveOutput)))
+	carrierKinds := make(map[string]int)
+	relocationTypes := make(map[string]int)
+	mainHasInfo, mainHasRanges, mainHasLines := false, false, false
+	for _, symbol := range object.Symbols {
+		if strings.HasPrefix(symbol.Name, ".debug_") {
+			t.Errorf("ordinary LLVM DWARF section leaked into GoObj: %s", symbol.Name)
+		}
+		carrierKinds[symbol.Kind]++
+		for _, reloc := range symbol.Relocations {
+			relocationTypes[reloc.Type]++
+		}
+		if symbol.Name == "main.main" {
+			for _, aux := range symbol.Auxiliaries {
+				switch aux.Type {
+				case "dwarf_info":
+					mainHasInfo = true
+				case "dwarf_ranges":
+					mainHasRanges = true
+				case "dwarf_lines":
+					mainHasLines = true
+				}
+			}
+		}
+	}
+	for _, kind := range []string{"SDWARFFCN", "SDWARFABSFCN", "SDWARFRANGE", "SDWARFLINES"} {
+		if carrierKinds[kind] == 0 {
+			t.Errorf("GoObj has no %s carrier: %v", kind, carrierKinds)
+		}
+	}
+	if !mainHasInfo || !mainHasRanges || !mainHasLines {
+		t.Errorf("main.main DWARF aux = info:%v ranges:%v lines:%v", mainHasInfo, mainHasRanges, mainHasLines)
+	}
+	for _, typ := range []string{"R_DWTXTADDR_U4", "R_DWARFSECREF", "R_USETYPE"} {
+		if relocationTypes[typ] == 0 {
+			t.Errorf("GoObj DWARF5 has no %s relocation: %v", typ, relocationTypes)
+		}
+	}
+	if relocationTypes["R_ADDRCUOFF"] != 0 {
+		t.Errorf("GoObj DWARF5 unexpectedly uses R_ADDRCUOFF: %v", relocationTypes)
+	}
+
+	elfFile, err := elf.Open(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer elfFile.Close()
+	dwarfData, err := elfFile.DWARF()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkDwarfDebugFixture(t, dwarfData)
+}
+
+func checkDwarfDebugFixture(t *testing.T, dwarfData *dwarf.Data) {
+	t.Helper()
+	reader := dwarfData.Reader()
+	var mainCU *dwarf.Entry
+	inMain := false
+	subprograms := make(map[string]dwarf.Offset)
+	inlineOrigins := make([]dwarf.Offset, 0, 3)
+	formalParameters := make(map[string]bool)
+	hasLocal, unavailableLocations := false, 0
+	for {
+		entry, err := reader.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry == nil {
+			break
+		}
+		if entry.Tag == dwarf.TagCompileUnit {
+			name, _ := entry.Val(dwarf.AttrName).(string)
+			if inMain && name != "main" {
+				break
+			}
+			inMain = name == "main"
+			if inMain {
+				mainCU = entry
+			}
+			continue
+		}
+		if !inMain {
+			continue
+		}
+		name, _ := entry.Val(dwarf.AttrName).(string)
+		switch entry.Tag {
+		case dwarf.TagSubprogram:
+			if name != "" {
+				subprograms[name] = entry.Offset
+			}
+		case dwarf.TagInlinedSubroutine:
+			origin, ok := entry.Val(dwarf.AttrAbstractOrigin).(dwarf.Offset)
+			if !ok || entry.Val(dwarf.AttrCallFile) == nil || entry.Val(dwarf.AttrCallLine) == nil {
+				t.Errorf("inlined_subroutine lacks origin/call site: %#v", entry)
+			} else {
+				inlineOrigins = append(inlineOrigins, origin)
+			}
+			ranges, err := dwarfData.Ranges(entry)
+			if err != nil || len(ranges) == 0 {
+				t.Errorf("inlined_subroutine ranges = %v, %v", ranges, err)
+			}
+		case dwarf.TagFormalParameter:
+			formalParameters[name] = entry.Val(dwarf.AttrType) != nil
+			if location, ok := entry.Val(dwarf.AttrLocation).([]byte); ok && len(location) == 0 {
+				unavailableLocations++
+			}
+		case dwarf.TagVariable:
+			if name == "local" && entry.Val(dwarf.AttrType) != nil {
+				hasLocal = true
+			}
+			if location, ok := entry.Val(dwarf.AttrLocation).([]byte); ok && len(location) == 0 {
+				unavailableLocations++
+			}
+		}
+	}
+	for _, name := range []string{
+		"main.outer", "main.middle", "main.inner", "main.observe",
+		"main.split", "main.arrayWord", "main.main",
+	} {
+		if subprograms[name] == 0 {
+			t.Errorf("final DWARF has no %s subprogram", name)
+		}
+	}
+	for _, name := range []string{"x", "p", "~r0", "lo", "hi"} {
+		if !formalParameters[name] {
+			t.Errorf("final DWARF has no typed %s parameter", name)
+		}
+	}
+	if !hasLocal || unavailableLocations < 2 {
+		t.Errorf("final DWARF local=%v unavailable locations=%d", hasLocal, unavailableLocations)
+	}
+	wantOrigins := map[dwarf.Offset]bool{
+		subprograms["main.outer"]:  true,
+		subprograms["main.middle"]: true,
+		subprograms["main.inner"]:  true,
+	}
+	for _, origin := range inlineOrigins {
+		delete(wantOrigins, origin)
+	}
+	if len(wantOrigins) != 0 {
+		t.Errorf("inline abstract origins missing: %v", wantOrigins)
+	}
+	if mainCU == nil {
+		t.Fatal("final DWARF has no main compile unit")
+	}
+	lineReader, err := dwarfData.LineReader(mainCU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := make(map[int]bool)
+	for {
+		var line dwarf.LineEntry
+		err := lineReader.Next(&line)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line.File != nil && strings.HasSuffix(line.File.Name, "/dwarfdebug/main.go") {
+			lines[line.Line] = true
+		}
+	}
+	for _, line := range []int{20, 26, 30, 35} {
+		if !lines[line] {
+			t.Errorf("final DWARF line table lacks main.go:%d: %v", line, lines)
+		}
 	}
 }
 

@@ -39,6 +39,36 @@ const (
 	OptAllInl4 = "-gcflags=all=-l=4"
 )
 
+const llvmStdlibPolicyEnv = "GOALLC_RUN_LLVM_STDLIB"
+
+func llvmDwarfBuildFlags(t testing.TB, buildflag string) []string {
+	t.Helper()
+	if os.Getenv(llvmStdlibPolicyEnv) != "1" {
+		return []string{buildflag}
+	}
+	testName, _, _ := strings.Cut(t.Name(), "/")
+	if reason := llvmDwarfUnsupported[testName]; reason != "" {
+		t.Skipf("LLVM linker DWARF capability gap: %s", reason)
+	}
+	const prefix = "-gcflags="
+	if !strings.HasPrefix(buildflag, prefix) {
+		return []string{buildflag, prefix + "-enablellvm"}
+	}
+	flags := strings.TrimPrefix(buildflag, prefix)
+	if flags != "" {
+		flags += " "
+	}
+	return []string{prefix + flags + "-enablellvm"}
+}
+
+var llvmDwarfUnsupported = map[string]string{
+	"TestRuntimeTypeAttrInternal": "the fixture's empty noinline call is eliminated before linking, so *main.X has no surviving DWARF use",
+	"TestRuntimeTypeAttrExternal": "the fixture's empty noinline call is eliminated before linking, so *main.X has no surviving DWARF use",
+	"TestIssue27614":              "LLVM GoObj does not yet emit package-global variable DIEs",
+	"TestPackageNameAttr":         "LLVM GoObj compile units do not yet carry DW_AT_go_package_name",
+	"TestDictIndex":               "LLVM GoObj variables do not yet carry DW_AT_go_dict_index or dictionary-only type uses",
+}
+
 func TestRuntimeTypesPresent(t *testing.T) {
 	t.Parallel()
 	testenv.MustHaveGoBuild(t)
@@ -47,7 +77,7 @@ func TestRuntimeTypesPresent(t *testing.T) {
 
 	dir := t.TempDir()
 
-	f := gobuild(t, dir, `package main; func main() { }`, NoOpt)
+	f := gobuildDwarf(t, dir, `package main; func main() { }`, NoOpt)
 	defer f.Close()
 
 	dwarf, err := f.DWARF()
@@ -96,7 +126,7 @@ type builtFile struct {
 	path string
 }
 
-func gobuild(t *testing.T, dir string, testfile string, gcflags string) *builtFile {
+func gobuild(t *testing.T, dir string, testfile string, buildflags ...string) *builtFile {
 	src := filepath.Join(dir, "test.go")
 	dst := filepath.Join(dir, "out.exe")
 
@@ -104,7 +134,9 @@ func gobuild(t *testing.T, dir string, testfile string, gcflags string) *builtFi
 		t.Fatal(err)
 	}
 
-	cmd := testenv.Command(t, testenv.GoToolPath(t), "build", gcflags, "-o", dst, src)
+	args := append([]string{"build"}, buildflags...)
+	args = append(args, "-o", dst, src)
+	cmd := testenv.Command(t, testenv.GoToolPath(t), args...)
 	b, err := cmd.CombinedOutput()
 	if len(b) != 0 {
 		t.Logf("## build output:\n%s", b)
@@ -120,13 +152,20 @@ func gobuild(t *testing.T, dir string, testfile string, gcflags string) *builtFi
 	return &builtFile{f, dst}
 }
 
+func gobuildDwarf(t *testing.T, dir string, testfile string, buildflag string) *builtFile {
+	t.Helper()
+	return gobuild(t, dir, testfile, llvmDwarfBuildFlags(t, buildflag)...)
+}
+
 // Similar to gobuild() above, but uses a main package instead of a test.go file.
 
 func gobuildTestdata(t *testing.T, pkgDir string, gcflags string) *builtFile {
 	dst := filepath.Join(t.TempDir(), "out.exe")
 
 	// Run a build with an updated GOPATH
-	cmd := testenv.Command(t, testenv.GoToolPath(t), "build", gcflags, "-o", dst)
+	args := append([]string{"build"}, llvmDwarfBuildFlags(t, gcflags)...)
+	args = append(args, "-o", dst)
+	cmd := testenv.Command(t, testenv.GoToolPath(t), args...)
 	cmd.Dir = pkgDir
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Logf("build: %s\n", b)
@@ -144,7 +183,7 @@ func gobuildTestdata(t *testing.T, pkgDir string, gcflags string) *builtFile {
 func gobuildAndExamine(t *testing.T, source string, gcflags string) (*dwarf.Data, *dwtest.Examiner) {
 	dir := t.TempDir()
 
-	f := gobuild(t, dir, source, gcflags)
+	f := gobuildDwarf(t, dir, source, gcflags)
 	defer f.Close()
 
 	d, err := f.DWARF()
@@ -214,7 +253,7 @@ func main() {
 
 	dir := t.TempDir()
 
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 
 	defer f.Close()
 
@@ -298,7 +337,7 @@ func main() {
 `
 	dir := t.TempDir()
 
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 	defer f.Close()
 	d, err := f.DWARF()
 	if err != nil {
@@ -341,7 +380,7 @@ func main() {
 `
 	dir := t.TempDir()
 
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 	defer f.Close()
 
 	d, err := f.DWARF()
@@ -712,19 +751,34 @@ func main() {
 		// inlined subroutine DIE.
 		absFcnIdx := ex.IdxFromOffset(ooff)
 		absFcnChildDies := ex.Children(absFcnIdx)
-		if len(absFcnChildDies) != 2 {
-			t.Fatalf("expected abstract function: expected 2 children, got %d children", len(absFcnChildDies))
+		expectedFormals := 2
+		if os.Getenv(llvmStdlibPolicyEnv) == "1" {
+			// LLVM retains cand's unnamed result as a typed output parameter.
+			expectedFormals = 3
+		}
+		if len(absFcnChildDies) != expectedFormals {
+			t.Fatalf("expected abstract function: expected %d children, got %d children", expectedFormals, len(absFcnChildDies))
 		}
 		formalCount := 0
+		resultSeen := false
 		for _, absChild := range absFcnChildDies {
 			if absChild.Tag == dwarf.TagFormalParameter {
 				formalCount += 1
+				if name, _ := absChild.Val(dwarf.AttrName).(string); name == "~r0" {
+					resultSeen = true
+					if output, _ := absChild.Val(dwarf.AttrVarParam).(bool); !output {
+						t.Fatal("LLVM abstract result ~r0 is not marked as an output parameter")
+					}
+				}
 				continue
 			}
 			t.Fatalf("abstract function child DIE: expected formal, got %v", absChild.Tag)
 		}
-		if formalCount != 2 {
-			t.Fatalf("abstract function DIE: expected 2 formals, got %d", formalCount)
+		if formalCount != expectedFormals {
+			t.Fatalf("abstract function DIE: expected %d formals, got %d", expectedFormals, formalCount)
+		}
+		if expectedFormals == 3 && !resultSeen {
+			t.Fatal("LLVM abstract function DIE has no unnamed result parameter")
 		}
 
 		omap := make(map[dwarf.Offset]bool)
@@ -899,7 +953,7 @@ func f(x *X) { // Make sure that there is dwarf recorded for *X.
 `
 	dir := t.TempDir()
 
-	f := gobuild(t, dir, prog, flags)
+	f := gobuildDwarf(t, dir, prog, flags)
 	defer f.Close()
 
 	out, err := testenv.Command(t, f.path).CombinedOutput()
@@ -986,7 +1040,7 @@ func main() {
 }
 `
 
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 
 	defer f.Close()
 
@@ -1091,7 +1145,7 @@ func main() {
 }
 `
 
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 
 	defer f.Close()
 
@@ -1155,7 +1209,7 @@ func TestPackageNameAttr(t *testing.T) {
 
 	const prog = "package main\nfunc main() {\nprintln(\"hello world\")\n}\n"
 
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 
 	defer f.Close()
 
@@ -1231,7 +1285,7 @@ import "fmt"
 func main() {
   fmt.Println("Hello World")
 }`
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 	defer f.Close()
 	exe, err := pe.Open(f.path)
 	if err != nil {
@@ -1682,7 +1736,7 @@ func main() {
 `
 
 	dir := t.TempDir()
-	f := gobuild(t, dir, prog, NoOpt)
+	f := gobuildDwarf(t, dir, prog, NoOpt)
 	defer f.Close()
 
 	d, err := f.DWARF()
@@ -1896,7 +1950,7 @@ func main() {
 `
 
 	dir := t.TempDir()
-	f := gobuild(t, dir, prog, "-ldflags=-debugtramp=2")
+	f := gobuildDwarf(t, dir, prog, "-ldflags=-debugtramp=2")
 	defer f.Close()
 
 	d, err := f.DWARF()
