@@ -107,6 +107,8 @@
       "net/netip": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "net/textproto": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "net/url": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
+      "os": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
+      "os/signal": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "path": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "path/filepath": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "regexp": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
