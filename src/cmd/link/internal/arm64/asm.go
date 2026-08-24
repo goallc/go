@@ -538,6 +538,23 @@ func elfreloc1(ctxt *ld.Link, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, 
 		out.Write64(uint64(r.Xadd))
 		out.Write64(uint64(sectoff + 4))
 		out.Write64(uint64(elf.R_AARCH64_ADD_ABS_LO12_NC) | uint64(elfsym)<<32)
+	case objabi.R_ARM64_PCREL:
+		// LLVM may schedule the ADRP and its low-12 ADD or LD/ST apart.
+		// Emit the corresponding ELF relocation for this single instruction;
+		// adjacent pairs use the composite relocation cases below.
+		relocs := ldr.Relocs(s)
+		reloc := relocs.At(ri)
+		off := int(reloc.Off())
+		data := ldr.Data(s)
+		if off < 0 || off+4 > len(data) {
+			return false
+		}
+		insn := ctxt.Arch.ByteOrder.Uint32(data[off:])
+		typ, ok := elfRelocTypeForPCRel(insn)
+		if !ok {
+			return false
+		}
+		out.Write64(uint64(typ) | uint64(elfsym)<<32)
 
 	case objabi.R_ARM64_PCREL_LDST8,
 		objabi.R_ARM64_PCREL_LDST16,
@@ -582,6 +599,33 @@ func elfreloc1(ctxt *ld.Link, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, 
 	out.Write64(uint64(r.Xadd))
 
 	return true
+}
+
+func elfRelocTypeForPCRel(insn uint32) (elf.R_AARCH64, bool) {
+	switch {
+	case (insn>>24)&0x9f == 0x90:
+		return elf.R_AARCH64_ADR_PREL_PG_HI21, true
+	case (insn>>24)&0x9f == 0x91:
+		return elf.R_AARCH64_ADD_ABS_LO12_NC, true
+	case (insn>>24)&0x3b == 0x39:
+		shift := insn >> 30
+		if shift == 0 && (insn>>20)&0x048 == 0x048 {
+			shift = 4
+		}
+		switch shift {
+		case 0:
+			return elf.R_AARCH64_LDST8_ABS_LO12_NC, true
+		case 1:
+			return elf.R_AARCH64_LDST16_ABS_LO12_NC, true
+		case 2:
+			return elf.R_AARCH64_LDST32_ABS_LO12_NC, true
+		case 3:
+			return elf.R_AARCH64_LDST64_ABS_LO12_NC, true
+		case 4:
+			return elf.R_AARCH64_LDST128_ABS_LO12_NC, true
+		}
+	}
+	return 0, false
 }
 
 // sign-extends from 21, 24-bit.
@@ -795,6 +839,11 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		nExtReloc := 0
 		switch rt := r.Type(); rt {
 		default:
+		case objabi.R_ARM64_PCREL:
+			if !target.IsElf() {
+				break
+			}
+			return val, 1, isOk
 		case objabi.R_ARM64_GOTPCREL,
 			objabi.R_ARM64_PCREL_LDST8,
 			objabi.R_ARM64_PCREL_LDST16,
@@ -1127,6 +1176,10 @@ func archrelocvariant(*ld.Target, *loader.Loader, loader.Reloc, sym.RelocVariant
 
 func extreloc(target *ld.Target, ldr *loader.Loader, r loader.Reloc, s loader.Sym) (loader.ExtReloc, bool) {
 	switch rt := r.Type(); rt {
+	case objabi.R_ARM64_PCREL:
+		if target.IsElf() {
+			return ld.ExtrelocViaOuterSym(ldr, r, s), true
+		}
 	case objabi.R_ARM64_GOTPCREL,
 		objabi.R_ARM64_PCREL_LDST8,
 		objabi.R_ARM64_PCREL_LDST16,
