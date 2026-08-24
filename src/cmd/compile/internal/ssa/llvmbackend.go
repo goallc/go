@@ -37,7 +37,9 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	}
 	tm := target.CreateTargetMachine(triple, "", "", llvm.CodeGenLevelDefault, llvm.RelocDefault, llvm.CodeModelDefault)
 	defer tm.Dispose()
-	setLLVMModuleDataLayout(CurrentModule, tm)
+	td := tm.CreateTargetData()
+	CurrentModule.SetDataLayout(td.String())
+	td.Dispose()
 
 	if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
 		return nil, fmt.Errorf("verify LLVM module before optimization: %w", err)
@@ -82,15 +84,6 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	}
 	defer buffer.Dispose()
 	return append([]byte(nil), buffer.Bytes()...), nil
-}
-
-func setLLVMModuleDataLayout(module llvm.Module, tm llvm.TargetMachine) {
-	if module.DataLayout() != "" {
-		return
-	}
-	td := tm.CreateTargetData()
-	defer td.Dispose()
-	module.SetDataLayout(td.String())
 }
 
 func configureLLVMCodeGenOptions() {

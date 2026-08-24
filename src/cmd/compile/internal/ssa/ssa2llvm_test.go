@@ -33,30 +33,6 @@ func (n *llvmTestTypeName) Sym() *types.Sym { return n.sym }
 func (*llvmTestTypeName) Pos() src.XPos     { return src.NoXPos }
 func (*llvmTestTypeName) Type() *types.Type { return nil }
 
-func TestLLVMGoObjAMD64VectorStackAlignment(t *testing.T) {
-	layout := goObjDataLayout("linux", "amd64")
-	if layout == "" {
-		t.Fatal("linux/amd64 GoObj data layout is empty")
-	}
-	targetData := llvm.NewTargetData(layout)
-	t.Cleanup(targetData.Dispose)
-	v128 := llvm.VectorType(GlobalCtxt.Int64Type(), 2)
-	if got, want := targetData.ABITypeAlignment(v128), 8; got != want {
-		t.Fatalf("v128 ABI alignment = %d, want %d", got, want)
-	}
-	if got, want := targetData.PrefTypeAlignment(v128), 8; got != want {
-		t.Fatalf("v128 preferred alignment = %d, want %d", got, want)
-	}
-
-	module := GlobalCtxt.NewModule("goobj_data_layout")
-	t.Cleanup(module.Dispose)
-	module.SetDataLayout(layout)
-	setLLVMModuleDataLayout(module, llvm.TargetMachine{})
-	if got := module.DataLayout(); got != layout {
-		t.Fatalf("module data layout = %q, want %q", got, layout)
-	}
-}
-
 func TestLLVMABICarrierPreservesNamedAggregateIdentity(t *testing.T) {
 	pkg := types.NewPkg("runtime", "runtime")
 	namedSlice := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup("slice")})

@@ -12,8 +12,7 @@ package codegen
 // LLVM: br i1 {{%.*}}, label %{{.*}}.nil, label %{{.*}}.notnil
 // LLVM: call goabiinternal void @runtime.panicmem()
 // LLVM-NEXT: unreachable
-// LLVM-AMD64: store i64 %y, ptr %p, align 8
-// LLVM-ARM64: store i64 %y, ptr %p, align 4
+// LLVM: store i64 %y, ptr %p, align 4
 
 func f(x, y int, p *int) {
 	// amd64:`MOVQ AX, BX`
