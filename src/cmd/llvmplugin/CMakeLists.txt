@@ -358,14 +358,18 @@ if(BUILD_TESTING)
     if(GOALLC_DEBUG_TARGET STREQUAL "X86")
       set(GOALLC_DEBUG_TRIPLE x86_64-unknown-linux-goobj)
       set(GOALLC_DEBUG_CHECK_PREFIX DEBUG-X86)
+      set(GOALLC_DEBUG_CODEGEN_OPTIONS)
     else()
       set(GOALLC_DEBUG_TRIPLE aarch64-unknown-linux-goobj)
       set(GOALLC_DEBUG_CHECK_PREFIX DEBUG-AARCH64)
+      set(GOALLC_DEBUG_CODEGEN_OPTIONS
+        -aarch64-goobj-composite-relocations)
     endif()
     add_test(
       NAME GoALLCStatepoints.DebugInline${GOALLC_DEBUG_TARGET}GoObj
       COMMAND "${GOALLC_LLC_EXECUTABLE}"
         "-mtriple=${GOALLC_DEBUG_TRIPLE}"
+        ${GOALLC_DEBUG_CODEGEN_OPTIONS}
         "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
         -verify-machineinstrs -filetype=obj
         -o "${CMAKE_CURRENT_BINARY_DIR}/debug-inline-${GOALLC_DEBUG_TARGET}.goobj"

@@ -10,6 +10,7 @@ import (
 	"cmd/compile/internal/base"
 	"cmd/internal/llvmbackend"
 	"fmt"
+	"internal/buildcfg"
 	"strings"
 
 	"github.com/goallc/go-llvm"
@@ -92,5 +93,11 @@ func configureLLVMCodeGenOptions() {
 }
 
 func llvmCodeGenOptions() []string {
-	return []string{"-trap-unreachable", "-disable-machine-cse", "-disable-lsr"}
+	options := []string{"-trap-unreachable", "-disable-machine-cse", "-disable-lsr"}
+	if buildcfg.GOARCH == "arm64" {
+		// Keep page-relative references compatible with Go linkers that require
+		// one composite relocation instead of separate page and low-12 records.
+		options = append(options, "-aarch64-goobj-composite-relocations")
+	}
+	return options
 }

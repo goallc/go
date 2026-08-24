@@ -7,12 +7,16 @@
 package ssa
 
 import (
+	"internal/buildcfg"
 	"slices"
 	"testing"
 )
 
 func TestLLVMCodeGenOptions(t *testing.T) {
 	want := []string{"-trap-unreachable", "-disable-machine-cse", "-disable-lsr"}
+	if buildcfg.GOARCH == "arm64" {
+		want = append(want, "-aarch64-goobj-composite-relocations")
+	}
 	if got := llvmCodeGenOptions(); !slices.Equal(got, want) {
 		t.Errorf("llvmCodeGenOptions() = %q, want %q", got, want)
 	}

@@ -7,12 +7,12 @@ target triple = "x86_64-unknown-linux-goobj"
 ; DEBUG:            "line": 10,
 ; DEBUG:            "name": "main.mid",
 ; DEBUG-X86:        "parent_pc": 0
-; DEBUG-AARCH64:    "parent_pc": 4
+; DEBUG-AARCH64:    "parent_pc": 8
 ; DEBUG:            "parent": 0,
 ; DEBUG:            "line": 20,
 ; DEBUG:            "name": "main.inner",
 ; DEBUG-X86:        "parent_pc": 7
-; DEBUG-AARCH64:    "parent_pc": 8
+; DEBUG-AARCH64:    "parent_pc": 12
 ; DEBUG-X86:        "pc_quantum": 1,
 ; DEBUG-AARCH64:    "pc_quantum": 4,
 ; DEBUG:            "kind": "pcfile",
@@ -62,7 +62,7 @@ target triple = "x86_64-unknown-linux-goobj"
 ; DEBUG:            "line": 71,
 ; DEBUG:            "name": "main.sharedRight",
 ; DEBUG-X86:        "parent_pc": 8
-; DEBUG-AARCH64:    "parent_pc": 12
+; DEBUG-AARCH64:    "parent_pc": 16
 
 ; DEBUG-LABEL:      "name": "main.erased",
 ; DEBUG:            "start_line": 100,
