@@ -102,6 +102,7 @@
       "image/png": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "index/suffixarray": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "internal/copyright": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
+      "internal/runtime/cgobench": "qualified through LLVM O2 compilation and execution of its cgo-generated empty C wrapper with a zero-sized ABI0 result frame, plus its complete standard-library dependency closure and package tests",
       "internal/runtime/maps": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "io": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",
       "io/fs": "qualified through LLVM O2 compilation of its complete standard-library dependency closure including runtime, plus GoObj/archive, link, and package tests",

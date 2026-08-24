@@ -3796,7 +3796,12 @@ func LLVMCompile(f *Func) {
 				continue
 			}
 			if name.Class == ir.PPARAM {
-				parameterHomes = append(parameterHomes, name)
+				// A zero-sized parameter has a logical ABI0 address but no
+				// bytes to copy into its home. In particular, do not turn the
+				// go.abi.pad carrier into storage in the Go frame.
+				if name.Type().Size() != 0 {
+					parameterHomes = append(parameterHomes, name)
+				}
 				if name.Type().HasPointers() && !cgoUnsafeArgs {
 					parameterLifetimeSlots = append(parameterLifetimeSlots, FCtxt.Locals[key])
 				}

@@ -80,8 +80,9 @@ def resolve_pr(pr_number, api_url):
     pull = api_json(
         f"{api_url.rstrip('/')}/repos/{LLVM_REPOSITORY}/pulls/{pr_number}"
     )
-    if pull.get("state") != "open":
-        raise PayloadError(f"{LLVM_REPOSITORY}#{pr_number} is not open")
+    state = pull.get("state")
+    if state != "open" and not (state == "closed" and pull.get("merged_at")):
+        raise PayloadError(f"{LLVM_REPOSITORY}#{pr_number} is neither open nor merged")
     base = pull.get("base") or {}
     base_repo = (base.get("repo") or {}).get("full_name")
     if base_repo != LLVM_REPOSITORY or base.get("ref") != LLVM_BASE_BRANCH:

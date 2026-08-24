@@ -11,6 +11,12 @@ import (
 	"testing"
 )
 
+func TestEmptyC(t *testing.T) {
+	// Exercise the cgo-generated void result wrapper that originally exposed
+	// the zero-sized ABI0 frame lowering failure.
+	cgobench.EmptyC()
+}
+
 func BenchmarkCall(b *testing.B) {
 	for b.Loop() {
 		cgobench.Empty()

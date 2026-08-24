@@ -38,6 +38,7 @@
       "codegen/llvm_args_pointer_maps.go": "typed byval stack inputs and goret stack results across frontend safepoints",
       "codegen/llvm_caller_state.go": "caller PC and caller SP lowering through target-specific LLVM intrinsics",
       "codegen/_cgo_llvm_unsafe_args.go": "ABI0 cgo unsafe arguments use the modeled contiguous parameter and result frame",
+      "codegen/_cgo_llvm_zero_abi0.go": "zero-sized ABI0 arguments and results retain a frame address without allocating or copying storage",
       "codegen/llvm_data_sections.go": "preserve data, bss, noptrdata, and noptrbss identities in LLVM IR",
       "codegen/llvm_defer.go": "open-coded stack defers plus classic loop defer registration and recovery entries",
       "codegen/llvm_defer_noreturn.go": "classic loop defer without a normal return retains its recovery entry through callbr",
@@ -95,6 +96,7 @@
   },
   "run": {
     "whitelist": {
+      "llvm_zero_abi0.go": "zero-sized ABI0 argument and result frame addresses through LLVM compile, link, and execution",
       "64bit.go": "generated 64-bit arithmetic regression qualified through LLVM O2 generation, compile, link, and execution",
       "bom.go": "generated upstream regression repeatedly qualified through LLVM compile, link, and execution",
       "chan/select5.go": "generated upstream regression repeatedly qualified through LLVM compile, link, and execution",
