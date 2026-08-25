@@ -119,9 +119,22 @@ func (a *AuxNameOffset) FrameOffset() int64 {
 }
 
 type AuxCall struct {
-	Fn      *obj.LSym
-	reg     *regInfo // regInfo for this call
-	abiInfo *abi.ABIParamResultInfo
+	Fn         *obj.LSym
+	reg        *regInfo // regInfo for this call
+	abiInfo    *abi.ABIParamResultInfo
+	sourceCall bool
+}
+
+// SetSourceCall records that this call came from a frontend call expression.
+// Calls injected directly by compiler transformations do not have that identity
+// even when they carry a source position for line-table purposes.
+func (a *AuxCall) SetSourceCall() {
+	a.sourceCall = true
+}
+
+// IsSourceCall reports whether this call came from a frontend call expression.
+func (a *AuxCall) IsSourceCall() bool {
+	return a.sourceCall
 }
 
 // Reg returns the regInfo for a given call, combining the derived in/out register masks

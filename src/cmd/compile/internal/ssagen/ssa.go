@@ -5158,6 +5158,9 @@ func (s *state) call(n *ir.CallExpr, k callKind, returnResultAddr bool, deferExt
 		default:
 			s.Fatalf("bad call type %v %v", n.Op(), n)
 		}
+		if k == callNormal || k == callTail {
+			call.Aux.(*ssa.AuxCall).SetSourceCall()
+		}
 		call.AddArgs(callArgs...)
 		call.AuxInt = stksize // Call operations carry the argsize of the callee along with them
 	}
