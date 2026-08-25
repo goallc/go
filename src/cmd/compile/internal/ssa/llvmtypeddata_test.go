@@ -11,7 +11,35 @@ import (
 
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 )
+
+func TestLLVMGoObjSections(t *testing.T) {
+	dataTests := []struct {
+		kind objabi.SymKind
+		want string
+	}{
+		{objabi.SRODATA, ".rodata"},
+		{objabi.SRODATAFIPS, ".rodata.fips"},
+		{objabi.SNOPTRDATA, ".noptrdata"},
+		{objabi.SNOPTRDATAFIPS, ".noptrdata.fips"},
+		{objabi.SDATA, ".data"},
+		{objabi.SDATAFIPS, ".data.fips"},
+	}
+	for _, test := range dataTests {
+		s := &obj.LSym{Name: "test", Type: test.kind}
+		if got := llvmDataSection(s); got != test.want {
+			t.Errorf("llvmDataSection(%s) = %q, want %q", test.kind, got, test.want)
+		}
+	}
+
+	if got := llvmFunctionSection(&obj.LSym{Type: objabi.STEXT}); got != "" {
+		t.Errorf("ordinary text section = %q, want default section", got)
+	}
+	if got := llvmFunctionSection(&obj.LSym{Type: objabi.STEXTFIPS}); got != ".text.fips" {
+		t.Errorf("FIPS text section = %q, want .text.fips", got)
+	}
+}
 
 func TestLLVMDescriptorGoTypeCanonicalizesPredeclaredAliases(t *testing.T) {
 	tests := []struct {

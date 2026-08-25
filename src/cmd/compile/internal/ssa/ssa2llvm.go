@@ -96,6 +96,7 @@ const goOpenDeferBitsMD = "goallc.open_defer_bits"
 const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolIndexMD = "goobj.symbol.index"
+const goObjStaticRODataTypeMD = "goobj.static_rodata_type"
 const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
@@ -3486,6 +3487,9 @@ func LLVMCompile(f *Func) {
 		}
 	}
 	setLLVMSymbolLinkage(FCtxt.LF, f.OwnAux.Fn)
+	if section := llvmFunctionSection(f.OwnAux.Fn); section != "" {
+		FCtxt.LF.SetSection(section)
+	}
 	setGoObjFunctionFlags(FCtxt.LF, f.OwnAux.Fn)
 	setGoObjFunctionInfo(FCtxt.LF, f.OwnAux.Fn)
 	inParams := f.OwnAux.ABIInfo().InParams()
@@ -4192,6 +4196,7 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 		GlobalCtxt.MDNode(experimentMetadata),
 	})
 	CurrentModule.AddNamedMetadataOperand("goobj.config", config)
+	emitGoObjStaticRODataType()
 }
 
 func finalizeLLVMModule() {

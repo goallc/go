@@ -702,12 +702,18 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 
 func llvmDataSection(s *obj.LSym) string {
 	switch s.Type {
-	case objabi.SRODATA, objabi.SRODATAFIPS:
+	case objabi.SRODATA:
 		return ".rodata"
-	case objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS:
+	case objabi.SRODATAFIPS:
+		return ".rodata.fips"
+	case objabi.SNOPTRDATA:
 		return ".noptrdata"
-	case objabi.SDATA, objabi.SDATAFIPS:
+	case objabi.SNOPTRDATAFIPS:
+		return ".noptrdata.fips"
+	case objabi.SDATA:
 		return ".data"
+	case objabi.SDATAFIPS:
+		return ".data.fips"
 	case objabi.SBSS:
 		return ".bss"
 	case objabi.SNOPTRBSS:
@@ -716,6 +722,13 @@ func llvmDataSection(s *obj.LSym) string {
 		base.Fatalf("unsupported Go data symbol kind %s for %s", s.Type, s.Name)
 		return ""
 	}
+}
+
+func llvmFunctionSection(s *obj.LSym) string {
+	if s.Type == objabi.STEXTFIPS {
+		return ".text.fips"
+	}
+	return ""
 }
 
 func llvmDataIsReadOnly(s *obj.LSym) bool {
@@ -733,6 +746,19 @@ func setLLVMSymbolLinkage(value llvm.Value, s *obj.LSym) {
 	} else if s.DuplicateOK() {
 		value.SetLinkage(llvm.WeakAnyLinkage)
 	}
+}
+
+// emitGoObjStaticRODataType tells the GoObj producer how to classify read-only
+// package-local symbols synthesized after Go IR lowering, such as switch and
+// lookup tables. Definitions that already exist in Go IR carry their semantic
+// kind in their section name instead.
+func emitGoObjStaticRODataType() {
+	if !obj.EnableFIPS() || !base.Ctxt.IsFIPS() {
+		return
+	}
+	CurrentModule.AddNamedMetadataOperand(goObjStaticRODataTypeMD, GlobalCtxt.MDNode([]llvm.Metadata{
+		llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(objabi.SRODATAFIPS), false).ConstantAsMetadata(),
+	}))
 }
 
 func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
