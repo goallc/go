@@ -235,8 +235,15 @@ jobs:
           GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
           GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
           GOALLC_RUN_LLVM_STDLIB: "1"
+          GOALLC_STDLIB_TEST_MODE: ${{ github.event_name == 'pull_request' && 'short' || 'long' }}
         run: |
-          ./bin/go test cmd/internal/testdir \
+          set -euo pipefail
+          mode_args=()
+          if [[ "$GOALLC_STDLIB_TEST_MODE" == "short" ]]; then
+            mode_args=(-short)
+          fi
+          echo "LLVM standard library test mode: $GOALLC_STDLIB_TEST_MODE"
+          ./bin/go test "${mode_args[@]}" cmd/internal/testdir \
             -run '^TestLLVMStdlib$' \
             -count=1 \
             -timeout=100m \
