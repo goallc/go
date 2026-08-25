@@ -14,6 +14,7 @@ package codegen
 // LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: phi i64
 // LLVM: icmp eq ptr %p, null
+// LLVM: br i1 {{%.*}}, label {{%.*}}, label {{%.*}}, {{.*}}!make.implicit [[GO_NILCHECK:![0-9]+]]
 // LLVM: call goabiinternal void @runtime.panicmem()
 // LLVM-NEXT: unreachable
 // LLVM: declare goabiinternal void @runtime.panicmem()
@@ -34,7 +35,7 @@ package codegen
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheck(ptr %p)
 // LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: [[ISNIL:%.*]] = icmp eq ptr %p, null
-// LLVM-NEXT: br i1 [[ISNIL]], label %[[NIL:.*\.nil]], label %[[CONT:.*\.notnil]]
+// LLVM-NEXT: br i1 [[ISNIL]], label %[[NIL:.*\.nil]], label %[[CONT:.*\.notnil]], {{.*}}!make.implicit [[GO_NILCHECK]]
 // LLVM: [[NIL]]:
 // LLVM-NEXT: call goabiinternal void @runtime.panicmem()
 // LLVM-NEXT: unreachable
@@ -49,7 +50,7 @@ package codegen
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheck(
 // LLVM-OPT-NOT: llvm.goallc.nilcheck
 // LLVM-OPT: icmp eq ptr %p, null
-// LLVM-OPT: br i1 {{%.*}}, label %[[OPTNIL:[^,]+]], label %[[OPTCONT:[^,]+]], !dbg
+// LLVM-OPT: br i1 {{%.*}}, label %[[OPTNIL:[^,]+]], label %[[OPTCONT:[^,]+]], {{.*}}!make.implicit [[GO_NILCHECK_OPT:![0-9]+]]
 // LLVM-OPT: [[OPTNIL]]:
 // LLVM-OPT-NEXT: call goabiinternal void @runtime.panicmem()
 // LLVM-OPT-NEXT: unreachable
@@ -59,6 +60,8 @@ package codegen
 // LLVM-OPT-NOT: !annotation
 // LLVM-OPT: load i64, ptr %p
 // LLVM-OPT-NOT: llvm.goallc.nilcheck
+// LLVM: [[GO_NILCHECK]] = !{!"goallc"}
+// LLVM-OPT: [[GO_NILCHECK_OPT]] = !{!"goallc"}
 func llvmExplicitNilcheck(p *int) int {
 	return *p
 }

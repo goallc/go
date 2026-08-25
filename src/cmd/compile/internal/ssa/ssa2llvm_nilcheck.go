@@ -16,6 +16,8 @@ import (
 
 const llvmPanicmemName = "runtime.panicmem"
 const llvmNilCheckIntrinsicName = "llvm.goallc.nilcheck"
+const llvmImplicitNilCheckMD = "make.implicit"
+const llvmImplicitNilCheckTag = "goallc"
 
 // llvmPanicmem returns the compiler-owned Go object symbol and the only LLVM
 // signature accepted for runtime.panicmem. Unlike ordinary compiler-generated
@@ -136,7 +138,14 @@ func (lfc *LLVMFuncContext) expandNilCheckIntrinsics() {
 		b.SetCurrentDebugLocationMetadata(debugLoc)
 		b.SetInsertPointAtEnd(before)
 		isNil := b.CreateICmp(llvm.IntEQ, checked, llvm.ConstNull(checked.Type()), "nilcheck.isnil")
-		b.CreateCondBr(isNil, panicBlock, continueBlock)
+		nilBranch := b.CreateCondBr(isNil, panicBlock, continueBlock)
+		// The GoObj implicit-null-check contract is intentionally narrower than
+		// LLVM's generic !make.implicit marker. The backend only folds this
+		// branch when it can replace it with a non-negative, first-page memory
+		// access whose synchronous fault is handled by Go's signal path.
+		nilBranch.SetMetadata(GlobalCtxt.MDKindID(llvmImplicitNilCheckMD), GlobalCtxt.MDNode([]llvm.Metadata{
+			GlobalCtxt.MDString(llvmImplicitNilCheckTag),
+		}))
 
 		b.SetInsertPointAtEnd(panicBlock)
 		panicmem, sig := llvmPanicmem()
@@ -158,8 +167,7 @@ func (lfc *LLVMFuncContext) expandNilCheckIntrinsics() {
 	}
 	intrinsic.EraseFromParentAsFunction()
 
-	// TODO(goallc): A later target-aware optimization may fold this explicit
-	// branch and panic call into an implicit faulting nil check. It must first
-	// prove Go panic ordering and recover semantics, a target-valid fault
-	// offset, memory dependence, and the target's fault classification rules.
+	// LLVM's target-aware ImplicitNullChecks pass may fold marked branches. If
+	// it cannot prove the required address and scheduling constraints, this
+	// explicit panic path remains unchanged.
 }
