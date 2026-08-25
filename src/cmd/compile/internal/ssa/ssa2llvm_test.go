@@ -137,7 +137,7 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 	}
 }
 
-func TestLLVMGoCallSitesCannotMerge(t *testing.T) {
+func TestLLVMSourceCallSitesCannotMerge(t *testing.T) {
 	module := GlobalCtxt.NewModule("go_call_nomerge")
 	builder := GlobalCtxt.NewBuilder()
 	t.Cleanup(module.Dispose)
@@ -151,15 +151,23 @@ func TestLLVMGoCallSitesCannotMerge(t *testing.T) {
 	callee := llvm.AddFunction(module, "callee", sig.Type)
 	caller := llvm.AddFunction(module, "caller", sig.Type)
 	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(caller, "entry"))
-	call := builder.CreateCall(sig.Type, callee, nil, "")
-	configureLLVMCall(call, sig)
+	sourceCall := builder.CreateCall(sig.Type, callee, nil, "")
+	configureLLVMCall(sourceCall, sig)
+	sourceAux := &AuxCall{}
+	sourceAux.SetSourceCall()
+	preserveLLVMSourceCallSite(&Value{Op: OpStaticLECall, Aux: sourceAux}, sourceCall)
+	loweredCall := builder.CreateCall(sig.Type, callee, nil, "")
+	configureLLVMCall(loweredCall, sig)
+	preserveLLVMSourceCallSite(&Value{Op: OpStaticLECall, Aux: &AuxCall{}}, loweredCall)
 	builder.CreateRetVoid()
 
 	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("LLVM verifier rejected non-mergeable Go call: %v\n%s", err, module.String())
 	}
-	if ir := module.String(); !strings.Contains(ir, "attributes #0 = { nomerge }") {
-		t.Fatalf("Go call lacks the nomerge call-site attribute:\n%s", ir)
+	ir := module.String()
+	if !strings.Contains(ir, "call void @callee() #0\n  call void @callee()\n") ||
+		!strings.Contains(ir, "attributes #0 = { nomerge }") {
+		t.Fatalf("source call is not isolated from mergeable lowered call:\n%s", ir)
 	}
 }
 

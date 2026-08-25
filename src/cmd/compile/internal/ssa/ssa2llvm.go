@@ -351,10 +351,6 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 }
 
 func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
-	// Go callers and tracebacks observe the source identity of call sites.
-	// LLVM cannot attach path-dependent locations to a call shared by multiple
-	// predecessors, so do not fold distinct Go calls into one machine call.
-	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmNoMergeAttribute())
 	if sig.ReturnCount > 1 {
 		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
@@ -372,6 +368,19 @@ func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
 		call.AddCallSiteAttribute(result.ParamIndex+1, llvmGoRetAttribute(result.ValueType))
 		call.AddCallSiteAttribute(result.ParamIndex+1, llvmGoRetIndexAttribute(index))
 		call.SetInstrParamAlignment(result.ParamIndex+1, result.Alignment)
+	}
+}
+
+func preserveLLVMSourceCallSite(v *Value, call llvm.Value) {
+	// Caller and traceback observe the source identity of frontend call
+	// expressions. LLVM cannot attach path-dependent locations to a call shared
+	// by multiple predecessors, so keep those calls distinct. Calls injected
+	// directly by compiler transformations may carry a source position for
+	// line-table purposes, but do not have source-call identity and remain
+	// eligible for merging.
+	aux := auxToCall(v.Aux)
+	if aux != nil && aux.IsSourceCall() {
+		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmNoMergeAttribute())
 	}
 }
 
@@ -2204,6 +2213,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	call := lfc.b.CreateCall(sig.Type, fn, args, name)
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
+	preserveLLVMSourceCallSite(v, call)
 	lfc.materializeAddressedResults(v, call, aux)
 	if llvmGCLeaf {
 		markLLVMGCLeafCall(call)
@@ -2270,6 +2280,7 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 	call := lfc.b.CreateCall(sig.Type, code, args, name)
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
+	preserveLLVMSourceCallSite(v, call)
 	lfc.materializeAddressedResults(v, call, aux)
 	if closureContext {
 		call.AddCallSiteAttribute(sig.ClosureContextIndex+1, llvmNestAttribute())
