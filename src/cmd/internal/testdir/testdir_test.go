@@ -153,35 +153,21 @@ func runTestDir(t *testing.T, useLLVM bool) {
 	var llvmMode *llvmTestMode
 	if useLLVM {
 		llvmMode = newLLVMTestMode(t, common)
-		t.Cleanup(func() { llvmMode.logSummary(t) })
 	}
 
 	for _, dir := range dirs {
 		for _, goFile := range goFiles(t, dir) {
 			name := path.Join(dir, goFile)
-			var llvmCase llvmTestCase
 			if llvmMode != nil {
-				var ok bool
-				llvmCase, ok = llvmMode.cases[name]
-				if !ok || llvmCase.class == llvmTestBlack {
+				if !llvmMode.cases[name] {
 					continue
 				}
 			}
-			test := test{testCommon: common, dir: dir, goFile: goFile, llvm: llvmMode, llvmCase: llvmCase}
+			test := test{testCommon: common, dir: dir, goFile: goFile, llvm: llvmMode}
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				test.T = t
-				var testError error
-				if llvmMode != nil {
-					t.Cleanup(func() { llvmMode.recordResult(t, llvmCase, testError) })
-				}
-				testError = test.run()
-				if llvmMode != nil && llvmCase.class == llvmTestGray {
-					if testError != nil {
-						t.Logf("LLVM graylist failure detail: %v", testError)
-					}
-					return
-				}
+				testError := test.run()
 				wantError := test.expectFail() && !*force
 				if testError != nil {
 					if wantError {
@@ -314,7 +300,6 @@ type test struct {
 	// For example, "fixedbugs", "bug000.go".
 	dir, goFile string
 	llvm        *llvmTestMode
-	llvmCase    llvmTestCase
 }
 
 // expectFail reports whether the (overall) test recipe is
