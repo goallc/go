@@ -314,6 +314,14 @@ func llvmNoInlineAttribute() llvm.Attribute {
 	return GlobalCtxt.CreateEnumAttribute(kind, 0)
 }
 
+func llvmNoMergeAttribute() llvm.Attribute {
+	kind := llvm.AttributeKindID("nomerge")
+	if kind == 0 {
+		base.Fatalf("LLVM does not provide the nomerge call-site attribute")
+	}
+	return GlobalCtxt.CreateEnumAttribute(kind, 0)
+}
+
 func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallConv) {
 	fn.SetFunctionCallConv(cc)
 	if sig.ReturnCount > 1 {
@@ -343,6 +351,10 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 }
 
 func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
+	// Go callers and tracebacks observe the source identity of call sites.
+	// LLVM cannot attach path-dependent locations to a call shared by multiple
+	// predecessors, so do not fold distinct Go calls into one machine call.
+	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmNoMergeAttribute())
 	if sig.ReturnCount > 1 {
 		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}

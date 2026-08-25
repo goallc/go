@@ -137,6 +137,32 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 	}
 }
 
+func TestLLVMGoCallSitesCannotMerge(t *testing.T) {
+	module := GlobalCtxt.NewModule("go_call_nomerge")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	sig := llvmFuncSignature{
+		Type:                llvm.FunctionType(GlobalCtxt.VoidType(), nil, false),
+		ReturnType:          GlobalCtxt.VoidType(),
+		ClosureContextIndex: -1,
+	}
+	callee := llvm.AddFunction(module, "callee", sig.Type)
+	caller := llvm.AddFunction(module, "caller", sig.Type)
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(caller, "entry"))
+	call := builder.CreateCall(sig.Type, callee, nil, "")
+	configureLLVMCall(call, sig)
+	builder.CreateRetVoid()
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected non-mergeable Go call: %v\n%s", err, module.String())
+	}
+	if ir := module.String(); !strings.Contains(ir, "attributes #0 = { nomerge }") {
+		t.Fatalf("Go call lacks the nomerge call-site attribute:\n%s", ir)
+	}
+}
+
 func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer
