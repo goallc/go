@@ -273,7 +273,9 @@ func TestLLVMStdlib(t *testing.T) {
 			limit <- struct{}{}
 			defer func() { <-limit }()
 			testTimeout := "2m"
-			processTimeout := 5 * time.Minute
+			// Cold full-LLVM builds can approach five minutes under shared
+			// runner contention. The test binary remains separately bounded.
+			processTimeout := 10 * time.Minute
 			if name == "runtime" {
 				// The runtime stress tests need more CPU time when they run
 				// alongside other full-LLVM package builds.
