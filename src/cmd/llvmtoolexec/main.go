@@ -163,6 +163,14 @@ func codegenLLCArgs(pluginPath, inputPath, outputPath string, enableLSR bool) []
 		// statepoints, or the post-statepoint rematerialization is made opaque to
 		// MachineCSE.
 		"-disable-machine-cse",
+		// Keep the retained external backend in sync with llvmCodeGenOptions in
+		// cmd/compile. Target prologue emission models the morestack retry as a
+		// loop backedge.
+		// Without profile data, MachineBlockPlacement keeps every loop block in
+		// one chain and places the cold morestack path before the function body.
+		// Honor the target-provided edge probabilities so that path is outlined
+		// after the body, matching the native Go prologue layout.
+		"-force-loop-cold-block",
 	}
 	// LSR can turn an address rooted at a pointer-containing alloca into a
 	// loop-carried derived pointer. The late statepoint pass relocates that

@@ -400,7 +400,7 @@ func TestWithLLVMExternalCodegen(t *testing.T) {
 	}
 }
 
-func TestCodegenLLCArgsDisableUnsafeMachinePasses(t *testing.T) {
+func TestCodegenLLCArgsMachinePassPolicy(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		enableLSR bool
@@ -408,12 +408,12 @@ func TestCodegenLLCArgsDisableUnsafeMachinePasses(t *testing.T) {
 	}{
 		{
 			name: "defaults",
-			want: "-load-pass-plugin=plugin -trap-unreachable -disable-machine-cse -disable-lsr -filetype=obj input.ll -o output.o",
+			want: "-load-pass-plugin=plugin -trap-unreachable -disable-machine-cse -force-loop-cold-block -disable-lsr -filetype=obj input.ll -o output.o",
 		},
 		{
 			name:      "LSR opt-in",
 			enableLSR: true,
-			want:      "-load-pass-plugin=plugin -trap-unreachable -disable-machine-cse -filetype=obj input.ll -o output.o",
+			want:      "-load-pass-plugin=plugin -trap-unreachable -disable-machine-cse -force-loop-cold-block -filetype=obj input.ll -o output.o",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

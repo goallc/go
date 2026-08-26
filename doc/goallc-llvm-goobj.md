@@ -167,6 +167,13 @@ nilcheck marker/intrinsic，并实现 target-aware nilcheck analysis：在 panic
 这一规则与调用点的 hidden context lowering 是同一 ABI 契约，不能只修改其中
 一侧。
 
+target prologue emission 将 morestack 重试边建模为机器 CFG loop。无 profile
+时，compiler 内的 `llvmCodeGenOptions` 固定设置 `-force-loop-cold-block`，让
+`MachineBlockPlacement` 按 target 已设置的极低 slow-path 边概率把 morestack
+block 移到正常函数体和 `RET` 之后。保留的 `llvmtoolexec` 外部 A/B 路径传递同一
+参数。这样热路径从 stack check 直接 fallthrough 到函数体，与原生 Go 的扩栈
+序言布局一致；不能删除该参数后仅依赖初始 MBB 顺序。
+
 ## 固定栈槽和动态 alloca
 
 每个仍有 use 的 SSA `OpLocalAddr` 在 LLVM entry block 预先建立唯一的固定

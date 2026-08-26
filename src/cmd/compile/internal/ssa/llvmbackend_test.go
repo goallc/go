@@ -13,7 +13,12 @@ import (
 )
 
 func TestLLVMCodeGenOptions(t *testing.T) {
-	want := []string{"-trap-unreachable", "-disable-machine-cse", "-disable-lsr"}
+	want := []string{
+		"-trap-unreachable",
+		"-disable-machine-cse",
+		"-force-loop-cold-block",
+		"-disable-lsr",
+	}
 	if buildcfg.GOARCH == "arm64" {
 		want = append(want, "-aarch64-goobj-composite-relocations")
 	}
