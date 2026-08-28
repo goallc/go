@@ -102,7 +102,9 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR-NOT: phi ptr
 ; IR: loop:
 ; IR: store ptr null, ptr %slot
-; IR: @llvm.experimental.gc.statepoint{{.*}}"deopt"({{.*}}ptr %slot{{.*}}){{.*}}"gc-live"(ptr %slot)
+; IR: %[[CALL_FIXED:[-a-zA-Z$._0-9]+]] = insertvalue { ptr, i64, i64 } %slice.relocated.merge.0, ptr %slot, 0
+; IR-NEXT: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}%[[CALL_FIXED]]
+; IR-SAME: "gc-live"(ptr %slot)
 ; IR-NOT: = call coldcc ptr @llvm.experimental.gc.relocate
 ; IR: %slot.address.remat{{.*}} = getelementptr i8, ptr %slot, i64 0
 ; IR: insertvalue { ptr, i64, i64 } %slice.relocated.merge{{.*}}, ptr %slot.address.remat{{.*}}, 0
@@ -113,7 +115,50 @@ target triple = "aarch64-unknown-linux-goobj"
 ; MIR-NOT: %{{(fixed-)?}}stack.1
 ; MIR-NOT: PHI
 ; MIR: bb.1.loop:
+; MIR: %[[CALL_FRAME:[0-9]+]]:{{[a-z0-9_]+}} = {{(LEA64r|ADDXri)}} %stack.0.slot
+; MIR: ${{(rax|x0)}} = COPY %[[CALL_FRAME]]
 ; MIR: STATEPOINT{{.*}}%stack.0.slot
+
+; IR-LABEL: define goabiinternal void @aggregate_different_offset_loop(
+; IR: %address.offset = select i1 %choose, i64 0, i64 8
+; IR: %argument.relocated.merge.0 = phi { ptr }
+; IR: %slot.local.address = getelementptr i8, ptr %slot, i64 %address.offset
+; IR-NEXT: %[[OFFSET_FIXED:[-a-zA-Z$._0-9]+]] = insertvalue { ptr } %argument.relocated.merge.0, ptr %slot.local.address, 0
+; IR-NEXT: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}%[[OFFSET_FIXED]]
+; IR-SAME: "gc-live"(ptr %slot)
+
+; MIR-LABEL: name: aggregate_different_offset_loop
+; MIR: bb.1.loop:
+; MIR: {{(LEA64r|ADDXri)}} %stack.0.slot
+; MIR: STATEPOINT{{.*}}%stack.0.slot
+
+; A current-call-only aggregate is deliberately absent from caller gc-live,
+; but its fixed-frame leaf can still be made explicit for ordinary call
+; lowering. Distinct frame identities remain on the existing vreg path.
+; Aggregate terminal uses follow the same localization rule even when the
+; original leaf was already a direct frame base.
+; IR-LABEL: define goabiinternal void @aggregate_current_direct_alloca(
+; IR: %argument.frame.local = insertvalue { ptr } %argument, ptr %slot, 0
+; IR-NEXT: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}%argument.frame.local
+
+; IR-LABEL: define goabiinternal void @aggregate_current_select_same_alloca(
+; IR-NOT: "gc-live"
+; IR: %selected.frame.local = insertvalue { ptr } %selected, ptr %slot, 0
+; IR-NEXT: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}%selected.frame.local
+
+; IR-LABEL: define goabiinternal void @aggregate_current_select_mixed_alloca(
+; IR-NOT: frame.local
+; IR: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}%selected
+
+; Aggregate localization is defined for terminal uses rather than statepoint
+; records. A gc-leaf call therefore receives the same Base+Offset rebuild.
+; IR-LABEL: define goabiinternal void @aggregate_leaf_terminal_select(
+; IR-NOT: @llvm.experimental.gc.statepoint
+; IR: %selected.offset = select i1 %choose, i64 0, i64 8
+; IR: %slot.local.address = getelementptr i8, ptr %slot, i64 %selected.offset
+; IR-NEXT: %selected.frame.local = insertvalue { ptr } %selected, ptr %slot.local.address, 0
+; IR-NEXT: call goabiinternal void @consume_leaf_aggregate({ ptr } %selected.frame.local)
+; IR-NOT: @llvm.experimental.gc.statepoint
 
 ; IR-LABEL: define goabiinternal void @aggregate_phi_same_alloca(
 ; IR-NOT: = call coldcc ptr @llvm.experimental.gc.relocate
@@ -150,6 +195,7 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR: %nested.leaf.0.0 = extractvalue { { ptr, i64 }, i64 } %nested, 0, 0
 ; IR: "gc-live"(ptr %nested.leaf.0.0)
 ; IR: %nested.leaf.0.0.relocated = call coldcc ptr @llvm.experimental.gc.relocate
+; IR-NOT: frame.local
 
 ; IR-LABEL: define goabiinternal void @nested_aggregate_different_offset(
 ; IR: %selected.offset = select i1 %choose, i64 0, i64 8
@@ -165,6 +211,7 @@ declare goabiinternal i64 @dynamic_offset(ptr)
 declare goabiinternal void @consume_slice({ ptr, i64, i64 })
 declare goabiinternal void @consume_pointer_aggregate({ ptr })
 declare goabiinternal void @consume_nested_aggregate({ { ptr, i64 }, i64 })
+declare goabiinternal void @consume_leaf_aggregate({ ptr }) #0
 
 define goabiinternal ptr @pointer_contents(ptr %value) gc "goallc" {
 entry:
@@ -342,6 +389,68 @@ exit:
   ret void
 }
 
+define goabiinternal void @aggregate_different_offset_loop(
+    i1 %again, i1 %choose) gc "goallc" {
+entry:
+  %slot = alloca [2 x ptr], align 8
+  %first = getelementptr inbounds [2 x ptr], ptr %slot, i64 0, i64 0
+  %second = getelementptr inbounds [2 x ptr], ptr %slot, i64 0, i64 1
+  %address = select i1 %choose, ptr %first, ptr %second
+  %argument = insertvalue { ptr } poison, ptr %address, 0
+  br label %loop
+
+loop:
+  call goabiinternal void @consume_pointer_aggregate({ ptr } %argument)
+  br i1 %again, label %loop, label %exit
+
+exit:
+  ret void
+}
+
+define goabiinternal void @aggregate_current_direct_alloca() gc "goallc" {
+entry:
+  %slot = alloca ptr, align 8
+  %argument = insertvalue { ptr } poison, ptr %slot, 0
+  call goabiinternal void @consume_pointer_aggregate({ ptr } %argument)
+  ret void
+}
+
+define goabiinternal void @aggregate_current_select_same_alloca(
+    i1 %choose) gc "goallc" {
+entry:
+  %slot = alloca ptr, align 8
+  %left = insertvalue { ptr } poison, ptr %slot, 0
+  %right = insertvalue { ptr } poison, ptr %slot, 0
+  %selected = select i1 %choose, { ptr } %left, { ptr } %right
+  call goabiinternal void @consume_pointer_aggregate({ ptr } %selected)
+  ret void
+}
+
+define goabiinternal void @aggregate_current_select_mixed_alloca(
+    i1 %choose) gc "goallc" {
+entry:
+  %left.slot = alloca ptr, align 8
+  %right.slot = alloca ptr, align 8
+  %left = insertvalue { ptr } poison, ptr %left.slot, 0
+  %right = insertvalue { ptr } poison, ptr %right.slot, 0
+  %selected = select i1 %choose, { ptr } %left, { ptr } %right
+  call goabiinternal void @consume_pointer_aggregate({ ptr } %selected)
+  ret void
+}
+
+define goabiinternal void @aggregate_leaf_terminal_select(
+    i1 %choose) gc "goallc" {
+entry:
+  %slot = alloca [2 x ptr], align 8
+  %first = getelementptr inbounds [2 x ptr], ptr %slot, i64 0, i64 0
+  %second = getelementptr inbounds [2 x ptr], ptr %slot, i64 0, i64 1
+  %left = insertvalue { ptr } poison, ptr %first, 0
+  %right = insertvalue { ptr } poison, ptr %second, 0
+  %selected = select i1 %choose, { ptr } %left, { ptr } %right
+  call goabiinternal void @consume_leaf_aggregate({ ptr } %selected)
+  ret void
+}
+
 define goabiinternal void @aggregate_phi_same_alloca(i1 %choose) gc "goallc" {
 entry:
   %slot = alloca ptr, align 8
@@ -442,3 +551,5 @@ entry:
   call goabiinternal void @consume_nested_aggregate({ { ptr, i64 }, i64 } %nested)
   ret void
 }
+
+attributes #0 = { "gc-leaf-function" }

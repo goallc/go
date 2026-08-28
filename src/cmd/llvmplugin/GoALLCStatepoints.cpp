@@ -116,6 +116,9 @@ struct AggregateLeaf {
   SmallVector<unsigned, 4> Indices;
 };
 
+Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
+                               SmallVectorImpl<AggregateLeaf> &Leaves);
+
 struct PointerFrameLeaf {
   SmallVector<unsigned, 4> Indices;
   uint64_t Offset;
@@ -219,8 +222,13 @@ bool isFixedFrameBase(const Value *V) {
 // forwarding graph remains derived from that object. Offsets may differ: they
 // are normalized to integer SSA separately, so only mixed object identities
 // make the provenance ambiguous.
-const Value *fixedFrameProvenanceBase(const Value *Root) {
-  if (!Root->getType()->isPointerTy())
+const Value *fixedFrameProvenanceBase(const Value *Root,
+                                      ArrayRef<unsigned> RootIndices) {
+  Type *RootLeafTy =
+      RootIndices.empty()
+          ? Root->getType()
+          : ExtractValueInst::getIndexedType(Root->getType(), RootIndices);
+  if (!RootLeafTy || !RootLeafTy->isPointerTy())
     return nullptr;
 
   struct IdentityQuery {
@@ -229,7 +237,7 @@ const Value *fixedFrameProvenanceBase(const Value *Root) {
   };
 
   SmallVector<IdentityQuery, 8> Worklist;
-  Worklist.push_back({Root, {}});
+  Worklist.push_back({Root, SmallVector<unsigned, 4>(RootIndices)});
   SmallVector<IdentityQuery, 8> Visited;
   const Value *Base = nullptr;
 
@@ -336,7 +344,11 @@ const Value *fixedFrameProvenanceBase(const Value *Root) {
 
   // Reject an unanchored forwarding cycle and address-space changes which
   // cannot be reproduced by one Base+Offset recipe.
-  return Base && Root->getType() == Base->getType() ? Base : nullptr;
+  return Base && RootLeafTy == Base->getType() ? Base : nullptr;
+}
+
+const Value *fixedFrameProvenanceBase(const Value *Root) {
+  return fixedFrameProvenanceBase(Root, {});
 }
 
 Value *fixedFrameProvenanceBase(Value *V) {
@@ -1020,6 +1032,11 @@ public:
     return get(V, Base, ArrayRef<unsigned>());
   }
 
+  Expected<Value *> getAggregateLeaf(Value *Aggregate,
+                                     ArrayRef<unsigned> Indices, Value *Base) {
+    return get(Aggregate, Base, Indices);
+  }
+
 private:
   const DataLayout &DL;
   SmallVector<FixedFrameOffsetCacheEntry, 32> Cache;
@@ -1218,7 +1235,100 @@ prepareFixedFrameAddresses(Function &F) {
   return Records;
 }
 
-Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
+bool isAggregateForwardingUse(const Use &U) {
+  // Keep aggregate SSA forwarding intact and localize only where an
+  // instruction actually observes the aggregate. This lets one terminal-use
+  // rule cover calls, returns, stores, and any future aggregate consumers
+  // without teaching each consumer about fixed-frame provenance.
+  auto *I = dyn_cast<Instruction>(U.getUser());
+  if (!I)
+    return false;
+  if (isa<PHINode, SelectInst, FreezeInst, InsertValueInst, ExtractValueInst>(
+          I))
+    return true;
+  if (isa<DbgInfoIntrinsic>(I))
+    return true;
+  auto *Intrinsic = dyn_cast<IntrinsicInst>(I);
+  return Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::fake_use;
+}
+
+Error localizeFixedFrameAggregateTerminalUses(Function &F) {
+  SmallVector<Use *, 32> TerminalUses;
+  for (Instruction &I : instructions(F)) {
+    for (Use &U : I.operands()) {
+      Type *Ty = U->getType();
+      if (Ty->isAggregateType() && containsPointer(Ty) &&
+          !isAggregateForwardingUse(U))
+        TerminalUses.push_back(&U);
+    }
+  }
+
+  FixedFrameOffsetBuilder OffsetBuilder(F);
+  for (Use *U : TerminalUses) {
+    Value *Aggregate = U->get();
+    auto *User = cast<Instruction>(U->getUser());
+    SmallVector<AggregateLeaf, 8> Leaves;
+    SmallVector<unsigned, 4> Path;
+    if (Error Err =
+            enumerateAggregateLeaves(Aggregate->getType(), Path, Leaves)) {
+      // Localization is a CodeGen canonicalization, not a new restriction on
+      // aggregate values which the ordinary vreg path already supports.
+      consumeError(std::move(Err));
+      continue;
+    }
+
+    IRBuilder<> Builder(User);
+    Builder.SetCurrentDebugLocation(User->getDebugLoc());
+    Value *Localized = Aggregate;
+    for (const AggregateLeaf &Leaf : Leaves) {
+      Type *LeafTy =
+          ExtractValueInst::getIndexedType(Aggregate->getType(), Leaf.Indices);
+      assert(LeafTy && "enumerated aggregate leaf has no indexed type");
+      // A fixed vector of pointers is one relocatable leaf, but it cannot
+      // denote one scalar alloca/byval/goret frame identity.
+      if (!LeafTy->isPointerTy())
+        continue;
+
+      Value *Base = const_cast<Value *>(
+          fixedFrameProvenanceBase(Aggregate, Leaf.Indices));
+      if (!Base)
+        continue;
+
+      Expected<Value *> Offset =
+          OffsetBuilder.getAggregateLeaf(Aggregate, Leaf.Indices, Base);
+      if (!Offset)
+        return Offset.takeError();
+
+      Value *Address = Base;
+      auto *ConstantOffset = dyn_cast<ConstantInt>(*Offset);
+      if (!ConstantOffset || !ConstantOffset->isZero()) {
+        std::string Name = Base->hasName()
+                               ? (Base->getName() + ".local.address").str()
+                               : "fixed.frame.local.address";
+        Address = Builder.CreateGEP(Builder.getInt8Ty(), Base, *Offset, Name);
+      }
+
+      // Keep the reaching aggregate as the bottom so untouched scalar, undef,
+      // and poison fields retain their exact semantics. The fixed-frame leaf
+      // is overwritten before this localized aggregate reaches its terminal
+      // use. If relocation repair later gives Aggregate multiple reaching
+      // definitions, mem2reg retargets this bottom operand to the correct SSA
+      // value while leaving the terminal Base(+Offset) recipe in place.
+      std::string Name = Aggregate->hasName()
+                             ? (Aggregate->getName() + ".frame.local").str()
+                             : "aggregate.frame.local";
+      Localized =
+          Builder.CreateInsertValue(Localized, Address, Leaf.Indices, Name);
+    }
+
+    if (Localized != Aggregate)
+      U->set(Localized);
+  }
+  return Error::success();
+}
+
+Error localizeFixedFrameAddresses(Function &F,
+                                  ArrayRef<FixedFrameAddressRecord> Records) {
   SmallVector<WeakTrackingVH, 32> DeadAddresses;
   for (const FixedFrameAddressRecord &Record : Records) {
     Value *Address = Record.Address;
@@ -1294,7 +1404,7 @@ Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
     else
       RecursivelyDeleteTriviallyDeadInstructions(I);
   }
-  return Error::success();
+  return localizeFixedFrameAggregateTerminalUses(F);
 }
 
 bool isTrackedValue(const Value *V, LivenessKind Kind) {
@@ -3306,7 +3416,7 @@ Error rewriteFunction(Function &F) {
   splitStatepointContinuations(Records);
   if (Error Err = materializeAggregateRelocations(Records))
     return Err;
-  if (Error Err = localizeFixedFrameAddresses(FixedFrameAddresses))
+  if (Error Err = localizeFixedFrameAddresses(F, FixedFrameAddresses))
     return Err;
   // splitStatepointContinuations changes the CFG after liveness and
   // object-activity analysis.
