@@ -62,6 +62,24 @@ target triple = "aarch64-apple-darwin-goobj"
 ; IR-COUNT-2: "deopt"({{.*}}ptr %input{{.*}}i64 1{{.*}}i64 4{{.*}}i64 15{{.*}}"gc-live"({{.*}}ptr %input)
 ; IR-NOT: ; (%input, %input)
 
+; A loop-carried aggregate still receives normal relocation SSA at the call,
+; but its pointer leaf would otherwise become a Machine PHI. Reinsert the
+; fixed argument immediately at the statepoint so ordinary fixed-argument
+; lowering selects the FrameIndex.
+; IR-LABEL: define goabiinternal void @fixed_frame_byval_aggregate_loop(
+; IR: %argument.relocated.merge.0 = phi { ptr }
+; IR: %[[BYVAL_FIXED:[-a-zA-Z$._0-9]+]] = insertvalue { ptr } %argument.relocated.merge.0, ptr %input, 0
+; IR-NEXT: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}@consume_pointer_aggregate{{.*}}%[[BYVAL_FIXED]]
+; IR-NOT: llvm.stackaddress
+; IR-NOT: ptrtoint ptr %input
+
+; IR-LABEL: define goabiinternal {{.*}} @fixed_frame_goret_aggregate_loop(
+; IR: %argument.relocated.merge.0 = phi { ptr }
+; IR: %[[GORET_FIXED:[-a-zA-Z$._0-9]+]] = insertvalue { ptr } %argument.relocated.merge.0, ptr %result, 0
+; IR-NEXT: %statepoint_token = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint{{.*}}@consume_pointer_aggregate{{.*}}%[[GORET_FIXED]]
+; IR-NOT: llvm.stackaddress
+; IR-NOT: ptrtoint ptr %result
+
 ; MIR-LABEL: name: fixed_frame_goret_base
 ; MIR: fixedStack:
 ; MIR: type: default
@@ -73,6 +91,18 @@ target triple = "aarch64-apple-darwin-goobj"
 ; MIR: STRXui [[RESULT]], %fixed-stack.0, 0
 ; MIR: STATEPOINT{{.*}}2, 1, 0, %fixed-stack.0, 0, 2, 0, csr_aarch64_go,
 ; MIR: bb.2.entry.statepoint.cont.statepoint.cont:
+
+; MIR-LABEL: name: fixed_frame_byval_aggregate_loop
+; MIR: bb.{{[0-9]+}}.loop:
+; MIR: %[[BYVAL_FRAME:[0-9]+]]:{{[a-z0-9_]+}} = ADDXri %fixed-stack.{{[0-9]+}}
+; MIR: $x0 = COPY %[[BYVAL_FRAME]]
+; MIR: STATEPOINT{{.*}}@consume_pointer_aggregate
+
+; MIR-LABEL: name: fixed_frame_goret_aggregate_loop
+; MIR: bb.{{[0-9]+}}.loop:
+; MIR: %[[GORET_FRAME:[0-9]+]]:{{[a-z0-9_]+}} = ADDXri %fixed-stack.{{[0-9]+}}
+; MIR: $x0 = COPY %[[GORET_FRAME]]
+; MIR: STATEPOINT{{.*}}@consume_pointer_aggregate
 
 ; OBJVIEW-LABEL: "name": "fixed_frame_goret_base"
 ; OBJVIEW: "kind": "args_pointer_maps"
@@ -126,6 +156,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; OBJVIEW: "set_bits": null
 
 declare goabiinternal void @safepoint()
+declare goabiinternal void @consume_pointer_aggregate({ ptr })
 declare void @observe_pointer(ptr) #1
 
 define goabiinternal { i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64 } @fixed_frame_goret_base(
@@ -226,6 +257,36 @@ entry:
   %value = load ptr, ptr %input, align 8
   call void @observe_pointer(ptr %value)
   ret void
+}
+
+define goabiinternal void @fixed_frame_byval_aggregate_loop(
+    ptr byval(ptr) align 8 %input, i1 %again) #0 gc "goallc" {
+entry:
+  %argument = insertvalue { ptr } poison, ptr %input, 0
+  br label %loop
+
+loop:
+  call goabiinternal void @consume_pointer_aggregate({ ptr } %argument)
+  br i1 %again, label %loop, label %exit
+
+exit:
+  ret void
+}
+
+define goabiinternal { i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64 } @fixed_frame_goret_aggregate_loop(
+    i1 %again,
+    ptr goret(%result_storage) align 8 "goretindex"="15" %result) #0 gc "goallc" {
+entry:
+  store %result_storage zeroinitializer, ptr %result, align 8
+  %argument = insertvalue { ptr } poison, ptr %result, 0
+  br label %loop
+
+loop:
+  call goabiinternal void @consume_pointer_aggregate({ ptr } %argument)
+  br i1 %again, label %loop, label %exit
+
+exit:
+  ret { i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64 } zeroinitializer
 }
 
 attributes #0 = { "frame-pointer"="non-leaf" "go_results_tuple" }

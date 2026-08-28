@@ -89,12 +89,24 @@ struct LivenessData {
   MapVector<BasicBlock *, ValueSet> LiveOut;
 };
 
+struct AggregateRelocationLeaf {
+  SmallVector<unsigned, 4> Indices;
+  WeakTrackingVH Value;
+};
+
+struct AggregateRelocation {
+  WeakTrackingVH Original;
+  SmallVector<AggregateRelocationLeaf, 4> Leaves;
+  WeakTrackingVH Relocated;
+};
+
 struct SafepointRecord {
   CallInst *Call;
   uint64_t ID;
   ValueSet Live;
   ValueSet FixedFrameAddresses;
   ValueSet DerivedPointers;
+  SmallVector<AggregateRelocation, 4> Aggregates;
   CallInst *Statepoint = nullptr;
   CallInst *Result = nullptr;
   SmallVector<CallInst *, 8> Relocates;
@@ -103,6 +115,9 @@ struct SafepointRecord {
 struct AggregateLeaf {
   SmallVector<unsigned, 4> Indices;
 };
+
+Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
+                               SmallVectorImpl<AggregateLeaf> &Leaves);
 
 struct PointerFrameLeaf {
   SmallVector<unsigned, 4> Indices;
@@ -151,8 +166,7 @@ struct OpenDeferInfo {
 };
 
 enum class LivenessKind {
-  PointerAggregates,
-  RelocatablePointers,
+  RelocatableValues,
   FixedFrameAddresses,
   DerivedPointers,
 };
@@ -208,8 +222,13 @@ bool isFixedFrameBase(const Value *V) {
 // forwarding graph remains derived from that object. Offsets may differ: they
 // are normalized to integer SSA separately, so only mixed object identities
 // make the provenance ambiguous.
-const Value *fixedFrameProvenanceBase(const Value *Root) {
-  if (!Root->getType()->isPointerTy())
+const Value *fixedFrameProvenanceBase(const Value *Root,
+                                      ArrayRef<unsigned> RootIndices) {
+  Type *RootLeafTy =
+      RootIndices.empty()
+          ? Root->getType()
+          : ExtractValueInst::getIndexedType(Root->getType(), RootIndices);
+  if (!RootLeafTy || !RootLeafTy->isPointerTy())
     return nullptr;
 
   struct IdentityQuery {
@@ -218,7 +237,7 @@ const Value *fixedFrameProvenanceBase(const Value *Root) {
   };
 
   SmallVector<IdentityQuery, 8> Worklist;
-  Worklist.push_back({Root, {}});
+  Worklist.push_back({Root, SmallVector<unsigned, 4>(RootIndices)});
   SmallVector<IdentityQuery, 8> Visited;
   const Value *Base = nullptr;
 
@@ -240,8 +259,8 @@ const Value *fixedFrameProvenanceBase(const Value *Root) {
     if (!Query.Indices.empty()) {
       // Carry an aggregate leaf path through SSA forwarding before asking
       // FindInsertedValue to resolve an insertvalue chain. This is the form
-      // produced when aggregate scalarization extracts a pointer leaf from an
-      // aggregate PHI/select that is live across a statepoint.
+      // produced when call-local aggregate relocation extracts a pointer leaf
+      // from an aggregate PHI/select that is live across a statepoint.
       if (const auto *Phi = dyn_cast<PHINode>(V)) {
         for (const Value *Incoming : Phi->incoming_values())
           Push(Incoming, Query.Indices);
@@ -325,7 +344,11 @@ const Value *fixedFrameProvenanceBase(const Value *Root) {
 
   // Reject an unanchored forwarding cycle and address-space changes which
   // cannot be reproduced by one Base+Offset recipe.
-  return Base && Root->getType() == Base->getType() ? Base : nullptr;
+  return Base && RootLeafTy == Base->getType() ? Base : nullptr;
+}
+
+const Value *fixedFrameProvenanceBase(const Value *Root) {
+  return fixedFrameProvenanceBase(Root, {});
 }
 
 Value *fixedFrameProvenanceBase(Value *V) {
@@ -1009,6 +1032,11 @@ public:
     return get(V, Base, ArrayRef<unsigned>());
   }
 
+  Expected<Value *> getAggregateLeaf(Value *Aggregate,
+                                     ArrayRef<unsigned> Indices, Value *Base) {
+    return get(Aggregate, Base, Indices);
+  }
+
 private:
   const DataLayout &DL;
   SmallVector<FixedFrameOffsetCacheEntry, 32> Cache;
@@ -1207,7 +1235,100 @@ prepareFixedFrameAddresses(Function &F) {
   return Records;
 }
 
-Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
+bool isAggregateForwardingUse(const Use &U) {
+  // Keep aggregate SSA forwarding intact and localize only where an
+  // instruction actually observes the aggregate. This lets one terminal-use
+  // rule cover calls, returns, stores, and any future aggregate consumers
+  // without teaching each consumer about fixed-frame provenance.
+  auto *I = dyn_cast<Instruction>(U.getUser());
+  if (!I)
+    return false;
+  if (isa<PHINode, SelectInst, FreezeInst, InsertValueInst, ExtractValueInst>(
+          I))
+    return true;
+  if (isa<DbgInfoIntrinsic>(I))
+    return true;
+  auto *Intrinsic = dyn_cast<IntrinsicInst>(I);
+  return Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::fake_use;
+}
+
+Error localizeFixedFrameAggregateTerminalUses(Function &F) {
+  SmallVector<Use *, 32> TerminalUses;
+  for (Instruction &I : instructions(F)) {
+    for (Use &U : I.operands()) {
+      Type *Ty = U->getType();
+      if (Ty->isAggregateType() && containsPointer(Ty) &&
+          !isAggregateForwardingUse(U))
+        TerminalUses.push_back(&U);
+    }
+  }
+
+  FixedFrameOffsetBuilder OffsetBuilder(F);
+  for (Use *U : TerminalUses) {
+    Value *Aggregate = U->get();
+    auto *User = cast<Instruction>(U->getUser());
+    SmallVector<AggregateLeaf, 8> Leaves;
+    SmallVector<unsigned, 4> Path;
+    if (Error Err =
+            enumerateAggregateLeaves(Aggregate->getType(), Path, Leaves)) {
+      // Localization is a CodeGen canonicalization, not a new restriction on
+      // aggregate values which the ordinary vreg path already supports.
+      consumeError(std::move(Err));
+      continue;
+    }
+
+    IRBuilder<> Builder(User);
+    Builder.SetCurrentDebugLocation(User->getDebugLoc());
+    Value *Localized = Aggregate;
+    for (const AggregateLeaf &Leaf : Leaves) {
+      Type *LeafTy =
+          ExtractValueInst::getIndexedType(Aggregate->getType(), Leaf.Indices);
+      assert(LeafTy && "enumerated aggregate leaf has no indexed type");
+      // A fixed vector of pointers is one relocatable leaf, but it cannot
+      // denote one scalar alloca/byval/goret frame identity.
+      if (!LeafTy->isPointerTy())
+        continue;
+
+      Value *Base = const_cast<Value *>(
+          fixedFrameProvenanceBase(Aggregate, Leaf.Indices));
+      if (!Base)
+        continue;
+
+      Expected<Value *> Offset =
+          OffsetBuilder.getAggregateLeaf(Aggregate, Leaf.Indices, Base);
+      if (!Offset)
+        return Offset.takeError();
+
+      Value *Address = Base;
+      auto *ConstantOffset = dyn_cast<ConstantInt>(*Offset);
+      if (!ConstantOffset || !ConstantOffset->isZero()) {
+        std::string Name = Base->hasName()
+                               ? (Base->getName() + ".local.address").str()
+                               : "fixed.frame.local.address";
+        Address = Builder.CreateGEP(Builder.getInt8Ty(), Base, *Offset, Name);
+      }
+
+      // Keep the reaching aggregate as the bottom so untouched scalar, undef,
+      // and poison fields retain their exact semantics. The fixed-frame leaf
+      // is overwritten before this localized aggregate reaches its terminal
+      // use. If relocation repair later gives Aggregate multiple reaching
+      // definitions, mem2reg retargets this bottom operand to the correct SSA
+      // value while leaving the terminal Base(+Offset) recipe in place.
+      std::string Name = Aggregate->hasName()
+                             ? (Aggregate->getName() + ".frame.local").str()
+                             : "aggregate.frame.local";
+      Localized =
+          Builder.CreateInsertValue(Localized, Address, Leaf.Indices, Name);
+    }
+
+    if (Localized != Aggregate)
+      U->set(Localized);
+  }
+  return Error::success();
+}
+
+Error localizeFixedFrameAddresses(Function &F,
+                                  ArrayRef<FixedFrameAddressRecord> Records) {
   SmallVector<WeakTrackingVH, 32> DeadAddresses;
   for (const FixedFrameAddressRecord &Record : Records) {
     Value *Address = Record.Address;
@@ -1283,7 +1404,7 @@ Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
     else
       RecursivelyDeleteTriviallyDeadInstructions(I);
   }
-  return Error::success();
+  return localizeFixedFrameAggregateTerminalUses(F);
 }
 
 bool isTrackedValue(const Value *V, LivenessKind Kind) {
@@ -1291,11 +1412,10 @@ bool isTrackedValue(const Value *V, LivenessKind Kind) {
     return false;
   Type *Ty = V->getType();
   switch (Kind) {
-  case LivenessKind::PointerAggregates:
-    return !isRelocatablePointerType(Ty) && containsPointer(Ty);
-  case LivenessKind::RelocatablePointers:
-    return isRelocatablePointerType(Ty) && !isFixedFrameAddress(V) &&
-           !rematerializableDerivedBase(V);
+  case LivenessKind::RelocatableValues:
+    if (!isRelocatablePointerType(Ty))
+      return containsPointer(Ty);
+    return !isFixedFrameAddress(V) && !rematerializableDerivedBase(V);
   case LivenessKind::FixedFrameAddresses:
     // Address liveness is independent from object-content liveness. Track
     // every same-object alloca/byval/goret pointer recipe and later map it to
@@ -1419,7 +1539,7 @@ Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
     if (ST->isOpaque())
       return createStringError(
           std::errc::not_supported,
-          "GoALLC statepoints cannot scalarize an opaque struct");
+          "GoALLC statepoints cannot inspect an opaque aggregate");
     for (auto [Index, ElementTy] : llvm::enumerate(ST->elements())) {
       Path.push_back(Index);
       if (Error Err = enumerateAggregateLeaves(ElementTy, Path, Leaves))
@@ -1463,16 +1583,16 @@ std::string leafName(Value &Aggregate, ArrayRef<unsigned> Indices) {
   return Name;
 }
 
-Value *findUniformUninitializedLeaf(Value &Aggregate,
-                                    ArrayRef<unsigned> Indices,
-                                    SmallPtrSetImpl<Value *> &Active) {
+Value *findUniformAggregateLeaf(Value &Aggregate, ArrayRef<unsigned> Indices,
+                                SmallPtrSetImpl<Value *> &Active) {
   if (Value *Inserted = FindInsertedValue(&Aggregate, Indices))
-    return isa<UndefValue, PoisonValue>(Inserted) ? Inserted : nullptr;
+    return Inserted;
 
   // FindInsertedValue deliberately stops at control-flow merges. Look through
-  // a merge only when every incoming aggregate contributes the exact same
-  // undef or poison leaf. Reusing that constant preserves the IR semantics and
-  // prevents scalarization from manufacturing a pointer SSA value whose
+  // a merge only when every incoming aggregate contributes the exact same SSA
+  // leaf. Reusing a dynamic leaf deduplicates it from an independently live
+  // scalar root. Reusing undef or poison preserves the IR semantics and
+  // prevents leaf discovery from manufacturing a pointer SSA value whose
   // SelectionDAG representation is only an IMPLICIT_DEF.
   if (!Active.insert(&Aggregate).second)
     return nullptr;
@@ -1488,7 +1608,7 @@ Value *findUniformUninitializedLeaf(Value &Aggregate,
 
   Value *Uniform = nullptr;
   for (Value *Incoming : IncomingAggregates) {
-    Value *Leaf = findUniformUninitializedLeaf(*Incoming, Indices, Active);
+    Value *Leaf = findUniformAggregateLeaf(*Incoming, Indices, Active);
     if (!Leaf || (Uniform && Leaf != Uniform)) {
       Uniform = nullptr;
       break;
@@ -1499,149 +1619,126 @@ Value *findUniformUninitializedLeaf(Value &Aggregate,
   return Uniform;
 }
 
-Value *findUniformUninitializedLeaf(Value &Aggregate,
-                                    ArrayRef<unsigned> Indices) {
+Value *findUniformAggregateLeaf(Value &Aggregate, ArrayRef<unsigned> Indices) {
   SmallPtrSet<Value *, 8> Active;
-  return findUniformUninitializedLeaf(Aggregate, Indices, Active);
+  return findUniformAggregateLeaf(Aggregate, Indices, Active);
 }
 
-Expected<SmallVector<Value *, 8>>
-extractAggregateLeaves(Value &Aggregate, ArrayRef<AggregateLeaf> Leaves,
-                       Function &F) {
-  IRBuilder<> Builder(F.getContext());
-  if (auto *Arg = dyn_cast<Argument>(&Aggregate)) {
-    Builder.SetInsertPoint(&F.getEntryBlock(),
-                           F.getEntryBlock().getFirstInsertionPt());
-    (void)Arg;
-  } else {
-    auto *Definition = cast<Instruction>(&Aggregate);
-    if (auto *Call = dyn_cast<CallInst>(Definition);
-        Call && Call->isMustTailCall())
-      return createStringError(
-          std::errc::not_supported,
-          "GoALLC statepoints cannot scalarize a musttail aggregate result");
-    if (isa<PHINode>(Definition))
-      Builder.SetInsertPoint(Definition->getParent(),
-                             Definition->getParent()->getFirstNonPHIIt());
-    else if (Instruction *Next = Definition->getNextNode())
-      Builder.SetInsertPoint(Next);
-    else
-      return createStringError(
-          std::errc::not_supported,
-          "GoALLC statepoints cannot extract leaves after an aggregate "
-          "terminator");
-    Builder.SetCurrentDebugLocation(Definition->getDebugLoc());
+Value *findDominatingAggregateExtract(Value &Aggregate,
+                                      ArrayRef<unsigned> Indices,
+                                      Instruction &Before, DominatorTree &DT) {
+  for (User *U : Aggregate.users()) {
+    auto *Extract = dyn_cast<ExtractValueInst>(U);
+    if (!Extract || Extract->getAggregateOperand() != &Aggregate ||
+        !DT.dominates(Extract, &Before))
+      continue;
+    ArrayRef<unsigned> ExtractIndices = Extract->getIndices();
+    if (ExtractIndices.size() > Indices.size() ||
+        !llvm::equal(ExtractIndices, Indices.take_front(ExtractIndices.size())))
+      continue;
+    if (ExtractIndices.size() == Indices.size())
+      return Extract;
+    if (Value *Nested = findDominatingAggregateExtract(
+            *Extract, Indices.drop_front(ExtractIndices.size()), Before, DT))
+      return Nested;
   }
+  return nullptr;
+}
 
-  SmallVector<Value *, 8> Values;
-  Values.reserve(Leaves.size());
+bool canReuseAggregateLeaf(Value &Leaf, const ValueSet &ReusableLeaves) {
+  // Reusing a scalar leaf adds a use at this statepoint. That is sound without
+  // recomputing ordinary liveness only when the scalar was already live here:
+  // its original live range then covers every intervening statepoint too.
+  // Constants need no relocation. Fixed-frame and rematerializable derived
+  // addresses use liveness analyses which run after aggregate leaf discovery,
+  // so those analyses see any newly introduced uses.
+  return isa<Constant>(Leaf) || ReusableLeaves.contains(&Leaf) ||
+         isFixedFrameAddress(&Leaf) || rematerializableDerivedBase(&Leaf);
+}
+
+Error collectAggregateRelocation(SafepointRecord &Record, Value &Aggregate,
+                                 const ValueSet &ReusableLeaves,
+                                 DominatorTree &DT) {
+  SmallVector<AggregateLeaf, 8> Leaves;
+  SmallVector<unsigned, 4> Path;
+  if (Error Err = enumerateAggregateLeaves(Aggregate.getType(), Path, Leaves))
+    return std::move(Err);
+
+  AggregateRelocation Relocation;
+  Relocation.Original = &Aggregate;
+  IRBuilder<> Builder(Record.Call);
+  Builder.SetCurrentDebugLocation(Record.Call->getDebugLoc());
+
   for (const AggregateLeaf &Leaf : Leaves) {
-    // Reuse alloca-derived inserted values so the post-scalarization fixed
-    // frame canonicalization can rebuild their complete address recipe at
-    // each concrete aggregate use. Other defined leaves retain distinct SSA
-    // identities because their ordinary relocation repair must not rewrite
-    // unrelated uses of the inserted value. Materializing an extractvalue
-    // from undef or poison would invent an ordinary pointer root whose
-    // SelectionDAG spill may be removed.
-    Value *Inserted = FindInsertedValue(&Aggregate, Leaf.Indices);
-    Value *LeafValue = nullptr;
-    if (Inserted && (isa<UndefValue, PoisonValue>(Inserted) ||
-                     isFixedFrameAddress(Inserted))) {
-      LeafValue = Inserted;
-    } else if (!Inserted) {
-      LeafValue = findUniformUninitializedLeaf(Aggregate, Leaf.Indices);
+    Type *LeafTy =
+        ExtractValueInst::getIndexedType(Aggregate.getType(), Leaf.Indices);
+    assert(LeafTy && "enumerated aggregate leaf has no indexed type");
+    if (!isRelocatablePointerType(LeafTy))
+      continue;
+
+    // Preserve exact insertvalue provenance only when doing so cannot extend
+    // an ordinary scalar's live range across an unrecorded statepoint. This
+    // still makes an aggregate leaf and the same independently live scalar
+    // pointer one root. Otherwise use a fresh call-local extract: relocation
+    // SSA will retarget its aggregate operand to the current reaching
+    // aggregate definition.
+    Value *LeafValue = findUniformAggregateLeaf(Aggregate, Leaf.Indices);
+    if (!LeafValue || !canReuseAggregateLeaf(*LeafValue, ReusableLeaves)) {
+      Value *Dominating = findDominatingAggregateExtract(
+          Aggregate, Leaf.Indices, *Record.Call, DT);
+      if (Dominating && canReuseAggregateLeaf(*Dominating, ReusableLeaves))
+        LeafValue = Dominating;
+      else
+        LeafValue = Builder.CreateExtractValue(
+            &Aggregate, Leaf.Indices, leafName(Aggregate, Leaf.Indices));
     }
-    if (!LeafValue)
-      LeafValue = Builder.CreateExtractValue(&Aggregate, Leaf.Indices,
-                                             leafName(Aggregate, Leaf.Indices));
-    Values.push_back(LeafValue);
-  }
-  return Values;
-}
 
-Instruction *aggregateUseInsertionPoint(Use &U) {
-  auto *User = dyn_cast<Instruction>(U.getUser());
-  if (!User)
-    return nullptr;
-  if (auto *Phi = dyn_cast<PHINode>(User))
-    return Phi->getIncomingBlock(U)->getTerminator();
-  return User;
-}
-
-Error scalarizeLivePointerAggregates(Function &F) {
-  LivenessData AggregateLiveness =
-      computeLiveness(F, LivenessKind::PointerAggregates);
-  ValueSet Candidates;
-
-  for (Instruction &I : instructions(F)) {
-    auto *Call = dyn_cast<CallBase>(&I);
-    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
-        Call->isMustTailCall())
+    // Constants cannot move. In particular, do not manufacture statepoint
+    // roots for undef or poison fields in partially initialized aggregates;
+    // leaving the original aggregate as the rebuild base preserves them.
+    if (isa<Constant>(LeafValue))
       continue;
-    auto *OrdinaryCall = dyn_cast<CallInst>(Call);
-    if (!OrdinaryCall)
-      continue;
-    Candidates.insert_range(liveAtCall(*OrdinaryCall, AggregateLiveness,
-                                       LivenessKind::PointerAggregates));
+    if (LeafValue->getType() != LeafTy)
+      return createStringError(
+          std::errc::invalid_argument,
+          "GoALLC aggregate pointer leaf has an incompatible SSA type");
+
+    if (isFixedFrameAddress(LeafValue))
+      Record.FixedFrameAddresses.insert(LeafValue);
+    else if (rematerializableDerivedBase(LeafValue))
+      Record.DerivedPointers.insert(LeafValue);
+    else
+      Record.Live.insert(LeafValue);
+    Relocation.Leaves.push_back(
+        {SmallVector<unsigned, 4>(Leaf.Indices), LeafValue});
   }
 
-  for (Value *Candidate : Candidates) {
-    SmallVector<AggregateLeaf, 8> Leaves;
-    SmallVector<unsigned, 4> Path;
+  if (!Relocation.Leaves.empty())
+    Record.Aggregates.push_back(std::move(Relocation));
+  return Error::success();
+}
+
+Error collectRelocatableValues(SafepointRecord &Record,
+                               const ValueSet &LiveValues,
+                               const ValueSet &ReusableAggregateLeaves,
+                               DominatorTree &DT) {
+  for (Value *V : LiveValues) {
+    if (isRelocatablePointerType(V->getType())) {
+      Record.Live.insert(V);
+      continue;
+    }
+    if (isa<ScalableVectorType>(V->getType()))
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints do not support scalable vectors inside live "
+          "pointer aggregates");
+    if (!V->getType()->isAggregateType() || !containsPointer(V->getType()))
+      return createStringError(
+          std::errc::invalid_argument,
+          "GoALLC relocatable SSA value has an unsupported type");
     if (Error Err =
-            enumerateAggregateLeaves(Candidate->getType(), Path, Leaves))
-      return std::move(Err);
-
-    SmallVector<Use *, 16> OriginalUses;
-    for (Use &U : Candidate->uses())
-      OriginalUses.push_back(&U);
-
-    Expected<SmallVector<Value *, 8>> LeafValuesOrErr =
-        extractAggregateLeaves(*Candidate, Leaves, F);
-    if (!LeafValuesOrErr)
-      return LeafValuesOrErr.takeError();
-    SmallVector<Value *, 8> LeafValues = std::move(*LeafValuesOrErr);
-    DenseMap<Instruction *, Value *> RebuiltAtUsePoint;
-
-    for (Use *U : OriginalUses) {
-      auto *Extract = dyn_cast<ExtractValueInst>(U->getUser());
-      if (Extract) {
-        auto Match = llvm::find_if(Leaves, [&](const AggregateLeaf &Leaf) {
-          return ArrayRef<unsigned>(Leaf.Indices) == Extract->getIndices();
-        });
-        if (Match != Leaves.end()) {
-          size_t Index = std::distance(Leaves.begin(), Match);
-          Extract->replaceAllUsesWith(LeafValues[Index]);
-          Extract->eraseFromParent();
-          continue;
-        }
-      }
-
-      Instruction *InsertBefore = aggregateUseInsertionPoint(*U);
-      if (!InsertBefore)
-        return createStringError(
-            std::errc::not_supported,
-            "GoALLC statepoints cannot rebuild a non-instruction aggregate "
-            "use");
-      if (Value *Rebuilt = RebuiltAtUsePoint.lookup(InsertBefore)) {
-        U->set(Rebuilt);
-        continue;
-      }
-      IRBuilder<> Builder(InsertBefore);
-      Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
-      Value *Rebuilt = PoisonValue::get(Candidate->getType());
-      for (auto [Leaf, LeafValue] : llvm::zip(Leaves, LeafValues)) {
-        Rebuilt = Builder.CreateInsertValue(
-            Rebuilt, LeafValue, Leaf.Indices,
-            Candidate->hasName() ? Candidate->getName() + ".rebuilt" : "");
-      }
-      RebuiltAtUsePoint[InsertBefore] = Rebuilt;
-      U->set(Rebuilt);
-    }
-    for (Value *LeafValue : LeafValues)
-      if (auto *LeafInst = dyn_cast<Instruction>(LeafValue);
-          LeafInst && LeafInst->use_empty())
-        LeafInst->eraseFromParent();
+            collectAggregateRelocation(Record, *V, ReusableAggregateLeaves, DT))
+      return Err;
   }
   return Error::success();
 }
@@ -2012,8 +2109,7 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
   SmallPtrSet<CallInst *, 4> NonGoRetCallUses;
   visitFixedFrameAddressUses(
       *Record.Alloca,
-      [&](Value *Address, Use &U, Instruction *I,
-          FrameAddressUseKind Kind) {
+      [&](Value *Address, Use &U, Instruction *I, FrameAddressUseKind Kind) {
         if (!I) {
           Record.ActivityUnclear = true;
           return;
@@ -2112,8 +2208,7 @@ Error computePointerAllocaActivity(
         // a caller gc-live root.
         auto *Call = dyn_cast<CallInst>(&I);
         bool IsGoRetDef = llvm::is_contained(Record.GoRetDefs, Call);
-        if (Call && SafepointCalls.contains(Call) &&
-            !IsGoRetDef &&
+        if (Call && SafepointCalls.contains(Call) && !IsGoRetDef &&
             (Live || !DT.isReachableFromEntry(Call->getParent())))
           Record.ActiveCalls.push_back(Call);
         transferPointerAllocaLiveness(Record, I, Live);
@@ -2259,8 +2354,7 @@ bool hasInitializedPointerSlotsBeforeSafepoint(
     if (auto *Call = dyn_cast<CallBase>(I);
         Call && !Call->isMustTailCall() && !isLeafCall(*Call)) {
       if (auto *OrdinaryCall = dyn_cast<CallInst>(Call);
-          OrdinaryCall &&
-          llvm::is_contained(Record.ActiveCalls, OrdinaryCall))
+          OrdinaryCall && llvm::is_contained(Record.ActiveCalls, OrdinaryCall))
         return Initialized.count() == Record.Layout.Leaves.size();
       // On a normal return, a typed goret call has initialized the complete
       // logical result object. The caller stack map at that call describes
@@ -2771,7 +2865,7 @@ Error validateSafepoint(const SafepointRecord &Record) {
     if (!isRelocatablePointerType(V->getType()))
       return createStringError(
           std::errc::not_supported,
-          "GoALLC statepoints do not yet support live pointer aggregates");
+          "GoALLC statepoint gc-live contains an unsupported SSA type");
   }
   return Error::success();
 }
@@ -2942,6 +3036,59 @@ void splitStatepointContinuations(ArrayRef<SafepointRecord> Records) {
   }
 }
 
+Instruction *
+statepointContinuationInsertionPoint(const SafepointRecord &Record) {
+  if (!Record.Relocates.empty())
+    return Record.Relocates.back()->getNextNode();
+  if (Record.Result)
+    return Record.Result->getNextNode();
+  BasicBlock *Continuation =
+      Record.Statepoint->getParent()->getSingleSuccessor();
+  assert(Continuation && "statepoint block has no unique continuation");
+  return &*Continuation->getFirstInsertionPt();
+}
+
+Error materializeAggregateRelocations(
+    MutableArrayRef<SafepointRecord> Records) {
+  for (SafepointRecord &Record : Records) {
+    Instruction *InsertBefore = statepointContinuationInsertionPoint(Record);
+    if (!InsertBefore)
+      return createStringError(
+          std::errc::invalid_argument,
+          "GoALLC statepoint continuation has no aggregate insertion point");
+    IRBuilder<> Builder(InsertBefore);
+    Builder.SetCurrentDebugLocation(Record.Statepoint->getDebugLoc());
+
+    for (AggregateRelocation &Relocation : Record.Aggregates) {
+      Value *Original = Relocation.Original;
+      if (!Original)
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC lost a live aggregate during statepoint rewrite");
+
+      // This is a field update, not a full aggregate reconstruction. The
+      // original aggregate preserves every untouched scalar field; each
+      // pointer field which can move is overwritten before the rebuilt value
+      // has any ordinary use.
+      Value *Rebuilt = Original;
+      for (AggregateRelocationLeaf &Leaf : Relocation.Leaves) {
+        Value *LeafValue = Leaf.Value;
+        if (!LeafValue)
+          return createStringError(
+              std::errc::invalid_argument,
+              "GoALLC lost an aggregate pointer leaf during statepoint "
+              "rewrite");
+        Rebuilt = Builder.CreateInsertValue(
+            Rebuilt, LeafValue, Leaf.Indices,
+            Original->hasName() ? Original->getName() + ".relocated"
+                                : "aggregate.relocated");
+      }
+      Relocation.Relocated = Rebuilt;
+    }
+  }
+  return Error::success();
+}
+
 Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
                             Instruction *InsertBefore) {
   SmallVector<Instruction *, 4> Chain;
@@ -2971,10 +3118,10 @@ Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
 
 void repairRelocationSSA(Function &F, DominatorTree &DT,
                          ArrayRef<SafepointRecord> Records) {
-  // Each ordinary relocated pointer and each rematerialized derived address is
-  // a new reaching definition of its original SSA value. Fixed frame
-  // identities never enter this map: their uses are rebuilt directly from the
-  // original FrameIndex.
+  // Each relocated pointer, rematerialized derived address, and field-updated
+  // aggregate is a new reaching definition of its original SSA value. Fixed
+  // frame identities never enter this map: their uses are rebuilt directly
+  // from the original FrameIndex.
   MapVector<Value *, SmallVector<Value *, 4>> Definitions;
   for (const SafepointRecord &Record : Records) {
     for (CallInst *RelocateCall : Record.Relocates) {
@@ -2996,6 +3143,13 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
           rematerializeAddress(Address, Base, *Relocate, InsertBefore);
       Definitions[Address].push_back(Rematerialized);
     }
+    for (const AggregateRelocation &Relocation : Record.Aggregates) {
+      Value *Original = Relocation.Original;
+      Value *Relocated = Relocation.Relocated;
+      assert(Original && Relocated &&
+             "aggregate relocation was not materialized");
+      Definitions[Original].push_back(Relocated);
+    }
   }
   if (Definitions.empty())
     return;
@@ -3006,7 +3160,7 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
   PromotableAllocas.reserve(Definitions.size());
   for (auto &[V, NewDefinitions] : Definitions) {
     (void)NewDefinitions;
-    StringRef Name = V->hasName() ? V->getName() : "pointer";
+    StringRef Name = V->hasName() ? V->getName() : "value";
     auto *Slot = new AllocaInst(V->getType(), DL.getAllocaAddrSpace(),
                                 (Name + ".relocated.merge").str(),
                                 F.getEntryBlock().getFirstNonPHIIt());
@@ -3022,7 +3176,7 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
     }
   }
 
-  // Express every old use as a load from the pointer's temporary slot, then
+  // Express every old use as a load from the value's temporary slot, then
   // seed that slot immediately after the original definition. PromoteMemToReg
   // removes all of this memory traffic and constructs the required SSA PHIs
   // for arbitrary CFGs, including loop backedges and irreducible regions.
@@ -3033,7 +3187,7 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
       if (auto *I = dyn_cast<Instruction>(U); I && Seen.insert(I).second)
         Users.push_back(I);
 
-    StringRef Name = Original->hasName() ? Original->getName() : "pointer";
+    StringRef Name = Original->hasName() ? Original->getName() : "value";
     std::string LoadName = (Name + ".relocated.current").str();
     for (Instruction *User : Users) {
       if (auto *Phi = dyn_cast<PHINode>(User)) {
@@ -3103,28 +3257,28 @@ Error rewriteFunction(Function &F) {
   SmallVector<PointerFixedArgRecord, 4> PointerFixedArgs;
   if (Error Err = collectPointerFixedArgs(F, PointerFixedArgs))
     return Err;
-  if (Error Err = scalarizeLivePointerAggregates(F))
-    return Err;
   if (Error Err = normalizeMergedDerivedPointers(F))
     return Err;
-  // Scalarization can expose fixed-frame pointer PHIs/selects. Preserve only
-  // their integer object offsets across statepoints; concrete addresses are
-  // rebuilt from the canonical alloca/byval/goret base after continuations are
-  // split into independent SelectionDAG blocks.
-  Expected<SmallVector<FixedFrameAddressRecord, 32>> FixedFrameAddressesOrErr =
-      prepareFixedFrameAddresses(F);
-  if (!FixedFrameAddressesOrErr)
-    return FixedFrameAddressesOrErr.takeError();
-  SmallVector<FixedFrameAddressRecord, 32> FixedFrameAddresses =
-      std::move(*FixedFrameAddressesOrErr);
 
-  LivenessData Data = computeLiveness(F, LivenessKind::RelocatablePointers);
-  LivenessData FixedFrameData =
-      computeLiveness(F, LivenessKind::FixedFrameAddresses);
-  LivenessData DerivedData = computeLiveness(F, LivenessKind::DerivedPointers);
-  SmallVector<SafepointRecord, 8> Records;
+  // Compute ordinary SSA liveness once for both scalar pointers and
+  // pointer-containing aggregates. Live aggregates remain intact; only their
+  // initialized pointer leaves are materialized at each concrete statepoint.
+  LivenessData Data = computeLiveness(F, LivenessKind::RelocatableValues);
+  // A scalar which is the base of an independently live derived address is
+  // also safe to reuse as an aggregate leaf. Compute this before leaf
+  // discovery so such sharing does not create a hidden live-range extension;
+  // the complete derived analysis is recomputed below after discovery to
+  // include any new fixed/provenance-aware leaf uses.
+  LivenessData PreAggregateDerivedData =
+      computeLiveness(F, LivenessKind::DerivedPointers);
+  struct PendingSafepoint {
+    CallInst *Call;
+    uint64_t ID;
+    ValueSet LiveValues;
+    ValueSet ReusableAggregateLeaves;
+  };
+  SmallVector<PendingSafepoint, 8> Pending;
   uint64_t CallOrdinal = 0;
-
   for (Instruction &I : instructions(F)) {
     auto *Call = dyn_cast<CallBase>(&I);
     if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
@@ -3135,13 +3289,46 @@ Error rewriteFunction(Function &F) {
       return createStringError(
           std::errc::not_supported,
           "GoALLC statepoints do not yet support invoke or callbr");
-    Records.push_back(
+    ValueSet LiveValues =
+        liveAtCall(*OrdinaryCall, Data, LivenessKind::RelocatableValues);
+    ValueSet ReusableAggregateLeaves = LiveValues;
+    for (Value *Address : liveAtCall(*OrdinaryCall, PreAggregateDerivedData,
+                                     LivenessKind::DerivedPointers))
+      ReusableAggregateLeaves.insert(rematerializableDerivedBase(Address));
+    Pending.push_back(
         {OrdinaryCall, stableStatepointID(F.getName(), CallOrdinal++),
-         liveAtCall(*OrdinaryCall, Data, LivenessKind::RelocatablePointers),
-         liveAtCall(*OrdinaryCall, FixedFrameData,
-                    LivenessKind::FixedFrameAddresses),
-         liveAtCall(*OrdinaryCall, DerivedData,
-                    LivenessKind::DerivedPointers)});
+         std::move(LiveValues), std::move(ReusableAggregateLeaves)});
+  }
+
+  SmallVector<SafepointRecord, 8> Records;
+  Records.reserve(Pending.size());
+  for (PendingSafepoint &P : Pending) {
+    SafepointRecord Record{P.Call, P.ID};
+    if (Error Err = collectRelocatableValues(Record, P.LiveValues,
+                                             P.ReusableAggregateLeaves, DT))
+      return Err;
+    Records.push_back(std::move(Record));
+  }
+
+  // Aggregate leaf discovery can expose fixed-frame pointer extracts. Preserve
+  // only their integer object offsets across statepoints; concrete addresses
+  // are rebuilt from the canonical alloca/byval/goret base after continuations
+  // are split into independent SelectionDAG blocks.
+  Expected<SmallVector<FixedFrameAddressRecord, 32>> FixedFrameAddressesOrErr =
+      prepareFixedFrameAddresses(F);
+  if (!FixedFrameAddressesOrErr)
+    return FixedFrameAddressesOrErr.takeError();
+  SmallVector<FixedFrameAddressRecord, 32> FixedFrameAddresses =
+      std::move(*FixedFrameAddressesOrErr);
+
+  LivenessData FixedFrameData =
+      computeLiveness(F, LivenessKind::FixedFrameAddresses);
+  LivenessData DerivedData = computeLiveness(F, LivenessKind::DerivedPointers);
+  for (SafepointRecord &Record : Records) {
+    Record.FixedFrameAddresses.insert_range(liveAtCall(
+        *Record.Call, FixedFrameData, LivenessKind::FixedFrameAddresses));
+    Record.DerivedPointers.insert_range(
+        liveAtCall(*Record.Call, DerivedData, LivenessKind::DerivedPointers));
   }
   SmallPtrSet<const CallInst *, 16> SafepointCalls;
   for (const SafepointRecord &Record : Records)
@@ -3156,8 +3343,8 @@ Error rewriteFunction(Function &F) {
     for (Value *Address : Record.FixedFrameAddresses) {
       Value *Base = fixedFrameProvenanceBase(Address);
       assert(Base && "live fixed frame address has no fixed base");
-      auto AllocaIt = llvm::find_if(
-          PointerAllocas, [&](const PointerAllocaRecord &Alloca) {
+      auto AllocaIt =
+          llvm::find_if(PointerAllocas, [&](const PointerAllocaRecord &Alloca) {
             return Alloca.Alloca == Base;
           });
       // An unobservable caller-side goret carrier is defined by this call.
@@ -3227,7 +3414,9 @@ Error rewriteFunction(Function &F) {
   }
   eraseOriginalCalls(Records);
   splitStatepointContinuations(Records);
-  if (Error Err = localizeFixedFrameAddresses(FixedFrameAddresses))
+  if (Error Err = materializeAggregateRelocations(Records))
+    return Err;
+  if (Error Err = localizeFixedFrameAddresses(F, FixedFrameAddresses))
     return Err;
   // splitStatepointContinuations changes the CFG after liveness and
   // object-activity analysis.

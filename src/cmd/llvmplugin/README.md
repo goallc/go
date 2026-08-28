@@ -71,12 +71,12 @@ The current SSA value and CFG rewrite support matrix is:
 | `select`, GEP, and pointer casts | Supported | Same-object fixed-frame expressions are represented as one canonical base plus integer offsets. Offset PHIs/selects may cross statepoints, while concrete addresses are rebuilt in each consuming block. Mixed bases, address-space changes, and non-stack pointers remain ordinary scalar roots. |
 | Pointer-valued call results | Supported | `gc.result` replaces the ordinary result and later safepoints relocate it. |
 | Multiple ordinary calls | Supported | Stable IDs and live sets remain per call; the next statepoint consumes the current relocated SSA value. |
-| Ordinary CFG merges | Supported | Call/skip and multiple-safepoint paths merge through pointer PHIs formed by `PromoteMemToReg`. |
+| Ordinary CFG merges | Supported | Call/skip and multiple-safepoint paths merge through scalar-pointer or whole-aggregate PHIs formed by `PromoteMemToReg`. |
 | Loops and irreducible CFG | Supported | Relocation definitions are propagated through backedge and multi-entry PHIs without a shape-specific algorithm. |
-| Fixed struct/array SSA aggregates | Supported | Pointer and fixed pointer-vector leaves are extracted before liveness. Same-object fixed-frame leaves carry integer offsets and are reconstructed in each consuming block from the raw alloca/byval/goret base; ordinary leaves use their current relocated SSA values. Nested insert/extract paths and aggregate PHI/select/freeze forwarding are resolved structurally and fail closed for mixed bases. |
+| Fixed struct/array SSA aggregates | Supported | Whole aggregate SSA values participate in ordinary liveness. At each concrete safepoint, initialized pointer and fixed pointer-vector leaves are resolved from exact `insertvalue` provenance or a call-local `extractvalue`. Same-object fixed-frame leaves carry integer offsets and are reconstructed from the raw alloca/byval/goret base; ordinary leaves use their current relocated SSA values. Nested paths and aggregate PHI/select/freeze forwarding are resolved structurally and fail closed for mixed bases. |
 | Fixed-width pointer-vector SSA values | Supported | The vector remains one `gc-live` operand and one same-typed `gc.relocate`; it is not split into lanes. Pointer vectors in allocas remain unsupported. |
 | Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; supported fixed formal layouts also contribute pointer words to AArch64 entry maps. |
-| Aggregate load results and store operands | Supported | First-class SSA values use aggregate normalization. Pointer leaves in surviving fixed allocas remain memory roots described by the alloca deopt layout protocol. |
+| Aggregate load results and store operands | Supported | First-class SSA values use whole-value relocation SSA; a post-statepoint store consumes the aggregate with its live pointer leaves updated. Pointer leaves in surviving fixed allocas remain memory roots described by the alloca deopt layout protocol. |
 | Pointer-containing `alloca` storage | GoObj qualified for fixed layouts | Go `VarDef` emits `llvm.lifetime.start`; parameter homes and addressed result homes have explicit starts at their initialization sites. The statepoint pass uses starts as backward liveness kills and real address uses as gens, so the last use supplies the implicit end. Active contents contribute callsite `LocalsPointerMaps`; address-observable objects additionally get function-wide `FUNCDATA_StackObjects`. If the optimized producer does not definitely initialize every pointer slot before the next safepoint, the plugin inserts an inline zero initialization at that lifetime start. It preserves existing lifetime markers and emits no new lifetime ends. |
 | Scalable vectors | Unsupported | The generic LLVM statepoint rewrite assumes a fixed vector width when constructing relocates; fails closed. |
 | General moving-GC base/derived analysis | Unsupported | Base and derived indexes are identical in the current non-moving-heap phase. |
@@ -92,44 +92,59 @@ results have IR and verifier coverage, but are not yet runtime-qualified:
 focused execution trials currently expose invalid post-call values or
 traceback/stack-map failures in those shapes.
 
-The statepoint pass first computes aggregate-only liveness to find each
-supported pointer-containing aggregate that is live after a safepoint. Every
-explicit leaf is extracted next to the aggregate definition, and each
-aggregate use is rebuilt next to that use from `poison` with every required
-leaf inserted. Rebuilding from the original aggregate would keep that
-aggregate live across the safepoint and is forbidden. Exact `extractvalue`
-uses consume the corresponding leaf directly.
+The statepoint pass computes one ordinary SSA liveness relation for scalar
+pointers and pointer-containing aggregates. Both kinds are sampled strictly
+after the current call: the caller statepoint describes values live across that
+call, while values used only as call arguments belong to the callee's
+`FUNCDATA_ArgsPointerMaps`. A live aggregate remains one SSA value in this
+analysis. At each concrete safepoint, the pass finds its initialized pointer
+leaves. Exact `insertvalue` provenance or an already-dominating projection is
+reused only when that scalar was independently live at this safepoint (or is
+covered by the later fixed-frame/derived analysis), so sharing cannot silently
+extend a scalar live range across an unrecorded call. Thus a pointer that is
+also independently live remains one root. Every other dynamic leaf gets a
+fresh call-local `extractvalue` from the current aggregate definition. A
+PHI/select whose incoming aggregates all provide the same exact leaf follows
+the same reuse rule.
 
-After normalization, a second liveness computation tracks scalar pointers
-only. Both computations inspect instructions strictly after the current call:
-the caller statepoint describes values live across that call, while values used
-only as call arguments belong to the callee's `FUNCDATA_ArgsPointerMaps`.
-No rebuilt aggregate or side table participates in final liveness.
+After the statepoint, the aggregate is updated by inserting each relocated
+pointer leaf into the original aggregate value. This is a field update rather
+than a full reconstruction: untouched scalar fields, `undef`/`poison` choices,
+and padding retain their original semantics. The original aggregate is allowed
+to be the syntactic base of the `insertvalue` chain, but every initialized
+movable pointer field is overwritten before the updated aggregate has any
+ordinary use. X86 and AArch64 pre-RA MIR tests verify that the old pointer
+component is not kept as an additional statepoint root or post-call machine
+value.
 
-This normalization has four invariants:
+This relocation model has four invariants:
 
-1. `gc-live` contains only scalar pointers, never an aggregate.
-2. The original aggregate is used only by definition-local extracts and cannot
-   cross a safepoint.
-3. A use-local rebuilt aggregate cannot cross a safepoint. A call-only
-   aggregate argument stays as the real ABI operand and is neither scalarized
-   nor recorded in caller `gc-live`.
-4. Post-safepoint reconstruction uses either a use-local fixed-allocation
-   recipe or the current ordinary SSA definition produced by `gc.relocate` and
-   the whole-function relocation PHIs.
+1. `gc-live` contains relocatable scalar pointer values or fixed-width pointer
+   vectors, never an aggregate.
+2. Every initialized movable pointer leaf of a live aggregate is represented
+   by one `gc-live` identity at that safepoint; an independently live direct
+   scalar alias is deduplicated by SSA identity.
+3. Every such leaf is overwritten with its relocated definition before the
+   updated aggregate has an ordinary post-statepoint use. Constant
+   `undef`/`poison`/null leaves do not become roots.
+4. Scalar pointers, rematerialized derived addresses, and updated aggregates
+   all enter the same temporary-slot plus `PromoteMemToReg` repair. The
+   resulting pointer or whole-value PHIs handle conditionals, loops, and
+   irreducible CFG without shape-specific replacement logic.
 
 Nested fixed structs and arrays are enumerated by leaf index path. A fixed-width
 pointer vector is one leaf: LLVM's statepoint verifier and rewrite preserve its
 type in `gc-live` and `gc.relocate`, so there is no lane-wise scalarization.
-Extracting after an aggregate `freeze` preserves its correlated choice;
-rebuilding all explicit leaves preserves `undef` and `poison` field semantics.
-LLVM struct padding is not a first-class leaf. LLVM 23 permits an aggregate
-`gc.result`, so an aggregate call result is projected first and its pointer
-leaves become roots at later safepoints.
+Extracting after an aggregate `freeze` preserves its correlated choice, and
+using the original aggregate as the update base preserves `undef` and `poison`
+field semantics without manufacturing roots for uninitialized leaves. LLVM
+struct padding is not a first-class leaf. LLVM 23 permits an aggregate
+`gc.result`, so its pointer leaves become roots at later safepoints and the
+field-updated result participates in ordinary relocation SSA.
 
-An aggregate loaded from memory can be normalized as an independent SSA value
-and an aggregate store can consume a rebuilt value. For each surviving fixed
-pointer-containing alloca, the plugin first inspects the optimized LLVM use
+An aggregate loaded from memory can be tracked as an independent SSA value,
+and an aggregate store can consume the field-updated value. For each surviving
+fixed pointer-containing alloca, the plugin first inspects the optimized LLVM use
 graph. Calls, stored or returned addresses, ptr-to-int, volatile/atomic access,
 and unknown uses make the object address-observable. Direct load/store,
 constant address derivation, and local PHI/select uses remain compiler
@@ -221,30 +236,32 @@ narrow Go ABI contract above.
 
 The final combined order is:
 
-1. **Optimized alloca classification and activity.** Enumerate pointer leaves,
-   classify final IR uses as address-observable stack objects or direct-only
-   locals, then compute callsite live-out from frontend lifetime starts and
-   terminal address uses. Insert lifetime-local zero initialization only when
-   the optimized producer cannot initialize every pointer slot before a
-   safepoint.
-2. **Aggregate normalization.** Use aggregate-only liveness to find and
-   decompose supported live first-class struct/array values, then rebuild
-   aggregates immediately before their uses.
-3. **Fixed-frame canonicalization and scalar statepoints.** Normalize
-   same-object alloca/byval/goret pointer expressions (including nested
-   aggregate leaves and different-offset merges) to one canonical base plus
-   integer offset SSA. Put the live base and ordinary scalar roots in
+1. **Optimized alloca classification.** Enumerate pointer leaves and classify
+   final IR uses as address-observable stack objects or direct-only locals.
+2. **Unified SSA liveness and leaf discovery.** Track scalar pointers and
+   pointer-containing aggregate SSA values together. For every live aggregate
+   at a concrete call, reuse an exact pointer source only when its existing
+   live range already covers that call; otherwise create call-local extracts
+   for its initialized movable leaves.
+3. **Fixed-frame canonicalization, object activity, and statepoint emission.**
+   Normalize same-object alloca/byval/goret pointer expressions (including
+   nested aggregate leaves and different-offset merges) to one canonical base
+   plus integer offset SSA. Compute callsite object activity from frontend
+   lifetime starts and terminal address uses, inserting lifetime-local zero
+   initialization only when the optimized producer cannot initialize every
+   pointer slot before a safepoint. Put the live base and ordinary scalar roots in
    `gc-live`, append object-content ptrmap records to deopt, and emit
    `gc.result`. After splitting statepoint continuations, rebuild each concrete
    fixed address in its consuming block. Emit `gc.relocate` only for ordinary
    roots, never for a fixed-frame identity.
-4. **Ordinary relocation SSA.** Rebuild live GEP/cast address chains from each
-   ordinary relocatable base. Model those definitions and ordinary scalar
-   relocates as stores to temporary promotable allocas, rewrite old uses through
-   loads, and call the public `PromoteMemToReg` utility. This constructs
-   conditional, loop/backedge, and irreducible-CFG PHIs while preserving raw
-   alloca identity for direct memory, lifetime, deopt, StackObjects, and content
-   pointer maps.
+4. **Unified relocation SSA.** Insert relocated leaves into each original
+   aggregate base, then rebuild live GEP/cast address chains from each ordinary
+   relocatable base. Model updated aggregates, rematerialized addresses, and
+   ordinary scalar relocates as stores to temporary promotable allocas, rewrite
+   old uses through loads, and call the public `PromoteMemToReg` utility. This
+   constructs conditional, loop/backedge, and irreducible-CFG PHIs while
+   preserving raw alloca identity for direct memory, lifetime, deopt,
+   StackObjects, and content pointer maps.
 
 Future stages remain:
 
