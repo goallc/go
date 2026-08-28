@@ -1588,6 +1588,170 @@ Instruction *aggregateUseInsertionPoint(Use &U) {
   return User;
 }
 
+Error reloadAggregateArgumentProjection(
+    AllocaInst &Home, Type *AggregateType, ArrayRef<unsigned> Indices,
+    Instruction &Projection,
+    SmallVectorImpl<std::pair<Instruction *, unsigned>> &Recipe) {
+  SmallVector<Use *, 8> Uses;
+  for (Use &U : Projection.uses())
+    Uses.push_back(&U);
+  DenseMap<Instruction *, Value *> ReloadedAtUsePoint;
+
+  for (Use *U : Uses) {
+    if (auto *Nested = dyn_cast<ExtractValueInst>(U->getUser())) {
+      SmallVector<unsigned, 4> NestedIndices(Indices);
+      NestedIndices.append(Nested->idx_begin(), Nested->idx_end());
+      if (Error Err = reloadAggregateArgumentProjection(
+              Home, AggregateType, NestedIndices, *Nested, Recipe))
+        return Err;
+      if (Nested->use_empty())
+        Nested->eraseFromParent();
+      continue;
+    }
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(U->getUser());
+        GEP &&
+        U->getOperandNo() == GetElementPtrInst::getPointerOperandIndex()) {
+      Recipe.push_back({GEP, U->getOperandNo()});
+      if (Error Err = reloadAggregateArgumentProjection(Home, AggregateType,
+                                                        Indices, *GEP, Recipe))
+        return Err;
+      Recipe.pop_back();
+      if (GEP->use_empty())
+        GEP->eraseFromParent();
+      continue;
+    }
+
+    Instruction *InsertBefore = aggregateUseInsertionPoint(*U);
+    if (!InsertBefore)
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints cannot reload a non-instruction aggregate "
+          "argument projection");
+    if (Value *Leaf = ReloadedAtUsePoint.lookup(InsertBefore)) {
+      U->set(Leaf);
+      continue;
+    }
+    IRBuilder<> Builder(InsertBefore);
+    Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
+    Value *Reloaded = Builder.CreateAlignedLoad(
+        AggregateType, &Home, Home.getAlign(), Home.getName() + ".reload");
+    Value *Leaf = Builder.CreateExtractValue(
+        Reloaded, Indices,
+        Projection.hasName() ? Projection.getName() + ".reload"
+                             : "argument.field.reload");
+    for (auto [Template, OperandNo] : Recipe) {
+      Instruction *Rematerialized = Template->clone();
+      Rematerialized->setOperand(OperandNo, Leaf);
+      Rematerialized->setName(Template->hasName()
+                                  ? Template->getName() + ".reload"
+                                  : "argument.address.reload");
+      Rematerialized->setDebugLoc(InsertBefore->getDebugLoc());
+      Rematerialized->insertBefore(InsertBefore->getIterator());
+      Leaf = Rematerialized;
+    }
+    ReloadedAtUsePoint[InsertBefore] = Leaf;
+    U->set(Leaf);
+  }
+  return Error::success();
+}
+
+bool aggregateArgumentFeedsAddressProjection(
+    Value &V, SmallPtrSetImpl<Value *> &Visited) {
+  if (!Visited.insert(&V).second)
+    return false;
+  for (User *U : V.users()) {
+    if (isa<GetElementPtrInst>(U))
+      return true;
+    if (auto *Extract = dyn_cast<ExtractValueInst>(U);
+        Extract && aggregateArgumentFeedsAddressProjection(*Extract, Visited))
+      return true;
+  }
+  return false;
+}
+
+// A register-passed Go aggregate that remains live across ordinary calls has
+// a caller-owned ABI home even when its LLVM formal arrives in registers. Keep
+// one canonical entry copy in that home and reload individual projections at
+// their actual use points. SelectionDAG maps the alloca/store pair back to the
+// target's fixed Go argument home. Besides matching native Go's parameter
+// model, this prevents interface and slice fields from becoming long-lived
+// statepoint operands merely because the aggregate was projected near entry.
+Error homeLivePointerAggregateArguments(Function &F) {
+  if (!isGoCallingConv(F.getCallingConv()))
+    return Error::success();
+
+  LivenessData AggregateLiveness =
+      computeLiveness(F, LivenessKind::PointerAggregates);
+  SetVector<Argument *> Candidates;
+  for (Instruction &I : instructions(F)) {
+    auto *Call = dyn_cast<CallInst>(&I);
+    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
+        Call->isMustTailCall())
+      continue;
+    for (Value *Live :
+         liveAtCall(*Call, AggregateLiveness, LivenessKind::PointerAggregates))
+      if (auto *Arg = dyn_cast<Argument>(Live))
+        Candidates.insert(Arg);
+  }
+
+  for (Argument *Arg : Candidates) {
+    Type *AggregateType = Arg->getType();
+    if (!AggregateType->isAggregateType() || !containsPointer(AggregateType))
+      continue;
+    SmallPtrSet<Value *, 8> Visited;
+    if (!aggregateArgumentFeedsAddressProjection(*Arg, Visited))
+      continue;
+
+    BasicBlock &Entry = F.getEntryBlock();
+    IRBuilder<> EntryBuilder(&*Entry.getFirstInsertionPt());
+    auto *Home = EntryBuilder.CreateAlloca(
+        AggregateType, nullptr,
+        Arg->hasName() ? Arg->getName() + ".statepoint.home"
+                       : "argument.statepoint.home");
+    Home->setAlignment(F.getDataLayout().getABITypeAlign(AggregateType));
+    StoreInst *Initialize =
+        EntryBuilder.CreateAlignedStore(Arg, Home, Home->getAlign());
+
+    SmallVector<Use *, 16> OriginalUses;
+    for (Use &U : Arg->uses())
+      if (U.getUser() != Initialize)
+        OriginalUses.push_back(&U);
+    DenseMap<Instruction *, Value *> ReloadedAtUsePoint;
+
+    for (Use *U : OriginalUses) {
+      if (auto *Extract = dyn_cast<ExtractValueInst>(U->getUser())) {
+        SmallVector<unsigned, 4> Indices(Extract->idx_begin(),
+                                         Extract->idx_end());
+        SmallVector<std::pair<Instruction *, unsigned>, 4> Recipe;
+        if (Error Err = reloadAggregateArgumentProjection(
+                *Home, AggregateType, Indices, *Extract, Recipe))
+          return Err;
+        if (Extract->use_empty())
+          Extract->eraseFromParent();
+        continue;
+      }
+
+      Instruction *InsertBefore = aggregateUseInsertionPoint(*U);
+      if (!InsertBefore)
+        return createStringError(
+            std::errc::not_supported,
+            "GoALLC statepoints cannot reload a non-instruction aggregate "
+            "argument use");
+      if (Value *Reloaded = ReloadedAtUsePoint.lookup(InsertBefore)) {
+        U->set(Reloaded);
+        continue;
+      }
+      IRBuilder<> Builder(InsertBefore);
+      Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
+      Value *Reloaded = Builder.CreateAlignedLoad(
+          AggregateType, Home, Home->getAlign(), Home->getName() + ".reload");
+      ReloadedAtUsePoint[InsertBefore] = Reloaded;
+      U->set(Reloaded);
+    }
+  }
+  return Error::success();
+}
+
 Error scalarizeLivePointerAggregates(
     Function &F, MapVector<Value *, Value *> &DirectPointerLeafSources) {
   LivenessData AggregateLiveness =
@@ -3236,6 +3400,8 @@ Error rewriteFunction(Function &F) {
         StackColoringNoMergeMD,
         MDNode::get(F.getContext(), ArrayRef<Metadata *>()));
   }
+  if (Error Err = homeLivePointerAggregateArguments(F))
+    return Err;
   SmallVector<PointerAllocaRecord, 8> PointerAllocas;
   if (Error Err = collectPointerAllocas(F, OpenDefer, PointerAllocas))
     return Err;

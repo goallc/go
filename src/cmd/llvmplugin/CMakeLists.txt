@@ -858,6 +858,35 @@ if(BUILD_TESTING)
       "value\\.leaf\\.0\\.relocated"
   )
 
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.InterfaceCallLiveHomes
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/interface-call-live-homes.ll"
+    IR
+  )
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.InterfaceCallLiveHomesMIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/interface-call-live-homes.ll"
+    MIR
+    "${GOALLC_LLC_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -verify-machineinstrs
+    -stop-after=finalize-isel
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/interface-call-live-homes.ll"
+  )
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.InterfaceCallLiveHomesAArch64MIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/interface-call-live-homes.ll"
+    MIR-AARCH64
+    "${GOALLC_LLC_EXECUTABLE}"
+    -mtriple=aarch64-unknown-linux-goobj
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -verify-machineinstrs
+    -stop-after=finalize-isel
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/interface-call-live-homes.ll"
+  )
+
   set(GOALLC_AGGREGATE_SCALARIZATION_PIPELINE
     "'${GOALLC_LLC_EXECUTABLE}'"
     " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
