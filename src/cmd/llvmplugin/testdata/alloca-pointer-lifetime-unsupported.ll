@@ -61,9 +61,9 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %slot)
 ; IR-NOT: call void @llvm.lifetime.start
 ; IR-NOT: %slice.cap.leaf.0
+; IR: %slice.cap.relocated = insertvalue { ptr, i64, i64 } %slice.cap, ptr %slot, 0
 ; IR: store ptr null
 ; IR: %second.remat = getelementptr i8, ptr %slot, i64 8
-; IR: %slice.cap.rebuilt = insertvalue { ptr, i64, i64 } poison, ptr %slot, 0
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"deopt"({{.*}}i64 1095520067
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"deopt"({{.*}}i64 1095520067
 ; IR-NOT: %slice.cap.leaf.0.relocated

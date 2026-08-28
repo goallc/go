@@ -2,57 +2,69 @@ target triple = "x86_64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_diamond_call_skip(
 ; IR: i64 -4232994149196383034
-; IR: phi ptr [ %value.leaf.0.relocated, %call.statepoint.cont ], [ %value.leaf.0, %skip ]
-; IR: insertvalue %pair poison, ptr %value.leaf.0.relocated.merge
+; IR: %value.relocated = insertvalue %pair %value, ptr %value.leaf.0.relocated, 0
+; IR: phi %pair [ %value.relocated, %call.statepoint.cont ], [ %value, %skip ]
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_branch_safepoints(
 ; IR-COUNT-2: @llvm.experimental.gc.statepoint
-; IR: phi ptr [ %value.leaf.0.relocated{{[0-9]*}}, %left.statepoint.cont ], [ %value.leaf.0.relocated{{[0-9]*}}, %right.statepoint.cont ]
+; IR: phi %pair [ %value.relocated, %left.statepoint.cont ], [ %value.relocated{{[0-9]+}}, %right.statepoint.cont ]
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_sequential_conditional(
-; IR: "gc-live"(ptr %value.leaf.0.relocated.merge
-; IR: phi ptr
+; IR: %value.relocated.merge.0 = phi %pair
+; IR: extractvalue %pair %value.relocated.merge.0, 0
+; IR: "gc-live"(ptr
+; IR: %value.relocated.merge.1 = phi %pair
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_natural_loop(
 ; IR: header:
-; IR: phi ptr
-; IR: "gc-live"(ptr %value.leaf.0.relocated.merge
+; IR: phi %pair
+; IR: extractvalue %pair
+; IR: "gc-live"(ptr
+; IR: insertvalue %pair
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_irreducible(
-; IR-COUNT-3: = phi ptr
-; IR: insertvalue %pair poison, ptr %value.leaf.0.relocated.merge
+; IR: %value.relocated.merge.1 = phi %pair
+; IR: %value.relocated = insertvalue %pair
+; IR: %value.relocated.merge.0 = phi %pair
+; IR: %value.relocated.merge.2 = phi %pair
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_phi_edge_use(
 ; IR: @llvm.experimental.gc.statepoint
-; IR-COUNT-3: insertvalue %pair
-; IR: %carried = phi %pair
+; IR: %carried = phi %pair [ %value.relocated, %call.statepoint.cont ], [ %value, %skip ]
 ; IR: @llvm.experimental.gc.statepoint
-; IR: insertvalue %pair poison
+; IR: %carried.relocated = insertvalue %pair %carried, ptr %carried.leaf.0.relocated, 0
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_phi_duplicate_edge(
-; IR: %[[PARTIAL:[-a-zA-Z$._0-9]+]] = insertvalue %pair poison
-; IR: %[[REBUILT:[-a-zA-Z$._0-9]+]] = insertvalue %pair %[[PARTIAL]]
-; IR: %carried = phi %pair [ %[[REBUILT]], %entry.statepoint.cont ], [ %[[REBUILT]], %entry.statepoint.cont ], [ %[[REBUILT]], %entry.statepoint.cont ]
+; IR: %[[RELOCATED:[-a-zA-Z$._0-9]+]] = insertvalue %pair %value, ptr %value.leaf.0.relocated, 0
+; IR: %carried = phi %pair [ %[[RELOCATED]], %entry.statepoint.cont ], [ %[[RELOCATED]], %entry.statepoint.cont ], [ %[[RELOCATED]], %entry.statepoint.cont ]
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_call_result_conditional(
-; IR: call %pair @llvm.experimental.gc.result.{{[^(]+}}
-; IR: = phi ptr
-; IR: insertvalue %pair poison, ptr %value.leaf.0
+; IR: %[[RESULT:.*]] = call %pair @llvm.experimental.gc.result.{{[^(]+}}
+; IR: extractvalue %pair %[[RESULT]], 0
+; IR: insertvalue %pair %[[RESULT]], ptr %value.leaf.0.relocated, 0
+; IR: = phi %pair
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_call_result_loop(
 ; IR: call %pair @llvm.experimental.gc.result.{{[^(]+}}
-; IR: = phi ptr
-; IR: insertvalue %pair poison, ptr %value.leaf.0
+; IR: = phi %pair
+; IR: insertvalue %pair
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_call_result_irreducible(
 ; IR: call %pair @llvm.experimental.gc.result.{{[^(]+}}
-; IR: = phi ptr
-; IR: insertvalue %pair poison, ptr %value.leaf.0
+; IR: = phi %pair
+; IR: insertvalue %pair
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_multiple_safepoints(
-; IR: "gc-live"(ptr %value.leaf.0)
-; IR: "gc-live"(ptr %value.leaf.0.relocated{{[0-9]*}})
-; IR: "gc-live"(ptr %value.leaf.0.relocated{{[0-9]*}})
+; IR: %[[FIRST_LEAF:[-a-zA-Z$._0-9]+]] = extractvalue %pair %value, 0
+; IR: "gc-live"(ptr %[[FIRST_LEAF]])
+; IR: %[[FIRST_RELOCATED:[-a-zA-Z$._0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate.p0
+; IR: %[[FIRST_AGGREGATE:[-a-zA-Z$._0-9]+]] = insertvalue %pair %value, ptr %[[FIRST_RELOCATED]], 0
+; IR: %[[SECOND_LEAF:[-a-zA-Z$._0-9]+]] = extractvalue %pair %[[FIRST_AGGREGATE]], 0
+; IR: "gc-live"(ptr %[[SECOND_LEAF]])
+; IR: %[[SECOND_RELOCATED:[-a-zA-Z$._0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate.p0
+; IR: %[[SECOND_AGGREGATE:[-a-zA-Z$._0-9]+]] = insertvalue %pair %[[FIRST_AGGREGATE]], ptr %[[SECOND_RELOCATED]], 0
+; IR: %[[THIRD_LEAF:[-a-zA-Z$._0-9]+]] = extractvalue %pair %[[SECOND_AGGREGATE]], 0
+; IR: "gc-live"(ptr %[[THIRD_LEAF]])
 
 %pair = type { ptr, i64 }
 
@@ -264,6 +276,10 @@ exit:
   ret ptr %result
 }
 
+; Each safepoint must project the leaf from the current aggregate definition.
+; Reusing the first projection at a later call would extend that scalar's live
+; range across an intermediate statepoint whose gc-live set does not contain
+; it, allowing the original spill slot to be overwritten by another root.
 define goabiinternal ptr @aggregate_multiple_safepoints(%pair %value)
     gc "goallc" {
 entry:

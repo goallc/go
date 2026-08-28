@@ -102,9 +102,10 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR-NOT: phi ptr
 ; IR: loop:
 ; IR: store ptr null, ptr %slot
-; IR: %slot.address.remat{{.*}} = getelementptr i8, ptr %slot, i64 0
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"deopt"({{.*}}ptr %slot{{.*}}){{.*}}"gc-live"(ptr %slot)
 ; IR-NOT: = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: %slot.address.remat{{.*}} = getelementptr i8, ptr %slot, i64 0
+; IR: insertvalue { ptr, i64, i64 } %slice.relocated.merge{{.*}}, ptr %slot.address.remat{{.*}}, 0
 
 ; MIR-LABEL: name: aggregate_leaf_loop
 ; MIR: stack:
@@ -119,7 +120,7 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %slot)
 ; IR: merge.statepoint.cont:
 ; IR: %merged.leaf.0.remat = getelementptr i8, ptr %slot, i64 0
-; IR: insertvalue { ptr, i64, i64 } poison, ptr %merged.leaf.0.remat, 0
+; IR: insertvalue { ptr, i64, i64 } %merged, ptr %merged.leaf.0.remat, 0
 ; IR: @llvm.experimental.gc.statepoint
 
 ; MIR-LABEL: name: aggregate_phi_same_alloca
@@ -135,7 +136,7 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %slot)
 ; IR-NOT: = call coldcc ptr @llvm.experimental.gc.relocate
 ; IR: %merged.leaf.0.remat = getelementptr i8, ptr %slot, i64 %merged.offset
-; IR: insertvalue { ptr } poison, ptr %merged.leaf.0.remat, 0
+; IR: insertvalue { ptr } %merged, ptr %merged.leaf.0.remat, 0
 
 ; IR-LABEL: define goabiinternal void @nested_aggregate_same_alloca(
 ; IR-NOT: = call coldcc ptr @llvm.experimental.gc.relocate
@@ -143,7 +144,7 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %slot)
 ; IR: {{.*}}statepoint.cont:
 ; IR: %nested.leaf.0.0.remat = getelementptr i8, ptr %slot, i64 %forwarded.offset
-; IR: insertvalue { { ptr, i64 }, i64 } poison, ptr %nested.leaf.0.0.remat, 0, 0
+; IR: insertvalue { { ptr, i64 }, i64 } %nested, ptr %nested.leaf.0.0.remat, 0, 0
 
 ; IR-LABEL: define goabiinternal void @nested_aggregate_mixed_alloca(
 ; IR: %nested.leaf.0.0 = extractvalue { { ptr, i64 }, i64 } %nested, 0, 0
@@ -156,7 +157,7 @@ target triple = "aarch64-unknown-linux-goobj"
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %slot)
 ; IR-NOT: = call coldcc ptr @llvm.experimental.gc.relocate
 ; IR: %nested.leaf.0.0.remat = getelementptr i8, ptr %slot, i64 %forwarded.offset
-; IR: insertvalue { { ptr, i64 }, i64 } poison, ptr %nested.leaf.0.0.remat, 0, 0
+; IR: insertvalue { { ptr, i64 }, i64 } %nested, ptr %nested.leaf.0.0.remat, 0, 0
 
 declare goabiinternal void @safepoint()
 declare goabiinternal void @observe(ptr)

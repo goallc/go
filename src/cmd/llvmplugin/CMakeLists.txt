@@ -866,7 +866,7 @@ if(BUILD_TESTING)
     " 2>&1"
     " | '${GOALLC_OPT_EXECUTABLE}'"
     " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
-    " -S -passes=verify -o - -"
+    " -S '-passes=verify<safepoint-ir>,verify' -o - -"
     " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=IR"
     " '${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-scalarization.ll'")
   string(JOIN "" GOALLC_AGGREGATE_SCALARIZATION_PIPELINE
@@ -875,6 +875,30 @@ if(BUILD_TESTING)
     NAME GoALLCStatepoints.AggregateScalarization
     COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
       "${GOALLC_AGGREGATE_SCALARIZATION_PIPELINE}"
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.AggregateSharedRootMIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-shared-root.ll"
+    MIR
+    "${GOALLC_LLC_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -verify-machineinstrs
+    -stop-after=finalize-isel
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-shared-root.ll"
+  )
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.AggregateSharedRootAArch64MIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-shared-root.ll"
+    MIR-AARCH64
+    "${GOALLC_LLC_EXECUTABLE}"
+    -mtriple=aarch64-unknown-linux-goobj
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -verify-machineinstrs
+    -stop-after=finalize-isel
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-shared-root.ll"
   )
 
   goallc_add_ir_filecheck_test(
@@ -1226,7 +1250,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.AggregateConditionalRewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "value\\.leaf\\.0\\.relocated\\.merge.* = phi ptr"
+      "value\\.relocated\\.merge.* = phi %pair"
   )
 
   add_test(
@@ -1256,7 +1280,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.AggregateLoopRewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "value\\.leaf\\.0\\.relocated\\.merge.* = phi ptr"
+      "value\\.relocated\\.merge.* = phi %pair"
   )
 
   set(GOALLC_AGGREGATE_CFG_PIPELINE
@@ -1267,7 +1291,7 @@ if(BUILD_TESTING)
     " 2>&1"
     " | '${GOALLC_OPT_EXECUTABLE}'"
     " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
-    " -S -passes=verify -o - -"
+    " -S '-passes=verify<safepoint-ir>,verify' -o - -"
     " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=IR"
     " '${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-cfg.ll'")
   string(JOIN "" GOALLC_AGGREGATE_CFG_PIPELINE

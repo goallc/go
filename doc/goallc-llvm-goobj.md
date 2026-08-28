@@ -593,12 +593,15 @@ path/filepath regexp strings text/scanner text/tabwriter text/template/parse
 - `regexp/syntax` 和 `encoding/gob` 越过了 O2 推断的 `readnone` 参数属性；
   statepoint verifier 和 SelectionDAG 均原生支持这一非 ABI 属性，因此插件与
   `readonly` 等属性一样直接保留它；
-- `encoding/gob` 还暴露了一个独立的聚合标量化问题：对部分初始化的
+- `encoding/gob` 还暴露了一个独立的聚合指针叶问题：对部分初始化的
   `insertvalue poison/undef` 聚合，插件曾为未定义指针叶制造 `extractvalue` 并
   错误加入 `gc-live`。SelectionDAG 合法删除 undef spill 后，GoObj 栈图仍会扫描
-  未初始化槽。现在只用 `FindInsertedValue` 识别 poison/undef 叶；已定义叶仍保留
-  各自的 `extractvalue` SSA 身份，避免 statepoint relocation 修复把同一源值的
-  其他使用一并改写。常量 poison/undef 不进入活根；`TestTypeRace` 50 次和完整
+  未初始化槽。当前 whole-value 活跃性路径只为已初始化的动态指针叶建立 root：
+  只有原本已在该调用存活（或由后续 fixed-frame/derived 活跃性覆盖）的精确来源叶
+  才复用 scalar SSA identity，其他叶在具体 statepoint 前从当前聚合定义局部提取；
+  这避免新增长的 scalar use 暗中跨越未记录它的中间调用。常量 poison/undef 不进入
+  活根。relocate 后以原聚合为底值覆盖所有动态指针叶，因此既保留未定义字段语义，
+  也能让真正独立存活的直接插入指针保持一个 root。`TestTypeRace` 50 次和完整
   `encoding/gob` 5 次复测均通过。
 
 ### Linux/amd64 正式 v8 资格复测
