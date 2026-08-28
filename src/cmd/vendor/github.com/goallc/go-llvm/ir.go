@@ -81,6 +81,7 @@ type (
 	ComdatSelectionKind C.LLVMComdatSelectionKind
 	IntPredicate        C.LLVMIntPredicate
 	FloatPredicate      C.LLVMRealPredicate
+	FastMathFlags       C.LLVMFastMathFlags
 	InlineAsmDialect    C.LLVMInlineAsmDialect
 )
 
@@ -389,6 +390,8 @@ const (
 	FloatUNE            FloatPredicate = C.LLVMRealUNE
 	FloatPredicateTrue  FloatPredicate = C.LLVMRealPredicateTrue
 )
+
+const FastMathAllowContract FastMathFlags = C.LLVMFastMathAllowContract
 
 //-------------------------------------------------------------------------
 // llvm.InlineAsmDialect
@@ -739,6 +742,9 @@ func (v Value) Metadata(kind int) (rv Value) {
 }
 func (v Value) SetMetadata(kind int, node Metadata) {
 	C.LLVMSetMetadata2(v.C, C.unsigned(kind), node.C)
+}
+func (v Value) SetFastMathFlags(flags FastMathFlags) {
+	C.LLVMSetFastMathFlags(v.C, C.LLVMFastMathFlags(flags))
 }
 func (v Value) SetGlobalMetadata(kind int, node Metadata) {
 	C.LLVMGlobalSetMetadata(v.C, C.unsigned(kind), node.C)

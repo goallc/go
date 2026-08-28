@@ -485,18 +485,32 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 		return fmt.Errorf("FileCheck failed: %v\n%s", err, out)
 	}
 
-	if !bytes.Contains(src, []byte("// LLVM-OPT")) {
-		return nil
+	if bytes.Contains(src, []byte("// LLVM-OPT")) {
+		optimizedIR, err := os.ReadFile(archive + ".opt.ll")
+		if err != nil {
+			return err
+		}
+		cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-OPT", src), source)
+		cmd.Stdin = bytes.NewReader(optimizedIR)
+		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("optimized LLVM FileCheck failed: %v\n%s", err, out)
+		}
 	}
-	optimizedIR, err := os.ReadFile(archive + ".opt.ll")
-	if err != nil {
-		return err
-	}
-	cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-OPT", src), source)
-	cmd.Stdin = bytes.NewReader(optimizedIR)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("optimized LLVM FileCheck failed: %v\n%s", err, out)
+
+	if bytes.Contains(src, []byte("// LLVM-ASM")) {
+		cmd = exec.Command(goTool, "tool", "objdump", archive)
+		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+		assembly, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("LLVM object disassembly failed: %v\n%s", err, assembly)
+		}
+		cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-ASM", src), source)
+		cmd.Stdin = bytes.NewReader(assembly)
+		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("LLVM assembly FileCheck failed: %v\n%s", err, out)
+		}
 	}
 	return nil
 }

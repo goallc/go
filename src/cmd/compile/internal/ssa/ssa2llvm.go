@@ -597,6 +597,78 @@ func (lfc *LLVMFuncContext) llvmFMA(v *Value) llvm.Value {
 	return lfc.llvmTernaryIntrinsic(v, "llvm.x86.go.fma.f64")
 }
 
+// llvmContractionMul recognizes a product that the native target rules may
+// contract with its parent. ARM64 first reduces these immediate negation forms
+// to FMUL/FNMUL; AMD64 passes allowNeg=false because its contraction rule only
+// matches MUL directly.
+func llvmContractionMul(v *Value, mulOp, negOp Op, allowNeg bool) *Value {
+	if allowNeg && v.Op == negOp {
+		v = v.Args[0]
+	}
+	if v.Op != mulOp {
+		return nil
+	}
+	return v
+}
+
+func setLLVMContract(v llvm.Value) {
+	// LLVM's fast-math C API accepts only instructions. IRBuilder may fold a
+	// floating-point operation to a constant, which needs no contraction flag.
+	if v.IsAInstruction().IsNil() {
+		return
+	}
+	v.SetFastMathFlags(llvm.FastMathAllowContract)
+}
+
+// allowLLVMContraction mirrors the native target rewrite eligibility but
+// leaves the contraction choice to LLVM. Only the matched multiply and its
+// Add/Sub root receive contract; no other fast-math flags are enabled.
+//
+// Round32F and Round64F, conversions, calls, and other explicit SSA values do
+// not match a product here and therefore remain rounding boundaries.
+func (lfc *LLVMFuncContext) allowLLVMContraction(v *Value, result llvm.Value) {
+	var mulOp, negOp Op
+	switch v.Op {
+	case OpAdd32F, OpSub32F:
+		mulOp, negOp = OpMul32F, OpNeg32F
+	case OpAdd64F, OpSub64F:
+		mulOp, negOp = OpMul64F, OpNeg64F
+	default:
+		return
+	}
+
+	var products []*Value
+	switch lfc.F.Config.arch {
+	case "arm64":
+		// ARM64.rules contracts Add/Sub with FMUL/FNMUL for f32 and f64.
+		for _, arg := range v.Args {
+			if product := llvmContractionMul(arg, mulOp, negOp, true); product != nil {
+				products = append(products, product)
+			}
+		}
+	case "amd64":
+		// AMD64.rules contracts only Add with MUL at GOAMD64 v3 and above.
+		if buildcfg.GOAMD64 < 3 || (v.Op != OpAdd32F && v.Op != OpAdd64F) {
+			return
+		}
+		for _, arg := range v.Args {
+			if product := llvmContractionMul(arg, mulOp, negOp, false); product != nil {
+				products = append(products, product)
+			}
+		}
+	default:
+		return
+	}
+	if len(products) == 0 || !v.Block.Func.useFMA(v) {
+		return
+	}
+
+	setLLVMContract(result)
+	for _, product := range products {
+		setLLVMContract(lfc.GenLV(product))
+	}
+}
+
 func llvmTargetCPU(arch string, goamd64 int) string {
 	if arch != "amd64" {
 		return ""
@@ -2537,12 +2609,14 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.carryBorrow(v, "llvm.uadd.with.overflow.i64")
 	case OpAdd32F, OpAdd64F:
 		lVal = lfc.b.CreateFAdd(arg0(), arg1(), v.String())
+		lfc.allowLLVMContraction(v, lVal)
 	case OpSub64, OpSub32, OpSub16, OpSub8:
 		lVal = lfc.b.CreateSub(arg0(), arg1(), v.String())
 	case OpSub64borrow:
 		lVal = lfc.carryBorrow(v, "llvm.usub.with.overflow.i64")
 	case OpSub32F, OpSub64F:
 		lVal = lfc.b.CreateFSub(arg0(), arg1(), v.String())
+		lfc.allowLLVMContraction(v, lVal)
 	case OpMul64, OpMul32, OpMul16, OpMul8:
 		lVal = lfc.b.CreateMul(arg0(), arg1(), v.String())
 	case OpMul64uhilo:
