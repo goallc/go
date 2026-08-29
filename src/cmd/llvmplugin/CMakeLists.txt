@@ -527,6 +527,17 @@ if(BUILD_TESTING)
       )
     endif()
   endforeach()
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.X86CallsiteGoRetAsm
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/callsite-goret.ll"
+    ASM-X86
+    "${GOALLC_LLC_EXECUTABLE}"
+    -mtriple=x86_64-unknown-linux-goobj
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -verify-machineinstrs
+    -o -
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/callsite-goret.ll"
+  )
   goallc_add_ir_filecheck_test(
     GoALLCStatepoints.IndirectCallRewrite
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/indirect-callee.ll"

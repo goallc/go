@@ -80,6 +80,88 @@ entry:
   ret %slice %ret.cap
 }
 
+; IR-LABEL: define goabiinternal void @forwarded_incoming_slice_indirect(
+; An indirect ABI0 target prevents the frontend carrier from using the narrow
+; direct-call elision. Argument-copy elision can still map this private slice
+; carrier to the incoming value's fixed register home. CodeGen should forward
+; its SSA pieces to the ABI0 outgoing area without a fixed-home store/reload
+; chain, while retaining the home for the independent morestack path.
+; IR: %forward.argument = alloca %slice, align 8
+; IR: call goabi0 token {{.*}} @llvm.experimental.gc.statepoint
+; IR-SAME: ptr elementtype(void (ptr)) %callee
+; IR-SAME: ptr byval(%slice) align 8 %forward.argument
+;
+; MIR-LABEL: name: forwarded_incoming_slice_indirect
+; MIR: fixedStack:
+; MIR: ADJCALLSTACKDOWN
+; MIR-NOT: {{(MOV|STR|LDR)}}{{.*}}%fixed-stack
+; MIR: STATEPOINT
+; MIR: ADJCALLSTACKUP
+define goabiinternal void @forwarded_incoming_slice_indirect(
+    %slice %value, ptr %callee) #0 gc "goallc" {
+entry:
+  %forward.argument = alloca %slice, align 8
+  store %slice %value, ptr %forward.argument, align 8
+  call goabi0 void %callee(ptr byval(%slice) align 8 %forward.argument)
+  ret void
+}
+
+; IR-LABEL: define goabiinternal i64 @indirect_slice_loop(
+; The carrier is reused by an indirect ABI0 call in a loop and read after the
+; following statepoint. It must therefore remain in both gc-live sets rather
+; than being treated as a disposable private carrier.
+; IR: %loop.argument = alloca %slice, align 8
+; IR: call goabi0 token {{.*}} @llvm.experimental.gc.statepoint
+; IR-SAME: ptr elementtype(void (ptr)) %callee
+; IR-SAME: ptr byval(%slice) align 8 %loop.argument
+; IR-SAME: "gc-live"({{.*}}ptr %loop.argument{{.*}})
+; IR: call goabiinternal token {{.*}} @llvm.experimental.gc.statepoint
+; IR-SAME: ptr elementtype(void ()) @safepoint
+; IR-SAME: "gc-live"({{.*}}ptr %loop.argument{{.*}})
+;
+; MIR-LABEL: name: indirect_slice_loop
+; MIR: bb.1.loop:
+; MIR: ADJCALLSTACKDOWN
+; MIR: STATEPOINT
+; MIR: ADJCALLSTACKUP
+; MIR: STATEPOINT
+;
+; X86 reserves the maximum outgoing area in the fixed frame. Do not pin the
+; frame size, registers, or the complete instruction sequence; only ensure the
+; loop itself does not grow and shrink the call frame or use PUSH arguments.
+; ASM-X86-LABEL: indirect_slice_loop:
+; ASM-X86: subq
+; ASM-X86: [[LOOP:.LBB[0-9]+_[0-9]+]]:
+; ASM-X86-NOT: subq
+; ASM-X86-NOT: pushq
+; ASM-X86: callq
+; ASM-X86-NOT: addq
+; ASM-X86: callq
+define goabiinternal i64 @indirect_slice_loop(
+    ptr %callee, %slice %value, i64 %iterations) #0 gc "goallc" {
+entry:
+  %loop.argument = alloca %slice, align 8
+  br label %loop
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop.cont ]
+  store %slice %value, ptr %loop.argument, align 8
+  call goabi0 void %callee(ptr byval(%slice) align 8 %loop.argument)
+  call goabiinternal void @safepoint()
+  %length.address = getelementptr inbounds i8, ptr %loop.argument, i64 8
+  %length = load i64, ptr %length.address, align 8
+  br label %loop.cont
+
+loop.cont:
+  %next = add nuw i64 %index, 1
+  %more = icmp ult i64 %next, %iterations
+  br i1 %more, label %loop, label %exit
+
+exit:
+  %answer = add i64 %next, %length
+  ret i64 %answer
+}
+
 ; IR-LABEL: define goabiinternal i64 @prior_safepoint_call_slice_abi0()
 ; A prior safepoint keeps both future call-carrier addresses in gc-live so
 ; stack growth cannot leave a cached address live in its continuation.
