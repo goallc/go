@@ -90,8 +90,8 @@ exit:
 ; stays ordinary SSA.
 ;
 ; IR-LABEL: define goabiinternal i64 @passive_pointer_interface_call_loop(
-; IR-DAG: %left.statepoint.home = alloca %iface
-; IR-DAG: %right.statepoint.home = alloca %iface
+; IR-NOT: %left.statepoint.home
+; IR-NOT: %right.statepoint.home
 ; IR-DAG: %preserved.statepoint.home = alloca ptr
 ; IR-LABEL: preheader:
 ; IR: call void @llvm.lifetime.start.p0(ptr %preserved.statepoint.home)
@@ -99,17 +99,19 @@ exit:
 ; IR-NEXT: br label %loop
 ; IR-LABEL: loop:
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %right.statepoint.home, ptr %left.statepoint.home)
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %right.statepoint.home, ptr %left.statepoint.home)
-; IR-NOT: @llvm.experimental.gc.relocate
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR-NOT: %preserved.relocated
 ; IR: %preserved.statepoint.reload = load ptr, ptr %preserved.statepoint.home
 ; IR: %preserved.value = load i64, ptr %preserved.statepoint.reload
 ; IR: ret i64
 ;
 ; MIR-LABEL: name: passive_pointer_interface_call_loop
 ; MIR:       fixedStack:
-; MIR:       stack:           []
+; MIR:       stack:
 ; MIR-LABEL: bb.0.entry:
 ; MIR:         LIFETIME_START %fixed-stack.[[HOME:[0-9]+]]
 ; MIR-NEXT:    MOV64mr %fixed-stack.[[HOME]], {{.*}} :: (store (s64) into %fixed-stack.[[HOME]])
@@ -119,15 +121,19 @@ exit:
 ; MIR-NOT:     MOV64mr %fixed-stack.[[HOME]]
 ; MIR:         STATEPOINT {{.*}} %fixed-stack.[[HOME]], 0,
 ; MIR-NOT:     MOV64mr %fixed-stack.[[HOME]]
+; MIR:         STATEPOINT {{.*}} %fixed-stack.[[HOME]], 0,
+; MIR-NOT:     MOV64mr %fixed-stack.[[HOME]]
 ; MIR:         MOV64rm %fixed-stack.[[HOME]],
 ;
 ; MIR-AARCH64-LABEL: name: passive_pointer_interface_call_loop
 ; MIR-AARCH64:       fixedStack:
-; MIR-AARCH64:       stack:           []
+; MIR-AARCH64:       stack:
 ; MIR-AARCH64-LABEL: bb.0.entry:
 ; MIR-AARCH64:         LIFETIME_START %fixed-stack.[[HOME:[0-9]+]]
 ; MIR-AARCH64-NEXT:    STRXui {{.*}}, %fixed-stack.[[HOME]], 0 :: (store (s64) into %fixed-stack.[[HOME]])
 ; MIR-AARCH64-LABEL: bb.1.loop:
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[HOME]]
+; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[HOME]], 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[HOME]]
 ; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[HOME]], 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[HOME]]
@@ -138,9 +144,9 @@ define goabiinternal i64 @passive_pointer_interface_call_loop(
     %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
 entry:
   %left.itab = extractvalue %iface %left, 0
-  %left.method = getelementptr i8, ptr %left.itab, i64 24
+  %left.method = add i64 %left.itab, 24
   %right.itab = extractvalue %iface %right, 0
-  %right.method = getelementptr i8, ptr %right.itab, i64 24
+  %right.method = add i64 %right.itab, 24
   br label %preheader
 
 preheader:
@@ -149,16 +155,71 @@ preheader:
 loop:
   %index = phi i64 [ 0, %preheader ], [ %next, %loop ]
   %sum = phi i64 [ 0, %preheader ], [ %updated, %loop ]
-  %left.fn = load ptr, ptr %left.method, align 8
+  %left.method.addr = inttoptr i64 %left.method to ptr
+  %left.fn = load ptr, ptr %left.method.addr, align 8
   %left.data = extractvalue %iface %left, 1
   %left.value = call goabiinternal i64 %left.fn(ptr %left.data, i64 %index)
-  %right.fn = load ptr, ptr %right.method, align 8
+  %right.method.addr = inttoptr i64 %right.method to ptr
+  %right.fn = load ptr, ptr %right.method.addr, align 8
+  %right.data = extractvalue %iface %right, 1
+  %right.value = call goabiinternal i64 %right.fn(ptr %right.data, i64 %sum)
+  %left.again.itab = extractvalue %iface %left, 0
+  %left.again.method = add i64 %left.again.itab, 24
+  %left.again.method.addr = inttoptr i64 %left.again.method to ptr
+  %left.again.fn = load ptr, ptr %left.again.method.addr, align 8
+  %left.again.data = extractvalue %iface %left, 1
+  %left.again.value = call goabiinternal i64 %left.again.fn(ptr %left.again.data, i64 %right.value)
+  %preserved.value = load i64, ptr %preserved, align 8
+  %partial = add i64 %left.value, %right.value
+  %called.sum = add i64 %partial, %left.again.value
+  %with.preserved = add i64 %called.sum, %preserved.value
+  %updated = add i64 %with.preserved, %sum
+  %next = add i64 %index, 1
+  %done = icmp eq i64 %next, %limit
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i64 %updated
+}
+
+; Two passive indirect callsites do not amortize a function-wide scalar home.
+; Keep the ordinary relocate chain so a cold fallback loop cannot perturb the
+; frame of hotter paths which bypass it.
+;
+; IR-LABEL: define goabiinternal i64 @two_passive_pointer_interface_call_loop_relocate(
+; IR-NOT: %preserved.statepoint.home
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %preserved
+; IR: %[[RELOC1:preserved.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %[[RELOC1]]
+; IR: %[[RELOC2:preserved.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: load i64, ptr %[[RELOC2]]
+; IR: ret i64
+define goabiinternal i64 @two_passive_pointer_interface_call_loop_relocate(
+    %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
+entry:
+  %left.itab = extractvalue %iface %left, 0
+  %left.method = add i64 %left.itab, 24
+  %right.itab = extractvalue %iface %right, 0
+  %right.method = add i64 %right.itab, 24
+  br label %loop
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
+  %sum = phi i64 [ 0, %entry ], [ %updated, %loop ]
+  %left.method.addr = inttoptr i64 %left.method to ptr
+  %left.fn = load ptr, ptr %left.method.addr, align 8
+  %left.data = extractvalue %iface %left, 1
+  %left.value = call goabiinternal i64 %left.fn(ptr %left.data, i64 %index)
+  %right.method.addr = inttoptr i64 %right.method to ptr
+  %right.fn = load ptr, ptr %right.method.addr, align 8
   %right.data = extractvalue %iface %right, 1
   %right.value = call goabiinternal i64 %right.fn(ptr %right.data, i64 %sum)
   %preserved.value = load i64, ptr %preserved, align 8
-  %partial = add i64 %left.value, %right.value
-  %called.sum = add i64 %partial, %preserved.value
-  %updated = add i64 %called.sum, %sum
+  %called.sum = add i64 %left.value, %right.value
+  %with.preserved = add i64 %called.sum, %preserved.value
+  %updated = add i64 %with.preserved, %sum
   %next = add i64 %index, 1
   %done = icmp eq i64 %next, %limit
   br i1 %done, label %exit, label %loop
@@ -183,7 +244,9 @@ exit:
 ; IR-SAME: "gc-live"({{.*}}ptr %selected.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-SAME: "gc-live"({{.*}}ptr %selected.statepoint.home
-; IR-NOT: @llvm.experimental.gc.relocate
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %selected.statepoint.home
+; IR-NOT: %selected.relocated
 ; IR: %selected.statepoint.reload = load ptr, ptr %selected.statepoint.home
 ; IR: %selected.value = load i64, ptr %selected.statepoint.reload
 ; IR: ret i64
@@ -191,6 +254,8 @@ exit:
 ; MIR-LABEL: name: passive_pointer_phi_interface_call_loop
 ; MIR:         LIFETIME_START %stack.[[PHI_HOME:[0-9]+]]
 ; MIR-NEXT:    MOV64mr %stack.[[PHI_HOME]]{{[^,]*}}, {{.*}} :: (store (s64) into %ir.{{.*}}statepoint.home)
+; MIR-NOT:     MOV64mr %stack.[[PHI_HOME]]{{[^,]*}},
+; MIR:         STATEPOINT {{.*}} %stack.[[PHI_HOME]]{{[^,]*}}, 0,
 ; MIR-NOT:     MOV64mr %stack.[[PHI_HOME]]{{[^,]*}},
 ; MIR:         STATEPOINT {{.*}} %stack.[[PHI_HOME]]{{[^,]*}}, 0,
 ; MIR-NOT:     MOV64mr %stack.[[PHI_HOME]]{{[^,]*}},
@@ -206,15 +271,17 @@ exit:
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %stack.[[PHI_HOME]]{{[^,]*}},
 ; MIR-AARCH64:         STATEPOINT {{.*}} %stack.[[PHI_HOME]]{{[^,]*}}, 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %stack.[[PHI_HOME]]{{[^,]*}},
+; MIR-AARCH64:         STATEPOINT {{.*}} %stack.[[PHI_HOME]]{{[^,]*}}, 0,
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %stack.[[PHI_HOME]]{{[^,]*}},
 ; MIR-AARCH64:         LDRXui %stack.[[PHI_HOME]]{{[^,]*}}, 0
 define goabiinternal i64 @passive_pointer_phi_interface_call_loop(
     %iface %left, %iface %right, ptr %first, ptr %second, i1 %choose,
     i64 %limit) gc "goallc" {
 entry:
   %left.itab = extractvalue %iface %left, 0
-  %left.method = getelementptr i8, ptr %left.itab, i64 24
+  %left.method = add i64 %left.itab, 24
   %right.itab = extractvalue %iface %right, 0
-  %right.method = getelementptr i8, ptr %right.itab, i64 24
+  %right.method = add i64 %right.itab, 24
   br i1 %choose, label %pick.first, label %pick.second
 
 pick.first:
@@ -230,16 +297,25 @@ preheader:
 loop:
   %index = phi i64 [ 0, %preheader ], [ %next, %loop ]
   %sum = phi i64 [ 0, %preheader ], [ %updated, %loop ]
-  %left.fn = load ptr, ptr %left.method, align 8
+  %left.method.addr = inttoptr i64 %left.method to ptr
+  %left.fn = load ptr, ptr %left.method.addr, align 8
   %left.data = extractvalue %iface %left, 1
   %left.value = call goabiinternal i64 %left.fn(ptr %left.data, i64 %index)
-  %right.fn = load ptr, ptr %right.method, align 8
+  %right.method.addr = inttoptr i64 %right.method to ptr
+  %right.fn = load ptr, ptr %right.method.addr, align 8
   %right.data = extractvalue %iface %right, 1
   %right.value = call goabiinternal i64 %right.fn(ptr %right.data, i64 %sum)
+  %left.again.itab = extractvalue %iface %left, 0
+  %left.again.method = add i64 %left.again.itab, 24
+  %left.again.method.addr = inttoptr i64 %left.again.method to ptr
+  %left.again.fn = load ptr, ptr %left.again.method.addr, align 8
+  %left.again.data = extractvalue %iface %left, 1
+  %left.again.value = call goabiinternal i64 %left.again.fn(ptr %left.again.data, i64 %right.value)
   %selected.value = load i64, ptr %selected, align 8
   %partial = add i64 %left.value, %right.value
-  %called.sum = add i64 %partial, %selected.value
-  %updated = add i64 %called.sum, %sum
+  %called.sum = add i64 %partial, %left.again.value
+  %with.selected = add i64 %called.sum, %selected.value
+  %updated = add i64 %with.selected, %sum
   %next = add i64 %index, 1
   %done = icmp eq i64 %next, %limit
   br i1 %done, label %exit, label %loop
@@ -269,13 +345,18 @@ exit:
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-SAME: "deopt"({{.*}}i64 1095520067, i64 12, ptr %preserved.statepoint.home, i64 0, i64 8, i64 8, i64 8, i64 1, i64 1, i64 64, i64 1, i64 1
 ; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
-; IR-NOT: @llvm.experimental.gc.relocate
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "deopt"({{.*}}i64 1095520067, i64 12, ptr %preserved.statepoint.home, i64 0, i64 8, i64 8, i64 8, i64 1, i64 1, i64 64, i64 1, i64 1
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR-NOT: %preserved.relocated
 ; IR: %preserved.statepoint.reload = load ptr, ptr %preserved.statepoint.home
 ; IR: load i64, ptr %preserved.statepoint.reload
 ;
 ; MIR-LABEL: name: nested_passive_pointer_interface_call_loop
 ; MIR:         LIFETIME_START %fixed-stack.[[NESTED_HOME:[0-9]+]]
 ; MIR-NEXT:    MOV64mr %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, {{.*}} :: (store (s64) into %fixed-stack.[[NESTED_HOME]])
+; MIR-NOT:     MOV64mr %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
+; MIR:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
 ; MIR-NOT:     MOV64mr %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
 ; MIR:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
 ; MIR-NOT:     MOV64mr %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
@@ -288,14 +369,16 @@ exit:
 ; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
 ; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
+; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
 define goabiinternal i64 @nested_passive_pointer_interface_call_loop(
     %iface %left, %iface %right, ptr %preserved, i64 %outer.limit,
     i64 %inner.limit) gc "goallc" {
 entry:
   %left.itab = extractvalue %iface %left, 0
-  %left.method = getelementptr i8, ptr %left.itab, i64 24
+  %left.method = add i64 %left.itab, 24
   %right.itab = extractvalue %iface %right, 0
-  %right.method = getelementptr i8, ptr %right.itab, i64 24
+  %right.method = add i64 %right.itab, 24
   br label %outer.preheader
 
 outer.preheader:
@@ -312,15 +395,24 @@ inner.preheader:
 inner:
   %inner.index = phi i64 [ 0, %inner.preheader ], [ %inner.next, %inner ]
   %inner.sum = phi i64 [ %total, %inner.preheader ], [ %inner.updated, %inner ]
-  %left.fn = load ptr, ptr %left.method, align 8
+  %left.method.addr = inttoptr i64 %left.method to ptr
+  %left.fn = load ptr, ptr %left.method.addr, align 8
   %left.data = extractvalue %iface %left, 1
   %left.value = call goabiinternal i64 %left.fn(ptr %left.data, i64 %inner.index)
-  %right.fn = load ptr, ptr %right.method, align 8
+  %right.method.addr = inttoptr i64 %right.method to ptr
+  %right.fn = load ptr, ptr %right.method.addr, align 8
   %right.data = extractvalue %iface %right, 1
   %right.value = call goabiinternal i64 %right.fn(ptr %right.data, i64 %inner.sum)
+  %left.again.itab = extractvalue %iface %left, 0
+  %left.again.method = add i64 %left.again.itab, 24
+  %left.again.method.addr = inttoptr i64 %left.again.method to ptr
+  %left.again.fn = load ptr, ptr %left.again.method.addr, align 8
+  %left.again.data = extractvalue %iface %left, 1
+  %left.again.value = call goabiinternal i64 %left.again.fn(ptr %left.again.data, i64 %right.value)
   %preserved.value = load i64, ptr %preserved, align 8
   %called.sum = add i64 %left.value, %right.value
-  %partial = add i64 %called.sum, %preserved.value
+  %with.repeat = add i64 %called.sum, %left.again.value
+  %partial = add i64 %with.repeat, %preserved.value
   %inner.updated = add i64 %partial, %inner.sum
   %inner.next = add i64 %inner.index, 1
   %inner.done = icmp eq i64 %inner.next, %inner.limit

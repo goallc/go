@@ -1721,6 +1721,13 @@ bool isHomeableBasePointer(Value &V, SmallPtrSetImpl<Value *> &Active,
 
 Loop *findRepeatedPassiveIndirectLoopSafepoints(
     const StatepointPreservationPlan &Plan, LoopInfo &LI, DominatorTree &DT) {
+  // A scalar home costs one function-wide frame object and one preheader
+  // store. Require at least three static passive indirect callsites before
+  // paying that cost. Two-call fallback loops are common in otherwise large
+  // functions; homing a pointer used only there can perturb the frame and hot
+  // paths which never execute the fallback without eliminating enough dynamic
+  // relocate traffic to compensate.
+  constexpr unsigned MinPassiveCallsToHome = 3;
   Loop *Best = nullptr;
   unsigned BestPassiveCalls = 0;
   unsigned BestFirstCall = std::numeric_limits<unsigned>::max();
@@ -1762,7 +1769,7 @@ Loop *findRepeatedPassiveIndirectLoopSafepoints(
         // passive indirect callsites; that is the best static proxy available
         // here for how much dynamic relocate traffic one home can eliminate.
         // Use the earliest live passive call only as a deterministic tie-break.
-        if (PassiveCalls >= 2 &&
+        if (PassiveCalls >= MinPassiveCallsToHome &&
             (!Best || Current->getLoopDepth() < Best->getLoopDepth() ||
              (Current->getLoopDepth() == Best->getLoopDepth() &&
               (PassiveCalls > BestPassiveCalls ||
