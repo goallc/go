@@ -26,16 +26,16 @@ package codegen
 // LLVM: load ptr, ptr
 // LLVM: call goabiinternal i64 %
 // LLVM-SAME: (ptr
-// LLVM-DAG: define goabiinternal { ptr, ptr } @codegen.makeLLVMDirectIfaceStruct(
+// LLVM-DAG: define goabiinternal { i64, ptr } @codegen.makeLLVMDirectIfaceStruct(
 // LLVM-DAG: extractvalue %codegen.llvmDirectIfaceStruct %{{.*}}, 0
-// LLVM-DAG: insertvalue { ptr, ptr } { ptr @"type:codegen.llvmDirectIfaceStruct", ptr undef }, ptr %{{.*}}, 1
-// LLVM-DAG: define goabiinternal { ptr, ptr } @codegen.makeLLVMDirectIfaceArray(
+// LLVM-DAG: insertvalue { i64, ptr } { i64 ptrtoint (ptr @"type:codegen.llvmDirectIfaceStruct" to i64), ptr undef }, ptr %{{.*}}, 1
+// LLVM-DAG: define goabiinternal { i64, ptr } @codegen.makeLLVMDirectIfaceArray(
 // LLVM-DAG: extractvalue [1 x ptr] %{{.*}}, 0
-// LLVM-DAG: insertvalue { ptr, ptr } { ptr @"type:codegen.llvmDirectIfaceArray", ptr undef }, ptr %{{.*}}, 1
+// LLVM-DAG: insertvalue { i64, ptr } { i64 ptrtoint (ptr @"type:codegen.llvmDirectIfaceArray" to i64), ptr undef }, ptr %{{.*}}, 1
 // LLVM-DAG: define goabiinternal ptr @codegen.unboxLLVMDirectIfaceStruct(
-// LLVM-DAG: extractvalue { ptr, ptr } %{{.*}}, 1
+// LLVM-DAG: extractvalue { i64, ptr } %{{.*}}, 1
 // LLVM-DAG: define goabiinternal ptr @codegen.unboxLLVMDirectIfaceArray(
-// LLVM-DAG: extractvalue { ptr, ptr } %{{.*}}, 1
+// LLVM-DAG: extractvalue { i64, ptr } %{{.*}}, 1
 // LLVM-DAG: ![[USE_IFACE]] = !{ptr @"type:codegen.llvmInterfaceValue", i32 23, i64 0}
 // LLVM-DAG: ![[VALUE_METHOD]] = !{ptr @"type:codegen.llvmInterface", i32 24, i64 {{[0-9]+}}}
 // LLVM-DAG: ![[DOUBLE_METHOD]] = !{ptr @"type:codegen.llvmInterface", i32 24, i64 {{[0-9]+}}}

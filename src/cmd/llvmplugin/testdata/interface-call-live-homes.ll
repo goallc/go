@@ -1,23 +1,27 @@
 target triple = "x86_64-unknown-linux-goobj"
 
-%iface = type { ptr, ptr }
+%iface = type { i64, ptr }
 %slice = type { ptr, i64, i64 }
 
 ; IR-LABEL: define goabiinternal i64 @interface_call_loop(
-; IR-DAG: %left.statepoint.home = alloca %iface
-; IR-DAG: %right.statepoint.home = alloca %iface
-; IR-DAG: %scratch.statepoint.home = alloca %slice
-; IR-DAG: store %iface %left, ptr %left.statepoint.home
-; IR-DAG: store %iface %right, ptr %right.statepoint.home
-; IR-DAG: store %slice %scratch, ptr %scratch.statepoint.home
-; IR-NOT: extractvalue %iface %left
-; IR-NOT: extractvalue %iface %right
-; IR: load %iface, ptr %left.statepoint.home
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %scratch.statepoint.home, ptr %right.statepoint.home, ptr %left.statepoint.home)
-; IR-NOT: @llvm.experimental.gc.relocate
-; IR: load %iface, ptr %right.statepoint.home
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %scratch.statepoint.home, ptr %right.statepoint.home, ptr %left.statepoint.home)
-; IR-NOT: @llvm.experimental.gc.relocate
+; IR-NOT: %left.statepoint.home
+; IR-NOT: %right.statepoint.home
+; IR: %left.leaf.0 = extractvalue %iface %left, 0
+; IR: %left.leaf.1 = extractvalue %iface %left, 1
+; IR: %right.leaf.0 = extractvalue %iface %right, 0
+; IR: %right.leaf.1 = extractvalue %iface %right, 1
+; IR: %scratch.statepoint.home = alloca %slice
+; IR: store %slice %scratch, ptr %scratch.statepoint.home
+; IR: %left.method = add i64 %left.leaf.0, 24
+; IR: %right.method = add i64 %right.leaf.0, 24
+; IR: %[[LEFT_MERGE:left\.leaf\.1\.relocated\.merge\.[0-9]+]] = phi ptr
+; IR: %[[RIGHT_MERGE:right\.leaf\.1\.relocated\.merge\.[0-9]+]] = phi ptr
+; IR: inttoptr i64 %left.method to ptr
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[RIGHT_MERGE]], ptr %[[LEFT_MERGE]], ptr %scratch.statepoint.home)
+; IR: %[[RIGHT_RELOC:right\.leaf\.1\.relocated[0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: %[[LEFT_RELOC:left\.leaf\.1\.relocated[0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: inttoptr i64 %right.method to ptr
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[RIGHT_RELOC]], ptr %[[LEFT_RELOC]], ptr %scratch.statepoint.home)
 ; IR: load %slice, ptr %scratch.statepoint.home
 ; IR: ret i64
 
@@ -26,7 +30,10 @@ target triple = "x86_64-unknown-linux-goobj"
 ; MIR-DAG: size: 16
 ; MIR-DAG: size: 16
 ; MIR-DAG: size: 24
-; MIR: stack: []
+; MIR-DAG: size: 8
+; MIR: stack:
+; MIR-DAG: size: 8
+; MIR-DAG: size: 8
 ; MIR: STATEPOINT
 ; MIR: STATEPOINT
 
@@ -35,7 +42,10 @@ target triple = "x86_64-unknown-linux-goobj"
 ; MIR-AARCH64-DAG: size: 16
 ; MIR-AARCH64-DAG: size: 16
 ; MIR-AARCH64-DAG: size: 24
-; MIR-AARCH64: stack: []
+; MIR-AARCH64-DAG: size: 8
+; MIR-AARCH64: stack:
+; MIR-AARCH64-DAG: size: 8
+; MIR-AARCH64-DAG: size: 8
 ; MIR-AARCH64: STATEPOINT
 ; MIR-AARCH64: STATEPOINT
 
@@ -43,18 +53,20 @@ define goabiinternal i64 @interface_call_loop(
     %iface %left, %iface %right, %slice %scratch, i64 %limit) gc "goallc" {
 entry:
   %left.itab = extractvalue %iface %left, 0
-  %left.method = getelementptr i8, ptr %left.itab, i64 24
+  %left.method = add i64 %left.itab, 24
   %right.itab = extractvalue %iface %right, 0
-  %right.method = getelementptr i8, ptr %right.itab, i64 24
+  %right.method = add i64 %right.itab, 24
   br label %loop
 
 loop:
   %index = phi i64 [ 0, %entry ], [ %next, %loop ]
   %sum = phi i64 [ 0, %entry ], [ %updated, %loop ]
-  %left.fn = load ptr, ptr %left.method, align 8
+  %left.method.addr = inttoptr i64 %left.method to ptr
+  %left.fn = load ptr, ptr %left.method.addr, align 8
   %left.data = extractvalue %iface %left, 1
   %left.value = call goabiinternal i64 %left.fn(ptr %left.data, i64 %index, i64 %sum)
-  %right.fn = load ptr, ptr %right.method, align 8
+  %right.method.addr = inttoptr i64 %right.method to ptr
+  %right.fn = load ptr, ptr %right.method.addr, align 8
   %right.data = extractvalue %iface %right, 1
   %right.value = call goabiinternal i64 %right.fn(ptr %right.data, i64 %sum, i64 %index)
   %scratch.data = extractvalue %slice %scratch, 0
@@ -194,9 +206,8 @@ entry:
 ;
 ; IR-LABEL: define goabiinternal ptr @single_call_aggregate_relocate(
 ; IR-NOT: statepoint.home
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"({{(ptr %value.leaf.0, ptr %value.leaf.1|ptr %value.leaf.1, ptr %value.leaf.0)}})
-; IR-DAG: %value.leaf.0.relocated = call coldcc ptr @llvm.experimental.gc.relocate
-; IR-DAG: %value.leaf.1.relocated = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %value.leaf.1)
+; IR: %value.leaf.1.relocated = call coldcc ptr @llvm.experimental.gc.relocate
 ; IR-NOT: relocated.merge
 ; IR: ret ptr
 define goabiinternal ptr @single_call_aggregate_relocate(%iface %value)
@@ -204,8 +215,9 @@ define goabiinternal ptr @single_call_aggregate_relocate(%iface %value)
 entry:
   %ignored = call goabiinternal i64 @consume_pointer(ptr null, i64 0)
   %itab = extractvalue %iface %value, 0
-  %method = getelementptr i8, ptr %itab, i64 24
-  %method.value = load ptr, ptr %method, align 8
+  %method = add i64 %itab, 24
+  %method.addr = inttoptr i64 %method to ptr
+  %method.value = load ptr, ptr %method.addr, align 8
   %data = extractvalue %iface %value, 1
   %method.nil = icmp eq ptr %method.value, null
   %selected = select i1 %method.nil, ptr %data, ptr %method.value

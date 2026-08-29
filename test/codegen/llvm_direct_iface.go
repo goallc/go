@@ -31,7 +31,7 @@ func llvmDirectIfaceSink(llvmDirectIfaceNested) {}
 //
 // LLVM-LABEL: define goabiinternal void @codegen.llvmDirectIfaceCall(
 // LLVM: [[SLOT:%.*]] = alloca %codegen.llvmDirectIfaceNested, align 8
-// LLVM: [[DATA:%.*]] = extractvalue { ptr, ptr } %x, 1
+// LLVM: [[DATA:%.*]] = extractvalue { i64, ptr } %x, 1
 // LLVM: [[LEAF:%.*]] = insertvalue %codegen.llvmDirectIfaceLeaf undef, ptr [[DATA]], 0
 // LLVM: [[ARRAY:%.*]] = insertvalue [1 x %codegen.llvmDirectIfaceLeaf] undef, %codegen.llvmDirectIfaceLeaf [[LEAF]], 0
 // LLVM: [[NESTED:%.*]] = insertvalue %codegen.llvmDirectIfaceNested {{.*}}, [1 x %codegen.llvmDirectIfaceLeaf] [[ARRAY]], 2

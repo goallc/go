@@ -378,6 +378,23 @@ func TestLLVMCurrentGRegister(t *testing.T) {
 	}
 }
 
+func TestLLVMInterfaceTypeWordIsInteger(t *testing.T) {
+	interfaceType := getLLVMType(types.Types[types.TINTER])
+	if interfaceType.TypeKind() != llvm.StructTypeKind {
+		t.Fatalf("LLVM interface type kind = %s, want struct", interfaceType.TypeKind())
+	}
+	fields := interfaceType.StructElementTypes()
+	if len(fields) != 2 {
+		t.Fatalf("LLVM interface field count = %d, want 2", len(fields))
+	}
+	if fields[0].TypeKind() != llvm.IntegerTypeKind || fields[0].IntTypeWidth() != types.PtrSize*8 {
+		t.Fatalf("LLVM interface type word = %s, want pointer-sized integer", fields[0])
+	}
+	if fields[1].TypeKind() != llvm.PointerTypeKind {
+		t.Fatalf("LLVM interface data word = %s, want pointer", fields[1])
+	}
+}
+
 func TestLLVMCanEmitMustTail(t *testing.T) {
 	internalConfig := abi.NewABIConfig(16, 16, 0, uint8(obj.ABIInternal))
 	abi0Config := abi.NewABIConfig(0, 0, 0, uint8(obj.ABI0))

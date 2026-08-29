@@ -1738,6 +1738,15 @@ func (lfc *LLVMFuncContext) amd64MoveByteMask(v *Value) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) FinishPhi() {
+	savedBlock := lfc.b.GetInsertBlock()
+	savedLocation := lfc.b.CurrentDebugLocationMetadata()
+	defer func() {
+		lfc.b.SetCurrentDebugLocationMetadata(savedLocation)
+		if !savedBlock.IsNil() {
+			lfc.b.SetInsertPointAtEnd(savedBlock)
+		}
+	}()
+
 	for _, BB := range lfc.F.Blocks {
 		for _, v := range BB.Values {
 			if v.Op != OpPhi {
@@ -1746,8 +1755,12 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 			if v.Type.IsMemory() {
 				continue
 			}
-			var incomingLVals []llvm.Value
-			for _, incoming := range v.Args {
+			if len(v.Args) != len(BB.Preds) {
+				v.Fatalf("phi has %d inputs for %d predecessors", len(v.Args), len(BB.Preds))
+			}
+			incomingLVals := make([]llvm.Value, 0, len(v.Args))
+			predecessors := make([]llvm.BasicBlock, 0, len(BB.Preds))
+			for i, incoming := range v.Args {
 				incomingLVal, ok := lfc.Vs[incoming.ID]
 				if !ok {
 					v.Fatalf("phi input %s was not emitted in its defining block", incoming)
@@ -1755,15 +1768,19 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 				if incomingLVal.IsNil() {
 					v.Fatalf("phi input %s produced no LLVM value", incoming.LongString())
 				}
+				predecessor := lfc.BBs[BB.Preds[i].Block().ID]
+				terminator := predecessor.LastInstruction()
+				if terminator.IsNil() {
+					v.Fatalf("phi predecessor %s has no LLVM terminator", BB.Preds[i].Block())
+				}
+				lfc.b.SetInsertPointBefore(terminator)
+				lfc.setDebugLocation(v.Pos)
 				incomingLVal = lfc.reshapeLLVMValue(v, incomingLVal, incoming.Type, v.Type, v.String()+".incoming")
 				if got, want := incomingLVal.Type(), lfc.Vs[v.ID].Type(); got != want {
 					v.Fatalf("phi input %s has LLVM kind %s, want %s", incoming.LongString(), got.TypeKind(), want.TypeKind())
 				}
 				incomingLVals = append(incomingLVals, incomingLVal)
-			}
-			var predecessors []llvm.BasicBlock
-			for _, pred := range BB.Preds {
-				predecessors = append(predecessors, lfc.BBs[pred.Block().ID])
+				predecessors = append(predecessors, predecessor)
 			}
 			lfc.Vs[v.ID].AddIncoming(incomingLVals, predecessors)
 		}
@@ -1944,10 +1961,18 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 				elementType = v.Type.FieldType(i)
 			case types.TARRAY:
 				elementType = v.Type.Elem()
+			case types.TINTER:
+				// Go SSA represents an interface's itab/type word as uintptr,
+				// but OpAddr may still expose a semantic pointer. Keep the
+				// interface carrier integer-typed so statepoint liveness does
+				// not mistake immutable runtime metadata for a movable GC root.
+				value = lfc.reshapeLLVMValueToType(value, elementTypes[i], fmt.Sprintf("%s.field%d", v, i))
 			default:
 				v.Fatalf("aggregate field %d changes LLVM representation for Go type %v", i, v.Type)
 			}
-			value = lfc.reshapeLLVMValue(v, value, arg.Type, elementType, fmt.Sprintf("%s.field%d", v, i))
+			if elementType != nil {
+				value = lfc.reshapeLLVMValue(v, value, arg.Type, elementType, fmt.Sprintf("%s.field%d", v, i))
+			}
 		}
 		if got, want := value.Type(), elementTypes[i]; got != want {
 			v.Fatalf("aggregate field %d from %s has LLVM kind %s for Go type %v, want %s in Go aggregate %v", i, arg.LongString(), got.TypeKind(), arg.Type, want.TypeKind(), v.Type)
@@ -2851,7 +2876,19 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		}
 	case OpOffPtr:
 		off := llvmConstInt(types.Types[types.TINT], auxIntToInt64(v.AuxInt))
-		lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), arg0(), []llvm.Value{off}, v.String())
+		base := arg0()
+		if base.Type().TypeKind() == llvm.IntegerTypeKind {
+			// Interface itab/type words are addresses, but keeping their
+			// arithmetic integer-typed prevents an early inttoptr from
+			// becoming live across unrelated safepoints. The terminal memory
+			// operation materializes the pointer immediately before use.
+			if base.Type() != off.Type() {
+				v.Fatalf("%s integer address has incompatible offset type", v.Op)
+			}
+			lVal = lfc.b.CreateAdd(base, off, v.String())
+		} else {
+			lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), base, []llvm.Value{off}, v.String())
+		}
 	case OpAddPtr:
 		lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), arg0(), []llvm.Value{arg1()}, v.String())
 	case OpSubPtr:
@@ -3020,6 +3057,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 				addr.SetAlignment(int(home.Type.Alignment()))
 				addr.SetVolatile(true)
 			}
+		}
+		if addr.Type().TypeKind() == llvm.IntegerTypeKind {
+			if addr.Type().IntTypeWidth() != types.PtrSize*8 {
+				v.Fatalf("%s integer address has width %d, want %d", v.Op, addr.Type().IntTypeWidth(), types.PtrSize*8)
+			}
+			addr = lfc.b.CreateIntToPtr(addr, GlobalCtxt.PointerType(0), v.String()+".addr")
 		}
 		if addr.Type().TypeKind() != llvm.PointerTypeKind {
 			v.Fatalf("%s address has non-pointer LLVM type", v.Op)
@@ -4143,7 +4186,10 @@ func getLLVMType(typ *types.Type) llvm.Type {
 			getLLVMType(types.Types[types.TINT]),
 		}, false)
 	case types.TINTER:
-		lType = llvm.StructType([]llvm.Type{ptrType(), ptrType()}, false)
+		// The itab/type word addresses immutable runtime metadata and is not a
+		// movable GC pointer. Preserve its pointer-sized ABI bits as an integer
+		// so LLVM statepoint liveness only sees the interface data word.
+		lType = llvm.StructType([]llvm.Type{getLLVMType(types.Types[types.TINT]), ptrType()}, false)
 	case types.TCOMPLEX64:
 		lType = llvm.StructType([]llvm.Type{GlobalCtxt.FloatType(), GlobalCtxt.FloatType()}, false)
 	case types.TCOMPLEX128:

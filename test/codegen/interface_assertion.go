@@ -18,13 +18,13 @@ func (v llvmAssertionValue) Value(delta int) int {
 }
 
 // LLVM: @codegen..typeAssert.0 = internal global <{ ptr, ptr, [8 x i8] }>
-// LLVM-LABEL: define goabiinternal { { ptr, ptr }, i8 } @codegen.assertLLVMInterface(
+// LLVM-LABEL: define goabiinternal { { i64, ptr }, i8 } @codegen.assertLLVMInterface(
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
 // LLVM: call goabiinternal ptr @"runtime.typeAssert<builtin.{{[0-9]+}}>"(ptr @codegen..typeAssert.0, ptr
 // LLVM-LABEL: define goabiinternal { i64, i8 } @codegen.assertLLVMConcrete(
-// LLVM: extractvalue { ptr, ptr }
-// LLVM: icmp eq ptr
-// LLVM-SAME: @"type:codegen.llvmAssertionValue"
+// LLVM: extractvalue { i64, ptr }
+// LLVM: icmp eq i64
+// LLVM-SAME: ptrtoint (ptr @"type:codegen.llvmAssertionValue" to i64)
 // LLVM: load i64, ptr
 func assertLLVMConcrete(v any) (llvmAssertionValue, bool) {
 	x, ok := v.(llvmAssertionValue)
