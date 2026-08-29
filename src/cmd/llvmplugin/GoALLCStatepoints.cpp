@@ -179,6 +179,7 @@ struct StatepointPreservationPlan {
   StatepointPreservationStrategy Strategy =
       StatepointPreservationStrategy::RelocateSSA;
   SmallVector<CallInst *, 4> LiveCalls;
+  Loop *HomeLoop = nullptr;
 };
 
 // Classify how a frame-derived address participates in IR. Address derivations
@@ -1682,16 +1683,148 @@ bool aggregateArgumentFeedsAddressProjection(
   return false;
 }
 
+bool isHomeableBasePointer(Value &V, SmallPtrSetImpl<Value *> &Active,
+                           DenseMap<Value *, bool> &Memo) {
+  if (auto It = Memo.find(&V); It != Memo.end())
+    return It->second;
+  // Reject unanchored forwarding cycles. A PHI/select may choose different
+  // object identities: the preheader store records the value selected on the
+  // current path. It is homeable once every incoming chain reaches a concrete
+  // base producer and the merge is available before the chosen loop.
+  if (!Active.insert(&V).second)
+    return false;
+
+  bool IsBase = false;
+  if (isa<ConstantPointerNull, Argument, LoadInst, CallBase, ExtractValueInst>(
+          &V)) {
+    IsBase = true;
+  } else if (auto *Freeze = dyn_cast<FreezeInst>(&V)) {
+    IsBase = isHomeableBasePointer(*Freeze->getOperand(0), Active, Memo);
+  } else if (auto *Cast = dyn_cast<CastInst>(&V);
+             Cast && Cast->getSrcTy()->isPointerTy() &&
+             Cast->getDestTy()->isPointerTy() &&
+             Cast->isNoopCast(Cast->getDataLayout())) {
+    IsBase = isHomeableBasePointer(*Cast->getOperand(0), Active, Memo);
+  } else if (auto *Phi = dyn_cast<PHINode>(&V)) {
+    IsBase = llvm::all_of(Phi->incoming_values(), [&](Value *Incoming) {
+      return isHomeableBasePointer(*Incoming, Active, Memo);
+    });
+  } else if (auto *Select = dyn_cast<SelectInst>(&V)) {
+    IsBase = isHomeableBasePointer(*Select->getTrueValue(), Active, Memo) &&
+             isHomeableBasePointer(*Select->getFalseValue(), Active, Memo);
+  }
+
+  Active.erase(&V);
+  Memo[&V] = IsBase;
+  return IsBase;
+}
+
+Loop *findRepeatedPassiveIndirectLoopSafepoints(
+    const StatepointPreservationPlan &Plan, LoopInfo &LI, DominatorTree &DT) {
+  Loop *Best = nullptr;
+  unsigned BestPassiveCalls = 0;
+  unsigned BestFirstCall = std::numeric_limits<unsigned>::max();
+  for (Loop *TopLevel : LI) {
+    SmallVector<Loop *, 4> Worklist{TopLevel};
+    while (!Worklist.empty()) {
+      Loop *Current = Worklist.pop_back_val();
+      BasicBlock *Preheader = Current->getLoopPreheader();
+      auto *Def = dyn_cast<Instruction>(Plan.V);
+      bool AvailableInPreheader =
+          Preheader &&
+          (!Def || (!Current->contains(Def->getParent()) &&
+                    DT.dominates(Def, Preheader->getTerminator())));
+      if (AvailableInPreheader) {
+        unsigned PassiveCalls =
+            llvm::count_if(Plan.LiveCalls, [&](CallInst *Call) {
+              return Current->contains(Call->getParent()) &&
+                     !Call->getCalledFunction() &&
+                     !llvm::is_contained(Call->args(), Plan.V);
+            });
+        // Prefer the outermost available loop. Initializing in a nested
+        // preheader which is re-entered by an enclosing loop keeps Plan.V live
+        // across the very statepoints the home is intended to cover, because
+        // the next outer iteration still needs the SSA value for another
+        // store. The shallowest qualifying loop makes the home authoritative
+        // for the whole nest and lets the original SSA range end at its one
+        // preheader initialization.
+        unsigned FirstCall = std::numeric_limits<unsigned>::max();
+        for (auto [Index, Call] : llvm::enumerate(Plan.LiveCalls)) {
+          if (Current->contains(Call->getParent()) &&
+              !Call->getCalledFunction() &&
+              !llvm::is_contained(Call->args(), Plan.V)) {
+            FirstCall = Index;
+            break;
+          }
+        }
+        // LoopInfo's sibling iteration order is not function instruction
+        // order. Among equally shallow regions, prefer the one covering more
+        // passive indirect callsites; that is the best static proxy available
+        // here for how much dynamic relocate traffic one home can eliminate.
+        // Use the earliest live passive call only as a deterministic tie-break.
+        if (PassiveCalls >= 2 &&
+            (!Best || Current->getLoopDepth() < Best->getLoopDepth() ||
+             (Current->getLoopDepth() == Best->getLoopDepth() &&
+              (PassiveCalls > BestPassiveCalls ||
+               (PassiveCalls == BestPassiveCalls &&
+                FirstCall < BestFirstCall))))) {
+          Best = Current;
+          BestPassiveCalls = PassiveCalls;
+          BestFirstCall = FirstCall;
+        }
+      }
+      Worklist.append(Current->begin(), Current->end());
+    }
+  }
+  return Best;
+}
+
+bool hasMaterialPointerUse(Value &V, SmallPtrSetImpl<Value *> &Visited) {
+  if (!Visited.insert(&V).second)
+    return false;
+  for (User *User : V.users()) {
+    if (isa<GetElementPtrInst, LoadInst, StoreInst, AtomicRMWInst,
+            AtomicCmpXchgInst, CallBase, ReturnInst, PtrToIntInst>(User))
+      return true;
+    if (isa<PHINode, SelectInst, FreezeInst, CastInst>(User) &&
+        hasMaterialPointerUse(*cast<Value>(User), Visited))
+      return true;
+  }
+  return false;
+}
+
 StatepointPreservationStrategy
 chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
-                                     Function &F, LoopInfo &LI) {
+                                     Function &F, LoopInfo &LI,
+                                     DominatorTree &DT) {
   Value *V = Plan.V;
   if (isFixedFrameAddress(V) || rematerializableDerivedBase(V))
     return StatepointPreservationStrategy::Rematerialize;
 
+  if (!isGoCallingConv(F.getCallingConv()))
+    return StatepointPreservationStrategy::RelocateSSA;
+
+  Type *Ty = V->getType();
+  if (Ty->isPointerTy()) {
+    SmallPtrSet<Value *, 16> Active;
+    DenseMap<Value *, bool> Memo;
+    // Keep this deliberately narrower than "live across calls in a loop".
+    // Direct-call relocation chains are usually already visible to generic
+    // statepoint spill-slot reuse and target post-RA store elimination. An
+    // explicit stable identity can then perturb register allocation without
+    // removing a dynamic store. Repeated indirect calls are the opaque case
+    // where Go interface/closure dispatch most often defeats that reuse.
+    SmallPtrSet<Value *, 16> UseVisited;
+    Plan.HomeLoop = findRepeatedPassiveIndirectLoopSafepoints(Plan, LI, DT);
+    return Plan.HomeLoop && !isa<Constant>(V) &&
+                   isHomeableBasePointer(*V, Active, Memo) &&
+                   hasMaterialPointerUse(*V, UseVisited)
+               ? StatepointPreservationStrategy::TrackInHome
+               : StatepointPreservationStrategy::RelocateSSA;
+  }
+
   auto *Arg = dyn_cast<Argument>(V);
-  if (!Arg || !isGoCallingConv(F.getCallingConv()) ||
-      Arg->hasPassPointeeByValueCopyAttr())
+  if (!Arg || Arg->hasPassPointeeByValueCopyAttr())
     return StatepointPreservationStrategy::RelocateSSA;
 
   // A fixed ABI argument home avoids a new local frame object, but populating
@@ -1705,14 +1838,6 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
   if (!AmortizesHome || goabi::getPaddingPieces(Arg->getType()).any())
     return StatepointPreservationStrategy::RelocateSSA;
 
-  Type *Ty = Arg->getType();
-  if (Ty->isPointerTy()) {
-    // A scalar pointer is already one first-class statepoint root. Moving it
-    // to a home cannot reduce the root count, but does add an entry store and
-    // terminal reloads. Keep scalar pointers on the native relocate path even
-    // when the aggregate profitability threshold below would be met.
-    return StatepointPreservationStrategy::RelocateSSA;
-  }
   if (!Ty->isAggregateType() || !containsPointer(Ty))
     return StatepointPreservationStrategy::RelocateSSA;
   SmallPtrSet<Value *, 8> Visited;
@@ -1722,7 +1847,8 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
 }
 
 MapVector<Value *, StatepointPreservationPlan>
-buildStatepointPreservationPlans(Function &F, LoopInfo &LI) {
+buildStatepointPreservationPlans(Function &F, LoopInfo &LI,
+                                 DominatorTree &DT) {
   LivenessData StatepointLiveness = computeStatepointLiveness(F);
   MapVector<Value *, StatepointPreservationPlan> Plans;
   for (Instruction &I : instructions(F)) {
@@ -1742,7 +1868,7 @@ buildStatepointPreservationPlans(Function &F, LoopInfo &LI) {
   }
   for (auto &[V, Plan] : Plans) {
     (void)V;
-    Plan.Strategy = chooseStatepointPreservationStrategy(Plan, F, LI);
+    Plan.Strategy = chooseStatepointPreservationStrategy(Plan, F, LI, DT);
   }
   return Plans;
 }
@@ -1813,6 +1939,60 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
   return Error::success();
 }
 
+Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
+                            DominatorTree &DT) {
+  assert(V.getType()->isPointerTy() && "expected scalar pointer home");
+  BasicBlock *Preheader = HomeLoop.getLoopPreheader();
+  if (!Preheader)
+    return Error::success();
+
+  BasicBlock &Entry = F.getEntryBlock();
+  IRBuilder<> EntryBuilder(&*Entry.getFirstInsertionPt());
+  StringRef Name = V.hasName() ? V.getName() : "pointer";
+  auto *Home = EntryBuilder.CreateAlloca(V.getType(), nullptr,
+                                         Name + ".statepoint.home");
+  Home->setAlignment(F.getDataLayout().getABITypeAlign(V.getType()));
+
+  Instruction *InitializeBefore = Preheader->getTerminator();
+  IRBuilder<> InitializeBuilder(InitializeBefore);
+  InitializeBuilder.SetCurrentDebugLocation(InitializeBefore->getDebugLoc());
+  CallInst *LifetimeStart = InitializeBuilder.CreateLifetimeStart(Home);
+  StoreInst *Initialize =
+      InitializeBuilder.CreateAlignedStore(&V, Home, Home->getAlign());
+
+  SmallVector<Use *, 16> OriginalUses;
+  for (Use &U : V.uses())
+    if (U.getUser() != Initialize)
+      OriginalUses.push_back(&U);
+  DenseMap<Instruction *, Value *> ReloadedAtUsePoint;
+  unsigned RewrittenUses = 0;
+  for (Use *U : OriginalUses) {
+    if (!DT.dominates(Initialize, *U))
+      continue;
+    Instruction *InsertBefore = aggregateUseInsertionPoint(*U);
+    if (!InsertBefore)
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC statepoints cannot reload a non-instruction pointer use");
+    Value *Reloaded = ReloadedAtUsePoint.lookup(InsertBefore);
+    if (!Reloaded) {
+      IRBuilder<> Builder(InsertBefore);
+      Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
+      Reloaded = Builder.CreateAlignedLoad(V.getType(), Home, Home->getAlign(),
+                                           Name + ".statepoint.reload");
+      ReloadedAtUsePoint[InsertBefore] = Reloaded;
+    }
+    U->set(Reloaded);
+    ++RewrittenUses;
+  }
+  if (!RewrittenUses) {
+    Initialize->eraseFromParent();
+    LifetimeStart->eraseFromParent();
+    Home->eraseFromParent();
+  }
+  return Error::success();
+}
+
 // Build one preservation plan for every live pointer or pointer-bearing SSA
 // carrier, then materialize only the homes selected by the profitability
 // policy. Scalar relocate and aggregate-leaf scalarization remain the default;
@@ -1821,11 +2001,40 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
 Error applyStatepointPreservationPlans(
     MapVector<Value *, StatepointPreservationPlan> &Plans, Function &F,
     DominatorTree &DT, LoopInfo &LI) {
-  for (auto &[V, Plan] : Plans) {
-    if (Plan.Strategy != StatepointPreservationStrategy::TrackInHome)
+  struct PendingPreservation {
+    WeakTrackingVH V;
+    SmallVector<CallInst *, 4> LiveCalls;
+    Loop *HomeLoop;
+  };
+  SmallVector<PendingPreservation, 8> Pending;
+  for (auto &[V, Plan] : Plans)
+    if (Plan.Strategy == StatepointPreservationStrategy::TrackInHome)
+      Pending.push_back({V, Plan.LiveCalls, Plan.HomeLoop});
+
+  // Aggregate homes may erase pointer projections which were independently
+  // selected for a scalar home. Apply them first and let weak handles discard
+  // the now-redundant decisions.
+  llvm::stable_sort(Pending, [](const PendingPreservation &Left,
+                                const PendingPreservation &Right) {
+    Value *LeftValue = Left.V;
+    Value *RightValue = Right.V;
+    return LeftValue && RightValue &&
+           !LeftValue->getType()->isPointerTy() &&
+           RightValue->getType()->isPointerTy();
+  });
+  for (PendingPreservation &P : Pending) {
+    Value *V = P.V;
+    if (!V)
       continue;
-    auto *Arg = cast<Argument>(V);
-    if (Error Err = homeStatepointArgument(*Arg, Plan.LiveCalls, F, DT, LI))
+    if (!V->getType()->isPointerTy()) {
+      auto *Arg = cast<Argument>(V);
+      if (Error Err = homeStatepointArgument(*Arg, P.LiveCalls, F, DT, LI))
+        return Err;
+      continue;
+    }
+    if (!P.HomeLoop)
+      continue;
+    if (Error Err = homeStatepointPointer(*V, *P.HomeLoop, F, DT))
       return Err;
   }
   return Error::success();
@@ -3468,7 +3677,7 @@ Error rewriteFunction(Function &F) {
         MDNode::get(F.getContext(), ArrayRef<Metadata *>()));
   }
   MapVector<Value *, StatepointPreservationPlan> PreservationPlans =
-      buildStatepointPreservationPlans(F, LI);
+      buildStatepointPreservationPlans(F, LI, DT);
   SmallVector<WeakTrackingVH, 16> AggregateScalarizationCandidates =
       collectRelocatablePointerAggregates(PreservationPlans);
   if (Error Err =
