@@ -85,27 +85,37 @@ exit:
 
 ; A scalar heap pointer which is only passively live across repeated interface
 ; calls gets one pointer-containing alloca. Its storage has function identity,
-; but its lifetime and initialization begin only in the loop preheader. The
-; interfaces still use their aggregate argument homes, while scalar loop state
-; stays ordinary SSA.
+; but its lifetime and initialization begin only in the loop preheader.
+; Aggregate scalarization sends the two interface data leaves back through the
+; same policy. They get independent pointer homes and are reloaded only at the
+; calls which consume them; integer itabs and scalar loop state stay SSA.
 ;
 ; IR-LABEL: define goabiinternal i64 @passive_pointer_interface_call_loop(
-; IR-NOT: %left.statepoint.home
-; IR-NOT: %right.statepoint.home
+; IR-DAG: %left.leaf.1.statepoint.home = alloca ptr
+; IR-DAG: %right.leaf.1.statepoint.home = alloca ptr
 ; IR-DAG: %preserved.statepoint.home = alloca ptr
 ; IR-LABEL: preheader:
 ; IR: call void @llvm.lifetime.start.p0(ptr %preserved.statepoint.home)
 ; IR-NEXT: store ptr %preserved, ptr %preserved.statepoint.home
+; IR: call void @llvm.lifetime.start.p0(ptr %left.leaf.1.statepoint.home)
+; IR-NEXT: store ptr %left.leaf.1, ptr %left.leaf.1.statepoint.home
+; IR: call void @llvm.lifetime.start.p0(ptr %right.leaf.1.statepoint.home)
+; IR-NEXT: store ptr %right.leaf.1, ptr %right.leaf.1.statepoint.home
 ; IR-NEXT: br label %loop
 ; IR-LABEL: loop:
+; IR: %left.leaf.1.statepoint.reload = load volatile ptr, ptr %left.leaf.1.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %left.leaf.1.statepoint.home, ptr %right.leaf.1.statepoint.home)
+; IR: %right.leaf.1.statepoint.reload = load volatile ptr, ptr %right.leaf.1.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %left.leaf.1.statepoint.home, ptr %right.leaf.1.statepoint.home)
+; IR: %left.leaf.1.statepoint.reload1 = load volatile ptr, ptr %left.leaf.1.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %left.leaf.1.statepoint.home, ptr %right.leaf.1.statepoint.home)
 ; IR-NOT: %preserved.relocated
-; IR: %preserved.statepoint.reload = load ptr, ptr %preserved.statepoint.home
+; IR-NOT: %left.leaf.1.relocated
+; IR-NOT: %right.leaf.1.relocated
+; IR: %preserved.statepoint.reload = load volatile ptr, ptr %preserved.statepoint.home
 ; IR: %preserved.value = load i64, ptr %preserved.statepoint.reload
 ; IR: ret i64
 ;
@@ -123,7 +133,7 @@ exit:
 ; MIR-NOT:     MOV64mr %fixed-stack.[[HOME]]
 ; MIR:         STATEPOINT {{.*}} %fixed-stack.[[HOME]], 0,
 ; MIR-NOT:     MOV64mr %fixed-stack.[[HOME]]
-; MIR:         MOV64rm %fixed-stack.[[HOME]],
+; MIR:         MOV64rm %fixed-stack.[[HOME]],{{.*}} :: (volatile dereferenceable load (s64) from %fixed-stack.[[HOME]])
 ;
 ; MIR-AARCH64-LABEL: name: passive_pointer_interface_call_loop
 ; MIR-AARCH64:       fixedStack:
@@ -139,7 +149,7 @@ exit:
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[HOME]]
 ; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[HOME]], 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[HOME]]
-; MIR-AARCH64:         LDRXui %fixed-stack.[[HOME]], 0
+; MIR-AARCH64:         LDRXui %fixed-stack.[[HOME]], 0 :: (volatile dereferenceable load (s64) from %fixed-stack.[[HOME]])
 define goabiinternal i64 @passive_pointer_interface_call_loop(
     %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
 entry:
@@ -187,7 +197,7 @@ exit:
 ; frame of hotter paths which bypass it.
 ;
 ; IR-LABEL: define goabiinternal i64 @two_passive_pointer_interface_call_loop_relocate(
-; IR-NOT: %preserved.statepoint.home
+; IR-NOT: statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-SAME: "gc-live"({{.*}}ptr %preserved
 ; IR: %[[RELOC1:preserved.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
@@ -228,6 +238,167 @@ exit:
   ret i64 %updated
 }
 
+; A value may be live through profitable loops on disjoint paths. Each path
+; needs its own initialized home: an alloca which is merely present in the
+; function-wide frame description has contents-live=0 before its path's
+; preheader store. Its address may still be a gc-live operand for fixed-frame
+; rematerialization, but its uninitialized contents do not contribute GC
+; roots. Do not choose just one sibling based on its static call count.
+;
+; IR-LABEL: define goabiinternal i64 @disjoint_passive_pointer_interface_call_loops(
+; IR-DAG: %[[PRESERVED_HOME:preserved\.statepoint\.home]] = alloca ptr
+; IR-DAG: %[[PRESERVED_HOME2:preserved\.statepoint\.home[0-9]+]] = alloca ptr
+; IR-DAG: %[[LEFT_HOME:left\.leaf\.1\.statepoint\.home]] = alloca ptr
+; IR-DAG: %[[LEFT_HOME2:left\.leaf\.1\.statepoint\.home[0-9]+]] = alloca ptr
+; IR-DAG: %[[RIGHT_HOME:right\.leaf\.1\.statepoint\.home]] = alloca ptr
+; IR-DAG: %[[RIGHT_HOME2:right\.leaf\.1\.statepoint\.home[0-9]+]] = alloca ptr
+; IR-LABEL: first.preheader:
+; IR-DAG: call void @llvm.lifetime.start.p0(ptr %[[PRESERVED_HOME]])
+; IR-DAG: store ptr %preserved, ptr %[[PRESERVED_HOME]]
+; IR-DAG: call void @llvm.lifetime.start.p0(ptr %[[LEFT_HOME]])
+; IR-DAG: store ptr %left.leaf.1, ptr %[[LEFT_HOME]]
+; IR-DAG: call void @llvm.lifetime.start.p0(ptr %[[RIGHT_HOME]])
+; IR-DAG: store ptr %right.leaf.1, ptr %[[RIGHT_HOME]]
+; IR: br label %first.loop
+; IR-LABEL: first.loop:
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %[[PRESERVED_HOME]]{{.*}}ptr %[[LEFT_HOME]]{{.*}}ptr %[[RIGHT_HOME]])
+; IR: @llvm.experimental.gc.statepoint
+; IR: @llvm.experimental.gc.statepoint
+; IR-LABEL: second.preheader:
+; IR-DAG: call void @llvm.lifetime.start.p0(ptr %[[PRESERVED_HOME2]])
+; IR-DAG: store ptr %preserved, ptr %[[PRESERVED_HOME2]]
+; IR-DAG: call void @llvm.lifetime.start.p0(ptr %[[LEFT_HOME2]])
+; IR-DAG: store ptr %left.leaf.1, ptr %[[LEFT_HOME2]]
+; IR-DAG: call void @llvm.lifetime.start.p0(ptr %[[RIGHT_HOME2]])
+; IR-DAG: store ptr %right.leaf.1, ptr %[[RIGHT_HOME2]]
+; IR: br label %second.loop
+; IR-LABEL: second.loop:
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %[[PRESERVED_HOME2]]{{.*}}ptr %[[LEFT_HOME2]]{{.*}}ptr %[[RIGHT_HOME2]])
+; IR: @llvm.experimental.gc.statepoint
+; IR: @llvm.experimental.gc.statepoint
+; IR-NOT: %preserved.relocated
+; IR: ret i64
+define goabiinternal i64 @disjoint_passive_pointer_interface_call_loops(
+    %iface %left, %iface %right, ptr %preserved, i1 %choose, i64 %limit)
+    gc "goallc" {
+entry:
+  %left.itab = extractvalue %iface %left, 0
+  %left.method = add i64 %left.itab, 24
+  %right.itab = extractvalue %iface %right, 0
+  %right.method = add i64 %right.itab, 24
+  br i1 %choose, label %first.preheader, label %second.preheader
+
+first.preheader:
+  br label %first.loop
+
+first.loop:
+  %first.index = phi i64 [ 0, %first.preheader ], [ %first.next, %first.loop ]
+  %first.sum = phi i64 [ 0, %first.preheader ], [ %first.updated, %first.loop ]
+  %first.left.method.addr = inttoptr i64 %left.method to ptr
+  %first.left.fn = load ptr, ptr %first.left.method.addr, align 8
+  %first.left.data = extractvalue %iface %left, 1
+  %first.left.value = call goabiinternal i64 %first.left.fn(ptr %first.left.data, i64 %first.index)
+  %first.right.method.addr = inttoptr i64 %right.method to ptr
+  %first.right.fn = load ptr, ptr %first.right.method.addr, align 8
+  %first.right.data = extractvalue %iface %right, 1
+  %first.right.value = call goabiinternal i64 %first.right.fn(ptr %first.right.data, i64 %first.sum)
+  %first.left.again = call goabiinternal i64 %first.left.fn(ptr %first.left.data, i64 %first.right.value)
+  %first.preserved = load i64, ptr %preserved, align 8
+  %first.called = add i64 %first.left.value, %first.right.value
+  %first.called.again = add i64 %first.called, %first.left.again
+  %first.with.preserved = add i64 %first.called.again, %first.preserved
+  %first.updated = add i64 %first.with.preserved, %first.sum
+  %first.next = add i64 %first.index, 1
+  %first.done = icmp eq i64 %first.next, %limit
+  br i1 %first.done, label %first.exit, label %first.loop
+
+first.exit:
+  ret i64 %first.updated
+
+second.preheader:
+  br label %second.loop
+
+second.loop:
+  %second.index = phi i64 [ 0, %second.preheader ], [ %second.next, %second.loop ]
+  %second.sum = phi i64 [ 0, %second.preheader ], [ %second.updated, %second.loop ]
+  %second.left.method.addr = inttoptr i64 %left.method to ptr
+  %second.left.fn = load ptr, ptr %second.left.method.addr, align 8
+  %second.left.data = extractvalue %iface %left, 1
+  %second.left.value = call goabiinternal i64 %second.left.fn(ptr %second.left.data, i64 %second.index)
+  %second.right.method.addr = inttoptr i64 %right.method to ptr
+  %second.right.fn = load ptr, ptr %second.right.method.addr, align 8
+  %second.right.data = extractvalue %iface %right, 1
+  %second.right.value = call goabiinternal i64 %second.right.fn(ptr %second.right.data, i64 %second.sum)
+  %second.left.again = call goabiinternal i64 %second.left.fn(ptr %second.left.data, i64 %second.right.value)
+  %second.preserved = load i64, ptr %preserved, align 8
+  %second.called = add i64 %second.left.value, %second.right.value
+  %second.called.again = add i64 %second.called, %second.left.again
+  %second.with.preserved = add i64 %second.called.again, %second.preserved
+  %second.updated = add i64 %second.with.preserved, %second.sum
+  %second.next = add i64 %second.index, 1
+  %second.done = icmp eq i64 %second.next, %limit
+  br i1 %second.done, label %second.exit, label %second.loop
+
+second.exit:
+  ret i64 %second.updated
+}
+
+; A three-call loop is not sufficient by itself. If dominated material uses
+; would require at least as many home reload points as the value has live
+; calls, keep ordinary relocate SSA. Reject the remaining low-use singleton as
+; well: a partial one-slot group only grows the frame without shortening the
+; mutually live root cluster.
+;
+; IR-LABEL: define goabiinternal i64 @dense_pointer_interface_call_loop_relocate(
+; IR-NOT: statepoint.home
+; IR: @llvm.experimental.gc.statepoint
+; IR: @llvm.experimental.gc.statepoint
+; IR: @llvm.experimental.gc.statepoint
+; IR: ret i64
+define goabiinternal i64 @dense_pointer_interface_call_loop_relocate(
+    %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
+entry:
+  %left.itab = extractvalue %iface %left, 0
+  %left.method = add i64 %left.itab, 24
+  %right.itab = extractvalue %iface %right, 0
+  %right.method = add i64 %right.itab, 24
+  br label %loop
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
+  %sum = phi i64 [ 0, %entry ], [ %updated, %loop ]
+  %left.method.addr = inttoptr i64 %left.method to ptr
+  %left.fn = load ptr, ptr %left.method.addr, align 8
+  %left.data = extractvalue %iface %left, 1
+  %left.value = call goabiinternal i64 %left.fn(ptr %left.data, i64 %index)
+  %left.memory = load i64, ptr %left.data, align 8
+  %right.method.addr = inttoptr i64 %right.method to ptr
+  %right.fn = load ptr, ptr %right.method.addr, align 8
+  %right.data = extractvalue %iface %right, 1
+  %right.value = call goabiinternal i64 %right.fn(ptr %right.data, i64 %sum)
+  %right.memory = load i64, ptr %right.data, align 8
+  %left.again = call goabiinternal i64 %left.fn(ptr %left.data, i64 %right.value)
+  %left.memory.again = load i64, ptr %left.data, align 8
+  %preserved.first = load i64, ptr %preserved, align 8
+  %preserved.second = load i64, ptr %preserved, align 8
+  %called = add i64 %left.value, %right.value
+  %called.again = add i64 %called, %left.again
+  %memory = add i64 %left.memory, %right.memory
+  %memory.again = add i64 %memory, %left.memory.again
+  %preserved.sum = add i64 %preserved.first, %preserved.second
+  %partial = add i64 %called.again, %memory.again
+  %with.preserved = add i64 %partial, %preserved.sum
+  %updated = add i64 %with.preserved, %sum
+  %next = add i64 %index, 1
+  %done = icmp eq i64 %next, %limit
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i64 %updated
+}
+
 ; A path-selected receiver is equally safe to home. The PHI may denote two
 ; different heap objects; the preheader store records the selected identity,
 ; and only that home remains live through the loop statepoints.
@@ -238,7 +409,7 @@ exit:
 ; IR: %selected = phi ptr [ %first, %pick.first ], [ %second, %pick.second ]
 ; IR: call void @llvm.lifetime.start.p0(ptr %selected.statepoint.home)
 ; IR-NEXT: store ptr %selected, ptr %selected.statepoint.home
-; IR-NEXT: br label %loop
+; IR: br label %loop
 ; IR-LABEL: loop:
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-SAME: "gc-live"({{.*}}ptr %selected.statepoint.home
@@ -247,7 +418,7 @@ exit:
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-SAME: "gc-live"({{.*}}ptr %selected.statepoint.home
 ; IR-NOT: %selected.relocated
-; IR: %selected.statepoint.reload = load ptr, ptr %selected.statepoint.home
+; IR: %selected.statepoint.reload = load volatile ptr, ptr %selected.statepoint.home
 ; IR: %selected.value = load i64, ptr %selected.statepoint.reload
 ; IR: ret i64
 ;
@@ -261,7 +432,7 @@ exit:
 ; MIR-NOT:     MOV64mr %stack.[[PHI_HOME]]{{[^,]*}},
 ; MIR:         STATEPOINT {{.*}} %stack.[[PHI_HOME]]{{[^,]*}}, 0,
 ; MIR-NOT:     MOV64mr %stack.[[PHI_HOME]]{{[^,]*}},
-; MIR:         MOV64rm %stack.[[PHI_HOME]]{{[^,]*}},
+; MIR:         MOV64rm %stack.[[PHI_HOME]]{{[^,]*}},{{.*}} :: (volatile dereferenceable load (s64) from %ir.{{.*}}statepoint.home)
 ;
 ; MIR-AARCH64-LABEL: name: passive_pointer_phi_interface_call_loop
 ; MIR-AARCH64:         LIFETIME_START %stack.[[PHI_HOME:[0-9]+]]
@@ -273,7 +444,7 @@ exit:
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %stack.[[PHI_HOME]]{{[^,]*}},
 ; MIR-AARCH64:         STATEPOINT {{.*}} %stack.[[PHI_HOME]]{{[^,]*}}, 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %stack.[[PHI_HOME]]{{[^,]*}},
-; MIR-AARCH64:         LDRXui %stack.[[PHI_HOME]]{{[^,]*}}, 0
+; MIR-AARCH64:         LDRXui %stack.[[PHI_HOME]]{{[^,]*}}, 0 :: (volatile dereferenceable load (s64) from %ir.{{.*}}statepoint.home)
 define goabiinternal i64 @passive_pointer_phi_interface_call_loop(
     %iface %left, %iface %right, ptr %first, ptr %second, i1 %choose,
     i64 %limit) gc "goallc" {
@@ -334,7 +505,7 @@ exit:
 ; IR-LABEL: outer.preheader:
 ; IR: call void @llvm.lifetime.start.p0(ptr %preserved.statepoint.home)
 ; IR-NEXT: store ptr %preserved, ptr %preserved.statepoint.home
-; IR-NEXT: br label %outer.header
+; IR: br label %outer.header
 ; IR-LABEL: inner.preheader:
 ; IR-NOT: store ptr %preserved
 ; IR: br label %inner
@@ -349,7 +520,7 @@ exit:
 ; IR-SAME: "deopt"({{.*}}i64 1095520067, i64 12, ptr %preserved.statepoint.home, i64 0, i64 8, i64 8, i64 8, i64 1, i64 1, i64 64, i64 1, i64 1
 ; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
 ; IR-NOT: %preserved.relocated
-; IR: %preserved.statepoint.reload = load ptr, ptr %preserved.statepoint.home
+; IR: %preserved.statepoint.reload = load volatile ptr, ptr %preserved.statepoint.home
 ; IR: load i64, ptr %preserved.statepoint.reload
 ;
 ; MIR-LABEL: name: nested_passive_pointer_interface_call_loop
@@ -361,6 +532,7 @@ exit:
 ; MIR:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
 ; MIR-NOT:     MOV64mr %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
 ; MIR:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
+; MIR:         MOV64rm %fixed-stack.[[NESTED_HOME]]{{[^,]*}},{{.*}} :: (volatile dereferenceable load (s64) from %fixed-stack.[[NESTED_HOME]])
 ;
 ; MIR-AARCH64-LABEL: name: nested_passive_pointer_interface_call_loop
 ; MIR-AARCH64:         LIFETIME_START %fixed-stack.[[NESTED_HOME:[0-9]+]]
@@ -371,6 +543,7 @@ exit:
 ; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
 ; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[NESTED_HOME]]{{[^,]*}},
 ; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0,
+; MIR-AARCH64:         LDRXui %fixed-stack.[[NESTED_HOME]]{{[^,]*}}, 0 :: (volatile dereferenceable load (s64) from %fixed-stack.[[NESTED_HOME]])
 define goabiinternal i64 @nested_passive_pointer_interface_call_loop(
     %iface %left, %iface %right, ptr %preserved, i64 %outer.limit,
     i64 %inner.limit) gc "goallc" {
