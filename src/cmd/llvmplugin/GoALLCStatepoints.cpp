@@ -163,14 +163,6 @@ struct OpenDeferInfo {
   uint64_t SlotCount = 0;
 };
 
-enum class LivenessKind {
-  StatepointValues,
-  PointerAggregates,
-  RelocatablePointers,
-  FixedFrameAddresses,
-  DerivedPointers,
-};
-
 // Pointer-bearing SSA values share one liveness and profitability analysis,
 // but not one post-statepoint representation. Keeping the strategy explicit
 // prevents aggregate carriers from becoming mutable whole-value SSA
@@ -1318,32 +1310,24 @@ Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
   return Error::success();
 }
 
-bool isTrackedValue(const Value *V, LivenessKind Kind) {
+bool isStatepointValue(const Value *V) {
   if (isa<Constant>(V))
     return false;
-  Type *Ty = V->getType();
-  switch (Kind) {
-  case LivenessKind::StatepointValues:
-    return isRelocatablePointerType(Ty) ||
-           (!isRelocatablePointerType(Ty) && containsPointer(Ty));
-  case LivenessKind::PointerAggregates:
-    return !isRelocatablePointerType(Ty) && containsPointer(Ty);
-  case LivenessKind::RelocatablePointers:
-    return isRelocatablePointerType(Ty) && !isFixedFrameAddress(V) &&
-           !rematerializableDerivedBase(V);
-  case LivenessKind::FixedFrameAddresses:
-    // Address liveness is independent from object-content liveness. Track
-    // every same-object alloca/byval/goret pointer recipe and later map it to
-    // the one canonical base carried by gc-live without gc.relocate.
-    return Ty->isPointerTy() && fixedFrameProvenanceBase(V);
-  case LivenessKind::DerivedPointers:
-    return rematerializableDerivedBase(V) != nullptr;
-  }
-  llvm_unreachable("unknown GoALLC liveness kind");
+  return containsPointer(V->getType());
 }
 
-void addLiveValue(Value *V, ValueSet &Live, LivenessKind Kind) {
-  if (isTrackedValue(V, Kind))
+bool isPointerAggregateValue(const Value *V) {
+  Type *Ty = V->getType();
+  return !isRelocatablePointerType(Ty) && containsPointer(Ty);
+}
+
+bool isOrdinaryRelocatablePointer(const Value *V) {
+  return isRelocatablePointerType(V->getType()) && !isFixedFrameAddress(V) &&
+         !rematerializableDerivedBase(V);
+}
+
+void addLiveValue(Value *V, ValueSet &Live) {
+  if (isStatepointValue(V))
     Live.insert(V);
 }
 
@@ -1370,44 +1354,43 @@ uint64_t stableStatepointID(StringRef FunctionName, uint64_t CallOrdinal) {
 }
 
 void scanBackward(BasicBlock::reverse_iterator Begin,
-                  BasicBlock::reverse_iterator End, ValueSet &Live,
-                  LivenessKind Kind) {
+                  BasicBlock::reverse_iterator End, ValueSet &Live) {
   for (Instruction &I : make_range(Begin, End)) {
     Live.remove(&I);
     if (isa<PHINode>(I))
       continue;
     for (Value *Operand : I.operands())
-      addLiveValue(Operand, Live, Kind);
+      addLiveValue(Operand, Live);
   }
 }
 
-void seedPhiUses(BasicBlock &BB, ValueSet &LiveOut, LivenessKind Kind) {
+void seedPhiUses(BasicBlock &BB, ValueSet &LiveOut) {
   for (BasicBlock *Succ : successors(&BB)) {
     for (Instruction &I : *Succ) {
       auto *Phi = dyn_cast<PHINode>(&I);
       if (!Phi)
         break;
       Value *Incoming = Phi->getIncomingValueForBlock(&BB);
-      addLiveValue(Incoming, LiveOut, Kind);
+      addLiveValue(Incoming, LiveOut);
     }
   }
 }
 
-LivenessData computeLiveness(Function &F, LivenessKind Kind) {
+LivenessData computeStatepointLiveness(Function &F) {
   LivenessData Data;
   SmallSetVector<BasicBlock *, 32> Worklist;
 
   for (BasicBlock &BB : F) {
     ValueSet &Kill = Data.Kill[&BB];
     for (Instruction &I : BB)
-      if (isTrackedValue(&I, Kind))
+      if (isStatepointValue(&I))
         Kill.insert(&I);
 
     ValueSet &Gen = Data.Gen[&BB];
-    scanBackward(BB.rbegin(), BB.rend(), Gen, Kind);
+    scanBackward(BB.rbegin(), BB.rend(), Gen);
 
     ValueSet &Out = Data.LiveOut[&BB];
-    seedPhiUses(BB, Out, Kind);
+    seedPhiUses(BB, Out);
 
     ValueSet &In = Data.LiveIn[&BB];
     In = Gen;
@@ -1437,13 +1420,13 @@ LivenessData computeLiveness(Function &F, LivenessKind Kind) {
   return Data;
 }
 
-ValueSet liveAtCall(CallInst &Call, LivenessData &Data, LivenessKind Kind) {
+ValueSet liveAtCall(CallInst &Call, LivenessData &Data) {
   ValueSet Live = Data.LiveOut[Call.getParent()];
   // Go scans the callee's incoming arguments through
   // FUNCDATA_ArgsPointerMaps. The caller's statepoint therefore contains only
   // values live after the call, not values whose sole use is the call itself.
   scanBackward(Call.getParent()->rbegin(), Call.getIterator().getReverse(),
-               Live, Kind);
+               Live);
   Live.remove(&Call);
   return Live;
 }
@@ -1595,7 +1578,7 @@ extractAggregateLeaves(Value &Aggregate, ArrayRef<AggregateLeaf> Leaves,
       // independently live at a safepoint, both identities represent the same
       // root there and can share one gc.relocate.
       if (Inserted && LeafValue->getType()->isPointerTy() &&
-          isTrackedValue(Inserted, LivenessKind::RelocatablePointers))
+          isOrdinaryRelocatablePointer(Inserted))
         DirectPointerLeafSources[LeafValue] = Inserted;
     }
     Values.push_back(LeafValue);
@@ -1740,16 +1723,14 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
 
 MapVector<Value *, StatepointPreservationPlan>
 buildStatepointPreservationPlans(Function &F, LoopInfo &LI) {
-  LivenessData StatepointLiveness =
-      computeLiveness(F, LivenessKind::StatepointValues);
+  LivenessData StatepointLiveness = computeStatepointLiveness(F);
   MapVector<Value *, StatepointPreservationPlan> Plans;
   for (Instruction &I : instructions(F)) {
     auto *Call = dyn_cast<CallInst>(&I);
     if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
         Call->isMustTailCall())
       continue;
-    for (Value *Live : liveAtCall(*Call, StatepointLiveness,
-                                  LivenessKind::StatepointValues)) {
+    for (Value *Live : liveAtCall(*Call, StatepointLiveness)) {
       auto It = Plans.find(Live);
       if (It == Plans.end()) {
         Plans.insert({Live, {Live}});
@@ -1764,6 +1745,16 @@ buildStatepointPreservationPlans(Function &F, LoopInfo &LI) {
     Plan.Strategy = chooseStatepointPreservationStrategy(Plan, F, LI);
   }
   return Plans;
+}
+
+SmallVector<WeakTrackingVH, 16> collectRelocatablePointerAggregates(
+    const MapVector<Value *, StatepointPreservationPlan> &Plans) {
+  SmallVector<WeakTrackingVH, 16> Candidates;
+  for (const auto &[V, Plan] : Plans)
+    if (Plan.Strategy == StatepointPreservationStrategy::RelocateSSA &&
+        isPointerAggregateValue(V))
+      Candidates.push_back(V);
+  return Candidates;
 }
 
 Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
@@ -1827,10 +1818,9 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
 // policy. Scalar relocate and aggregate-leaf scalarization remain the default;
 // in particular this never makes a whole aggregate a post-statepoint SSA
 // definition and therefore cannot introduce relocate-driven aggregate PHIs.
-Error applyStatepointPreservationPlans(Function &F, DominatorTree &DT,
-                                       LoopInfo &LI) {
-  MapVector<Value *, StatepointPreservationPlan> Plans =
-      buildStatepointPreservationPlans(F, LI);
+Error applyStatepointPreservationPlans(
+    MapVector<Value *, StatepointPreservationPlan> &Plans, Function &F,
+    DominatorTree &DT, LoopInfo &LI) {
   for (auto &[V, Plan] : Plans) {
     if (Plan.Strategy != StatepointPreservationStrategy::TrackInHome)
       continue;
@@ -1842,22 +1832,12 @@ Error applyStatepointPreservationPlans(Function &F, DominatorTree &DT,
 }
 
 Error scalarizeLivePointerAggregates(
-    Function &F, MapVector<Value *, Value *> &DirectPointerLeafSources) {
-  LivenessData AggregateLiveness =
-      computeLiveness(F, LivenessKind::PointerAggregates);
+    Function &F, ArrayRef<WeakTrackingVH> CandidateHandles,
+    MapVector<Value *, Value *> &DirectPointerLeafSources) {
   ValueSet Candidates;
-
-  for (Instruction &I : instructions(F)) {
-    auto *Call = dyn_cast<CallBase>(&I);
-    if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
-        Call->isMustTailCall())
-      continue;
-    auto *OrdinaryCall = dyn_cast<CallInst>(Call);
-    if (!OrdinaryCall)
-      continue;
-    Candidates.insert_range(liveAtCall(*OrdinaryCall, AggregateLiveness,
-                                       LivenessKind::PointerAggregates));
-  }
+  for (const WeakTrackingVH &Handle : CandidateHandles)
+    if (Value *Candidate = Handle)
+      Candidates.insert(Candidate);
 
   for (Value *Candidate : Candidates) {
     SmallVector<AggregateLeaf, 8> Leaves;
@@ -3487,8 +3467,17 @@ Error rewriteFunction(Function &F) {
         StackColoringNoMergeMD,
         MDNode::get(F.getContext(), ArrayRef<Metadata *>()));
   }
-  if (Error Err = applyStatepointPreservationPlans(F, DT, LI))
+  MapVector<Value *, StatepointPreservationPlan> PreservationPlans =
+      buildStatepointPreservationPlans(F, LI);
+  SmallVector<WeakTrackingVH, 16> AggregateScalarizationCandidates =
+      collectRelocatablePointerAggregates(PreservationPlans);
+  if (Error Err =
+          applyStatepointPreservationPlans(PreservationPlans, F, DT, LI))
     return Err;
+  // Selected homes can delete projection instructions which also appeared in
+  // the original plan map. Candidate handles above track the aggregate values
+  // still requiring scalarization; discard raw plan keys before continuing.
+  PreservationPlans.clear();
   SmallVector<PointerAllocaRecord, 8> PointerAllocas;
   if (Error Err = collectPointerAllocas(F, OpenDefer, PointerAllocas))
     return Err;
@@ -3496,7 +3485,8 @@ Error rewriteFunction(Function &F) {
   if (Error Err = collectPointerFixedArgs(F, PointerFixedArgs))
     return Err;
   MapVector<Value *, Value *> DirectPointerLeafSources;
-  if (Error Err = scalarizeLivePointerAggregates(F, DirectPointerLeafSources))
+  if (Error Err = scalarizeLivePointerAggregates(
+          F, AggregateScalarizationCandidates, DirectPointerLeafSources))
     return Err;
   if (Error Err = normalizeMergedDerivedPointers(F))
     return Err;
@@ -3511,10 +3501,11 @@ Error rewriteFunction(Function &F) {
   SmallVector<FixedFrameAddressRecord, 32> FixedFrameAddresses =
       std::move(*FixedFrameAddressesOrErr);
 
-  LivenessData Data = computeLiveness(F, LivenessKind::RelocatablePointers);
-  LivenessData FixedFrameData =
-      computeLiveness(F, LivenessKind::FixedFrameAddresses);
-  LivenessData DerivedData = computeLiveness(F, LivenessKind::DerivedPointers);
+  // Aggregate preservation has now been decided and materialized. Compute one
+  // final SSA live set, then choose the representation-specific repair for
+  // each value at the callsite. Pointer-containing memory has independent
+  // content liveness and is added below by the alloca/fixed-argument analyses.
+  LivenessData FinalLiveness = computeStatepointLiveness(F);
   SmallVector<SafepointRecord, 8> Records;
   uint64_t CallOrdinal = 0;
 
@@ -3528,13 +3519,30 @@ Error rewriteFunction(Function &F) {
       return createStringError(
           std::errc::not_supported,
           "GoALLC statepoints do not yet support invoke or callbr");
-    Records.push_back(
-        {OrdinaryCall, stableStatepointID(F.getName(), CallOrdinal++),
-         liveAtCall(*OrdinaryCall, Data, LivenessKind::RelocatablePointers),
-         liveAtCall(*OrdinaryCall, FixedFrameData,
-                    LivenessKind::FixedFrameAddresses),
-         liveAtCall(*OrdinaryCall, DerivedData,
-                    LivenessKind::DerivedPointers)});
+    SafepointRecord Record{OrdinaryCall,
+                           stableStatepointID(F.getName(), CallOrdinal++)};
+    for (Value *Live : liveAtCall(*OrdinaryCall, FinalLiveness)) {
+      if (isFixedFrameAddress(Live)) {
+        // Address liveness is independent from object-content liveness. Map
+        // every same-object alloca/byval/goret recipe to its canonical frame
+        // base below; fixed addresses never get gc.relocate.
+        Record.FixedFrameAddresses.insert(Live);
+      } else if (rematerializableDerivedBase(Live)) {
+        Record.DerivedPointers.insert(Live);
+      } else if (isOrdinaryRelocatablePointer(Live)) {
+        Record.Live.insert(Live);
+      } else if (isPointerAggregateValue(Live)) {
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC statepoint preservation left a pointer-bearing "
+            "aggregate live after scalarization");
+      } else {
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC statepoint liveness found an unsupported pointer value");
+      }
+    }
+    Records.push_back(std::move(Record));
   }
   SmallPtrSet<const CallInst *, 16> SafepointCalls;
   for (const SafepointRecord &Record : Records)
