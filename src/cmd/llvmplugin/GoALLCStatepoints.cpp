@@ -36,6 +36,7 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CheckedArithmetic.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
@@ -1719,8 +1720,9 @@ bool isHomeableBasePointer(Value &V, SmallPtrSetImpl<Value *> &Active,
   return IsBase;
 }
 
-SmallVector<Loop *, 2> findRepeatedPassiveLoopSafepoints(
-    const StatepointPreservationPlan &Plan, LoopInfo &LI, DominatorTree &DT) {
+SmallVector<Loop *, 2>
+findRepeatedPassiveLoopSafepoints(const StatepointPreservationPlan &Plan,
+                                  LoopInfo &LI, DominatorTree &DT) {
   // A scalar home costs one function-wide frame object and one preheader
   // store. Require at least three safepoints and require the value to be
   // passive at one of them. A pointer may still be an argument of another
@@ -1734,13 +1736,20 @@ SmallVector<Loop *, 2> findRepeatedPassiveLoopSafepoints(
     SmallVector<Loop *, 4> Worklist{TopLevel};
     while (!Worklist.empty()) {
       Loop *Current = Worklist.pop_back_val();
-      BasicBlock *Preheader = Current->getLoopPreheader();
+      BasicBlock *Entry = Current->getLoopPreheader();
+      if (!Entry)
+        Entry = Current->getLoopPredecessor();
+      BasicBlock *Header = Current->getHeader();
+      bool HasUniqueEntryEdge =
+          Entry && llvm::count_if(successors(Entry), [&](BasicBlock *Succ) {
+                     return Succ == Header;
+                   }) == 1;
       auto *Def = dyn_cast<Instruction>(Plan.V);
-      bool AvailableInPreheader =
-          Preheader &&
+      bool AvailableOnEntryEdge =
+          HasUniqueEntryEdge &&
           (!Def || (!Current->contains(Def->getParent()) &&
-                    DT.dominates(Def, Preheader->getTerminator())));
-      if (AvailableInPreheader) {
+                    DT.dominates(Def, Entry->getTerminator())));
+      if (AvailableOnEntryEdge) {
         unsigned LoopCalls =
             llvm::count_if(Plan.LiveCalls, [&](CallInst *Call) {
               return Current->contains(Call->getParent());
@@ -1766,14 +1775,19 @@ SmallVector<Loop *, 2> findRepeatedPassiveLoopSafepoints(
   // an enclosing loop instead of reinitializing the home in an inner loop.
   SmallVector<Loop *, 2> Result;
   for (Loop *Candidate : Candidates) {
-    BasicBlock *CandidatePreheader = Candidate->getLoopPreheader();
+    BasicBlock *CandidateEntry = Candidate->getLoopPreheader();
+    if (!CandidateEntry)
+      CandidateEntry = Candidate->getLoopPredecessor();
+    BasicBlockEdge CandidateEdge(CandidateEntry, Candidate->getHeader());
     bool Covered = llvm::any_of(Candidates, [&](Loop *Other) {
       if (Other == Candidate)
         return false;
-      BasicBlock *OtherPreheader = Other->getLoopPreheader();
-      return OtherPreheader && CandidatePreheader &&
-             DT.dominates(OtherPreheader->getTerminator(),
-                          CandidatePreheader->getTerminator());
+      BasicBlock *OtherEntry = Other->getLoopPreheader();
+      if (!OtherEntry)
+        OtherEntry = Other->getLoopPredecessor();
+      return OtherEntry && CandidateEntry &&
+             DT.dominates(BasicBlockEdge(OtherEntry, Other->getHeader()),
+                          CandidateEdge);
     });
     if (!Covered)
       Result.push_back(Candidate);
@@ -1790,30 +1804,53 @@ SmallVector<Loop *, 2> findRepeatedPassiveLoopSafepoints(
   return Result;
 }
 
+std::optional<BasicBlockEdge> loopHomeEntryEdge(Loop *HomeLoop) {
+  if (!HomeLoop)
+    return std::nullopt;
+  BasicBlock *Entry = HomeLoop->getLoopPreheader();
+  if (!Entry)
+    Entry = HomeLoop->getLoopPredecessor();
+  BasicBlock *Header = HomeLoop->getHeader();
+  if (!Entry || llvm::count_if(successors(Entry), [&](BasicBlock *Succ) {
+                  return Succ == Header;
+                }) != 1)
+    return std::nullopt;
+  return BasicBlockEdge(Entry, Header);
+}
+
+CallInst *previousStatepointCall(Instruction &InsertBefore) {
+  for (Instruction *I = InsertBefore.getPrevNode(); I; I = I->getPrevNode()) {
+    auto *Call = dyn_cast<CallInst>(I);
+    if (Call && !isa<GCStatepointInst>(Call) && !Call->isMustTailCall() &&
+        !isLeafCall(*Call))
+      return Call;
+  }
+  return nullptr;
+}
+
 std::optional<unsigned>
 countPointerHomeReloadPoints(const StatepointPreservationPlan &Plan,
                              Loop *HomeLoop, DominatorTree &DT) {
-  BasicBlock *Preheader = HomeLoop ? HomeLoop->getLoopPreheader() : nullptr;
-  if (!Preheader)
+  std::optional<BasicBlockEdge> EntryEdge = loopHomeEntryEdge(HomeLoop);
+  if (!EntryEdge)
     return std::nullopt;
 
-  // homeStatepointPointer initializes immediately before the preheader
-  // terminator and rewrites every dominated use. Count the distinct insertion
-  // points it would therefore turn into loads. A high-frequency address used
-  // throughout a numeric loop is a poor home candidate even if it happens to
-  // cross several calls: replacing a few relocates with a volatile load at
-  // every address use is strictly the wrong tradeoff.
-  Instruction *ProposedInitialize = Preheader->getTerminator();
-  SmallPtrSet<Instruction *, 16> ReloadPoints;
+  // The home is authoritative after entering the loop. Count one volatile
+  // reload for each basic-block segment delimited by an ordinary safepoint;
+  // uses in the same segment can safely share that reload. A high-frequency
+  // address used throughout a numeric loop remains a poor home candidate when
+  // those uses span as many statepoint-free regions as the calls it covers.
+  SmallSet<std::pair<BasicBlock *, CallInst *>, 16> ReloadRegions;
   for (Use &U : Plan.V->uses()) {
-    if (!DT.dominates(ProposedInitialize, U))
+    if (!DT.dominates(*EntryEdge, U))
       continue;
     Instruction *InsertBefore = aggregateUseInsertionPoint(U);
     if (!InsertBefore)
       return std::nullopt;
-    ReloadPoints.insert(InsertBefore);
+    ReloadRegions.insert(
+        {InsertBefore->getParent(), previousStatepointCall(*InsertBefore)});
   }
-  return ReloadPoints.size();
+  return ReloadRegions.size();
 }
 
 void retainProfitablePointerHomes(
@@ -1828,20 +1865,38 @@ void retainProfitablePointerHomes(
         !V->getType()->isPointerTy() || Plan.HomeLoops.empty())
       continue;
 
+    Value *Candidate = V;
     StatepointPreservationPlan *PlanPtr = &Plan;
-    llvm::erase_if(Plan.HomeLoops, [PlanPtr, &DT](Loop *HomeLoop) {
-      BasicBlock *Preheader = HomeLoop->getLoopPreheader();
-      if (!Preheader)
-        return true;
-      Instruction *Initialize = Preheader->getTerminator();
-      unsigned DominatedLiveCalls =
-          llvm::count_if(PlanPtr->LiveCalls, [&](CallInst *Call) {
-            return DT.dominates(Initialize, Call);
-          });
-      std::optional<unsigned> ReloadPoints =
-          countPointerHomeReloadPoints(*PlanPtr, HomeLoop, DT);
-      return !ReloadPoints || *ReloadPoints >= DominatedLiveCalls;
-    });
+    llvm::erase_if(
+        Plan.HomeLoops, [Candidate, PlanPtr, &Plans, &DT](Loop *HomeLoop) {
+          std::optional<BasicBlockEdge> EntryEdge = loopHomeEntryEdge(HomeLoop);
+          if (!EntryEdge)
+            return true;
+          SmallPtrSet<CallInst *, 16> DominatedLiveCalls;
+          for (CallInst *Call : PlanPtr->LiveCalls)
+            if (DT.dominates(*EntryEdge, Call->getParent()))
+              DominatedLiveCalls.insert(Call);
+
+          // A derived address which remains live through a call is rebuilt from
+          // its base after the statepoint. Homing that base would therefore
+          // leave both the home and its reloaded base in gc-live at the same
+          // call, so it eliminates no relocate there. Charge those calls
+          // against the benefit instead of selecting a nominally profitable but
+          // duplicate root.
+          SmallPtrSet<CallInst *, 16> ReintroducedBaseCalls;
+          for (auto &[OtherV, OtherPlan] : Plans) {
+            if (rematerializableDerivedBase(OtherV) != Candidate)
+              continue;
+            for (CallInst *Call : OtherPlan.LiveCalls)
+              if (DominatedLiveCalls.contains(Call))
+                ReintroducedBaseCalls.insert(Call);
+          }
+          unsigned EliminatedRelocates =
+              DominatedLiveCalls.size() - ReintroducedBaseCalls.size();
+          std::optional<unsigned> ReloadPoints =
+              countPointerHomeReloadPoints(*PlanPtr, HomeLoop, DT);
+          return !ReloadPoints || *ReloadPoints >= EliminatedRelocates;
+        });
     if (Plan.HomeLoops.empty()) {
       Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
       continue;
@@ -1915,8 +1970,7 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
 }
 
 MapVector<Value *, StatepointPreservationPlan>
-buildStatepointPreservationPlans(Function &F, LoopInfo &LI,
-                                 DominatorTree &DT) {
+buildStatepointPreservationPlans(Function &F, LoopInfo &LI, DominatorTree &DT) {
   LivenessData StatepointLiveness = computeStatepointLiveness(F);
   MapVector<Value *, StatepointPreservationPlan> Plans;
   for (Instruction &I : instructions(F)) {
@@ -2008,11 +2062,21 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
 }
 
 Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
-                            DominatorTree &DT) {
+                            DominatorTree &DT, LoopInfo &LI) {
   assert(V.getType()->isPointerTy() && "expected scalar pointer home");
   BasicBlock *Preheader = HomeLoop.getLoopPreheader();
-  if (!Preheader)
-    return Error::success();
+  if (!Preheader) {
+    BasicBlock *Predecessor = HomeLoop.getLoopPredecessor();
+    if (!Predecessor)
+      return Error::success();
+    Preheader =
+        SplitEdge(Predecessor, HomeLoop.getHeader(), &DT, &LI, nullptr,
+                  HomeLoop.getHeader()->getName() + ".statepoint.preheader");
+    if (!Preheader)
+      return createStringError(
+          std::errc::not_supported,
+          "GoALLC cannot split a selected loop home entry edge");
+  }
 
   BasicBlock &Entry = F.getEntryBlock();
   IRBuilder<> EntryBuilder(&*Entry.getFirstInsertionPt());
@@ -2032,8 +2096,13 @@ Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
   for (Use &U : V.uses())
     if (U.getUser() != Initialize)
       OriginalUses.push_back(&U);
-  DenseMap<Instruction *, Value *> ReloadedAtUsePoint;
-  unsigned RewrittenUses = 0;
+  struct ReloadRegion {
+    BasicBlock *Block;
+    CallInst *PreviousCall;
+    Instruction *InsertBefore;
+    SmallVector<Use *, 4> Uses;
+  };
+  SmallVector<ReloadRegion, 8> ReloadRegions;
   for (Use *U : OriginalUses) {
     if (!DT.dominates(Initialize, *U))
       continue;
@@ -2042,29 +2111,41 @@ Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
       return createStringError(
           std::errc::not_supported,
           "GoALLC statepoints cannot reload a non-instruction pointer use");
-    Value *Reloaded = ReloadedAtUsePoint.lookup(InsertBefore);
-    if (!Reloaded) {
-      IRBuilder<> Builder(InsertBefore);
-      Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
-      auto *Reload = Builder.CreateAlignedLoad(
-          V.getType(), Home, Home->getAlign(), Name + ".statepoint.reload");
-      // The collector may rewrite Home while executing any intervening
-      // statepoint. The gc-live operand describes the stack map, but it is not
-      // an LLVM memory dependence: ordinary alias analysis knows that the
-      // local alloca is not passed to the callee and may otherwise hoist this
-      // reload above the call. Keep the reload ordered at its post-statepoint
-      // use so that CodeGen cannot resurrect the pre-relocation address.
-      Reload->setVolatile(true);
-      Reloaded = Reload;
-      ReloadedAtUsePoint[InsertBefore] = Reloaded;
+    CallInst *PreviousCall = previousStatepointCall(*InsertBefore);
+    auto It = llvm::find_if(ReloadRegions, [&](const ReloadRegion &Region) {
+      return Region.Block == InsertBefore->getParent() &&
+             Region.PreviousCall == PreviousCall;
+    });
+    if (It == ReloadRegions.end()) {
+      ReloadRegions.push_back(
+          {InsertBefore->getParent(), PreviousCall, InsertBefore, {U}});
+      continue;
     }
-    U->set(Reloaded);
-    ++RewrittenUses;
+    if (InsertBefore->comesBefore(It->InsertBefore))
+      It->InsertBefore = InsertBefore;
+    It->Uses.push_back(U);
   }
-  if (!RewrittenUses) {
+  if (ReloadRegions.empty()) {
     Initialize->eraseFromParent();
     LifetimeStart->eraseFromParent();
     Home->eraseFromParent();
+    return Error::success();
+  }
+
+  for (ReloadRegion &Region : ReloadRegions) {
+    IRBuilder<> Builder(Region.InsertBefore);
+    Builder.SetCurrentDebugLocation(Region.InsertBefore->getDebugLoc());
+    auto *Reload = Builder.CreateAlignedLoad(
+        V.getType(), Home, Home->getAlign(), Name + ".statepoint.reload");
+    // The collector may rewrite Home while executing any intervening
+    // statepoint. The gc-live operand describes the stack map, but it is not
+    // an LLVM memory dependence: ordinary alias analysis knows that the local
+    // alloca is not passed to the callee and may otherwise hoist this reload
+    // above the call. Keep one volatile reload in each statepoint-free region
+    // so CodeGen cannot resurrect the pre-relocation address.
+    Reload->setVolatile(true);
+    for (Use *U : Region.Uses)
+      U->set(Reload);
   }
   return Error::success();
 }
@@ -2094,8 +2175,7 @@ Error applyStatepointPreservationPlans(
                                 const PendingPreservation &Right) {
     Value *LeftValue = Left.V;
     Value *RightValue = Right.V;
-    return LeftValue && RightValue &&
-           !LeftValue->getType()->isPointerTy() &&
+    return LeftValue && RightValue && !LeftValue->getType()->isPointerTy() &&
            RightValue->getType()->isPointerTy();
   });
   for (PendingPreservation &P : Pending) {
@@ -2109,7 +2189,7 @@ Error applyStatepointPreservationPlans(
       continue;
     }
     for (Loop *HomeLoop : P.HomeLoops)
-      if (Error Err = homeStatepointPointer(*V, *HomeLoop, F, DT))
+      if (Error Err = homeStatepointPointer(*V, *HomeLoop, F, DT, LI))
         return Err;
   }
   return Error::success();

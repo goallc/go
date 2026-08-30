@@ -367,8 +367,10 @@ second.exit:
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
 ; IR-NOT: %preserved.relocated
-; IR: load volatile ptr, ptr %preserved.statepoint.home
-; IR: load volatile ptr, ptr %preserved.statepoint.home
+; IR: %[[PRESERVED_RELOAD:preserved\.statepoint\.reload]] = load volatile ptr, ptr %preserved.statepoint.home
+; IR: %preserved.first = load i64, ptr %[[PRESERVED_RELOAD]]
+; IR: %preserved.second = load i64, ptr %[[PRESERVED_RELOAD]]
+; IR-NOT: load volatile ptr, ptr %preserved.statepoint.home
 ; IR: ret i64
 define goabiinternal i64 @dense_pointer_interface_call_loop_relocate(
     %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
@@ -677,6 +679,125 @@ loop:
   %first.pair = add i64 %first, %second
   %called.sum = add i64 %first.pair, %third
   %partial = add i64 %called.sum, %preserved.value
+  %updated = add i64 %partial, %sum
+  %next = add i64 %index, 1
+  %done = icmp eq i64 %next, %limit
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i64 %updated
+}
+
+; A loop can have one entering edge without already having a canonical
+; preheader when the predecessor also branches around the loop. Select the
+; same profitable home, but split only the entering edge so its lifetime and
+; initialization do not execute on the bypass path.
+;
+; IR-LABEL: define goabiinternal i64 @unique_entry_edge_passive_pointer_direct_call_loop(
+; IR-LABEL: entry:
+; IR: %preserved.statepoint.home = alloca ptr
+; IR: br i1 %enter, label %loop.statepoint.preheader, label %bypass
+; IR-LABEL: loop.statepoint.preheader:
+; IR: call void @llvm.lifetime.start.p0(ptr %preserved.statepoint.home)
+; IR-NEXT: store ptr %preserved, ptr %preserved.statepoint.home
+; IR-NEXT: br label %loop
+; IR-LABEL: loop:
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home)
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home)
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home)
+; IR-NOT: %preserved.relocated
+; IR: %preserved.statepoint.reload = load volatile ptr, ptr %preserved.statepoint.home
+; IR-LABEL: bypass:
+; IR-NOT: store ptr %preserved
+; IR: ret i64 0
+;
+; MIR-LABEL: name: unique_entry_edge_passive_pointer_direct_call_loop
+; MIR-LABEL: bb.0.entry:
+; MIR-NOT:     LIFETIME_START
+; MIR:         JMP_1 %bb.1
+; MIR-LABEL: bb.1.loop.preheader:
+; MIR:         LIFETIME_START %stack.{{[0-9]+}}.preserved.statepoint.home
+; MIR-NEXT:    MOV64mr %stack.{{[0-9]+}}.preserved.statepoint.home, {{.*}} :: (store (s64) into %ir.{{.*}}statepoint.home)
+; MIR-LABEL: bb.2.loop:
+; MIR:         STATEPOINT {{.*}} %stack.{{[0-9]+}}.preserved.statepoint.home, 0,
+;
+; MIR-AARCH64-LABEL: name: unique_entry_edge_passive_pointer_direct_call_loop
+; MIR-AARCH64-LABEL: bb.0.entry:
+; MIR-AARCH64-NOT:     LIFETIME_START
+; MIR-AARCH64:         B %bb.1
+; MIR-AARCH64-LABEL: bb.1.loop.preheader:
+; MIR-AARCH64:         LIFETIME_START %stack.{{[0-9]+}}.preserved.statepoint.home
+; MIR-AARCH64-NEXT:    STRXui {{.*}}, %stack.{{[0-9]+}}.preserved.statepoint.home, 0 :: (store (s64) into %ir.{{.*}}statepoint.home)
+; MIR-AARCH64-LABEL: bb.2.loop:
+; MIR-AARCH64:         STATEPOINT {{.*}} %stack.{{[0-9]+}}.preserved.statepoint.home, 0,
+define goabiinternal i64 @unique_entry_edge_passive_pointer_direct_call_loop(
+    ptr %preserved, i1 %enter, i64 %limit) gc "goallc" {
+entry:
+  br i1 %enter, label %loop, label %bypass
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
+  %sum = phi i64 [ 0, %entry ], [ %updated, %loop ]
+  %first = call goabiinternal i64 @consume_scalar(i64 %index)
+  %second = call goabiinternal i64 @consume_scalar(i64 %first)
+  %third = call goabiinternal i64 @consume_scalar(i64 %second)
+  %preserved.value = load i64, ptr %preserved, align 8
+  %first.pair = add i64 %first, %second
+  %called.sum = add i64 %first.pair, %third
+  %partial = add i64 %called.sum, %preserved.value
+  %updated = add i64 %partial, %sum
+  %next = add i64 %index, 1
+  %done = icmp eq i64 %next, %limit
+  br i1 %done, label %exit, label %loop
+
+bypass:
+  ret i64 0
+
+exit:
+  ret i64 %updated
+}
+
+; A live derived address is rebuilt from its relocated base after every
+; statepoint. A simultaneous base home would add that home without removing
+; the reintroduced base root, so charge all three calls as zero benefit and
+; keep the ordinary single-root relocate chain.
+;
+; IR-LABEL: define goabiinternal i64 @derived_base_passive_pointer_direct_call_loop(
+; IR-NOT: statepoint.home
+; IR: %[[BASE_MERGE:preserved\.relocated\.merge[.0-9]*]] = phi ptr
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[BASE_MERGE]])
+; IR: %[[BASE1:preserved\.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: getelementptr i64, ptr %[[BASE1]], i64 1
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[BASE1]])
+; IR: %[[BASE2:preserved\.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: getelementptr i64, ptr %[[BASE2]], i64 1
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[BASE2]])
+; IR: %[[BASE3:preserved\.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: %[[DERIVED:[a-zA-Z0-9_.]+]] = getelementptr i64, ptr %[[BASE3]], i64 1
+; IR: load i64, ptr %[[BASE3]]
+; IR: load i64, ptr %[[DERIVED]]
+; IR: ret i64
+define goabiinternal i64 @derived_base_passive_pointer_direct_call_loop(
+    ptr %preserved, i64 %limit) gc "goallc" {
+entry:
+  %derived = getelementptr i64, ptr %preserved, i64 1
+  br label %loop
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %next, %loop ]
+  %sum = phi i64 [ 0, %entry ], [ %updated, %loop ]
+  %first = call goabiinternal i64 @consume_scalar(i64 %index)
+  %second = call goabiinternal i64 @consume_scalar(i64 %first)
+  %third = call goabiinternal i64 @consume_scalar(i64 %second)
+  %preserved.value = load i64, ptr %preserved, align 8
+  %derived.value = load i64, ptr %derived, align 8
+  %first.pair = add i64 %first, %second
+  %called.sum = add i64 %first.pair, %third
+  %pointer.sum = add i64 %preserved.value, %derived.value
+  %partial = add i64 %called.sum, %pointer.sum
   %updated = add i64 %partial, %sum
   %next = add i64 %index, 1
   %done = icmp eq i64 %next, %limit
