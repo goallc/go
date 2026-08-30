@@ -192,7 +192,7 @@ exit:
   ret i64 %updated
 }
 
-; Two passive indirect callsites do not amortize a function-wide scalar home.
+; Two passive safepoints do not amortize a function-wide scalar home.
 ; Keep the ordinary relocate chain so a cold fallback loop cannot perturb the
 ; frame of hotter paths which bypass it.
 ;
@@ -347,15 +347,28 @@ second.exit:
 
 ; A three-call loop is not sufficient by itself. If dominated material uses
 ; would require at least as many home reload points as the value has live
-; calls, keep ordinary relocate SSA. Reject the remaining low-use singleton as
-; well: a partial one-slot group only grows the frame without shortening the
-; mutually live root cluster.
+; calls, keep ordinary relocate SSA. A low-use pointer is decided independently
+; and may use a single home when its reload count is lower than its live-call
+; count.
 ;
 ; IR-LABEL: define goabiinternal i64 @dense_pointer_interface_call_loop_relocate(
-; IR-NOT: statepoint.home
+; IR-LABEL: entry:
+; IR-NOT: %left.leaf.1.statepoint.home
+; IR-DAG: %right.leaf.1.statepoint.home = alloca ptr
+; IR-DAG: %preserved.statepoint.home = alloca ptr
+; IR-NOT: %left.leaf.1.statepoint.home
+; IR: call void @llvm.lifetime.start.p0(ptr %preserved.statepoint.home)
+; IR-NEXT: store ptr %preserved, ptr %preserved.statepoint.home
+; IR-LABEL: loop:
 ; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"({{.*}}ptr %preserved.statepoint.home
+; IR-NOT: %preserved.relocated
+; IR: load volatile ptr, ptr %preserved.statepoint.home
+; IR: load volatile ptr, ptr %preserved.statepoint.home
 ; IR: ret i64
 define goabiinternal i64 @dense_pointer_interface_call_loop_relocate(
     %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
@@ -602,17 +615,53 @@ exit:
 
 declare goabiinternal i64 @consume_scalar(i64)
 
-; A pointer passively live across repeated direct calls keeps the ordinary
-; relocate path. Generic statepoint lowering can already reuse those spill
-; chains, so forcing a dedicated identity here may only perturb allocation.
+; Direct and indirect calls use the same scalar-home policy. A pointer which
+; is passively live across three direct safepoints gets a home when the one
+; dominated reload point is cheaper than preserving it at every call.
 ;
 ; IR-LABEL: define goabiinternal i64 @passive_pointer_direct_call_loop(
-; IR-NOT: %preserved.statepoint.home
+; IR-LABEL: entry:
+; IR: %preserved.statepoint.home = alloca ptr
+; IR: call void @llvm.lifetime.start.p0(ptr %preserved.statepoint.home)
+; IR-NEXT: store ptr %preserved, ptr %preserved.statepoint.home
+; IR-LABEL: loop:
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"(ptr
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home)
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"(ptr
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home)
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home)
+; IR-NOT: %preserved.relocated
+; IR: %preserved.statepoint.reload = load volatile ptr, ptr %preserved.statepoint.home
 ; IR: ret i64
+;
+; MIR-LABEL: name: passive_pointer_direct_call_loop
+; MIR-LABEL: bb.0.entry:
+; MIR:         LIFETIME_START %fixed-stack.[[DIRECT_HOME:[0-9]+]]
+; MIR-NEXT:    MOV64mr %fixed-stack.[[DIRECT_HOME]], {{.*}} :: (store (s64) into %fixed-stack.[[DIRECT_HOME]])
+; MIR-LABEL: bb.1.loop:
+; MIR-NOT:     MOV64mr %fixed-stack.[[DIRECT_HOME]]
+; MIR:         STATEPOINT {{.*}} %fixed-stack.[[DIRECT_HOME]], 0,
+; MIR-NOT:     MOV64mr %fixed-stack.[[DIRECT_HOME]]
+; MIR:         STATEPOINT {{.*}} %fixed-stack.[[DIRECT_HOME]], 0,
+; MIR-NOT:     MOV64mr %fixed-stack.[[DIRECT_HOME]]
+; MIR:         STATEPOINT {{.*}} %fixed-stack.[[DIRECT_HOME]], 0,
+; MIR-NOT:     MOV64mr %fixed-stack.[[DIRECT_HOME]]
+; MIR:         MOV64rm %fixed-stack.[[DIRECT_HOME]],{{.*}} :: (volatile dereferenceable load (s64) from %fixed-stack.[[DIRECT_HOME]])
+;
+; MIR-AARCH64-LABEL: name: passive_pointer_direct_call_loop
+; MIR-AARCH64-LABEL: bb.0.entry:
+; MIR-AARCH64:         LIFETIME_START %fixed-stack.[[DIRECT_HOME:[0-9]+]]
+; MIR-AARCH64-NEXT:    STRXui {{.*}}, %fixed-stack.[[DIRECT_HOME]], 0 :: (store (s64) into %fixed-stack.[[DIRECT_HOME]])
+; MIR-AARCH64-LABEL: bb.1.loop:
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[DIRECT_HOME]]
+; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[DIRECT_HOME]], 0,
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[DIRECT_HOME]]
+; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[DIRECT_HOME]], 0,
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[DIRECT_HOME]]
+; MIR-AARCH64:         STATEPOINT {{.*}} %fixed-stack.[[DIRECT_HOME]], 0,
+; MIR-AARCH64-NOT:     STRXui {{.*}}, %fixed-stack.[[DIRECT_HOME]]
+; MIR-AARCH64:         LDRXui %fixed-stack.[[DIRECT_HOME]], 0 :: (volatile dereferenceable load (s64) from %fixed-stack.[[DIRECT_HOME]])
 define goabiinternal i64 @passive_pointer_direct_call_loop(
     ptr %preserved, i64 %limit) gc "goallc" {
 entry:
@@ -623,8 +672,10 @@ loop:
   %sum = phi i64 [ 0, %entry ], [ %updated, %loop ]
   %first = call goabiinternal i64 @consume_scalar(i64 %index)
   %second = call goabiinternal i64 @consume_scalar(i64 %first)
+  %third = call goabiinternal i64 @consume_scalar(i64 %second)
   %preserved.value = load i64, ptr %preserved, align 8
-  %called.sum = add i64 %first, %second
+  %first.pair = add i64 %first, %second
+  %called.sum = add i64 %first.pair, %third
   %partial = add i64 %called.sum, %preserved.value
   %updated = add i64 %partial, %sum
   %next = add i64 %index, 1

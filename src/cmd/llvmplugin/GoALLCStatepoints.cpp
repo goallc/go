@@ -1719,16 +1719,16 @@ bool isHomeableBasePointer(Value &V, SmallPtrSetImpl<Value *> &Active,
   return IsBase;
 }
 
-SmallVector<Loop *, 2> findRepeatedPassiveIndirectLoopSafepoints(
+SmallVector<Loop *, 2> findRepeatedPassiveLoopSafepoints(
     const StatepointPreservationPlan &Plan, LoopInfo &LI, DominatorTree &DT) {
   // A scalar home costs one function-wide frame object and one preheader
-  // store. Require a cluster of at least three safepoints including two
-  // indirect calls, and require the value to be passive at one of the
-  // indirect calls. A pointer may still be an argument of another call in the
-  // cluster: reloading it at that use is precisely what ends its cross-call
-  // SSA range. Two-call fallback loops remain below the amortization boundary.
+  // store. Require at least three safepoints and require the value to be
+  // passive at one of them. A pointer may still be an argument of another
+  // call in the cluster: reloading it at that use is precisely what ends its
+  // cross-call SSA range. Direct and indirect calls have the same GC
+  // preservation requirement here. Two-call loops remain below the
+  // amortization boundary.
   constexpr unsigned MinLoopCallsToHome = 3;
-  constexpr unsigned MinIndirectCallsToHome = 2;
   SmallVector<Loop *, 4> Candidates;
   for (Loop *TopLevel : LI) {
     SmallVector<Loop *, 4> Worklist{TopLevel};
@@ -1745,19 +1745,12 @@ SmallVector<Loop *, 2> findRepeatedPassiveIndirectLoopSafepoints(
             llvm::count_if(Plan.LiveCalls, [&](CallInst *Call) {
               return Current->contains(Call->getParent());
             });
-        unsigned IndirectCalls =
-            llvm::count_if(Plan.LiveCalls, [&](CallInst *Call) {
-              return Current->contains(Call->getParent()) &&
-                     !Call->getCalledFunction();
-            });
         unsigned PassiveCalls =
             llvm::count_if(Plan.LiveCalls, [&](CallInst *Call) {
               return Current->contains(Call->getParent()) &&
-                     !Call->getCalledFunction() &&
                      !llvm::is_contained(Call->args(), Plan.V);
             });
-        if (LoopCalls >= MinLoopCallsToHome &&
-            IndirectCalls >= MinIndirectCallsToHome && PassiveCalls != 0)
+        if (LoopCalls >= MinLoopCallsToHome && PassiveCalls != 0)
           Candidates.push_back(Current);
       }
       Worklist.append(Current->begin(), Current->end());
@@ -1823,16 +1816,13 @@ countPointerHomeReloadPoints(const StatepointPreservationPlan &Plan,
   return ReloadPoints.size();
 }
 
-void retainProfitablePointerHomeGroups(
+void retainProfitablePointerHomes(
     MapVector<Value *, StatepointPreservationPlan> &Plans, DominatorTree &DT) {
-  // A lone home did not remove machine spill traffic in the motivating Go
-  // interface loop; it merely added a frame object. Select a compact group of
-  // mutually live roots instead. Three covers the receiver plus two interface
-  // data pointers in the common two-At/one-update shape, while rejecting the
-  // broad single-value homes seen in numeric and test-helper loops.
-  constexpr unsigned MinPointerHomesPerLoop = 3;
-  DenseMap<Loop *, SmallVector<StatepointPreservationPlan *, 4>> Groups;
-
+  // Decide independently for each pointer. Requiring a particular number of
+  // sibling homes makes profitability depend on aggregate shape rather than
+  // on the work this home removes. Reject only candidates whose dominated
+  // material uses would add at least as many reload points as the live calls
+  // covered by the home.
   for (auto &[V, Plan] : Plans) {
     if (Plan.Strategy != StatepointPreservationStrategy::TrackInHome ||
         !V->getType()->isPointerTy() || Plan.HomeLoops.empty())
@@ -1852,24 +1842,11 @@ void retainProfitablePointerHomeGroups(
           countPointerHomeReloadPoints(*PlanPtr, HomeLoop, DT);
       return !ReloadPoints || *ReloadPoints >= DominatedLiveCalls;
     });
-    for (Loop *HomeLoop : Plan.HomeLoops)
-      Groups[HomeLoop].push_back(&Plan);
     if (Plan.HomeLoops.empty()) {
       Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
       continue;
     }
   }
-
-  for (auto &[HomeLoop, Group] : Groups) {
-    if (Group.size() >= MinPointerHomesPerLoop)
-      continue;
-    for (StatepointPreservationPlan *Plan : Group)
-      llvm::erase(Plan->HomeLoops, HomeLoop);
-  }
-  for (auto &[V, Plan] : Plans)
-    if (Plan.Strategy == StatepointPreservationStrategy::TrackInHome &&
-        V->getType()->isPointerTy() && Plan.HomeLoops.empty())
-      Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
 }
 
 bool hasMaterialPointerUse(Value &V, SmallPtrSetImpl<Value *> &Visited) {
@@ -1902,13 +1879,11 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
     SmallPtrSet<Value *, 16> Active;
     DenseMap<Value *, bool> Memo;
     // Keep this deliberately narrower than "live across calls in a loop".
-    // Direct-call relocation chains are usually already visible to generic
-    // statepoint spill-slot reuse and target post-RA store elimination. An
-    // explicit stable identity can then perturb register allocation without
-    // removing a dynamic store. Repeated indirect calls are the opaque case
-    // where Go interface/closure dispatch most often defeats that reuse.
+    // A home is useful when one pointer is repeatedly preserved for later use
+    // rather than consumed by every call, independent of how those calls find
+    // their callees.
     SmallPtrSet<Value *, 16> UseVisited;
-    Plan.HomeLoops = findRepeatedPassiveIndirectLoopSafepoints(Plan, LI, DT);
+    Plan.HomeLoops = findRepeatedPassiveLoopSafepoints(Plan, LI, DT);
     return !Plan.HomeLoops.empty() && !isa<Constant>(V) &&
                    isHomeableBasePointer(*V, Active, Memo) &&
                    hasMaterialPointerUse(*V, UseVisited)
@@ -3780,10 +3755,9 @@ Error rewriteFunction(Function &F) {
       buildStatepointPreservationPlans(F, LI, DT);
   SmallVector<WeakTrackingVH, 16> AggregateScalarizationCandidates =
       collectRelocatablePointerAggregates(PreservationPlans);
-  // Scalar pointer homes are a group decision. Defer them until aggregate
-  // scalarization has exposed interface/slice/string pointer leaves, so the
-  // receiver and all carrier roots are costed together instead of committing
-  // a lone frame object in this first pass.
+  // Defer scalar pointer homes until aggregate scalarization has exposed
+  // interface/slice/string pointer leaves, so every pointer uses the same
+  // preservation policy.
   for (auto &[V, Plan] : PreservationPlans)
     if (V->getType()->isPointerTy())
       Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
@@ -3824,7 +3798,7 @@ Error rewriteFunction(Function &F) {
   for (auto &[V, Plan] : ScalarizedPlans)
     if (!V->getType()->isPointerTy())
       Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
-  retainProfitablePointerHomeGroups(ScalarizedPlans, DT);
+  retainProfitablePointerHomes(ScalarizedPlans, DT);
   if (Error Err = applyStatepointPreservationPlans(ScalarizedPlans, F, DT, LI))
     return Err;
   ScalarizedPlans.clear();
