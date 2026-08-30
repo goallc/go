@@ -21,12 +21,12 @@ import (
 
 const llvmStdlibPolicyEnv = "GOALLC_RUN_LLVM_STDLIB"
 
-// These tests exercise metadata, debugger-call injection, or signal semantics
-// that the LLVM backend does not model yet. Keep the exclusions at the LLVM
-// qualification boundary so the upstream tests continue to specify native Go
-// behavior unchanged. Subtest patterns retain the passing panicwrap, panic,
-// and unsafe-point rejection coverage beside the excluded cases.
-const llvmRuntimeSkip = `^(TestCallersNilPointerPanic|TestDebugCall|TestDebugCallGC|TestDebugCallGrowStack|TestDebugCallLarge|TestDebugCallPanic|TestGCInfo|TestTracebackArgs|TestTracebackElision)$|^TestStackWrapperStackPanic$/^sigpanic$|^TestTracebackSystem$/^trap$`
+// These tests exercise metadata or signal semantics that the LLVM backend does
+// not model yet. Keep the exclusions at the LLVM qualification boundary so the
+// upstream tests continue to specify native Go behavior unchanged. Subtest
+// patterns retain the passing panicwrap, panic, and unsafe-point rejection
+// coverage beside the excluded cases.
+const llvmRuntimeSkip = `^(TestCallersNilPointerPanic|TestTracebackArgs|TestTracebackElision)$|^TestTracebackSystem$/^trap$`
 
 // The amd64 test additionally requires the native compiler's INT3 function
 // alignment filler. LLVM deliberately emits NOP padding instead.
@@ -40,11 +40,6 @@ const llvmPprofSkip = `^(TestCPUProfileRecursion|TestGenericsInlineLocations|Tes
 // LLVM currently reports the inlined TestAll call sites rather than the
 // original testPrint call sites expected by the file-line assertions.
 const llvmLogSkip = `^TestAll$`
-
-// LLVM GoObj does not yet preserve the symbol boundaries used by the FIPS
-// integrity check. The algorithm, self-test, and service-indicator tests remain
-// enabled; only the object-layout assertion is excluded.
-const llvmFIPS140TestSkip = `^TestIntegrityCheckInfo$`
 
 type llvmStdlibTestSet struct {
 	Blacklist         map[string]string            `json:"blacklist"`
@@ -176,8 +171,6 @@ func TestEffectiveLLVMStdlibBlacklist(t *testing.T) {
 
 func llvmStdlibCapabilitySkip(name, goarch string) string {
 	switch name {
-	case "crypto/internal/fips140test":
-		return llvmFIPS140TestSkip
 	case "log":
 		return llvmLogSkip
 	case "runtime":
@@ -306,7 +299,7 @@ func TestLLVMStdlib(t *testing.T) {
 			if name == "runtime" {
 				// LLVM GoObj does not yet emit complete
 				// per-function DWARF, GC, and traceback metadata, or support
-				// the remaining debugger-call and signal tests.
+				// the remaining signal tests.
 				args = append(args, "-ldflags=-w")
 			}
 			if skip := llvmStdlibCapabilitySkip(name, runtime.GOARCH); skip != "" {
