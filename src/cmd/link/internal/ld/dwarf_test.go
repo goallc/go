@@ -46,10 +46,6 @@ func llvmDwarfBuildFlags(t testing.TB, buildflag string) []string {
 	if os.Getenv(llvmStdlibPolicyEnv) != "1" {
 		return []string{buildflag}
 	}
-	testName, _, _ := strings.Cut(t.Name(), "/")
-	if reason := llvmDwarfUnsupported[testName]; reason != "" {
-		t.Skipf("LLVM linker DWARF capability gap: %s", reason)
-	}
 	const prefix = "-gcflags="
 	if !strings.HasPrefix(buildflag, prefix) {
 		return []string{buildflag, prefix + "-enablellvm"}
@@ -59,14 +55,6 @@ func llvmDwarfBuildFlags(t testing.TB, buildflag string) []string {
 		flags += " "
 	}
 	return []string{prefix + flags + "-enablellvm"}
-}
-
-var llvmDwarfUnsupported = map[string]string{
-	"TestRuntimeTypeAttrInternal": "the fixture's empty noinline call is eliminated before linking, so *main.X has no surviving DWARF use",
-	"TestRuntimeTypeAttrExternal": "the fixture's empty noinline call is eliminated before linking, so *main.X has no surviving DWARF use",
-	"TestIssue27614":              "LLVM GoObj does not yet emit package-global variable DIEs",
-	"TestPackageNameAttr":         "LLVM GoObj compile units do not yet carry DW_AT_go_package_name",
-	"TestDictIndex":               "LLVM GoObj variables do not yet carry DW_AT_go_dict_index or dictionary-only type uses",
 }
 
 func TestRuntimeTypesPresent(t *testing.T) {
@@ -937,7 +925,10 @@ func testRuntimeTypeAttr(t *testing.T, flags string) {
 	const prog = `
 package main
 
-import "unsafe"
+import (
+	"sync/atomic"
+	"unsafe"
+)
 
 type X struct{ _ int }
 
@@ -947,8 +938,12 @@ func main() {
 	print(p)
 	f(nil)
 }
+
+var sink unsafe.Pointer
+
 //go:noinline
 func f(x *X) { // Make sure that there is dwarf recorded for *X.
+	atomic.StorePointer(&sink, unsafe.Pointer(x))
 }
 `
 	dir := t.TempDir()

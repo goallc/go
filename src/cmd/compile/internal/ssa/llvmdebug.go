@@ -10,6 +10,7 @@ import (
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/reflectdata"
+	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/src"
@@ -67,6 +68,7 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 			GlobalCtxt.MDString("pcln-v1"),
 			GlobalCtxt.MDString("dwarf-v1"),
 			GlobalCtxt.MDString(dwarfVersion),
+			GlobalCtxt.MDString(pkg.Name),
 		}))
 
 	flag := func(name string, value uint64) {
@@ -110,11 +112,54 @@ func finalizeLLVMDebugInfo() {
 			value.ConstantAsMetadata(),
 		}))
 	}
+	emitGoObjDebugGlobals()
 	emitGoObjCompilerUsed()
 	llvmDIBuilder.Finalize()
 	llvmDIBuilder.Destroy()
 	llvmDIBuilder = nil
 	llvmDIDebugFinalized = true
+}
+
+func emitGoObjDebugGlobals() {
+	if currentLLVMDataLowerer == nil {
+		return
+	}
+	expr := llvmDIBuilder.CreateExpression(nil)
+	for _, name := range typecheck.Target.Externs {
+		if name == nil || name.Op() != ir.ONAME || name.Class != ir.PEXTERN ||
+			name.Sym() == nil || name.Sym().Pkg != types.LocalPkg ||
+			name.Type() == nil || name.Type().IsUntyped() ||
+			name.Type().Kind() == types.TSSA || name.CoverageAuxVar() {
+			continue
+		}
+		sym := name.Linksym()
+		if sym == nil || sym.Local() {
+			continue
+		}
+		value, ok := currentLLVMDataLowerer.values[sym]
+		if !ok || value.IsNil() || value.IsDeclaration() {
+			continue
+		}
+		pos := llvmSourcePos(name.Pos())
+		line := 1
+		if pos.IsKnown() && pos.RelLine() != 0 {
+			line = int(pos.RelLine())
+		}
+		file := llvmDIFile(pos)
+		global := llvmDIBuilder.CreateGlobalVariableExpression(
+			llvmDICompileUnit, llvm.DIGlobalVariableExpression{
+				Name: sym.Name, LinkageName: value.Name(), File: file, Line: line,
+				Type: llvmDIType(name.Type(), file), Expr: expr,
+				AlignInBits: uint32(name.Type().Alignment()) * 8,
+			})
+		value.SetGlobalMetadata(GlobalCtxt.MDKindID("dbg"), global)
+		CurrentModule.AddNamedMetadataOperand("goobj.debug.globals",
+			GlobalCtxt.MDNode([]llvm.Metadata{
+				global,
+				value.ConstantAsMetadata(),
+				GlobalCtxt.MDString(types.TypeSymName(name.Type())),
+			}))
+	}
 }
 
 func llvmDebugSubprogramValue(sym *obj.LSym, sp llvm.Metadata, abstractValues map[string]llvm.Value) llvm.Value {
@@ -467,6 +512,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 				diVar,
 				GlobalCtxt.MDString(types.TypeSymName(name.Type())),
 				llvm.ConstInt(GlobalCtxt.Int32Type(), flags, false).ConstantAsMetadata(),
+				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(name.DictIndex), false).ConstantAsMetadata(),
 			}))
 
 		// Declare only a real canonical memory home. SSA-only, split,
@@ -494,6 +540,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 			GlobalCtxt.MDNode([]llvm.Metadata{
 				context,
 				GlobalCtxt.MDString(types.TypeSymName(goType)),
+				llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false).ConstantAsMetadata(),
 				llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false).ConstantAsMetadata(),
 			}))
 	}
