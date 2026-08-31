@@ -50,7 +50,10 @@ func (lfc *LLVMFuncContext) emitNilCheckIntrinsic(v *Value) llvm.Value {
 	sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{checked.Type()}, false)
 	intrinsic := getOrInsertLLVMIntrinsic(llvmNilCheckIntrinsicName, sig)
 	lfc.b.CreateCall(sig, intrinsic, []llvm.Value{checked}, "")
-	return p
+	if checked.Type() == getLLVMType(v.Type) {
+		return checked
+	}
+	return lfc.reshapeLLVMValue(v, p, v.Args[0].Type, v.Type, v.String()+".reshape")
 }
 
 func (lfc *LLVMFuncContext) nilCheckMarkers(intrinsic llvm.Value) []llvm.Value {

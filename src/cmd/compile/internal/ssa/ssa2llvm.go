@@ -2131,6 +2131,19 @@ func (lfc *LLVMFuncContext) reshapeLLVMValue(v *Value, value llvm.Value, from, t
 	if value.Type() == want {
 		return value
 	}
+	source := value.Type()
+	switch {
+	case source.TypeKind() == llvm.PointerTypeKind &&
+		want.TypeKind() == llvm.IntegerTypeKind &&
+		want.IntTypeWidth() == types.PtrSize*8 &&
+		llvmNotInHeapPointer(to):
+		return lfc.observePointerAddress(value, want, name)
+	case source.TypeKind() == llvm.IntegerTypeKind &&
+		source.IntTypeWidth() == types.PtrSize*8 &&
+		want.TypeKind() == llvm.PointerTypeKind &&
+		llvmNotInHeapPointer(from):
+		return lfc.materializeAddressPointer(value, from, want, name)
+	}
 	// The soft-float pass represents every float32/float64 SSA value with the
 	// same-width uint32/uint64 bit pattern. Function ABI types remain the Go
 	// source types, so calls and entries must reinterpret the carrier without a

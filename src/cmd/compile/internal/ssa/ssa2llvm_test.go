@@ -435,16 +435,29 @@ func TestLLVMNotInHeapAddressCarriers(t *testing.T) {
 	t.Cleanup(builder.Dispose)
 	uintptrType := getLLVMType(types.Types[types.TUINTPTR])
 	pointerType := GlobalCtxt.PointerType(0)
-	fn := llvm.AddFunction(module, "materialize", llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{uintptrType, uintptrType}, false))
+	fn := llvm.AddFunction(module, "materialize", llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{uintptrType, uintptrType, pointerType}, false))
 	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(fn, "entry"))
 	context := &LLVMFuncContext{b: builder}
 	context.materializeAddressPointer(fn.Param(0), nihPointer, pointerType, "nih")
 	context.materializeAddressPointer(fn.Param(1), types.Types[types.TUINTPTR], pointerType, "ordinary")
+	context.reshapeLLVMValue(&Value{ID: 1}, fn.Param(0), nihPointer, ordinaryPointer, "nih.reshape")
+	context.reshapeLLVMValue(&Value{ID: 2}, fn.Param(2), ordinaryPointer, nihPointer, "nih.observe")
 	nilPointer := context.materializeAddressPointer(llvm.ConstNull(uintptrType), nihPointer, pointerType, "nil")
 	if nilPointer.IsAConstantPointerNull().IsNil() {
 		t.Fatalf("LLVM nil *NotInHeap materialization = %s, want pointer constant", nilPointer)
 	}
 	builder.CreateRetVoid()
+
+	nilcheck := llvm.AddFunction(module, "nilcheck", llvm.FunctionType(pointerType, []llvm.Type{uintptrType}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(nilcheck, "entry"))
+	arg := &Value{ID: 3, Op: OpArg, Type: nihPointer}
+	memory := &Value{ID: 4, Op: OpInitMem, Type: types.TypeMem}
+	check := &Value{ID: 5, Op: OpNilCheck, Type: ordinaryPointer, Args: []*Value{arg, memory}}
+	context = &LLVMFuncContext{
+		b:  builder,
+		Vs: map[ID]llvm.Value{arg.ID: nilcheck.Param(0)},
+	}
+	builder.CreateRet(context.emitNilCheckIntrinsic(check))
 
 	ir := module.String()
 	if !strings.Contains(ir, "%nih = inttoptr") || !strings.Contains(ir, "!goallc.notinheap") {
@@ -452,6 +465,12 @@ func TestLLVMNotInHeapAddressCarriers(t *testing.T) {
 	}
 	if !strings.Contains(ir, "%ordinary = call ptr @llvm.go.pointer.from.address") {
 		t.Fatalf("LLVM ordinary address materialization does not retain pointer.from.address marker\n%s", ir)
+	}
+	if !strings.Contains(ir, "%nih.reshape = inttoptr") || !strings.Contains(ir, "%nih.observe = call i64 @llvm.go.pointer.address") {
+		t.Fatalf("LLVM *NotInHeap semantic reshaping lost its address provenance\n%s", ir)
+	}
+	if !strings.Contains(ir, "%v5.ptr = inttoptr") || !strings.Contains(ir, "call void @llvm.goallc.nilcheck(ptr %v5.ptr)") || !strings.Contains(ir, "ret ptr %v5.ptr") {
+		t.Fatalf("LLVM nil check did not adapt its *NotInHeap result carrier\n%s", ir)
 	}
 }
 
