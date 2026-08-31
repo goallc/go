@@ -136,6 +136,12 @@ func emitGoObjDebugGlobals() {
 		if sym == nil || sym.Local() {
 			continue
 		}
+		// GoObj global DWARF reuses this symbol's AuxGotype mapping. Synthetic
+		// aliases of compiler-generated storage, such as main..inittask, do not
+		// own a Go type mapping and therefore are not independent debug globals.
+		if sym.Gotype == nil {
+			continue
+		}
 		value, ok := currentLLVMDataLowerer.values[sym]
 		if !ok || value.IsNil() || value.IsDeclaration() {
 			continue
