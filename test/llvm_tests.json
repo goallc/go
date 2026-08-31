@@ -4,7 +4,6 @@
   },
   "run": {
     "blacklist": {
-      "fixedbugs/issue40954.go": "unsupported: cgo notinheap pointer adjustment across stack growth is not preserved",
       "rangegen.go": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
     },
     "platform_blacklist": {

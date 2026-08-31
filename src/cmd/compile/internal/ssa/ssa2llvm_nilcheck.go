@@ -8,7 +8,6 @@ package ssa
 
 import (
 	"cmd/compile/internal/base"
-	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 
 	"github.com/goallc/go-llvm"
@@ -47,17 +46,7 @@ func (lfc *LLVMFuncContext) emitNilCheckIntrinsic(v *Value) llvm.Value {
 	}
 
 	p := lfc.GenLV(v.Args[0])
-	checked := p
-	switch p.Type().TypeKind() {
-	case llvm.PointerTypeKind:
-	case llvm.IntegerTypeKind:
-		if p.Type().IntTypeWidth() != types.PtrSize*8 {
-			v.Fatalf("NilCheck integer address has width %d, want %d", p.Type().IntTypeWidth(), types.PtrSize*8)
-		}
-		checked = lfc.b.CreateIntToPtr(p, GlobalCtxt.PointerType(0), v.String()+".ptr")
-	default:
-		v.Fatalf("NilCheck address has unsupported LLVM type")
-	}
+	checked := lfc.llvmAddressPointer(v, p, v.Args[0].Type, v.String()+".ptr")
 	sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{checked.Type()}, false)
 	intrinsic := getOrInsertLLVMIntrinsic(llvmNilCheckIntrinsicName, sig)
 	lfc.b.CreateCall(sig, intrinsic, []llvm.Value{checked}, "")

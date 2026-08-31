@@ -395,6 +395,66 @@ func TestLLVMInterfaceTypeWordIsInteger(t *testing.T) {
 	}
 }
 
+func TestLLVMNotInHeapAddressCarriers(t *testing.T) {
+	nih := types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, nil, types.Types[types.TUINTPTR]),
+	})
+	nih.SetNotInHeap(true)
+	types.CalcSize(nih)
+
+	nihPointer := types.NewPtr(nih)
+	if got := getLLVMType(nihPointer); got.TypeKind() != llvm.IntegerTypeKind || got.IntTypeWidth() != types.PtrSize*8 {
+		t.Fatalf("LLVM *NotInHeap carrier = %s, want pointer-sized integer", got)
+	}
+
+	ordinaryPointer := types.NewPtr(types.Types[types.TUINTPTR])
+	if got := getLLVMType(ordinaryPointer); got.TypeKind() != llvm.PointerTypeKind {
+		t.Fatalf("LLVM ordinary pointer carrier = %s, want pointer", got)
+	}
+	if got := getLLVMType(types.NewPtr(nihPointer)); got.TypeKind() != llvm.PointerTypeKind {
+		t.Fatalf("LLVM **NotInHeap carrier = %s, want pointer", got)
+	}
+
+	nihSlice := getLLVMType(types.NewSlice(nih))
+	if got := nihSlice.StructElementTypes()[0]; got.TypeKind() != llvm.IntegerTypeKind || got.IntTypeWidth() != types.PtrSize*8 {
+		t.Fatalf("LLVM []NotInHeap data carrier = %s, want pointer-sized integer", got)
+	}
+	ordinarySlice := getLLVMType(types.NewSlice(types.Types[types.TUINTPTR]))
+	if got := ordinarySlice.StructElementTypes()[0]; got.TypeKind() != llvm.PointerTypeKind {
+		t.Fatalf("LLVM ordinary slice data carrier = %s, want pointer", got)
+	}
+
+	oldModule := CurrentModule
+	module := GlobalCtxt.NewModule("not_in_heap_address_materialization")
+	CurrentModule = module
+	t.Cleanup(func() {
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(builder.Dispose)
+	uintptrType := getLLVMType(types.Types[types.TUINTPTR])
+	pointerType := GlobalCtxt.PointerType(0)
+	fn := llvm.AddFunction(module, "materialize", llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{uintptrType, uintptrType}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(fn, "entry"))
+	context := &LLVMFuncContext{b: builder}
+	context.materializeAddressPointer(fn.Param(0), nihPointer, pointerType, "nih")
+	context.materializeAddressPointer(fn.Param(1), types.Types[types.TUINTPTR], pointerType, "ordinary")
+	nilPointer := context.materializeAddressPointer(llvm.ConstNull(uintptrType), nihPointer, pointerType, "nil")
+	if nilPointer.IsAConstantPointerNull().IsNil() {
+		t.Fatalf("LLVM nil *NotInHeap materialization = %s, want pointer constant", nilPointer)
+	}
+	builder.CreateRetVoid()
+
+	ir := module.String()
+	if !strings.Contains(ir, "%nih = inttoptr") || !strings.Contains(ir, "!goallc.notinheap") {
+		t.Fatalf("LLVM *NotInHeap materialization does not use marked direct inttoptr\n%s", ir)
+	}
+	if !strings.Contains(ir, "%ordinary = call ptr @llvm.go.pointer.from.address") {
+		t.Fatalf("LLVM ordinary address materialization does not retain pointer.from.address marker\n%s", ir)
+	}
+}
+
 func TestLLVMCanEmitMustTail(t *testing.T) {
 	internalConfig := abi.NewABIConfig(16, 16, 0, uint8(obj.ABIInternal))
 	abi0Config := abi.NewABIConfig(0, 0, 0, uint8(obj.ABI0))

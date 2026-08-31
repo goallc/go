@@ -54,6 +54,7 @@ constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoDeferResultMD = "goallc.defer_result";
 constexpr StringLiteral GoOpenDeferBitsMD = "goallc.open_defer_bits";
 constexpr StringLiteral GoOpenDeferSlotsMD = "goallc.open_defer_slots";
+constexpr StringLiteral GoNotInHeapAddressMD = "goallc.notinheap";
 constexpr StringLiteral GoObjMarkerRelocMD = "goobj.marker_reloc";
 constexpr StringLiteral StackColoringNoMergeMD = "llvm.stackcoloring.no_merge";
 
@@ -1312,8 +1313,87 @@ Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
   return Error::success();
 }
 
+// The frontend attaches the marker only to raw inttoptr instructions. Follow
+// transparent pointer derivations so their liveness has the same unmanaged
+// semantics. The two walks deliberately separate "reaches a marker" from
+// "contains only marked inputs": a self-referential loop PHI is accepted when
+// anchored by a marker, but an otherwise unanchored pointer cycle is not.
+bool hasNotInHeapAddressMarker(const Value *V,
+                               SmallPtrSetImpl<const Value *> &Active) {
+  if (const auto *I = dyn_cast<Instruction>(V);
+      I && I->getMetadata(GoNotInHeapAddressMD))
+    return true;
+  if (!V->getType()->isPointerTy() || !Active.insert(V).second)
+    return false;
+
+  bool Result = false;
+  if (const auto *GEP = dyn_cast<GetElementPtrInst>(V))
+    Result = hasNotInHeapAddressMarker(GEP->getPointerOperand(), Active);
+  else if (const auto *Freeze = dyn_cast<FreezeInst>(V))
+    Result = hasNotInHeapAddressMarker(Freeze->getOperand(0), Active);
+  else if (const auto *Cast = dyn_cast<CastInst>(V);
+           Cast && Cast->getSrcTy()->isPointerTy() &&
+           Cast->getDestTy()->isPointerTy())
+    Result = hasNotInHeapAddressMarker(Cast->getOperand(0), Active);
+  else if (const auto *Phi = dyn_cast<PHINode>(V))
+    Result = llvm::any_of(Phi->incoming_values(), [&](const Value *Incoming) {
+      return hasNotInHeapAddressMarker(Incoming, Active);
+    });
+  else if (const auto *Select = dyn_cast<SelectInst>(V))
+    Result = hasNotInHeapAddressMarker(Select->getTrueValue(), Active) ||
+             hasNotInHeapAddressMarker(Select->getFalseValue(), Active);
+
+  Active.erase(V);
+  return Result;
+}
+
+bool hasOnlyNotInHeapAddressInputs(const Value *V,
+                                   SmallPtrSetImpl<const Value *> &Active) {
+  if (const auto *I = dyn_cast<Instruction>(V);
+      I && I->getMetadata(GoNotInHeapAddressMD))
+    return true;
+  if (isa<Constant>(V))
+    return true;
+  if (!V->getType()->isPointerTy())
+    return false;
+  if (!Active.insert(V).second)
+    return true;
+
+  bool Result = false;
+  if (const auto *GEP = dyn_cast<GetElementPtrInst>(V))
+    Result = hasOnlyNotInHeapAddressInputs(GEP->getPointerOperand(), Active);
+  else if (const auto *Freeze = dyn_cast<FreezeInst>(V))
+    Result = hasOnlyNotInHeapAddressInputs(Freeze->getOperand(0), Active);
+  else if (const auto *Cast = dyn_cast<CastInst>(V);
+           Cast && Cast->getSrcTy()->isPointerTy() &&
+           Cast->getDestTy()->isPointerTy())
+    Result = hasOnlyNotInHeapAddressInputs(Cast->getOperand(0), Active);
+  else if (const auto *Phi = dyn_cast<PHINode>(V))
+    Result = llvm::all_of(Phi->incoming_values(), [&](const Value *Incoming) {
+      return hasOnlyNotInHeapAddressInputs(Incoming, Active);
+    });
+  else if (const auto *Select = dyn_cast<SelectInst>(V))
+    Result = hasOnlyNotInHeapAddressInputs(Select->getTrueValue(), Active) &&
+             hasOnlyNotInHeapAddressInputs(Select->getFalseValue(), Active);
+
+  Active.erase(V);
+  return Result;
+}
+
+bool isNotInHeapAddress(const Value *V) {
+  if (!V->getType()->isPointerTy())
+    return false;
+  SmallPtrSet<const Value *, 16> MarkerActive;
+  if (!hasNotInHeapAddressMarker(V, MarkerActive))
+    return false;
+  SmallPtrSet<const Value *, 16> InputActive;
+  return hasOnlyNotInHeapAddressInputs(V, InputActive);
+}
+
 bool isStatepointValue(const Value *V) {
   if (isa<Constant>(V))
+    return false;
+  if (isNotInHeapAddress(V))
     return false;
   return containsPointer(V->getType());
 }

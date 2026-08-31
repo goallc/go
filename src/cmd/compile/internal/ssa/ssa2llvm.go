@@ -91,6 +91,7 @@ const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
 const goDeferEdgeIntrinsic = "llvm.go.defer.edge"
 const goPointerAddressObservation = "llvm.go.pointer.address"
 const goPointerFromAddress = "llvm.go.pointer.from.address"
+const goNotInHeapAddressMD = "goallc.notinheap"
 const goDeferResultMD = "goallc.defer_result"
 const goOpenDeferBitsMD = "goallc.open_defer_bits"
 const goOpenDeferSlotsMD = "goallc.open_defer_slots"
@@ -836,13 +837,7 @@ func (lfc *LLVMFuncContext) prefetch(v *Value, locality uint64) llvm.Value {
 	if len(v.Args) != 2 || !v.Type.IsMemory() || !v.Args[1].Type.IsMemory() {
 		v.Fatalf("%s has invalid address or memory operands", v.Op)
 	}
-	address := lfc.GenLV(v.Args[0])
-	if address.Type().TypeKind() == llvm.IntegerTypeKind && address.Type().IntTypeWidth() == int(lfc.F.Config.PtrSize*8) {
-		address = lfc.b.CreateIntToPtr(address, GlobalCtxt.PointerType(0), v.String()+".address")
-	}
-	if address.Type().TypeKind() != llvm.PointerTypeKind {
-		v.Fatalf("%s has unsupported LLVM address type %s", v.Op, address.Type())
-	}
+	address := lfc.llvmAddressPointer(v, lfc.GenLV(v.Args[0]), v.Args[0].Type, v.String()+".address")
 	// Force the incoming Go memory dependency before emitting the side effect.
 	lfc.GenLV(v.Args[1])
 
@@ -1131,6 +1126,44 @@ func (lfc *LLVMFuncContext) pointerFromAddress(address llvm.Value, resultType ll
 	return lfc.b.CreateCall(sig, fn, []llvm.Value{address}, name)
 }
 
+// materializeAddressPointer distinguishes unmanaged addresses from integers
+// that may reconstruct movable Go pointers. Not-in-heap addresses are stable
+// across stack movement, so emit a marked plain inttoptr that statepoint
+// liveness excludes. Other address conversions retain the frontend marker so
+// their pointer identity and relocation semantics survive LLVM optimization.
+func (lfc *LLVMFuncContext) materializeAddressPointer(address llvm.Value, addressType *types.Type, resultType llvm.Type, name string) llvm.Value {
+	if llvmNotInHeapPointer(addressType) {
+		pointer := lfc.b.CreateIntToPtr(address, resultType, name)
+		// IRBuilder constant-folds a nil integer address into a pointer constant;
+		// constants never participate in statepoint liveness and cannot carry
+		// instruction metadata.
+		if !pointer.IsAInstruction().IsNil() {
+			pointer.SetMetadata(GlobalCtxt.MDKindID(goNotInHeapAddressMD), GlobalCtxt.MDNode(nil))
+		}
+		return pointer
+	}
+	return lfc.pointerFromAddress(address, resultType, name)
+}
+
+// llvmAddressPointer materializes an integer address only at its terminal
+// memory use. In particular, a pointer to a not-in-heap object remains an
+// integer while it is live across calls, so stack copying cannot mistake it
+// for a movable Go stack pointer.
+func (lfc *LLVMFuncContext) llvmAddressPointer(v *Value, address llvm.Value, addressType *types.Type, name string) llvm.Value {
+	switch address.Type().TypeKind() {
+	case llvm.PointerTypeKind:
+		return address
+	case llvm.IntegerTypeKind:
+		if address.Type().IntTypeWidth() != types.PtrSize*8 {
+			v.Fatalf("%s integer address has width %d, want %d", v.Op, address.Type().IntTypeWidth(), types.PtrSize*8)
+		}
+		return lfc.materializeAddressPointer(address, addressType, GlobalCtxt.PointerType(0), name)
+	default:
+		v.Fatalf("%s address has unsupported LLVM type %s", v.Op, address.Type())
+		return llvm.Value{}
+	}
+}
+
 func (lfc *LLVMFuncContext) cgoUnsafeArgAddress(name *ir.Name, llvmName string) llvm.Value {
 	if lfc.F.OwnAux.ABI().Which() != obj.ABI0 {
 		lfc.F.fe.Fatalf(name.Pos(), "cgo unsafe argument frame requires ABI0")
@@ -1190,11 +1223,7 @@ func (lfc *LLVMFuncContext) llvmMemoryLength(v *Value, size int64) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) llvmMemoryPointer(v *Value, arg int) llvm.Value {
-	p := lfc.GenLV(v.Args[arg])
-	if p.Type().TypeKind() != llvm.PointerTypeKind {
-		v.Fatalf("%s argument %d has non-pointer LLVM type", v.Op, arg)
-	}
-	return p
+	return lfc.llvmAddressPointer(v, lfc.GenLV(v.Args[arg]), v.Args[arg].Type, fmt.Sprintf("%s.arg%d.address", v, arg))
 }
 
 func (lfc *LLVMFuncContext) isDeferResultAddress(v *Value) bool {
@@ -2576,6 +2605,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			v.Fatalf("global address has non-LSym auxiliary %T", v.Aux)
 		}
 		lVal = llvmGoDataRef(sym)
+		if llvmNotInHeapPointer(v.Type) {
+			lVal = lfc.observePointerAddress(lVal, getLLVMType(v.Type), v.String())
+		}
 	case OpHasCPUFeature:
 		// The generic op is deliberately emitted before architecture lowering.
 		// Match AMD64LoweredHasCPUFeature by loading the runtime's byte flag and
@@ -2870,7 +2902,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		case lVal.Type().TypeKind() == llvm.IntegerTypeKind &&
 			lVal.Type().IntTypeWidth() == types.PtrSize*8 &&
 			want.TypeKind() == llvm.PointerTypeKind:
-			lVal = lfc.pointerFromAddress(lVal, want, v.String()+".coerce")
+			lVal = lfc.materializeAddressPointer(lVal, v.Args[0].Type, want, v.String()+".coerce")
 		default:
 			v.Fatalf("%s changes machine representation", v.Op)
 		}
@@ -2878,24 +2910,69 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		off := llvmConstInt(types.Types[types.TINT], auxIntToInt64(v.AuxInt))
 		base := arg0()
 		if base.Type().TypeKind() == llvm.IntegerTypeKind {
-			// Interface itab/type words are addresses, but keeping their
-			// arithmetic integer-typed prevents an early inttoptr from
-			// becoming live across unrelated safepoints. The terminal memory
-			// operation materializes the pointer immediately before use.
+			// Interface itab/type words and pointers to not-in-heap objects are
+			// addresses, but keeping their arithmetic integer-typed prevents an
+			// early inttoptr from becoming live across unrelated safepoints. A
+			// terminal memory operation materializes the pointer immediately
+			// before use.
 			if base.Type() != off.Type() {
 				v.Fatalf("%s integer address has incompatible offset type", v.Op)
 			}
 			lVal = lfc.b.CreateAdd(base, off, v.String())
+			// A derived value whose Go type is no longer *NotInHeap must adopt
+			// pointer representation, but its source address is still unmanaged.
+			// Materialize it with a raw inttoptr rather than a relocation marker.
+			// The integer itab carrier takes the other path because its source
+			// type is uintptr rather than *NotInHeap.
+			if llvmNotInHeapPointer(v.Args[0].Type) && !llvmNotInHeapPointer(v.Type) {
+				lVal = lfc.materializeAddressPointer(lVal, v.Args[0].Type, getLLVMType(v.Type), v.String()+".pointer")
+			}
 		} else {
 			lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), base, []llvm.Value{off}, v.String())
 		}
 	case OpAddPtr:
-		lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), arg0(), []llvm.Value{arg1()}, v.String())
+		base := arg0()
+		if base.Type().TypeKind() == llvm.IntegerTypeKind {
+			if base.Type() != arg1().Type() {
+				v.Fatalf("%s integer address has incompatible offset type", v.Op)
+			}
+			lVal = lfc.b.CreateAdd(base, arg1(), v.String())
+			if !llvmNotInHeapPointer(v.Type) {
+				lVal = lfc.materializeAddressPointer(lVal, v.Args[0].Type, getLLVMType(v.Type), v.String()+".pointer")
+			}
+		} else {
+			lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), base, []llvm.Value{arg1()}, v.String())
+		}
 	case OpSubPtr:
+		base := arg0()
 		neg := lfc.b.CreateNeg(arg1(), v.String()+".neg")
-		lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), arg0(), []llvm.Value{neg}, v.String())
+		if base.Type().TypeKind() == llvm.IntegerTypeKind {
+			if base.Type() != neg.Type() {
+				v.Fatalf("%s integer address has incompatible offset type", v.Op)
+			}
+			lVal = lfc.b.CreateAdd(base, neg, v.String())
+			if !llvmNotInHeapPointer(v.Type) {
+				lVal = lfc.materializeAddressPointer(lVal, v.Args[0].Type, getLLVMType(v.Type), v.String()+".pointer")
+			}
+		} else {
+			lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), base, []llvm.Value{neg}, v.String())
+		}
 	case OpPtrIndex:
-		lVal = lfc.b.CreateGEP(getLLVMType(v.Type.Elem()), arg0(), []llvm.Value{arg1()}, v.String())
+		base := arg0()
+		if base.Type().TypeKind() == llvm.IntegerTypeKind {
+			index := arg1()
+			if base.Type() != index.Type() {
+				v.Fatalf("%s integer address has incompatible index type", v.Op)
+			}
+			size := llvm.ConstInt(index.Type(), uint64(v.Type.Elem().Size()), false)
+			offset := lfc.b.CreateMul(index, size, v.String()+".offset")
+			lVal = lfc.b.CreateAdd(base, offset, v.String())
+			if !llvmNotInHeapPointer(v.Type) {
+				lVal = lfc.materializeAddressPointer(lVal, v.Args[0].Type, getLLVMType(v.Type), v.String()+".pointer")
+			}
+		} else {
+			lVal = lfc.b.CreateGEP(getLLVMType(v.Type.Elem()), base, []llvm.Value{arg1()}, v.String())
+		}
 	case OpStaticCall, OpStaticLECall, OpTailLECall:
 		lVal = lfc.staticCall(v)
 	case OpWB:
@@ -3058,15 +3135,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 				addr.SetVolatile(true)
 			}
 		}
-		if addr.Type().TypeKind() == llvm.IntegerTypeKind {
-			if addr.Type().IntTypeWidth() != types.PtrSize*8 {
-				v.Fatalf("%s integer address has width %d, want %d", v.Op, addr.Type().IntTypeWidth(), types.PtrSize*8)
-			}
-			addr = lfc.b.CreateIntToPtr(addr, GlobalCtxt.PointerType(0), v.String()+".addr")
-		}
-		if addr.Type().TypeKind() != llvm.PointerTypeKind {
-			v.Fatalf("%s address has non-pointer LLVM type", v.Op)
-		}
+		addr = lfc.llvmAddressPointer(v, addr, v.Args[0].Type, v.String()+".addr")
 		lVal = lfc.b.CreateLoad(typ, addr, v.String())
 		// The runtime may resume at the first deferreturn call recorded for the
 		// function, which can be an ordinary exit rather than the fake recovery
@@ -3084,10 +3153,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			lVal.SetAlignment(int(align))
 		}
 	case OpAtomicLoadPtr:
-		lVal = lfc.b.CreateLoad(GlobalCtxt.PointerType(0), arg0(), v.String())
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
+		lVal = lfc.b.CreateLoad(GlobalCtxt.PointerType(0), address, v.String())
 		lVal.SetOrdering(llvm.AtomicOrderingSequentiallyConsistent)
 	case OpAtomicLoad8, OpAtomicLoad32, OpAtomicLoad64, OpAtomicLoadAcq32, OpAtomicLoadAcq64:
-		lVal = lfc.b.CreateLoad(getLLVMType(v.Type.FieldType(0)), arg0(), v.String())
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
+		lVal = lfc.b.CreateLoad(getLLVMType(v.Type.FieldType(0)), address, v.String())
 		ordering := llvm.AtomicOrderingSequentiallyConsistent
 		if v.Op == OpAtomicLoadAcq32 || v.Op == OpAtomicLoadAcq64 {
 			ordering = llvm.AtomicOrderingAcquire
@@ -3099,7 +3170,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		OpAtomicStore64, OpAtomicStore64Variant,
 		OpAtomicStorePtrNoWB,
 		OpAtomicStoreRel32, OpAtomicStoreRel64:
-		lVal = lfc.b.CreateStore(arg1(), arg0())
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
+		lVal = lfc.b.CreateStore(arg1(), address)
 		ordering := llvm.AtomicOrderingSequentiallyConsistent
 		if v.Op == OpAtomicStoreRel32 || v.Op == OpAtomicStoreRel64 {
 			ordering = llvm.AtomicOrderingRelease
@@ -3107,8 +3179,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal.SetOrdering(ordering)
 		lVal.SetAlignment(int(v.Args[1].Type.Alignment()))
 	case OpAtomicAdd32, OpAtomicAdd32Variant, OpAtomicAdd64, OpAtomicAdd64Variant:
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		old := lfc.b.CreateAtomicRMW(
-			llvm.AtomicRMWBinOpAdd, arg0(), arg1(),
+			llvm.AtomicRMWBinOpAdd, address, arg1(),
 			llvm.AtomicOrderingSequentiallyConsistent,
 			false,
 		)
@@ -3116,8 +3189,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpAtomicExchange8, OpAtomicExchange8Variant,
 		OpAtomicExchange32, OpAtomicExchange32Variant,
 		OpAtomicExchange64, OpAtomicExchange64Variant:
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		lVal = lfc.b.CreateAtomicRMW(
-			llvm.AtomicRMWBinOpXchg, arg0(), arg1(),
+			llvm.AtomicRMWBinOpXchg, address, arg1(),
 			llvm.AtomicOrderingSequentiallyConsistent,
 			false,
 		)
@@ -3126,8 +3200,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		OpAtomicAnd64value, OpAtomicAnd64valueVariant,
 		OpAtomicAnd32value, OpAtomicAnd32valueVariant,
 		OpAtomicAnd8value, OpAtomicAnd8valueVariant:
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		lVal = lfc.b.CreateAtomicRMW(
-			llvm.AtomicRMWBinOpAnd, arg0(), arg1(),
+			llvm.AtomicRMWBinOpAnd, address, arg1(),
 			llvm.AtomicOrderingSequentiallyConsistent,
 			false,
 		)
@@ -3136,8 +3211,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		OpAtomicOr64value, OpAtomicOr64valueVariant,
 		OpAtomicOr32value, OpAtomicOr32valueVariant,
 		OpAtomicOr8value, OpAtomicOr8valueVariant:
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		lVal = lfc.b.CreateAtomicRMW(
-			llvm.AtomicRMWBinOpOr, arg0(), arg1(),
+			llvm.AtomicRMWBinOpOr, address, arg1(),
 			llvm.AtomicOrderingSequentiallyConsistent,
 			false,
 		)
@@ -3151,8 +3227,29 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			successOrdering = llvm.AtomicOrderingRelease
 			failureOrdering = llvm.AtomicOrderingMonotonic
 		}
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
+		compare, replacement := arg1(), lfc.GenLV(v.Args[2])
+		if compare.Type() != replacement.Type() {
+			// Pointer atomics are represented by the same generic 64-bit SSA
+			// operation as uintptr atomics. A generic atomic.Pointer method can
+			// pair an unsafe.Pointer value with a *NotInHeap value, whose LLVM
+			// carrier is integer-typed. Reconstruct only that terminal atomic
+			// operand rather than making the NotInHeap pointer live as a GC root.
+			switch {
+			case compare.Type().TypeKind() == llvm.IntegerTypeKind &&
+				compare.Type().IntTypeWidth() == types.PtrSize*8 &&
+				replacement.Type().TypeKind() == llvm.PointerTypeKind:
+				compare = lfc.materializeAddressPointer(compare, v.Args[1].Type, replacement.Type(), v.String()+".compare")
+			case compare.Type().TypeKind() == llvm.PointerTypeKind &&
+				replacement.Type().TypeKind() == llvm.IntegerTypeKind &&
+				replacement.Type().IntTypeWidth() == types.PtrSize*8:
+				replacement = lfc.materializeAddressPointer(replacement, v.Args[2].Type, compare.Type(), v.String()+".replacement")
+			default:
+				v.Fatalf("%s has incompatible compare and replacement LLVM types", v.Op)
+			}
+		}
 		pair := lfc.b.CreateAtomicCmpXchg(
-			arg0(), arg1(), lfc.GenLV(v.Args[2]),
+			address, compare, replacement,
 			successOrdering,
 			failureOrdering,
 			false,
@@ -3168,7 +3265,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpNilCheck:
 		lVal = lfc.emitNilCheckIntrinsic(v)
 	case OpStore:
-		lVal = lfc.b.CreateStore(arg1(), arg0())
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
+		lVal = lfc.b.CreateStore(arg1(), address)
 		if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 			lVal.SetVolatile(true)
 		}
@@ -4116,6 +4214,10 @@ var goObjCompilerUsedNames map[string]bool
 
 var GlobalCtxt = llvm.GlobalContext()
 
+func llvmNotInHeapPointer(typ *types.Type) bool {
+	return typ != nil && typ.IsPtr() && typ.Elem().NotInHeap()
+}
+
 func getLLVMType(typ *types.Type) llvm.Type {
 	if t, ok := type2lTypes[typ]; ok {
 		return t
@@ -4146,7 +4248,16 @@ func getLLVMType(typ *types.Type) llvm.Type {
 		lType = GlobalCtxt.FloatType()
 	case types.TFLOAT64:
 		lType = GlobalCtxt.DoubleType()
-	case types.TPTR, types.TUNSAFEPTR, types.TFUNC, types.TMAP, types.TCHAN:
+	case types.TPTR:
+		if llvmNotInHeapPointer(typ) {
+			// The runtime must not relocate pointers to unmanaged storage when a
+			// goroutine stack moves. Carry their pointer-sized bits as integers so
+			// LLVM statepoint liveness cannot classify them as movable GC roots.
+			lType = getLLVMType(types.Types[types.TUINTPTR])
+		} else {
+			lType = ptrType()
+		}
+	case types.TUNSAFEPTR, types.TFUNC, types.TMAP, types.TCHAN:
 		// LLVM uses opaque pointers. A Go func value is a pointer to its
 		// closure object; a callable LLVM function type is built from AuxCall
 		// ABI information instead.
@@ -4180,8 +4291,14 @@ func getLLVMType(typ *types.Type) llvm.Type {
 	case types.TSTRING:
 		lType = llvm.StructType([]llvm.Type{ptrType(), getLLVMType(types.Types[types.TINT])}, false)
 	case types.TSLICE:
+		data := ptrType()
+		if typ.Elem().NotInHeap() {
+			// A slice of not-in-heap elements has the same non-GC data-word
+			// semantics as *NotInHeap.
+			data = getLLVMType(types.Types[types.TUINTPTR])
+		}
 		lType = llvm.StructType([]llvm.Type{
-			ptrType(),
+			data,
 			getLLVMType(types.Types[types.TINT]),
 			getLLVMType(types.Types[types.TINT]),
 		}, false)

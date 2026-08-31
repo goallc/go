@@ -321,7 +321,7 @@ if(BUILD_TESTING)
     " | '${GOALLC_LLC_EXECUTABLE}'"
     " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
     " -print-after=goallc-late-statepoints"
-    " -filter-print-funcs=observe,restore -filetype=null -o - - 2>&1"
+    " -filter-print-funcs=observe,restore,terminal,terminal_direct_loop,terminal_direct_derived_loop,terminal_direct_mixed -filetype=null -o - - 2>&1"
     " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=REWRITE"
     " '${CMAKE_CURRENT_SOURCE_DIR}/testdata/pointer-address-observation.ll'")
   string(JOIN "" GOALLC_POINTER_ADDRESS_PIPELINE
