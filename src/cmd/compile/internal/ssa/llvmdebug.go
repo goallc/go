@@ -153,12 +153,6 @@ func emitGoObjDebugGlobals() {
 				AlignInBits: uint32(name.Type().Alignment()) * 8,
 			})
 		value.SetGlobalMetadata(GlobalCtxt.MDKindID("dbg"), global)
-		CurrentModule.AddNamedMetadataOperand("goobj.debug.globals",
-			GlobalCtxt.MDNode([]llvm.Metadata{
-				global,
-				value.ConstantAsMetadata(),
-				GlobalCtxt.MDString(types.TypeSymName(name.Type())),
-			}))
 	}
 }
 
