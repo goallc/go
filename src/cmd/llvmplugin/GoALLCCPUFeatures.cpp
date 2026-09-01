@@ -9,6 +9,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -427,6 +428,18 @@ struct Variant {
   uint64_t RuntimeRequired;
 };
 
+// The GoObj writer consumes this suffix into a source-name/SymABIstatic
+// identity. Keep it immediately before <ABI0> when cloning an ABI0 definition.
+std::string fmvImplementationName(StringRef SourceName, StringRef Tag) {
+  StringRef ABI0Suffix = GoObj::ABI0SymbolSuffix;
+  const bool IsABI0 = SourceName.consume_back(ABI0Suffix);
+  std::string Name =
+      (SourceName + GoObj::FMVSymbolSuffixPrefix + Tag + ">").str();
+  if (IsABI0)
+    Name += ABI0Suffix;
+  return Name;
+}
+
 Expected<SmallVector<const Profile *, 4>> requestedProfiles(Function &F,
                                                             StringRef Arch) {
   Attribute Attr = F.getFnAttribute(MultiversionAttr);
@@ -464,7 +477,7 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
   const bool DuplicateOK = isGoObjDuplicateOK(Source);
   ValueToValueMapTy VMap;
   Function *Clone = CloneFunction(&Source, VMap);
-  Clone->setName(Source.getName() + ".goallc.fmv." + Suffix);
+  Clone->setName(fmvImplementationName(Source.getName(), Suffix));
   Clone->setLinkage(GlobalValue::InternalLinkage);
   Clone->setDSOLocal(true);
   Clone->removeFnAttr(MultiversionAttr);
@@ -502,7 +515,7 @@ Function *cloneResolver(Function &Source) {
   const bool DuplicateOK = isGoObjDuplicateOK(Source);
   ValueToValueMapTy VMap;
   Function *Resolver = CloneFunction(&Source, VMap);
-  Resolver->setName(Source.getName() + ".goallc.fmv.resolve");
+  Resolver->setName(fmvImplementationName(Source.getName(), "resolve"));
   Resolver->setLinkage(GlobalValue::InternalLinkage);
   Resolver->setDSOLocal(true);
   Resolver->removeFnAttr(MultiversionAttr);

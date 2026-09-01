@@ -8,7 +8,7 @@ target triple = "x86_64-unknown-linux-gnu"
 
 @runtime.goallcCPUFeatures = external global i8
 
-; CHECK: @round.goallc.fmv.slot = internal global ptr @round.goallc.fmv.resolve, section ".noptrdata", align 8, !goobj.symbol.nonpackage ![[NONPACKAGE:[0-9]+]]
+; CHECK: @round.goallc.fmv.slot = internal global ptr @"round<goallc.fmv.resolve>", section ".noptrdata", align 8, !goobj.symbol.nonpackage ![[NONPACKAGE:[0-9]+]]
 
 declare double @fallback(double)
 declare double @llvm.floor.f64(double)
@@ -37,19 +37,19 @@ declare double @llvm.floor.f64(double)
 ; CHECK-FINAL: musttail call double %target(double %x)
 ; CHECK-FINAL-NOT: !goallc.cpu.dispatcher.inline
 ; CHECK-FINAL-NOT: "goallc.cpu.tail-transfers"
-; CHECK-FINAL-LABEL: define internal double @round.goallc.fmv.resolve(
-; CHECK-FINAL: musttail call double @round.goallc.fmv.baseline(double %x)
+; CHECK-FINAL-LABEL: define internal double @"round<goallc.fmv.resolve>"(
+; CHECK-FINAL: musttail call double @"round<goallc.fmv.baseline>"(double %x)
 ; CHECK-FINAL: musttail call double {{.*}}(double %x)
 ; CHECK-FINAL-NOT: "goallc.cpu.tail-transfers"
 
 ; CHECK-X86-ASM-LABEL: round:
 ; CHECK-X86-ASM: movq round.goallc.fmv.slot(%rip), %rax
 ; CHECK-X86-ASM-NEXT: jmpq *%rax
-; CHECK-X86-ASM-LABEL: round.goallc.fmv.resolve:
+; CHECK-X86-ASM-LABEL: "round<goallc.fmv.resolve>":
 ; CHECK-X86-ASM-NOT: callq
 ; CHECK-X86-ASM: jmpq *%rdx
 ; CHECK-X86-ASM-NOT: callq
-; CHECK-X86-ASM: jmp round.goallc.fmv.baseline
+; CHECK-X86-ASM: jmp "round<goallc.fmv.baseline>"
 define double @round(double %x) #0 !goobj.symbol.index !2 !goobj.symbol.flags !3 !goobj.func.info !15 !dbg !9 {
 entry:
   %flag = load i8, ptr @runtime.goallcCPUFeatures, align 1, !goallc.cpu.guard !1, !dbg !10
@@ -76,7 +76,7 @@ entry:
   ret double %adjusted, !dbg !17
 }
 
-; CHECK-LABEL: define internal double @round.goallc.fmv.baseline(
+; CHECK-LABEL: define internal double @"round<goallc.fmv.baseline>"(
 ; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
 ; CHECK-NOT: !goobj.symbol.flags
@@ -85,7 +85,7 @@ entry:
 ; CHECK: call double @fallback(double %x)
 ; CHECK: ret double
 
-; CHECK-LABEL: define internal double @round.goallc.fmv.sse41(
+; CHECK-LABEL: define internal double @"round<goallc.fmv.sse41>"(
 ; CHECK-SAME: #[[SSE41:[0-9]+]]
 ; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
@@ -95,7 +95,7 @@ entry:
 ; CHECK-NOT: call double @fallback
 ; CHECK: ret double
 
-; CHECK-LABEL: define internal double @round.goallc.fmv.resolve(
+; CHECK-LABEL: define internal double @"round<goallc.fmv.resolve>"(
 ; CHECK-SAME: #[[RESOLVER_ATTRS:[0-9]+]]
 ; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
@@ -103,10 +103,10 @@ entry:
 ; CHECK: and i64 %features, 64
 ; CHECK: br i1
 ; CHECK: uninitialized:
-; CHECK: musttail call double @round.goallc.fmv.baseline(double %x)
+; CHECK: musttail call double @"round<goallc.fmv.baseline>"(double %x)
 ; CHECK: select:
 ; CHECK: and i64 %features, 4
-; CHECK: select i1 {{.*}}, ptr @round.goallc.fmv.sse41, ptr @round.goallc.fmv.baseline
+; CHECK: select i1 {{.*}}, ptr @"round<goallc.fmv.sse41>", ptr @"round<goallc.fmv.baseline>"
 ; CHECK: store atomic ptr {{.*}}, ptr @round.goallc.fmv.slot monotonic
 ; CHECK: musttail call double {{.*}}(double %x)
 
@@ -116,8 +116,8 @@ entry:
 ; CHECK: !goobj.debug.inline.required = !{![[BASE_REQUIRED:[0-9]+]], ![[SSE_REQUIRED:[0-9]+]]}
 ; CHECK: !goallc.cpu.fmv.done = !{![[DONE:[0-9]+]]}
 ; CHECK: ![[NONPACKAGE]] = !{i1 true}
-; CHECK-DAG: ![[BASE_REQUIRED]] = !{ptr @round.goallc.fmv.baseline, ![[BASE_INLINE:[0-9]+]]}
-; CHECK-DAG: ![[SSE_REQUIRED]] = !{ptr @round.goallc.fmv.sse41, ![[SSE_INLINE:[0-9]+]]}
+; CHECK-DAG: ![[BASE_REQUIRED]] = !{ptr @"round<goallc.fmv.baseline>", ![[BASE_INLINE:[0-9]+]]}
+; CHECK-DAG: ![[SSE_REQUIRED]] = !{ptr @"round<goallc.fmv.sse41>", ![[SSE_INLINE:[0-9]+]]}
 ; CHECK-DAG: ![[BASE_INLINE]] = !DILocation(line: 10, column: 1, scope: ![[HELPER:[0-9]+]], inlinedAt: !{{[0-9]+}})
 ; CHECK-DAG: ![[SSE_INLINE]] = !DILocation(line: 10, column: 1, scope: ![[HELPER]], inlinedAt: !{{[0-9]+}})
 ; CHECK-DAG: ![[HELPER]] = distinct !DISubprogram(name: "helper", linkageName: "helper"

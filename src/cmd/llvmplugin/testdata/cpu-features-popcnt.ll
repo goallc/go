@@ -6,7 +6,7 @@ target triple = "x86_64-unknown-linux-gnu"
 declare i64 @fallback(i64)
 declare i64 @llvm.ctpop.i64(i64)
 
-; CHECK: @ones.goallc.fmv.slot = internal global ptr @ones.goallc.fmv.resolve{{.*}}!goobj.symbol.flags ![[DUPOK:[0-9]+]]
+; CHECK: @ones.goallc.fmv.slot = internal global ptr @"ones<goallc.fmv.resolve>"{{.*}}!goobj.symbol.flags ![[DUPOK:[0-9]+]]
 ; CHECK-LABEL: define internal i64 @ones(
 ; CHECK-SAME: #[[DISPATCH:[0-9]+]]
 ; CHECK: load atomic ptr, ptr @ones.goallc.fmv.slot monotonic
@@ -31,22 +31,22 @@ done:
   ret i64 %result
 }
 
-; CHECK-LABEL: define internal i64 @ones.goallc.fmv.baseline(
+; CHECK-LABEL: define internal i64 @"ones<goallc.fmv.baseline>"(
 ; CHECK-SAME: !goobj.symbol.flags ![[DUPOK]]
 ; CHECK-NOT: llvm.ctpop
 ; CHECK: call i64 @fallback
 
-; CHECK-LABEL: define internal i64 @ones.goallc.fmv.popcnt(
+; CHECK-LABEL: define internal i64 @"ones<goallc.fmv.popcnt>"(
 ; CHECK-SAME: #[[POPCNT:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.flags ![[DUPOK]]
 ; CHECK: call i64 @llvm.ctpop.i64
 ; CHECK-NOT: call i64 @fallback
 
-; CHECK-LABEL: define internal i64 @ones.goallc.fmv.resolve(
+; CHECK-LABEL: define internal i64 @"ones<goallc.fmv.resolve>"(
 ; CHECK-SAME: !goobj.symbol.flags ![[DUPOK]]
 ; CHECK: load i64, ptr @runtime.goallcCPUFeatures
 ; CHECK: and i64 %features, 128
-; CHECK: select i1 {{.*}}, ptr @ones.goallc.fmv.popcnt, ptr @ones.goallc.fmv.baseline
+; CHECK: select i1 {{.*}}, ptr @"ones<goallc.fmv.popcnt>", ptr @"ones<goallc.fmv.baseline>"
 ; CHECK: store atomic ptr {{.*}}, ptr @ones.goallc.fmv.slot monotonic
 
 ; CHECK: attributes #[[DISPATCH]] = {{.*}}"go-nosplit" {{.*}}"target-cpu"="x86-64"

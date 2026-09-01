@@ -1,4 +1,4 @@
-; CHECK: error: GoALLC CPU requirement x86.sse41 survives in function bad.goallc.fmv.baseline without the required target features
+; CHECK: error: GoALLC CPU requirement x86.sse41 survives in function bad<goallc.fmv.baseline> without the required target features
 
 target triple = "x86_64-unknown-linux-gnu"
 
