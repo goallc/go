@@ -20,9 +20,10 @@ namespace goallc {
 // safely invoke it again from the pre-codegen callback.
 Error runEarlyIRPipeline(Module &M);
 
-// Promotes marked FMV calls which remain terminal after optimization to
-// musttail immediately before statepoint rewriting and instruction selection.
-// Calls made non-terminal by inlining keep ordinary safepoint semantics.
+// Promotes calls in marked FMV functions which remain terminal after
+// optimization to musttail immediately before statepoint rewriting and
+// instruction selection. Calls made non-terminal by inlining keep ordinary
+// safepoint semantics.
 Error finalizeCPUFeatureTailTransfers(Function &F);
 
 class CPUFeaturesPass : public PassInfoMixin<CPUFeaturesPass> {

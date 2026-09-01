@@ -27,15 +27,15 @@ entry:
   ret void
 }
 
-define goabiinternal void @fmv_terminal_tail() gc "goallc" {
+define goabiinternal void @fmv_terminal_tail() "goallc.cpu.tail-transfers" gc "goallc" {
 entry:
-  tail call goabiinternal void @target(), !goallc.cpu.tail_transfer !0
+  tail call goabiinternal void @target()
   ret void
 }
 
-define goabiinternal ptr @fmv_terminal_tail_result(ptr %p) gc "goallc" {
+define goabiinternal ptr @fmv_terminal_tail_result(ptr %p) "goallc.cpu.tail-transfers" gc "goallc" {
 entry:
-  %result = tail call goabiinternal ptr @pointer_target(ptr %p), !goallc.cpu.tail_transfer !0
+  %result = tail call goabiinternal ptr @pointer_target(ptr %p)
   ret ptr %result
 }
 
@@ -45,11 +45,9 @@ entry:
   ret void
 }
 
-define goabiinternal ptr @nonterminal_tail(ptr %p) gc "goallc" {
+define goabiinternal ptr @nonterminal_tail(ptr %p) "goallc.cpu.tail-transfers" gc "goallc" {
 entry:
-  tail call goabiinternal void @target(), !goallc.cpu.tail_transfer !0
+  tail call goabiinternal void @target()
   %next = getelementptr i8, ptr %p, i64 1
   ret ptr %next
 }
-
-!0 = !{}

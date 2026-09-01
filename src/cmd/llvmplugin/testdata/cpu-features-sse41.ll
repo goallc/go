@@ -20,22 +20,22 @@ declare double @llvm.floor.f64(double)
 ; CHECK-SAME: !goobj.symbol.flags ![[SYMFLAGS:[0-9]+]]
 ; CHECK: entry:
 ; CHECK-NEXT: load atomic ptr, ptr @round.goallc.fmv.slot monotonic
-; CHECK: tail call double %target(double %x), !dbg ![[DISPATCHLOC:[0-9]+]], !goallc.cpu.tail_transfer
+; CHECK: tail call double %target(double %x), !dbg ![[DISPATCHLOC:[0-9]+]]
 ; CHECK-NEXT: ret double
 
 ; CHECK-INLINE-LABEL: define double @round.caller(
 ; CHECK-INLINE: load atomic ptr, ptr @round.goallc.fmv.slot monotonic
 ; CHECK-INLINE-NOT: call double @round(
-; CHECK-INLINE: tail call double %target.i(double %x){{.*}}!goallc.cpu.tail_transfer
+; CHECK-INLINE: tail call double %target.i(double %x)
 ; CHECK-INLINE: fadd double
 
 ; CHECK-FINAL-LABEL: define double @round(
 ; CHECK-FINAL: musttail call double %target(double %x)
-; CHECK-FINAL-NOT: !goallc.cpu.tail_transfer
+; CHECK-FINAL-NOT: "goallc.cpu.tail-transfers"
 ; CHECK-FINAL-LABEL: define internal double @round.goallc.fmv.resolve(
 ; CHECK-FINAL: musttail call double @round.goallc.fmv.baseline(double %x)
 ; CHECK-FINAL: musttail call double {{.*}}(double %x)
-; CHECK-FINAL-NOT: !goallc.cpu.tail_transfer
+; CHECK-FINAL-NOT: "goallc.cpu.tail-transfers"
 
 ; CHECK-X86-ASM-LABEL: round:
 ; CHECK-X86-ASM: movq round.goallc.fmv.slot(%rip), %rax
@@ -98,8 +98,8 @@ entry:
 ; CHECK: store atomic ptr {{.*}}, ptr @round.goallc.fmv.slot monotonic
 ; CHECK: tail call double {{.*}}(double %x)
 
-; CHECK-DAG: attributes #[[EARLY_DISPATCH]] = {{.*}}"go-nosplit" {{.*}}"target-cpu"="x86-64"
-; CHECK-DAG: attributes #[[RESOLVER_ATTRS]] = {{.*}}noinline{{.*}}"go-nosplit"
+; CHECK-DAG: attributes #[[EARLY_DISPATCH]] = {{.*}}"go-nosplit" "goallc.cpu.tail-transfers" {{.*}}"target-cpu"="x86-64"
+; CHECK-DAG: attributes #[[RESOLVER_ATTRS]] = {{.*}}noinline{{.*}}"go-nosplit" "goallc.cpu.tail-transfers"
 ; CHECK-DAG: attributes #[[SSE41]] = {{.*}}"target-cpu"="x86-64" {{.*}}"target-features"="+sse4.1"
 ; CHECK: !goobj.debug.inline.required = !{![[BASE_REQUIRED:[0-9]+]], ![[SSE_REQUIRED:[0-9]+]]}
 ; CHECK: !goallc.cpu.fmv.done = !{![[DONE:[0-9]+]]}
