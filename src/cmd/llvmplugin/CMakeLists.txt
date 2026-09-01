@@ -121,7 +121,7 @@ if(BUILD_TESTING)
     CHECK-INLINE
     "${GOALLC_OPT_EXECUTABLE}"
     "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
-    -passes=goallc-cpu-features,default<O2>
+    -passes=goallc-cpu-features,default<O2>,goallc-finalize-cpu-features
     -S
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-sse41.ll"
     -o -

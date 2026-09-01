@@ -48,10 +48,8 @@ constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
 constexpr StringLiteral GoObjFuncInfoMD = "goobj.func.info";
 constexpr StringLiteral GoNoSplitAttr = "go-nosplit";
 constexpr StringLiteral TailTransferAttr = "goallc.cpu.tail-transfers";
+constexpr StringLiteral DispatcherInlineMD = "goallc.cpu.dispatcher.inline";
 constexpr uint64_t GoObjSymFlagDupok = uint64_t{1} << 0;
-// Keep in sync with internal/abi.FuncIDWrapper. This pass consumes and emits
-// the Go 1.27 GoObj function-info ABI directly.
-constexpr uint8_t GoFuncIDWrapper = 23;
 
 enum FeatureBit : uint64_t {
 #define GOALLC_CPU_FEATURE(Name, Bit) Feature##Name = uint64_t{1} << Bit,
@@ -209,16 +207,6 @@ void eraseGoObjSourceSymbolIdentity(Function &F) {
         "goobj.import", "goobj.builtin"})
     F.setMetadata(Name, nullptr);
   markGoObjNonPackage(F);
-}
-
-void markGoObjWrapper(Function &F) {
-  LLVMContext &C = F.getContext();
-  Metadata *Operands[] = {
-      ConstantAsMetadata::get(ConstantInt::get(Type::getInt8Ty(C),
-                                               GoFuncIDWrapper)),
-      ConstantAsMetadata::get(ConstantInt::get(Type::getInt8Ty(C), 0)),
-  };
-  F.setMetadata(GoObjFuncInfoMD, MDNode::get(C, Operands));
 }
 
 void eraseFunctionBodyPreservingMetadata(Function &F) {
@@ -424,13 +412,14 @@ CallInst *createTailCall(IRBuilder<> &B, Function &Signature, Value *Callee,
   return Call;
 }
 
-void createTailReturn(IRBuilder<> &B, Function &Signature, Value *Callee,
-                      CallInst::TailCallKind Kind = CallInst::TCK_Tail) {
+CallInst *createTailReturn(IRBuilder<> &B, Function &Signature, Value *Callee,
+                           CallInst::TailCallKind Kind = CallInst::TCK_Tail) {
   CallInst *Call = createTailCall(B, Signature, Callee, Kind);
   if (Signature.getReturnType()->isVoidTy())
     B.CreateRetVoid();
   else
     B.CreateRet(Call);
+  return Call;
 }
 
 struct Variant {
@@ -606,13 +595,10 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     return Err;
   eraseFunctionBodyPreservingMetadata(F);
   F.removeFnAttr(MultiversionAttr);
-  // This synthetic dispatcher has no stack frame. Its terminal tail transfer
-  // is not a safepoint, while normal optimization may inline it into a
-  // same-module caller where a non-terminal call is rewritten as usual. Mark
-  // its logical inline scope as a wrapper: traceback then ignores only this
-  // synthetic layer while retaining the real caller chain. Executable variants
-  // already captured the source FuncInfo above.
-  markGoObjWrapper(F);
+  // The public function remains the source function and retains its complete
+  // FuncInfo. It has no new physical frame: when left out of line it tail
+  // transfers to a variant, and when inlined its synthetic debug scope is
+  // removed immediately before statepoint rewriting below.
   makeFramelessDispatcher(F);
   BasicBlock *Entry = BasicBlock::Create(C, "entry", &F);
   IRBuilder<> B(Entry);
@@ -620,7 +606,10 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   LoadInst *Target = B.CreateLoad(PointerType::getUnqual(C), Slot, "target");
   Target->setAtomic(AtomicOrdering::Monotonic);
   Target->setAlignment(Slot->getAlign().valueOrOne());
-  createTailReturn(B, F, Target);
+  MDNode *DispatcherMarker = MDNode::get(C, ArrayRef<Metadata *>());
+  Target->setMetadata(DispatcherInlineMD, DispatcherMarker);
+  CallInst *DispatchCall = createTailReturn(B, F, Target);
+  DispatchCall->setMetadata(DispatcherInlineMD, DispatcherMarker);
 
   BasicBlock *ResolveEntry = BasicBlock::Create(C, "entry", Resolver);
   BasicBlock *Uninitialized = BasicBlock::Create(C, "uninitialized", Resolver);
@@ -654,6 +643,21 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
 } // namespace
 
 Error llvm::goallc::finalizeCPUFeatureTailTransfers(Function &F) {
+  // If the public dispatcher was inlined, drop exactly its synthetic inline
+  // scope while retaining the real caller location and any outer inline chain.
+  // An out-of-line dispatcher keeps the source location because it still is
+  // the public source function. Clear the internal marker in both cases.
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (!I.getMetadata(DispatcherInlineMD))
+        continue;
+      if (const DILocation *Loc = I.getDebugLoc().get())
+        if (const DILocation *CallerLoc = Loc->getInlinedAt())
+          I.setDebugLoc(DebugLoc(CallerLoc));
+      I.setMetadata(DispatcherInlineMD, nullptr);
+    }
+  }
+
   if (!F.hasFnAttribute(TailTransferAttr))
     return Error::success();
   F.removeFnAttr(TailTransferAttr);
@@ -717,6 +721,18 @@ PreservedAnalyses llvm::goallc::CPUFeaturesPass::run(Module &M,
   if (Error Err = runEarlyIRPipeline(M)) {
     M.getContext().emitError(toString(std::move(Err)));
     return PreservedAnalyses::none();
+  }
+  return PreservedAnalyses::none();
+}
+
+PreservedAnalyses
+llvm::goallc::CPUFeaturesFinalizePass::run(Module &M,
+                                           ModuleAnalysisManager &) {
+  for (Function &F : M) {
+    if (Error Err = finalizeCPUFeatureTailTransfers(F)) {
+      M.getContext().emitError(toString(std::move(Err)));
+      return PreservedAnalyses::none();
+    }
   }
   return PreservedAnalyses::none();
 }

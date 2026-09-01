@@ -49,10 +49,15 @@ void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
          ArrayRef<PassBuilder::PipelineElement>) {
-        if (Name != "goallc-cpu-features")
-          return false;
-        MPM.addPass(goallc::CPUFeaturesPass());
-        return true;
+        if (Name == "goallc-cpu-features") {
+          MPM.addPass(goallc::CPUFeaturesPass());
+          return true;
+        }
+        if (Name == "goallc-finalize-cpu-features") {
+          MPM.addPass(goallc::CPUFeaturesFinalizePass());
+          return true;
+        }
+        return false;
       });
 }
 

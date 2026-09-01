@@ -18,20 +18,24 @@ declare double @llvm.floor.f64(double)
 ; CHECK-SAME: !dbg ![[SUBPROGRAM:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.index ![[SYMINDEX:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.flags ![[SYMFLAGS:[0-9]+]]
-; CHECK-SAME: !goobj.func.info ![[WRAPPER:[0-9]+]]
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO:[0-9]+]]
 ; CHECK: entry:
-; CHECK-NEXT: %target = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8, !dbg ![[DISPATCHLOC:[0-9]+]]
-; CHECK-NEXT: %{{.*}} = tail call double %target(double %x), !dbg ![[DISPATCHLOC]]
+; CHECK-NEXT: %target = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8, !dbg ![[DISPATCHLOC:[0-9]+]], !goallc.cpu.dispatcher.inline ![[DISPATCHMARK:[0-9]+]]
+; CHECK-NEXT: %{{.*}} = tail call double %target(double %x), !dbg ![[DISPATCHLOC]], !goallc.cpu.dispatcher.inline ![[DISPATCHMARK]]
 ; CHECK-NEXT: ret double
 
 ; CHECK-INLINE-LABEL: define double @round.caller(
-; CHECK-INLINE: %target.i = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8, !dbg ![[INLINELOC:[0-9]+]]
+; CHECK-INLINE: %target.i = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8, !dbg ![[CALLERLOC:[0-9]+]]
 ; CHECK-INLINE-NOT: call double @round(
-; CHECK-INLINE: %{{.*}} = tail call double %target.i(double %x), !dbg ![[INLINELOC]], !callees !{{[0-9]+}}, !inline_history !{{[0-9]+}}
+; CHECK-INLINE: %{{.*}} = tail call double %target.i(double %x), !dbg ![[CALLERLOC]], !callees !{{[0-9]+}}, !inline_history !{{[0-9]+}}
 ; CHECK-INLINE: fadd double
+; CHECK-INLINE-NOT: !goallc.cpu.dispatcher.inline
+; CHECK-INLINE: ![[CALLERSP:[0-9]+]] = distinct !DISubprogram(name: "round.caller"
+; CHECK-INLINE: ![[CALLERLOC]] = distinct !DILocation(line: 20, column: 1, scope: ![[CALLERSP]])
 
 ; CHECK-FINAL-LABEL: define double @round(
 ; CHECK-FINAL: musttail call double %target(double %x)
+; CHECK-FINAL-NOT: !goallc.cpu.dispatcher.inline
 ; CHECK-FINAL-NOT: "goallc.cpu.tail-transfers"
 ; CHECK-FINAL-LABEL: define internal double @round.goallc.fmv.resolve(
 ; CHECK-FINAL: musttail call double @round.goallc.fmv.baseline(double %x)
@@ -65,16 +69,16 @@ done:
   ret double %result, !dbg !10
 }
 
-define double @round.caller(double %x) #1 {
+define double @round.caller(double %x) #1 !dbg !16 {
 entry:
-  %rounded = call double @round(double %x)
-  %adjusted = fadd double %rounded, 1.000000e+00
-  ret double %adjusted
+  %rounded = call double @round(double %x), !dbg !17
+  %adjusted = fadd double %rounded, 1.000000e+00, !dbg !17
+  ret double %adjusted, !dbg !17
 }
 
 ; CHECK-LABEL: define internal double @round.goallc.fmv.baseline(
 ; CHECK-NOT: !goobj.symbol.flags
-; CHECK-SAME: !goobj.func.info ![[FUNCINFO:[0-9]+]]
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
 ; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
 ; CHECK-NOT: llvm.floor
@@ -120,9 +124,7 @@ entry:
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
 ; CHECK: ![[SYMINDEX]] = !{i32 17}
 ; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
-; The frameless dispatcher is a logical wrapper, not another source frame.
-; CHECK: ![[WRAPPER]] = !{i8 23, i8 0}
-; The executable variants inherit both the source FuncID and all FuncFlag bits.
+; The dispatcher and executable variants inherit the source FuncID and flags.
 ; CHECK: ![[FUNCINFO]] = !{i8 10, i8 3}
 
 attributes #0 = { "goallc.cpu.multiversion"="x86.sse41" "target-cpu"="x86-64" }
@@ -149,3 +151,5 @@ attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
 !13 = !{!9, ptr @round}
 !14 = !DILocation(line: 10, column: 1, scope: !11, inlinedAt: !10)
 !15 = !{i8 10, i8 3}
+!16 = distinct !DISubprogram(name: "round.caller", linkageName: "round.caller", scope: !4, file: !4, line: 20, type: !6, scopeLine: 20, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !7, retainedNodes: !5)
+!17 = !DILocation(line: 20, column: 1, scope: !16)

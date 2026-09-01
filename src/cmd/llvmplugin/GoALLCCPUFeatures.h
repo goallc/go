@@ -31,6 +31,13 @@ public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 
+// Exposes the common late finalization contract to opt-based regression tests.
+// Production invokes the same helper from the pre-isel statepoint pass.
+class CPUFeaturesFinalizePass : public PassInfoMixin<CPUFeaturesFinalizePass> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+};
+
 } // namespace goallc
 } // namespace llvm
 
