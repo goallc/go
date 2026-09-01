@@ -171,6 +171,16 @@ func llvmWritebarrierPass(f *Func) {
 	}
 }
 
+func llvmCPUFeaturesPass(f *Func) {
+	if base.Flag.EnableLLVM && buildcfg.Experiment.SIMD {
+		// LLVM emission precedes the native cpufeatures phase because it needs
+		// logical arguments and results before expandCalls. Run the same Go
+		// analysis here so LLVM sees the feature assumptions already encoded by
+		// SIMD signatures, Midway specialization, and internal/cpu guards.
+		cpufeatures(f)
+	}
+}
+
 func llvmCompilePass(f *Func) {
 	if base.Flag.EnableLLVM {
 		LLVMCompile(f)
@@ -501,6 +511,7 @@ var passes = [...]pass{
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
 	{name: "llvm deadcode", fn: deadcode, required: true},
+	{name: "llvm cpufeatures", fn: llvmCPUFeaturesPass, required: true},
 	{name: "llvm", fn: llvmCompilePass, required: true},
 	{name: "expand calls", fn: expandCalls, required: true},
 	{name: "decompose builtin", fn: postExpandCallsDecompose, required: true},

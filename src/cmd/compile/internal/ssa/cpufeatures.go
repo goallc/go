@@ -118,6 +118,10 @@ func cpufeatures(f *Func) {
 	if arch != goarch.AMD64 {
 		return
 	}
+	// LLVM emission runs this analysis once before expandCalls, while the native
+	// lowering pipeline runs it again after its late CFG transformations. Make
+	// the summary describe the current graph rather than accumulating both runs.
+	f.maxCPUFeatures = CPUNone
 
 	po := f.Postorder()
 

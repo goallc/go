@@ -11,6 +11,7 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"encoding/json"
+	"internal/cpu"
 	"internal/testenv"
 	"io"
 	"os"
@@ -283,6 +284,59 @@ func TestLLVMCPUFeatureMultiversion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLLVMVec128ABI(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("SIMD experiment is supported only on amd64 and arm64")
+	}
+	if runtime.GOARCH == "amd64" && !cpu.X86.HasAVX {
+		t.Skip("Vec128 archsimd operations require AVX on amd64")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	packagePath := "cmd/llvmtoolexec/testdata/simdvec128"
+	executable := filepath.Join(t.TempDir(), "simdvec128")
+	toolexec := strings.Join([]string{
+		wrapper,
+		"-llc=" + llc,
+		"-pass-plugin=" + plugin,
+	}, " ")
+	buildFixture := testenv.Command(
+		t, goTool, "build", "-a",
+		"-toolexec="+toolexec,
+		"-gcflags="+packagePath+"=-enablellvm",
+		"-o", executable,
+		"./src/"+packagePath,
+	)
+	buildFixture.Dir = root
+	buildFixture.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOCACHE="+t.TempDir(),
+		"GOEXPERIMENT=simd",
+	)
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("building Vec128 ABI fixture: %v\n%s", err, out)
+	}
+
+	runFixture := testenv.Command(t, executable)
+	if out, err := runFixture.CombinedOutput(); err != nil {
+		t.Fatalf("running Vec128 ABI fixture: %v\n%s", err, out)
 	}
 }
 

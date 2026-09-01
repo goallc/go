@@ -29,6 +29,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 
 using namespace llvm;
 
@@ -39,6 +40,7 @@ constexpr StringLiteral DoneMD = "goallc.cpu.fmv.done";
 constexpr StringLiteral GuardMD = "goallc.cpu.guard";
 constexpr StringLiteral RequiresMD = "goallc.cpu.requires";
 constexpr StringLiteral MultiversionAttr = "goallc.cpu.multiversion";
+constexpr StringLiteral FeatureFloorAttr = "goallc.cpu.feature-floor";
 constexpr StringLiteral RuntimeFeatureMask = "runtime.goallcCPUFeatures";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoObjDebugFuncsMD = "goobj.debug.funcs";
@@ -71,6 +73,11 @@ struct CPUConfig {
   uint64_t Baseline;
 };
 
+struct FeatureFloor {
+  uint64_t Available = 0;
+  SmallVector<const Profile *, 4> Profiles;
+};
+
 // Profiles describe Go's effective feature booleans, not a CPUID implication
 // graph. internal/cpu already folds the hardware and OS requirements into
 // HasFMA, while GODEBUG may independently disable sse41, avx, or fma. Treating
@@ -86,6 +93,7 @@ constexpr uint64_t V3Baseline = V2Baseline | FeatureAVX | FeatureFMA;
 
 constexpr Profile SSE41Profile = {"x86.sse41", "sse41", "+sse4.1", "amd64",
                                   SSE41Closure};
+constexpr Profile AVXProfile = {"x86.avx", "avx", "+avx", "amd64", FeatureAVX};
 constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64", FMAClosure};
 constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt", "+popcnt", "amd64",
                                    POPCNTClosure};
@@ -93,6 +101,8 @@ constexpr Profile ARM64LSEProfile = {"arm64.lse", "lse", "+lse", "arm64",
                                      ARM64LSEClosure};
 
 const Profile *findProfile(StringRef Name) {
+  if (Name == AVXProfile.Name)
+    return &AVXProfile;
   if (Name == FMAProfile.Name)
     return &FMAProfile;
   if (Name == SSE41Profile.Name)
@@ -331,6 +341,44 @@ void addTargetFeature(Function &F, StringRef Feature) {
   F.addFnAttr("target-features", Features);
 }
 
+Expected<FeatureFloor> takeFeatureFloor(Function &F, const CPUConfig &Config) {
+  Attribute Attr = F.getFnAttribute(FeatureFloorAttr);
+  if (!Attr.isStringAttribute())
+    return FeatureFloor{};
+  StringRef Value = Attr.getValueAsString();
+  if (Value.empty())
+    return createStringError(inconvertibleErrorCode(),
+                             "GoALLC CPU feature floor is empty");
+
+  FeatureFloor Floor;
+  StringMap<bool> Seen;
+  SmallVector<StringRef, 4> Names;
+  Value.split(Names, ',', -1, false);
+  for (StringRef Name : Names) {
+    const Profile *P = findProfile(Name);
+    if (!P)
+      return createStringError(inconvertibleErrorCode(),
+                               "unknown GoALLC CPU feature floor " + Name);
+    if (P->Arch != Config.Arch)
+      return createStringError(inconvertibleErrorCode(),
+                               "GoALLC CPU feature floor " + Name +
+                                   " does not match module architecture " +
+                                   Config.Arch);
+    if (!Seen.insert({Name, true}).second)
+      return createStringError(inconvertibleErrorCode(),
+                               "duplicate GoALLC CPU feature floor " + Name);
+    Floor.Profiles.push_back(P);
+    Floor.Available |= P->Closure;
+  }
+  F.removeFnAttr(FeatureFloorAttr);
+  return Floor;
+}
+
+void addTargetFeatures(Function &F, ArrayRef<const Profile *> Profiles) {
+  for (const Profile *P : Profiles)
+    addTargetFeature(F, P->TargetFeature);
+}
+
 Expected<bool> specializeGuards(Function &F, uint64_t Available) {
   SmallVector<LoadInst *, 4> Guards;
   for (BasicBlock &BB : F)
@@ -473,6 +521,7 @@ Expected<SmallVector<const Profile *, 4>> requestedProfiles(Function &F,
 
 Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
                                   uint64_t Available,
+                                  ArrayRef<const Profile *> FloorProfiles,
                                   ArrayRef<const Profile *> EnabledProfiles) {
   const bool DuplicateOK = isGoObjDuplicateOK(Source);
   ValueToValueMapTy VMap;
@@ -489,8 +538,8 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
     markGoObjDuplicateOK(*Clone);
   if (Error Err = cloneRequiredInlineLocations(Source, *Clone, VMap))
     return std::move(Err);
-  for (const Profile *P : EnabledProfiles)
-    addTargetFeature(*Clone, P->TargetFeature);
+  addTargetFeatures(*Clone, FloorProfiles);
+  addTargetFeatures(*Clone, EnabledProfiles);
   Expected<bool> Specialized = specializeGuards(*Clone, Available);
   if (!Specialized)
     return Specialized.takeError();
@@ -532,26 +581,28 @@ Function *cloneResolver(Function &Source) {
 }
 
 Error multiversionFunction(Function &F, const CPUConfig &Config,
-                           GlobalVariable &RuntimeMask) {
+                           GlobalVariable &RuntimeMask,
+                           const FeatureFloor &Floor) {
   const bool DuplicateOK = isGoObjDuplicateOK(F);
   Expected<SmallVector<const Profile *, 4>> Requested =
       requestedProfiles(F, Config.Arch);
   if (!Requested)
     return Requested.takeError();
 
-  Expected<Function *> BaselineOrErr =
-      cloneVariant(F, "baseline", Config.Baseline, {});
+  Expected<Function *> BaselineOrErr = cloneVariant(
+      F, "baseline", Config.Baseline | Floor.Available, Floor.Profiles, {});
   if (!BaselineOrErr)
     return BaselineOrErr.takeError();
   Function *BaselineImpl = *BaselineOrErr;
-  if (Error Err = verifyRequirements(*BaselineImpl, Config.Baseline))
+  if (Error Err =
+          verifyRequirements(*BaselineImpl, Config.Baseline | Floor.Available))
     return Err;
   if (Error Err = registerGoObjDebugFunction(*BaselineImpl))
     return Err;
 
   SmallVector<const Profile *, 4> OrderedProfiles;
-  for (const Profile *P :
-       {&SSE41Profile, &FMAProfile, &POPCNTProfile, &ARM64LSEProfile}) {
+  for (const Profile *P : {&SSE41Profile, &AVXProfile, &FMAProfile,
+                           &POPCNTProfile, &ARM64LSEProfile}) {
     if (llvm::find(*Requested, P) != Requested->end())
       OrderedProfiles.push_back(P);
   }
@@ -576,9 +627,9 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
       Suffix += P->Suffix;
       Required |= P->Closure;
     }
-    uint64_t Available = Config.Baseline | Required;
+    uint64_t Available = Config.Baseline | Floor.Available | Required;
     Expected<Function *> CloneOrErr =
-        cloneVariant(F, Suffix, Available, EnabledProfiles);
+        cloneVariant(F, Suffix, Available, Floor.Profiles, EnabledProfiles);
     if (!CloneOrErr)
       return CloneOrErr.takeError();
     Function *Clone = *CloneOrErr;
@@ -586,7 +637,8 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
       return Err;
     if (Error Err = registerGoObjDebugFunction(*Clone))
       return Err;
-    Variants.push_back({Clone, Required & ~Config.Baseline});
+    Variants.push_back(
+        {Clone, Required & ~(Config.Baseline | Floor.Available)});
   }
 
   LLVMContext &C = F.getContext();
@@ -705,10 +757,23 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
   if (!Config)
     return Config.takeError();
 
-  SmallVector<Function *, 16> Candidates;
-  for (Function &F : M)
-    if (!F.isDeclaration() && F.hasFnAttribute(MultiversionAttr))
-      Candidates.push_back(&F);
+  struct Candidate {
+    Function *F;
+    FeatureFloor Floor;
+  };
+  SmallVector<Candidate, 16> Candidates;
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    Expected<FeatureFloor> Floor = takeFeatureFloor(F, *Config);
+    if (!Floor)
+      return Floor.takeError();
+    if (F.hasFnAttribute(MultiversionAttr)) {
+      Candidates.push_back({&F, std::move(*Floor)});
+    } else {
+      addTargetFeatures(F, Floor->Profiles);
+    }
+  }
 
   if (!Candidates.empty()) {
     GlobalVariable *RuntimeMask = M.getNamedGlobal(RuntimeFeatureMask);
@@ -716,8 +781,9 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
       return createStringError(
           inconvertibleErrorCode(),
           "GoALLC CPU multiversioning requires runtime.goallcCPUFeatures");
-    for (Function *F : Candidates)
-      if (Error Err = multiversionFunction(*F, *Config, *RuntimeMask))
+    for (const Candidate &C : Candidates)
+      if (Error Err =
+              multiversionFunction(*C.F, *Config, *RuntimeMask, C.Floor))
         return Err;
   }
 

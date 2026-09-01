@@ -116,6 +116,42 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.FeatureFloorAVX
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-avx.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-avx.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.AVX
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.InvalidFeatureFloor
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-invalid.ll"
+    CHECK
+    "${GOALLC_NOT_EXECUTABLE}"
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -disable-output
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-invalid.ll"
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.InlineDispatcher
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-sse41.ll"
     CHECK-INLINE

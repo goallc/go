@@ -748,6 +748,127 @@ func TestLLVMAMD64MapPackedByteLowering(t *testing.T) {
 	})
 }
 
+func TestLLVMGenericVec128Lowering(t *testing.T) {
+	oldTypes := type2lTypes
+	oldModule := CurrentModule
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() {
+		type2lTypes = oldTypes
+		CurrentModule = oldModule
+	}()
+
+	carrier := getLLVMType(types.TypeVec128)
+	if carrier.TypeKind() != llvm.VectorTypeKind || carrier.VectorSize() != 16 || carrier.ElementType() != GlobalCtxt.Int8Type() {
+		t.Fatalf("Vec128 LLVM carrier is not <16 x i8>")
+	}
+
+	for _, test := range []struct {
+		name string
+		op   Op
+		want string
+	}{
+		{"int8", OpAddInt8x16, "add <16 x i8>"},
+		{"int16", OpAddInt16x8, "add <8 x i16>"},
+		{"int32", OpAddInt32x4, "add <4 x i32>"},
+		{"int64", OpAddInt64x2, "add <2 x i64>"},
+		{"float32", OpAddFloat32x4, "fadd <4 x float>"},
+		{"float64", OpAddFloat64x2, "fadd <2 x double>"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module := GlobalCtxt.NewModule("generic_vec128_" + test.name)
+			CurrentModule = module
+			builder := GlobalCtxt.NewBuilder()
+			t.Cleanup(module.Dispose)
+			t.Cleanup(builder.Dispose)
+
+			function := llvm.AddFunction(module, test.name, llvm.FunctionType(carrier, []llvm.Type{carrier, carrier}, false))
+			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+			context := &LLVMFuncContext{Vs: make(map[ID]llvm.Value), b: builder}
+			x := &Value{ID: 1, Op: OpArg, Type: types.TypeVec128}
+			y := &Value{ID: 2, Op: OpArg, Type: types.TypeVec128}
+			context.Vs[x.ID] = function.Param(0)
+			context.Vs[y.ID] = function.Param(1)
+			result := &Value{ID: 3, Op: test.op, Type: types.TypeVec128, Args: []*Value{x, y}}
+			builder.CreateRet(context.GenLV(result))
+
+			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("LLVM verifier rejected generic Vec128 lowering: %v\n%s", err, module.String())
+			}
+			if ir := module.String(); !strings.Contains(ir, test.want) || !strings.Contains(ir, "ret <16 x i8>") {
+				t.Errorf("generic Vec128 IR does not contain %q and its canonical return\n%s", test.want, ir)
+			}
+		})
+	}
+
+	t.Run("zero-load-store-alignment", func(t *testing.T) {
+		module := GlobalCtxt.NewModule("generic_vec128_memory")
+		CurrentModule = module
+		builder := GlobalCtxt.NewBuilder()
+		t.Cleanup(module.Dispose)
+		t.Cleanup(builder.Dispose)
+
+		pointer := GlobalCtxt.PointerType(0)
+		function := llvm.AddFunction(module, "memory", llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{pointer, pointer}, false))
+		builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+		context := &LLVMFuncContext{
+			F:  &Func{Config: &Config{arch: "arm64"}},
+			Vs: make(map[ID]llvm.Value),
+			b:  builder,
+		}
+		vecPointer := types.NewPtr(types.TypeVec128)
+		src := &Value{ID: 1, Op: OpArg, Type: vecPointer}
+		dst := &Value{ID: 2, Op: OpArg, Type: vecPointer}
+		context.Vs[src.ID] = function.Param(0)
+		context.Vs[dst.ID] = function.Param(1)
+		loaded := &Value{ID: 3, Op: OpLoad, Type: types.TypeVec128, Args: []*Value{src}}
+		zero := &Value{ID: 4, Op: OpZeroSIMD, Type: types.TypeVec128}
+		sum := &Value{ID: 5, Op: OpAddInt8x16, Type: types.TypeVec128, Args: []*Value{loaded, zero}}
+		store := &Value{ID: 6, Op: OpStore, Type: types.TypeMem, Args: []*Value{dst, sum}}
+		context.GenLV(store)
+		builder.CreateRetVoid()
+
+		if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+			t.Fatalf("LLVM verifier rejected Vec128 memory lowering: %v\n%s", err, module.String())
+		}
+		ir := module.String()
+		for _, want := range []string{
+			"load <16 x i8>, ptr %0, align 8",
+			"add <16 x i8>",
+			"zeroinitializer",
+			"store <16 x i8>",
+			"ptr %1, align 8",
+		} {
+			if !strings.Contains(ir, want) {
+				t.Errorf("Vec128 memory IR does not contain %q\n%s", want, ir)
+			}
+		}
+	})
+}
+
+func TestLLVMSIMDFeatureFloor(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		arch     string
+		features CPUfeatures
+		want     string
+	}{
+		{name: "amd64-avx", arch: "amd64", features: CPUavx, want: goCPUProfileX86AVX},
+		{name: "amd64-avx2-closure", arch: "amd64", features: CPUavx | CPUavx2, want: goCPUProfileX86AVX},
+		{name: "amd64-none", arch: "amd64", features: CPUNone},
+		{name: "arm64", arch: "arm64", features: CPUavx},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := &Func{
+				Config: &Config{arch: test.arch},
+				Entry:  &Block{CPUfeatures: test.features},
+			}
+			if got := llvmSIMDFeatureFloor(f); got != test.want {
+				t.Fatalf("llvmSIMDFeatureFloor() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestLLVMTargetCPU(t *testing.T) {
 	for _, test := range []struct {
 		arch    string

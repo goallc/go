@@ -108,8 +108,10 @@ const goCPUConfigMD = "goallc.cpu.config"
 const goCPUGuardMD = "goallc.cpu.guard"
 const goCPURequiresMD = "goallc.cpu.requires"
 const goCPUMultiversionAttr = "goallc.cpu.multiversion"
+const goCPUFeatureFloorAttr = "goallc.cpu.feature-floor"
 
 const (
+	goCPUProfileX86AVX    = "x86.avx"
 	goCPUProfileX86FMA    = "x86.fma"
 	goCPUProfileX86SSE41  = "x86.sse41"
 	goCPUProfileX86POPCNT = "x86.popcnt"
@@ -606,6 +608,20 @@ func llvmRequiredARM64CPUProfile(arch string, baselineHasFeature bool, profile s
 		return ""
 	}
 	return profile
+}
+
+// llvmSIMDFeatureFloor returns the function-wide target features established
+// by Go's SSA CPU-feature analysis in the entry block. They can come from a
+// SIMD signature or from an unconditionally executed entry-block SIMD value.
+// In particular, a Midway-specialized function is reached only after the
+// portable simd dispatcher has selected a hardware vector width. This is a
+// precondition, not a new runtime dispatch request: the shared early
+// CPU-feature pass consumes the attribute and adds the target feature.
+func llvmSIMDFeatureFloor(f *Func) string {
+	if f.Config.arch == "amd64" && f.Entry.CPUfeatures.hasFeature(CPUavx) {
+		return goCPUProfileX86AVX
+	}
+	return ""
 }
 
 func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile string) {
@@ -1657,6 +1673,48 @@ func (lfc *LLVMFuncContext) unsignedAverage(v *Value) llvm.Value {
 
 func llvmAMD64ByteVectorType() llvm.Type {
 	return llvm.VectorType(GlobalCtxt.Int8Type(), 16)
+}
+
+// llvmSIMDType is the canonical first-class carrier used at Go SSA and ABI
+// boundaries. Lane-sensitive operations bitcast this byte vector locally;
+// keeping one carrier type prevents source-level Int8x16, Uint32x4, and
+// Float64x2 names from creating distinct calling conventions for the same Go
+// register value.
+func llvmSIMDType(typ *types.Type) llvm.Type {
+	if typ == types.TypeMask {
+		return GlobalCtxt.Int64Type()
+	}
+	switch typ.Size() {
+	case 16:
+		return llvmAMD64ByteVectorType()
+	default:
+		base.Fatalf("unsupported SIMD width %d for %v in LLVM lowering", typ.Size(), typ)
+		return llvm.Type{}
+	}
+}
+
+func (lfc *LLVMFuncContext) simdAdd(v *Value, laneType llvm.Type, lanes int, floating bool) llvm.Value {
+	carrier := getLLVMType(v.Type)
+	x, y := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1])
+	if carrier != llvmSIMDType(types.TypeVec128) || x.Type() != carrier || y.Type() != carrier {
+		v.Fatalf("%s requires <16 x i8> operands and result", v.Op)
+	}
+
+	operationType := llvm.VectorType(laneType, lanes)
+	if x.Type() != operationType {
+		x = lfc.b.CreateBitCast(x, operationType, v.String()+".x")
+		y = lfc.b.CreateBitCast(y, operationType, v.String()+".y")
+	}
+	var result llvm.Value
+	if floating {
+		result = lfc.b.CreateFAdd(x, y, v.String()+".lanes")
+	} else {
+		result = lfc.b.CreateAdd(x, y, v.String()+".lanes")
+	}
+	if result.Type() != carrier {
+		result = lfc.b.CreateBitCast(result, carrier, v.String())
+	}
+	return result
 }
 
 func llvmVectorShuffleMask(indices ...uint64) llvm.Value {
@@ -2750,6 +2808,20 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = llvm.ConstStruct([]llvm.Value{strVal, strLen}, false)
 	case OpMakeTuple:
 		lVal = lfc.aggregate(v, v.Args)
+	case OpZeroSIMD:
+		lVal = llvm.ConstNull(getLLVMType(v.Type))
+	case OpAddInt8x16, OpAddUint8x16:
+		lVal = lfc.simdAdd(v, GlobalCtxt.Int8Type(), 16, false)
+	case OpAddInt16x8, OpAddUint16x8:
+		lVal = lfc.simdAdd(v, GlobalCtxt.Int16Type(), 8, false)
+	case OpAddInt32x4, OpAddUint32x4:
+		lVal = lfc.simdAdd(v, GlobalCtxt.Int32Type(), 4, false)
+	case OpAddInt64x2, OpAddUint64x2:
+		lVal = lfc.simdAdd(v, GlobalCtxt.Int64Type(), 2, false)
+	case OpAddFloat32x4:
+		lVal = lfc.simdAdd(v, GlobalCtxt.FloatType(), 4, true)
+	case OpAddFloat64x2:
+		lVal = lfc.simdAdd(v, GlobalCtxt.DoubleType(), 2, true)
 	case OpAdd64, OpAdd32, OpAdd16, OpAdd8:
 		lVal = lfc.b.CreateAdd(arg0(), arg1(), v.String())
 	case OpAdd64carry:
@@ -3227,6 +3299,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		}
 		addr = lfc.llvmAddressPointer(v, addr, v.Args[0].Type, v.String()+".addr")
 		lVal = lfc.b.CreateLoad(typ, addr, v.String())
+		if v.Type.IsSIMD() {
+			lVal.SetAlignment(int(v.Type.Alignment()))
+		}
 		if lfc.F.Config.arch == "arm64" && v.Op == OpLoad && len(v.Args) != 0 {
 			address := v.Args[0]
 			if address.Op == OpAddr {
@@ -3373,6 +3448,9 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpStore:
 		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		lVal = lfc.b.CreateStore(arg1(), address)
+		if v.Args[1].Type.IsSIMD() {
+			lVal.SetAlignment(int(v.Args[1].Type.Alignment()))
+		}
 		if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 			lVal.SetVolatile(true)
 		}
@@ -3755,6 +3833,9 @@ func LLVMCompile(f *Func) {
 		// v8.0. Generic LLVM atomics need the same function feature in order to
 		// select the single-instruction LSE forms.
 		FCtxt.LF.AddTargetDependentFunctionAttr(llvmTargetFeaturesAttr, features)
+	}
+	if floor := llvmSIMDFeatureFloor(f); floor != "" {
+		FCtxt.LF.AddTargetDependentFunctionAttr(goCPUFeatureFloorAttr, floor)
 	}
 	// Go has already made its source-level inlining decision before LLVM
 	// lowering. Preserve both explicit //go:noinline boundaries and the
@@ -4335,6 +4416,11 @@ func llvmNotInHeapPointer(typ *types.Type) bool {
 func getLLVMType(typ *types.Type) llvm.Type {
 	if t, ok := type2lTypes[typ]; ok {
 		return t
+	}
+	if typ.IsSIMD() {
+		lType := llvmSIMDType(typ)
+		type2lTypes[typ] = lType
+		return lType
 	}
 
 	ptrType := func() llvm.Type {

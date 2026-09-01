@@ -7,6 +7,7 @@ declare double @llvm.fma.f64(double, double, double)
 
 ; CHECK: @fma.goallc.fmv.slot = internal global ptr @"fma<goallc.fmv.resolve>"
 ; CHECK-LABEL: define double @fma(
+; CHECK-SAME: #[[DISPATCH:[0-9]+]]
 ; CHECK: load atomic ptr, ptr @fma.goallc.fmv.slot monotonic
 ; CHECK: tail call double %target(double %x, double %y, double %z)
 
@@ -30,6 +31,7 @@ done:
 }
 
 ; CHECK-LABEL: define internal double @"fma<goallc.fmv.baseline>"(
+; CHECK-SAME: #[[BASELINE:[0-9]+]]
 ; CHECK-NOT: llvm.fma
 ; CHECK: call double @fallback
 
@@ -39,6 +41,7 @@ done:
 ; CHECK-NOT: call double @fallback
 
 ; CHECK-LABEL: define internal double @"fma<goallc.fmv.resolve>"(
+; CHECK-SAME: #[[RESOLVER:[0-9]+]]
 ; CHECK: load i64, ptr @runtime.goallcCPUFeatures
 ; CHECK: and i64 %features, 64
 ; CHECK: and i64 %features, 32
@@ -46,9 +49,14 @@ done:
 ; CHECK: select i1 {{.*}}, ptr @"fma<goallc.fmv.fma>", ptr @"fma<goallc.fmv.baseline>"
 ; CHECK: store atomic ptr {{.*}}, ptr @fma.goallc.fmv.slot monotonic
 
-; CHECK: attributes #[[FMA]] = {{.*}}"target-cpu"="x86-64-v2" {{.*}}"target-features"="+fma"
+; The AVX floor belongs only to physical implementations. The public
+; dispatcher and resolver stay baseline-safe.
+; CHECK-DAG: attributes #[[DISPATCH]] = { "go-nosplit" "goallc.cpu.tail-transfers" "target-cpu"="x86-64-v2" }
+; CHECK-DAG: attributes #[[BASELINE]] = { "target-cpu"="x86-64-v2" "target-features"="+avx" }
+; CHECK-DAG: attributes #[[FMA]] = { "target-cpu"="x86-64-v2" "target-features"="+avx,+fma" }
+; CHECK-DAG: attributes #[[RESOLVER]] = { noinline "go-nosplit" "target-cpu"="x86-64-v2" }
 
-attributes #0 = { "goallc.cpu.multiversion"="x86.fma" "target-cpu"="x86-64-v2" }
+attributes #0 = { "goallc.cpu.feature-floor"="x86.avx" "goallc.cpu.multiversion"="x86.fma" "target-cpu"="x86-64-v2" }
 
 !goallc.cpu.config = !{!0}
 !0 = !{!"goallc.cpu.v1", !"amd64", !"v2"}
