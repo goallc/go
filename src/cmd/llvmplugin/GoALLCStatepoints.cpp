@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCStatepoints.h"
+#include "GoALLCCPUFeatures.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -1421,22 +1422,6 @@ bool isLeafCall(const CallBase &Call) {
   return false;
 }
 
-// A terminal tail transfer leaves the current frame before entering the
-// callee, so no pointer can remain live in this frame across the call. Check
-// the structure as well as the tail marker: LLVM can preserve a tail marker
-// after inlining even when the call is no longer in tail position.
-bool isTerminalTailTransfer(const CallBase &Call) {
-  const auto *Tail = dyn_cast<CallInst>(&Call);
-  if (!Tail || !Tail->isTailCall())
-    return false;
-  const auto *Ret = dyn_cast_or_null<ReturnInst>(Tail->getNextNode());
-  if (!Ret)
-    return false;
-  if (Tail->getType()->isVoidTy())
-    return Ret->getReturnValue() == nullptr;
-  return Ret->getReturnValue() == Tail;
-}
-
 uint64_t stableStatepointID(StringRef FunctionName, uint64_t CallOrdinal) {
   uint64_t Hash = 14695981039346656037ULL;
   auto Mix = [&](uint8_t Byte) {
@@ -1917,8 +1902,8 @@ std::optional<BasicBlockEdge> loopHomeEntryEdge(Loop *HomeLoop) {
 CallInst *previousStatepointCall(Instruction &InsertBefore) {
   for (Instruction *I = InsertBefore.getPrevNode(); I; I = I->getPrevNode()) {
     auto *Call = dyn_cast<CallInst>(I);
-    if (Call && !isa<GCStatepointInst>(Call) &&
-        !isTerminalTailTransfer(*Call) && !isLeafCall(*Call))
+    if (Call && !isa<GCStatepointInst>(Call) && !Call->isMustTailCall() &&
+        !isLeafCall(*Call))
       return Call;
   }
   return nullptr;
@@ -2072,7 +2057,7 @@ buildStatepointPreservationPlans(Function &F, LoopInfo &LI, DominatorTree &DT) {
   for (Instruction &I : instructions(F)) {
     auto *Call = dyn_cast<CallInst>(&I);
     if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
-        isTerminalTailTransfer(*Call))
+        Call->isMustTailCall())
       continue;
     for (Value *Live : liveAtCall(*Call, StatepointLiveness)) {
       auto It = Plans.find(Live);
@@ -3068,7 +3053,7 @@ bool hasInitializedPointerSlotsBeforeSafepoint(
       continue;
     }
     if (auto *Call = dyn_cast<CallBase>(I);
-        Call && !isTerminalTailTransfer(*Call) && !isLeafCall(*Call)) {
+        Call && !Call->isMustTailCall() && !isLeafCall(*Call)) {
       if (auto *OrdinaryCall = dyn_cast<CallInst>(Call);
           OrdinaryCall && llvm::is_contained(Record.ActiveCalls, OrdinaryCall))
         return Initialized.count() == Record.Layout.Leaves.size();
@@ -3141,8 +3126,8 @@ Error collectPointerAllocas(
     SmallVectorImpl<PointerAllocaRecord> &PointerAllocas) {
   bool HasSafepoint = llvm::any_of(instructions(F), [](Instruction &I) {
     auto *Call = dyn_cast<CallBase>(&I);
-    return Call && !isTerminalTailTransfer(*Call) &&
-           !isa<GCStatepointInst>(Call) && !isLeafCall(*Call);
+    return Call && !Call->isMustTailCall() && !isa<GCStatepointInst>(Call) &&
+           !isLeafCall(*Call);
   });
   if (!HasSafepoint)
     return Error::success();
@@ -3907,7 +3892,7 @@ Error rewriteFunction(Function &F) {
       if (!Call)
         continue;
       if (isa<GCStatepointInst>(Call) ||
-          (!isTerminalTailTransfer(*Call) && !isLeafCall(*Call)))
+          (!Call->isMustTailCall() && !isLeafCall(*Call)))
         return createStringError(
             std::errc::invalid_argument,
             "GoALLC gc-leaf-function contains a non-leaf call");
@@ -4009,7 +3994,7 @@ Error rewriteFunction(Function &F) {
   for (Instruction &I : instructions(F)) {
     auto *Call = dyn_cast<CallBase>(&I);
     if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
-        isTerminalTailTransfer(*Call))
+        Call->isMustTailCall())
       continue;
     auto *OrdinaryCall = dyn_cast<CallInst>(Call);
     if (!OrdinaryCall)
@@ -4231,6 +4216,8 @@ Error goallc::prepareStatepointModule(Module &M) {
 Error goallc::rewriteStatepoints(Function &F, TargetMachine &) {
   if (F.isDeclaration())
     return Error::success();
+  if (Error Err = finalizeCPUFeatureTailTransfers(F))
+    return Err;
   lowerPointerAddressConversions(F);
   if (!isGoCallingConv(F.getCallingConv()) || !F.hasGC() ||
       F.getGC() != GoALLCGCName)

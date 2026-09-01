@@ -137,6 +137,12 @@ if(BUILD_TESTING)
     -o -
   )
 
+  goallc_add_ir_filecheck_test(
+    GoALLCCPUFeatures.FinalizeTailTransfers
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-sse41.ll"
+    CHECK-FINAL
+  )
+
   goallc_add_filecheck_test(
     GoALLCCPUFeatures.FMAv2
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-fma-v2.ll"

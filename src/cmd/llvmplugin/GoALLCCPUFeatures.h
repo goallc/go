@@ -10,6 +10,7 @@
 
 namespace llvm {
 
+class Function;
 class Module;
 
 namespace goallc {
@@ -18,6 +19,11 @@ namespace goallc {
 // pipeline. The transformation is module-idempotent so no-opt llc paths may
 // safely invoke it again from the pre-codegen callback.
 Error runEarlyIRPipeline(Module &M);
+
+// Promotes marked FMV calls which remain terminal after optimization to
+// musttail immediately before statepoint rewriting and instruction selection.
+// Calls made non-terminal by inlining keep ordinary safepoint semantics.
+Error finalizeCPUFeatureTailTransfers(Function &F);
 
 class CPUFeaturesPass : public PassInfoMixin<CPUFeaturesPass> {
 public:

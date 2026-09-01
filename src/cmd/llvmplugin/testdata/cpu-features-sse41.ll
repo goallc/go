@@ -20,14 +20,22 @@ declare double @llvm.floor.f64(double)
 ; CHECK-SAME: !goobj.symbol.flags ![[SYMFLAGS:[0-9]+]]
 ; CHECK: entry:
 ; CHECK-NEXT: load atomic ptr, ptr @round.goallc.fmv.slot monotonic
-; CHECK: tail call double %target(double %x), !dbg ![[DISPATCHLOC:[0-9]+]]
+; CHECK: tail call double %target(double %x), !dbg ![[DISPATCHLOC:[0-9]+]], !goallc.cpu.tail_transfer
 ; CHECK-NEXT: ret double
 
 ; CHECK-INLINE-LABEL: define double @round.caller(
 ; CHECK-INLINE: load atomic ptr, ptr @round.goallc.fmv.slot monotonic
 ; CHECK-INLINE-NOT: call double @round(
-; CHECK-INLINE: tail call double %target.i(double %x)
+; CHECK-INLINE: tail call double %target.i(double %x){{.*}}!goallc.cpu.tail_transfer
 ; CHECK-INLINE: fadd double
+
+; CHECK-FINAL-LABEL: define double @round(
+; CHECK-FINAL: musttail call double %target(double %x)
+; CHECK-FINAL-NOT: !goallc.cpu.tail_transfer
+; CHECK-FINAL-LABEL: define internal double @round.goallc.fmv.resolve(
+; CHECK-FINAL: musttail call double @round.goallc.fmv.baseline(double %x)
+; CHECK-FINAL: musttail call double {{.*}}(double %x)
+; CHECK-FINAL-NOT: !goallc.cpu.tail_transfer
 
 ; CHECK-X86-ASM-LABEL: round:
 ; CHECK-X86-ASM: movq round.goallc.fmv.slot(%rip), %rax

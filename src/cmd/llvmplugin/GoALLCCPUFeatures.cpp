@@ -46,6 +46,7 @@ constexpr StringLiteral GoObjDebugInlineRequiredMD =
 constexpr StringLiteral GoObjNonPackageMD = "goobj.symbol.nonpackage";
 constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
 constexpr StringLiteral GoNoSplitAttr = "go-nosplit";
+constexpr StringLiteral TailTransferMD = "goallc.cpu.tail_transfer";
 constexpr uint64_t GoObjSymFlagDupok = uint64_t{1} << 0;
 
 enum FeatureBit : uint64_t {
@@ -385,6 +386,8 @@ CallInst *createTailCall(IRBuilder<> &B, Function &Signature, Value *Callee) {
   Call->setCallingConv(Signature.getCallingConv());
   Call->setAttributes(callAttributes(Signature));
   Call->setTailCallKind(CallInst::TCK_Tail);
+  Call->setMetadata(TailTransferMD, MDNode::get(Signature.getContext(),
+                                                ArrayRef<Metadata *>()));
   return Call;
 }
 
@@ -605,6 +608,28 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
 }
 
 } // namespace
+
+Error llvm::goallc::finalizeCPUFeatureTailTransfers(Function &F) {
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      auto *Call = dyn_cast<CallInst>(&I);
+      if (!Call || !Call->getMetadata(TailTransferMD))
+        continue;
+      Call->setMetadata(TailTransferMD, nullptr);
+
+      // An inlined dispatcher can leave the marked call in the middle of its
+      // caller. Such a call is an ordinary safepoint. Only a transfer which
+      // still returns the exact call result can use musttail at codegen.
+      auto *Ret = dyn_cast_or_null<ReturnInst>(Call->getNextNode());
+      bool ReturnsCall =
+          Ret && (Call->getType()->isVoidTy() ? Ret->getReturnValue() == nullptr
+                                              : Ret->getReturnValue() == Call);
+      if (Call->isTailCall() && ReturnsCall)
+        Call->setTailCallKind(CallInst::TCK_MustTail);
+    }
+  }
+  return Error::success();
+}
 
 Error llvm::goallc::runEarlyIRPipeline(Module &M) {
   if (M.getNamedMetadata(DoneMD))
