@@ -63,4 +63,6 @@ const (
 	goallcCPUFeatureAVX
 	goallcCPUFeatureFMA
 	goallcCPUFeaturesInitialized
+	goallcCPUFeaturePOPCNT
+	goallcCPUFeatureARM64LSE
 )

@@ -103,14 +103,17 @@ const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
+const llvmTargetFeaturesAttr = "target-features"
 const goCPUConfigMD = "goallc.cpu.config"
 const goCPUGuardMD = "goallc.cpu.guard"
 const goCPURequiresMD = "goallc.cpu.requires"
 const goCPUMultiversionAttr = "goallc.cpu.multiversion"
 
 const (
-	goCPUProfileX86FMA   = "x86.fma"
-	goCPUProfileX86SSE41 = "x86.sse41"
+	goCPUProfileX86FMA    = "x86.fma"
+	goCPUProfileX86SSE41  = "x86.sse41"
+	goCPUProfileX86POPCNT = "x86.popcnt"
+	goCPUProfileARM64LSE  = "arm64.lse"
 )
 
 // Keep fixed-size memmoves within the store expansion limits of the supported
@@ -577,7 +580,7 @@ func (lfc *LLVMFuncContext) llvmTernaryIntrinsic(v *Value, name string) llvm.Val
 
 func (lfc *LLVMFuncContext) llvmRoundIntrinsic(v *Value, genericName string) llvm.Value {
 	result := lfc.llvmUnaryIntrinsic(v, genericName)
-	if profile := llvmRequiredCPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 2, goCPUProfileX86SSE41); profile != "" {
+	if profile := llvmRequiredAMD64CPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 2, goCPUProfileX86SSE41); profile != "" {
 		lfc.requireCPUFeature(result, profile)
 	}
 	return result
@@ -585,14 +588,21 @@ func (lfc *LLVMFuncContext) llvmRoundIntrinsic(v *Value, genericName string) llv
 
 func (lfc *LLVMFuncContext) llvmFMA(v *Value) llvm.Value {
 	result := lfc.llvmTernaryIntrinsic(v, "llvm.fma.f64")
-	if profile := llvmRequiredCPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 3, goCPUProfileX86FMA); profile != "" {
+	if profile := llvmRequiredAMD64CPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 3, goCPUProfileX86FMA); profile != "" {
 		lfc.requireCPUFeature(result, profile)
 	}
 	return result
 }
 
-func llvmRequiredCPUProfile(arch string, goamd64, baselineLevel int, profile string) string {
+func llvmRequiredAMD64CPUProfile(arch string, goamd64, baselineLevel int, profile string) string {
 	if arch != "amd64" || goamd64 >= baselineLevel {
+		return ""
+	}
+	return profile
+}
+
+func llvmRequiredARM64CPUProfile(arch string, baselineHasFeature bool, profile string) string {
+	if arch != "arm64" || baselineHasFeature {
 		return ""
 	}
 	return profile
@@ -610,13 +620,33 @@ func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile st
 		lfc.RequiredCPUFeatures = make(map[string]bool)
 	}
 	lfc.RequiredCPUFeatures[profile] = true
-	profiles := make([]string, 0, 2)
-	for _, candidate := range []string{goCPUProfileX86FMA, goCPUProfileX86SSE41} {
+	profiles := make([]string, 0, 4)
+	for _, candidate := range []string{
+		goCPUProfileX86FMA,
+		goCPUProfileX86SSE41,
+		goCPUProfileX86POPCNT,
+		goCPUProfileARM64LSE,
+	} {
 		if lfc.RequiredCPUFeatures[candidate] {
 			profiles = append(profiles, candidate)
 		}
 	}
 	lfc.LF.AddTargetDependentFunctionAttr(goCPUMultiversionAttr, strings.Join(profiles, ","))
+}
+
+func (lfc *LLVMFuncContext) requireARM64LSE(v *Value, instruction llvm.Value) {
+	if llvmRequiredARM64CPUProfile(lfc.F.Config.arch, buildcfg.GOARM64.LSE, goCPUProfileARM64LSE) == "" {
+		return
+	}
+	switch v.Op {
+	case OpAtomicStore8Variant, OpAtomicStore32Variant, OpAtomicStore64Variant,
+		OpAtomicAdd32Variant, OpAtomicAdd64Variant,
+		OpAtomicExchange8Variant, OpAtomicExchange32Variant, OpAtomicExchange64Variant,
+		OpAtomicAnd64valueVariant, OpAtomicAnd32valueVariant, OpAtomicAnd8valueVariant,
+		OpAtomicOr64valueVariant, OpAtomicOr32valueVariant, OpAtomicOr8valueVariant,
+		OpAtomicCompareAndSwap32Variant, OpAtomicCompareAndSwap64Variant:
+		lfc.requireCPUFeature(instruction, goCPUProfileARM64LSE)
+	}
 }
 
 // llvmContractionMul recognizes a product that the native target rules may
@@ -704,6 +734,13 @@ func llvmTargetCPU(arch string, goamd64 int) string {
 		base.Fatalf("LLVM target CPU is not configured for GOAMD64=v%d", goamd64)
 		return ""
 	}
+}
+
+func llvmBaselineTargetFeatures(arch string, goarm64 buildcfg.Goarm64Features) string {
+	if arch == "arm64" && goarm64.LSE {
+		return "+lse"
+	}
+	return ""
 }
 
 func (lfc *LLVMFuncContext) buildPureTuple(v *Value, values ...llvm.Value) llvm.Value {
@@ -1024,6 +1061,9 @@ func (lfc *LLVMFuncContext) populationCount(v *Value) llvm.Value {
 	sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type()}, false)
 	fn := getOrInsertLLVMIntrinsic("llvm.ctpop.i"+fmt.Sprint(bits), sig)
 	count := lfc.b.CreateCall(sig, fn, []llvm.Value{x}, v.String()+".count")
+	if profile := llvmRequiredAMD64CPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 2, goCPUProfileX86POPCNT); profile != "" {
+		lfc.requireCPUFeature(count, profile)
+	}
 	want := getLLVMType(v.Type)
 	if want.TypeKind() != llvm.IntegerTypeKind {
 		v.Fatalf("%s has a non-integer LLVM result", v.Op)
@@ -2660,6 +2700,8 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 				profile = goCPUProfileX86FMA
 			case "runtime.x86HasSSE41":
 				profile = goCPUProfileX86SSE41
+			case "runtime.x86HasPOPCNT":
+				profile = goCPUProfileX86POPCNT
 			}
 			if profile != "" {
 				flag.SetMetadata(GlobalCtxt.MDKindID(goCPUGuardMD), GlobalCtxt.MDNode([]llvm.Metadata{
@@ -3185,6 +3227,16 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		}
 		addr = lfc.llvmAddressPointer(v, addr, v.Args[0].Type, v.String()+".addr")
 		lVal = lfc.b.CreateLoad(typ, addr, v.String())
+		if lfc.F.Config.arch == "arm64" && v.Op == OpLoad && len(v.Args) != 0 {
+			address := v.Args[0]
+			if address.Op == OpAddr {
+				if sym, ok := address.Aux.(*obj.LSym); ok && sym.Name == "runtime.arm64HasATOMICS" {
+					lVal.SetMetadata(GlobalCtxt.MDKindID(goCPUGuardMD), GlobalCtxt.MDNode([]llvm.Metadata{
+						GlobalCtxt.MDString(goCPUProfileARM64LSE),
+					}))
+				}
+			}
+		}
 		// The runtime may resume at the first deferreturn call recorded for the
 		// function, which can be an ordinary exit rather than the fake recovery
 		// successor. Reload named results from their stack homes at every such
@@ -3226,6 +3278,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		}
 		lVal.SetOrdering(ordering)
 		lVal.SetAlignment(int(v.Args[1].Type.Alignment()))
+		lfc.requireARM64LSE(v, lVal)
 	case OpAtomicAdd32, OpAtomicAdd32Variant, OpAtomicAdd64, OpAtomicAdd64Variant:
 		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		old := lfc.b.CreateAtomicRMW(
@@ -3233,6 +3286,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			llvm.AtomicOrderingSequentiallyConsistent,
 			false,
 		)
+		lfc.requireARM64LSE(v, old)
 		lVal = lfc.b.CreateAdd(old, arg1(), v.String())
 	case OpAtomicExchange8, OpAtomicExchange8Variant,
 		OpAtomicExchange32, OpAtomicExchange32Variant,
@@ -3244,6 +3298,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			false,
 		)
 		lVal.SetName(v.String())
+		lfc.requireARM64LSE(v, lVal)
 	case OpAtomicAnd8, OpAtomicAnd32,
 		OpAtomicAnd64value, OpAtomicAnd64valueVariant,
 		OpAtomicAnd32value, OpAtomicAnd32valueVariant,
@@ -3255,6 +3310,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			false,
 		)
 		lVal.SetName(v.String())
+		lfc.requireARM64LSE(v, lVal)
 	case OpAtomicOr8, OpAtomicOr32,
 		OpAtomicOr64value, OpAtomicOr64valueVariant,
 		OpAtomicOr32value, OpAtomicOr32valueVariant,
@@ -3266,6 +3322,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			false,
 		)
 		lVal.SetName(v.String())
+		lfc.requireARM64LSE(v, lVal)
 	case OpAtomicCompareAndSwap32, OpAtomicCompareAndSwap32Variant,
 		OpAtomicCompareAndSwap64, OpAtomicCompareAndSwap64Variant,
 		OpAtomicCompareAndSwapRel32:
@@ -3302,6 +3359,7 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 			failureOrdering,
 			false,
 		)
+		lfc.requireARM64LSE(v, pair)
 		success := lfc.b.CreateExtractValue(pair, 1, v.String()+".success")
 		lVal = lfc.b.CreateZExt(success, getLLVMType(v.Type.FieldType(0)), v.String())
 	case OpPubBarrier:
@@ -3691,6 +3749,12 @@ func LLVMCompile(f *Func) {
 		// Make the required instruction set visible to both LLVM optimization
 		// and instruction selection without selecting a host-specific CPU.
 		FCtxt.LF.AddTargetDependentFunctionAttr(llvmTargetCPUAttr, cpu)
+	}
+	if features := llvmBaselineTargetFeatures(f.Config.arch, buildcfg.GOARM64); features != "" {
+		// GOARM64 makes LSE mandatory at v8.1 and can request it explicitly at
+		// v8.0. Generic LLVM atomics need the same function feature in order to
+		// select the single-instruction LSE forms.
+		FCtxt.LF.AddTargetDependentFunctionAttr(llvmTargetFeaturesAttr, features)
 	}
 	// Go has already made its source-level inlining decision before LLVM
 	// lowering. Preserve both explicit //go:noinline boundaries and the
@@ -4486,7 +4550,7 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 	CurrentModule.AddNamedMetadataOperand(goCPUConfigMD, GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString("goallc.cpu.v1"),
 		GlobalCtxt.MDString(buildcfg.GOARCH),
-		GlobalCtxt.MDString(fmt.Sprintf("v%d", buildcfg.GOAMD64)),
+		GlobalCtxt.MDString(goarchValue),
 	}))
 	emitGoObjStaticRODataType()
 }

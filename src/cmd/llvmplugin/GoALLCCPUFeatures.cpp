@@ -40,6 +40,8 @@ constexpr StringLiteral RuntimeFeatureMask = "runtime.goallcCPUFeatures";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoObjDebugFuncsMD = "goobj.debug.funcs";
 constexpr StringLiteral GoObjNonPackageMD = "goobj.symbol.nonpackage";
+constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
+constexpr uint64_t GoObjSymFlagDupok = uint64_t{1} << 0;
 
 enum FeatureBit : uint64_t {
 #define GOALLC_CPU_FEATURE(Name, Bit) Feature##Name = uint64_t{1} << Bit,
@@ -51,7 +53,13 @@ struct Profile {
   StringLiteral Name;
   StringLiteral Suffix;
   StringLiteral TargetFeature;
+  StringLiteral Arch;
   uint64_t Closure;
+};
+
+struct CPUConfig {
+  StringRef Arch;
+  uint64_t Baseline;
 };
 
 // Profiles describe Go's effective feature booleans, not a CPUID implication
@@ -60,20 +68,31 @@ struct Profile {
 // one enabled boolean as another would therefore change Go program semantics.
 constexpr uint64_t SSE41Closure = FeatureSSE41;
 constexpr uint64_t FMAClosure = FeatureFMA;
+constexpr uint64_t POPCNTClosure = FeaturePOPCNT;
+constexpr uint64_t ARM64LSEClosure = FeatureARM64LSE;
 
 constexpr uint64_t V2Baseline =
-    FeatureSSE3 | FeatureSSSE3 | FeatureSSE41 | FeatureSSE42;
+    FeatureSSE3 | FeatureSSSE3 | FeatureSSE41 | FeatureSSE42 | FeaturePOPCNT;
 constexpr uint64_t V3Baseline = V2Baseline | FeatureAVX | FeatureFMA;
 
-constexpr Profile SSE41Profile = {"x86.sse41", "sse41", "+sse4.1",
+constexpr Profile SSE41Profile = {"x86.sse41", "sse41", "+sse4.1", "amd64",
                                   SSE41Closure};
-constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", FMAClosure};
+constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64",
+                                FMAClosure};
+constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt", "+popcnt", "amd64",
+                                   POPCNTClosure};
+constexpr Profile ARM64LSEProfile = {"arm64.lse", "lse", "+lse", "arm64",
+                                    ARM64LSEClosure};
 
 const Profile *findProfile(StringRef Name) {
   if (Name == FMAProfile.Name)
     return &FMAProfile;
   if (Name == SSE41Profile.Name)
     return &SSE41Profile;
+  if (Name == POPCNTProfile.Name)
+    return &POPCNTProfile;
+  if (Name == ARM64LSEProfile.Name)
+    return &ARM64LSEProfile;
   return nullptr;
 }
 
@@ -98,7 +117,7 @@ Expected<StringRef> getInstructionProfile(const Instruction &I,
   return getMetadataString(*Node, Kind, 0);
 }
 
-Expected<uint64_t> baselineMask(const Module &M) {
+Expected<CPUConfig> getCPUConfig(const Module &M) {
   const NamedMDNode *Config = M.getNamedMetadata(ConfigMD);
   if (!Config || Config->getNumOperands() != 1)
     return createStringError(inconvertibleErrorCode(),
@@ -121,22 +140,55 @@ Expected<uint64_t> baselineMask(const Module &M) {
     return createStringError(inconvertibleErrorCode(),
                              "unsupported GoALLC CPU config version " +
                                  *Version);
-  if (*Arch != "amd64")
-    return uint64_t{0};
-  if (*Level == "v1")
-    return uint64_t{0};
-  if (*Level == "v2")
-    return V2Baseline;
-  if (*Level == "v3" || *Level == "v4")
-    return V3Baseline;
-  return createStringError(inconvertibleErrorCode(),
-                           "unsupported GOAMD64 level " + *Level);
+  if (*Arch == "amd64") {
+    if (*Level == "v1")
+      return CPUConfig{*Arch, uint64_t{0}};
+    if (*Level == "v2")
+      return CPUConfig{*Arch, V2Baseline};
+    if (*Level == "v3" || *Level == "v4")
+      return CPUConfig{*Arch, V3Baseline};
+    return createStringError(inconvertibleErrorCode(),
+                             "unsupported GOAMD64 level " + *Level);
+  }
+  if (*Arch == "arm64") {
+    SmallVector<StringRef, 4> Parts;
+    Level->split(Parts, ',', -1, false);
+    if (Parts.empty() ||
+        !(Parts.front().starts_with("v8.") || Parts.front().starts_with("v9.")))
+      return createStringError(inconvertibleErrorCode(),
+                               "unsupported GOARM64 level " + *Level);
+    uint64_t Baseline = 0;
+    if (llvm::is_contained(Parts, StringRef("lse")))
+      Baseline |= FeatureARM64LSE;
+    return CPUConfig{*Arch, Baseline};
+  }
+  return CPUConfig{*Arch, uint64_t{0}};
 }
 
 void markGoObjNonPackage(GlobalObject &GO) {
   Metadata *Operands[] = {ConstantAsMetadata::get(
       ConstantInt::getTrue(GO.getContext()))};
   GO.setMetadata(GoObjNonPackageMD, MDNode::get(GO.getContext(), Operands));
+}
+
+bool isGoObjDuplicateOK(const GlobalObject &GO) {
+  if (GO.isWeakForLinker())
+    return true;
+  const MDNode *Flags = GO.getMetadata(GoObjSymbolFlagsMD);
+  if (!Flags || Flags->getNumOperands() != 2)
+    return false;
+  const auto *Flag = mdconst::dyn_extract<ConstantInt>(Flags->getOperand(0));
+  return Flag && (Flag->getZExtValue() & GoObjSymFlagDupok) != 0;
+}
+
+void markGoObjDuplicateOK(GlobalObject &GO) {
+  Metadata *Operands[] = {
+      ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(GO.getContext()),
+                                               GoObjSymFlagDupok)),
+      ConstantAsMetadata::get(
+          ConstantInt::get(Type::getInt32Ty(GO.getContext()), 0))};
+  GO.setMetadata(GoObjSymbolFlagsMD,
+                 MDNode::get(GO.getContext(), Operands));
 }
 
 void eraseGoObjDefinitionIdentity(Function &F) {
@@ -266,13 +318,14 @@ struct Variant {
   uint64_t RuntimeRequired;
 };
 
-Expected<SmallVector<const Profile *, 2>> requestedProfiles(Function &F) {
+Expected<SmallVector<const Profile *, 4>> requestedProfiles(Function &F,
+                                                            StringRef Arch) {
   Attribute Attr = F.getFnAttribute(MultiversionAttr);
   if (!Attr.isStringAttribute() || Attr.getValueAsString().empty())
     return createStringError(
         inconvertibleErrorCode(),
         "GoALLC multiversion function has an empty profile list");
-  SmallVector<const Profile *, 2> Result;
+  SmallVector<const Profile *, 4> Result;
   StringMap<bool> Seen;
   SmallVector<StringRef, 2> Names;
   Attr.getValueAsString().split(Names, ',', -1, false);
@@ -282,6 +335,11 @@ Expected<SmallVector<const Profile *, 2>> requestedProfiles(Function &F) {
       return createStringError(inconvertibleErrorCode(),
                                "unknown GoALLC CPU multiversion profile " +
                                    Name);
+    if (P->Arch != Arch)
+      return createStringError(inconvertibleErrorCode(),
+                               "GoALLC CPU profile " + Name +
+                                   " does not match module architecture " +
+                                   Arch);
     if (!Seen.insert({Name, true}).second)
       return createStringError(inconvertibleErrorCode(),
                                "duplicate GoALLC CPU multiversion profile " +
@@ -294,6 +352,7 @@ Expected<SmallVector<const Profile *, 2>> requestedProfiles(Function &F) {
 Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
                                   uint64_t Available,
                                   ArrayRef<const Profile *> EnabledProfiles) {
+  const bool DuplicateOK = isGoObjDuplicateOK(Source);
   ValueToValueMapTy VMap;
   Function *Clone = CloneFunction(&Source, VMap);
   Clone->setName(Source.getName() + ".goallc.fmv." + Suffix);
@@ -301,6 +360,8 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
   Clone->setDSOLocal(true);
   Clone->removeFnAttr(MultiversionAttr);
   eraseGoObjDefinitionIdentity(*Clone);
+  if (DuplicateOK)
+    markGoObjDuplicateOK(*Clone);
   for (const Profile *P : EnabledProfiles)
     addTargetFeature(*Clone, P->TargetFeature);
   Expected<bool> Specialized = specializeGuards(*Clone, Available);
@@ -323,24 +384,27 @@ Error registerGoObjDebugFunction(Function &F) {
   return Error::success();
 }
 
-Error multiversionFunction(Function &F, uint64_t Baseline,
+Error multiversionFunction(Function &F, const CPUConfig &Config,
                            GlobalVariable &RuntimeMask) {
-  Expected<SmallVector<const Profile *, 2>> Requested = requestedProfiles(F);
+  const bool DuplicateOK = isGoObjDuplicateOK(F);
+  Expected<SmallVector<const Profile *, 4>> Requested =
+      requestedProfiles(F, Config.Arch);
   if (!Requested)
     return Requested.takeError();
 
   Expected<Function *> BaselineOrErr =
-      cloneVariant(F, "baseline", Baseline, {});
+      cloneVariant(F, "baseline", Config.Baseline, {});
   if (!BaselineOrErr)
     return BaselineOrErr.takeError();
   Function *BaselineImpl = *BaselineOrErr;
-  if (Error Err = verifyRequirements(*BaselineImpl, Baseline))
+  if (Error Err = verifyRequirements(*BaselineImpl, Config.Baseline))
     return Err;
   if (Error Err = registerGoObjDebugFunction(*BaselineImpl))
     return Err;
 
-  SmallVector<const Profile *, 2> OrderedProfiles;
-  for (const Profile *P : {&SSE41Profile, &FMAProfile}) {
+  SmallVector<const Profile *, 4> OrderedProfiles;
+  for (const Profile *P :
+       {&SSE41Profile, &FMAProfile, &POPCNTProfile, &ARM64LSEProfile}) {
     if (llvm::find(*Requested, P) != Requested->end())
       OrderedProfiles.push_back(P);
   }
@@ -365,7 +429,7 @@ Error multiversionFunction(Function &F, uint64_t Baseline,
       Suffix += P->Suffix;
       Required |= P->Closure;
     }
-    uint64_t Available = Baseline | Required;
+    uint64_t Available = Config.Baseline | Required;
     Expected<Function *> CloneOrErr =
         cloneVariant(F, Suffix, Available, EnabledProfiles);
     if (!CloneOrErr)
@@ -375,7 +439,7 @@ Error multiversionFunction(Function &F, uint64_t Baseline,
       return Err;
     if (Error Err = registerGoObjDebugFunction(*Clone))
       return Err;
-    Variants.push_back({Clone, Required & ~Baseline});
+    Variants.push_back({Clone, Required & ~Config.Baseline});
   }
 
   LLVMContext &C = F.getContext();
@@ -388,9 +452,16 @@ Error multiversionFunction(Function &F, uint64_t Baseline,
   Slot->setDSOLocal(true);
   Slot->setSection(".noptrdata");
   markGoObjNonPackage(*Slot);
+  if (DuplicateOK)
+    markGoObjDuplicateOK(*Slot);
 
   eraseFunctionBodyPreservingMetadata(F);
   F.removeFnAttr(MultiversionAttr);
+  // The resolver's musttail transfer is valid only in the dispatcher's own
+  // calling convention. Keep this stable call boundary: inlining it into a
+  // runtime helper with a different convention would make the transfer
+  // invalid, and every call must also observe the single published slot.
+  F.addFnAttr(Attribute::NoInline);
   BasicBlock *Entry = BasicBlock::Create(C, "entry", &F);
   BasicBlock *Dispatch = BasicBlock::Create(C, "dispatch", &F);
   BasicBlock *Resolve = BasicBlock::Create(C, "resolve", &F);
@@ -444,9 +515,9 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
   if (!M.getNamedMetadata(ConfigMD))
     return Error::success();
 
-  Expected<uint64_t> Baseline = baselineMask(M);
-  if (!Baseline)
-    return Baseline.takeError();
+  Expected<CPUConfig> Config = getCPUConfig(M);
+  if (!Config)
+    return Config.takeError();
 
   SmallVector<Function *, 16> Candidates;
   for (Function &F : M)
@@ -460,7 +531,7 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
           inconvertibleErrorCode(),
           "GoALLC CPU multiversioning requires runtime.goallcCPUFeatures");
     for (Function *F : Candidates)
-      if (Error Err = multiversionFunction(*F, *Baseline, *RuntimeMask))
+      if (Error Err = multiversionFunction(*F, *Config, *RuntimeMask))
         return Err;
   }
 

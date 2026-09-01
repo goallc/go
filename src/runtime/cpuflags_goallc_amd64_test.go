@@ -22,6 +22,7 @@ func TestGoALLCCPUFeaturesSnapshot(t *testing.T) {
 		{cpu.X86.HasSSE42, runtime.GoALLCCPUFeatureSSE42ForTest},
 		{cpu.X86.HasAVX, runtime.GoALLCCPUFeatureAVXForTest},
 		{cpu.X86.HasFMA, runtime.GoALLCCPUFeatureFMAForTest},
+		{cpu.X86.HasPOPCNT, runtime.GoALLCCPUFeaturePOPCNTForTest},
 	} {
 		if feature.enabled {
 			want |= feature.bit

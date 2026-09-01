@@ -140,6 +140,30 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.POPCNT
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-popcnt.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-popcnt.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.ARM64LSE
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-arm64-lse.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-arm64-lse.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.InvalidRequirement
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-invalid.ll"
     CHECK
