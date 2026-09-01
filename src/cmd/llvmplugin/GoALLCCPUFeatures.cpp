@@ -239,7 +239,23 @@ Error cloneRequiredInlineLocations(Function &Source, Function &Clone,
     if (GV != &Source)
       continue;
 
-    auto *Mapped = dyn_cast_or_null<DILocation>(MapMetadata(Loc, VMap));
+    // Match CloneFunction's same-module debug mapping policy. In particular,
+    // keep subprograms and lexical scopes belonging to an inlined callee by
+    // identity. Required locations can describe an edge whose last real
+    // instruction has already disappeared, so those scopes are not
+    // necessarily present in VMap even though CloneFunction normally keeps
+    // them. Cloning such a scope creates a second DISubprogram with no entry
+    // in !goobj.debug.funcs, leaving GoObj unable to resolve its exact symbol.
+    DISubprogram *SourceSP = Source.getSubprogram();
+    MetadataPredicate IdentityMD = [SourceSP](const Metadata *MD) {
+      if (isa<DICompileUnit>(MD))
+        return true;
+      if (const auto *Scope = dyn_cast<DILocalScope>(MD))
+        return Scope->getSubprogram() != SourceSP;
+      return false;
+    };
+    auto *Mapped = dyn_cast_or_null<DILocation>(
+        MapMetadata(Loc, VMap, RF_None, nullptr, nullptr, &IdentityMD));
     if (!Mapped || !Mapped->getInlinedAt())
       return createStringError(inconvertibleErrorCode(),
                                "failed to map required inline location from " +

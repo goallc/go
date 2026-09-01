@@ -9,7 +9,7 @@ package codegen
 import "math"
 
 // LLVM-ARM64-DAG: call double @llvm.fma.f64(double %x, double %y, double %z)
-// LLVM-AMD64-DAG: call double @llvm.fma.f64(double %x, double %y, double %z), !goallc.cpu.requires
+// LLVM-AMD64-DAG: call double @llvm.fma.f64(double %x, double %y, double %z){{.*}}!goallc.cpu.requires
 func llvmFMA64(x, y, z float64) float64 {
 	return math.FMA(x, y, z)
 }

@@ -106,8 +106,9 @@ entry:
 ; CHECK: ![[NONPACKAGE]] = !{i1 true}
 ; CHECK-DAG: ![[BASE_REQUIRED]] = !{ptr @round.goallc.fmv.baseline, ![[BASE_INLINE:[0-9]+]]}
 ; CHECK-DAG: ![[SSE_REQUIRED]] = !{ptr @round.goallc.fmv.sse41, ![[SSE_INLINE:[0-9]+]]}
-; CHECK-DAG: ![[BASE_INLINE]] = !DILocation(line: 10, column: 1, scope: !{{[0-9]+}}, inlinedAt: !{{[0-9]+}})
-; CHECK-DAG: ![[SSE_INLINE]] = !DILocation(line: 10, column: 1, scope: !{{[0-9]+}}, inlinedAt: !{{[0-9]+}})
+; CHECK-DAG: ![[BASE_INLINE]] = !DILocation(line: 10, column: 1, scope: ![[HELPER:[0-9]+]], inlinedAt: !{{[0-9]+}})
+; CHECK-DAG: ![[SSE_INLINE]] = !DILocation(line: 10, column: 1, scope: ![[HELPER]], inlinedAt: !{{[0-9]+}})
+; CHECK-DAG: ![[HELPER]] = distinct !DISubprogram(name: "helper", linkageName: "helper"
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
 ; CHECK: ![[SYMINDEX]] = !{i32 17}
 ; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
