@@ -292,7 +292,6 @@ void makeFramelessResolver(Function &F) {
   F.removeFnAttr(Attribute::AlwaysInline);
   F.addFnAttr(Attribute::NoInline);
   F.addFnAttr(GoNoSplitAttr);
-  F.addFnAttr(TailTransferAttr);
 }
 
 void setSyntheticDebugLocation(IRBuilder<> &B, Function &F) {
@@ -382,19 +381,21 @@ AttributeList callAttributes(const Function &F) {
                             Source.getRetAttrs(), Params);
 }
 
-CallInst *createTailCall(IRBuilder<> &B, Function &Signature, Value *Callee) {
+CallInst *createTailCall(IRBuilder<> &B, Function &Signature, Value *Callee,
+                         CallInst::TailCallKind Kind) {
   SmallVector<Value *, 8> Args;
   for (Argument &Arg : Signature.args())
     Args.push_back(&Arg);
   CallInst *Call = B.CreateCall(Signature.getFunctionType(), Callee, Args);
   Call->setCallingConv(Signature.getCallingConv());
   Call->setAttributes(callAttributes(Signature));
-  Call->setTailCallKind(CallInst::TCK_Tail);
+  Call->setTailCallKind(Kind);
   return Call;
 }
 
-void createTailReturn(IRBuilder<> &B, Function &Signature, Value *Callee) {
-  CallInst *Call = createTailCall(B, Signature, Callee);
+void createTailReturn(IRBuilder<> &B, Function &Signature, Value *Callee,
+                      CallInst::TailCallKind Kind = CallInst::TCK_Tail) {
+  CallInst *Call = createTailCall(B, Signature, Callee, Kind);
   if (Signature.getReturnType()->isVoidTy())
     B.CreateRetVoid();
   else
@@ -593,7 +594,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   B.CreateCondBr(Initialized, Select, Uninitialized);
 
   B.SetInsertPoint(Uninitialized);
-  createTailReturn(B, *Resolver, BaselineImpl);
+  createTailReturn(B, *Resolver, BaselineImpl, CallInst::TCK_MustTail);
 
   B.SetInsertPoint(Select);
   Value *Selected = BaselineImpl;
@@ -605,7 +606,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   StoreInst *Publish = B.CreateStore(Selected, Slot);
   Publish->setAtomic(AtomicOrdering::Monotonic);
   Publish->setAlignment(Slot->getAlign().valueOrOne());
-  createTailReturn(B, *Resolver, Selected);
+  createTailReturn(B, *Resolver, Selected, CallInst::TCK_MustTail);
   return Error::success();
 }
 

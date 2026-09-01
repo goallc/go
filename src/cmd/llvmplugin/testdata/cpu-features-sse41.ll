@@ -91,15 +91,15 @@ entry:
 ; CHECK: and i64 %features, 64
 ; CHECK: br i1
 ; CHECK: uninitialized:
-; CHECK: tail call double @round.goallc.fmv.baseline(double %x)
+; CHECK: musttail call double @round.goallc.fmv.baseline(double %x)
 ; CHECK: select:
 ; CHECK: and i64 %features, 4
 ; CHECK: select i1 {{.*}}, ptr @round.goallc.fmv.sse41, ptr @round.goallc.fmv.baseline
 ; CHECK: store atomic ptr {{.*}}, ptr @round.goallc.fmv.slot monotonic
-; CHECK: tail call double {{.*}}(double %x)
+; CHECK: musttail call double {{.*}}(double %x)
 
 ; CHECK-DAG: attributes #[[EARLY_DISPATCH]] = {{.*}}"go-nosplit" "goallc.cpu.tail-transfers" {{.*}}"target-cpu"="x86-64"
-; CHECK-DAG: attributes #[[RESOLVER_ATTRS]] = {{.*}}noinline{{.*}}"go-nosplit" "goallc.cpu.tail-transfers"
+; CHECK-DAG: attributes #[[RESOLVER_ATTRS]] = {{.*}}noinline{{.*}}"go-nosplit"
 ; CHECK-DAG: attributes #[[SSE41]] = {{.*}}"target-cpu"="x86-64" {{.*}}"target-features"="+sse4.1"
 ; CHECK: !goobj.debug.inline.required = !{![[BASE_REQUIRED:[0-9]+]], ![[SSE_REQUIRED:[0-9]+]]}
 ; CHECK: !goallc.cpu.fmv.done = !{![[DONE:[0-9]+]]}
