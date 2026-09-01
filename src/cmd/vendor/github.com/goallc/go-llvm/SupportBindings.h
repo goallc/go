@@ -30,6 +30,11 @@ void LLVMLoadLibraryPermanently2(const char *Filename, char **ErrMsg);
 // configuration used by the target code-generation pipeline.
 LLVMErrorRef LLVMConfigureGoObjFromModule(LLVMModuleRef Module);
 
+// Load a pass plugin and run its named GoALLC early-IR pipeline. This happens
+// before the caller's normal optimization pipeline.
+LLVMErrorRef LLVMRunPassPluginEarlyIR(LLVMModuleRef Module,
+                                      const char *Filename);
+
 // Load a pass plugin and invoke its pre-codegen callback on Module. This is
 // the in-process equivalent of llc -load-pass-plugin immediately before llc
 // constructs the target code-generation pipeline.

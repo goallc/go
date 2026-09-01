@@ -26,6 +26,16 @@ const (
 )
 
 var (
+	// goallcCPUFeatures is the immutable CPU-feature snapshot consumed by
+	// GoALLC-generated function multiversion dispatchers. Keep the bit numbers
+	// in sync with src/cmd/llvmplugin/GoALLCCPUFeatures.def.
+	//
+	// The initialized bit is published together with the effective feature
+	// bits, after internal/cpu has applied GODEBUG overrides. A dispatcher that
+	// runs before publication must use its baseline implementation and must not
+	// cache that choice.
+	goallcCPUFeatures uint64
+
 	// Set in runtime.cpuinit.
 	// TODO: deprecate these; use internal/cpu directly.
 	x86HasAVX    bool
@@ -43,4 +53,14 @@ var (
 	loong64HasLSX        bool
 
 	riscv64HasZbb bool
+)
+
+const (
+	goallcCPUFeatureSSE3 uint64 = 1 << iota
+	goallcCPUFeatureSSSE3
+	goallcCPUFeatureSSE41
+	goallcCPUFeatureSSE42
+	goallcCPUFeatureAVX
+	goallcCPUFeatureFMA
+	goallcCPUFeaturesInitialized
 )

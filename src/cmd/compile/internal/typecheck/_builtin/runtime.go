@@ -299,6 +299,7 @@ var x86HasAVX bool
 var x86HasFMA bool
 var x86HasPOPCNT bool
 var x86HasSSE41 bool
+var goallcCPUFeatures uint64
 var armHasVFPv4 bool
 var arm64HasATOMICS bool
 var loong64HasLAMCAS bool

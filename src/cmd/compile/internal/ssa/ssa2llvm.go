@@ -21,33 +21,34 @@ import (
 )
 
 type LLVMFuncContext struct {
-	BBs               map[ID]llvm.BasicBlock
-	Vs                map[ID]llvm.Value
-	Locals            map[llvmLocalKey]llvmStackSlot
-	AddressedResults  map[ID][]llvmAddressedResult
-	ResultSlots       map[ID]llvm.Value
-	CallResultSlots   map[llvmCallResultKey]llvmStackSlot
-	ItabMethods       map[ID]bool
-	ClosureCodeLoads  map[ID]bool
-	DeferResults      map[llvmLocalKey]bool
-	DeferResultKeys   map[ID]llvmLocalKey
-	RequiredInlinePos map[int]bool
-	OpenDeferBits     llvmLocalKey
-	HasOpenDeferBits  bool
-	OpenDeferSlots    map[llvmLocalKey]int
-	F                 *Func
-	LF                llvm.Value
-	DISubprogram      llvm.Metadata
-	Prologue          llvm.BasicBlock
-	OpenDeferRecovery llvm.BasicBlock
-	ClosureContext    llvm.Value
-	ABI0FrameBase     llvm.Value
-	b                 llvm.Builder
-	ReturnType        llvm.Type
-	ResultCount       int
-	ReturnCount       int
-	Params            []llvmParamSignature
-	Results           []llvmResultSignature
+	BBs                 map[ID]llvm.BasicBlock
+	Vs                  map[ID]llvm.Value
+	Locals              map[llvmLocalKey]llvmStackSlot
+	AddressedResults    map[ID][]llvmAddressedResult
+	ResultSlots         map[ID]llvm.Value
+	CallResultSlots     map[llvmCallResultKey]llvmStackSlot
+	ItabMethods         map[ID]bool
+	ClosureCodeLoads    map[ID]bool
+	DeferResults        map[llvmLocalKey]bool
+	DeferResultKeys     map[ID]llvmLocalKey
+	RequiredInlinePos   map[int]bool
+	OpenDeferBits       llvmLocalKey
+	HasOpenDeferBits    bool
+	OpenDeferSlots      map[llvmLocalKey]int
+	RequiredCPUFeatures map[string]bool
+	F                   *Func
+	LF                  llvm.Value
+	DISubprogram        llvm.Metadata
+	Prologue            llvm.BasicBlock
+	OpenDeferRecovery   llvm.BasicBlock
+	ClosureContext      llvm.Value
+	ABI0FrameBase       llvm.Value
+	b                   llvm.Builder
+	ReturnType          llvm.Type
+	ResultCount         int
+	ReturnCount         int
+	Params              []llvmParamSignature
+	Results             []llvmResultSignature
 }
 
 // SSA may clone an ir.Name while retaining the same logical source
@@ -102,6 +103,15 @@ const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
+const goCPUConfigMD = "goallc.cpu.config"
+const goCPUGuardMD = "goallc.cpu.guard"
+const goCPURequiresMD = "goallc.cpu.requires"
+const goCPUMultiversionAttr = "goallc.cpu.multiversion"
+
+const (
+	goCPUProfileX86FMA   = "x86.fma"
+	goCPUProfileX86SSE41 = "x86.sse41"
+)
 
 // Keep fixed-size memmoves within the store expansion limits of the supported
 // LLVM targets. Larger moves must use runtime.memmove rather than a libc symbol,
@@ -565,37 +575,48 @@ func (lfc *LLVMFuncContext) llvmTernaryIntrinsic(v *Value, name string) llvm.Val
 	return lfc.b.CreateCall(sig, fn, []llvm.Value{x, y, z}, v.String())
 }
 
-func (lfc *LLVMFuncContext) llvmRoundIntrinsic(v *Value, genericName string, amd64Mode uint64) llvm.Value {
-	if lfc.F.Config.arch != "amd64" || buildcfg.GOAMD64 >= 2 {
-		return lfc.llvmUnaryIntrinsic(v, genericName)
+func (lfc *LLVMFuncContext) llvmRoundIntrinsic(v *Value, genericName string) llvm.Value {
+	result := lfc.llvmUnaryIntrinsic(v, genericName)
+	if profile := llvmRequiredCPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 2, goCPUProfileX86SSE41); profile != "" {
+		lfc.requireCPUFeature(result, profile)
 	}
-
-	// At GOAMD64=v1, Go SSA places these operations behind
-	// runtime.x86HasSSE41. Preserve that path-sensitive contract in the
-	// intrinsic instead of enabling SSE4.1 for the whole function. At v2 and
-	// above, the function target-cpu guarantees SSE4.1 and the generic LLVM
-	// intrinsic exposes the usual optimization opportunities.
-	x := lfc.GenLV(v.Args[0])
-	want := getLLVMType(v.Type)
-	if x.Type() != want || want.TypeKind() != llvm.DoubleTypeKind {
-		v.Fatalf("%s has incompatible LLVM operand and result types", v.Op)
-	}
-	i32 := GlobalCtxt.Int32Type()
-	sig := llvm.FunctionType(want, []llvm.Type{want, i32}, false)
-	fn := getOrInsertLLVMIntrinsic("llvm.x86.go.sse41.round.f64", sig)
-	mode := llvm.ConstInt(i32, amd64Mode, false)
-	return lfc.b.CreateCall(sig, fn, []llvm.Value{x, mode}, v.String())
+	return result
 }
 
 func (lfc *LLVMFuncContext) llvmFMA(v *Value) llvm.Value {
-	if lfc.F.Config.arch != "amd64" || buildcfg.GOAMD64 >= 3 {
-		return lfc.llvmTernaryIntrinsic(v, "llvm.fma.f64")
+	result := lfc.llvmTernaryIntrinsic(v, "llvm.fma.f64")
+	if profile := llvmRequiredCPUProfile(lfc.F.Config.arch, buildcfg.GOAMD64, 3, goCPUProfileX86FMA); profile != "" {
+		lfc.requireCPUFeature(result, profile)
 	}
+	return result
+}
 
-	// At GOAMD64=v1 and v2, the AMD64 SSA control flow has already guarded this
-	// operation with runtime.x86HasFMA. GOAMD64=v3 and above instead use the
-	// generic intrinsic under a function target-cpu that guarantees FMA.
-	return lfc.llvmTernaryIntrinsic(v, "llvm.x86.go.fma.f64")
+func llvmRequiredCPUProfile(arch string, goamd64, baselineLevel int, profile string) string {
+	if arch != "amd64" || goamd64 >= baselineLevel {
+		return ""
+	}
+	return profile
+}
+
+func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile string) {
+	instruction.SetMetadata(GlobalCtxt.MDKindID(goCPURequiresMD), GlobalCtxt.MDNode([]llvm.Metadata{
+		GlobalCtxt.MDString(profile),
+	}))
+	// Materialize the canonical GoObj declaration while the frontend still has
+	// the imported LSym identity. The early C++ pass turns it into a real load
+	// before normal LLVM optimization can discard the unused declaration.
+	llvmGoDataRef(ir.Syms.GoALLCCPUFeatures)
+	if lfc.RequiredCPUFeatures == nil {
+		lfc.RequiredCPUFeatures = make(map[string]bool)
+	}
+	lfc.RequiredCPUFeatures[profile] = true
+	profiles := make([]string, 0, 2)
+	for _, candidate := range []string{goCPUProfileX86FMA, goCPUProfileX86SSE41} {
+		if lfc.RequiredCPUFeatures[candidate] {
+			profiles = append(profiles, candidate)
+		}
+	}
+	lfc.LF.AddTargetDependentFunctionAttr(goCPUMultiversionAttr, strings.Join(profiles, ","))
 }
 
 // llvmContractionMul recognizes a product that the native target rules may
@@ -2632,6 +2653,20 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		}
 		flag := lfc.b.CreateLoad(GlobalCtxt.Int8Type(), llvmGoDataRef(sym), v.String()+".flag")
 		flag.SetAlignment(1)
+		if lfc.F.Config.arch == "amd64" {
+			profile := ""
+			switch sym.Name {
+			case "runtime.x86HasFMA":
+				profile = goCPUProfileX86FMA
+			case "runtime.x86HasSSE41":
+				profile = goCPUProfileX86SSE41
+			}
+			if profile != "" {
+				flag.SetMetadata(GlobalCtxt.MDKindID(goCPUGuardMD), GlobalCtxt.MDNode([]llvm.Metadata{
+					GlobalCtxt.MDString(profile),
+				}))
+			}
+		}
 		cond := lfc.b.CreateICmp(llvm.IntNE, flag, llvm.ConstInt(flag.Type(), 0, false), v.String()+".i1")
 		lVal = lfc.goBool(cond, v.String())
 	case OpArg:
@@ -2752,15 +2787,15 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpAbs:
 		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.fabs.f64")
 	case OpFloor:
-		lVal = lfc.llvmRoundIntrinsic(v, "llvm.floor.f64", 1)
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.floor.f64")
 	case OpCeil:
-		lVal = lfc.llvmRoundIntrinsic(v, "llvm.ceil.f64", 2)
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.ceil.f64")
 	case OpTrunc:
-		lVal = lfc.llvmRoundIntrinsic(v, "llvm.trunc.f64", 3)
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.trunc.f64")
 	case OpRound:
 		lVal = lfc.llvmUnaryIntrinsic(v, "llvm.round.f64")
 	case OpRoundToEven:
-		lVal = lfc.llvmRoundIntrinsic(v, "llvm.roundeven.f64", 0)
+		lVal = lfc.llvmRoundIntrinsic(v, "llvm.roundeven.f64")
 	case OpMin64F:
 		lVal = lfc.llvmBinaryIntrinsic(v, "llvm.minimum.f64")
 	case OpMin32F:
@@ -3619,25 +3654,26 @@ func LLVMCompile(f *Func) {
 	}
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
 	FCtxt := &LLVMFuncContext{
-		BBs:               map[ID]llvm.BasicBlock{},
-		Vs:                map[ID]llvm.Value{},
-		Locals:            map[llvmLocalKey]llvmStackSlot{},
-		AddressedResults:  map[ID][]llvmAddressedResult{},
-		ResultSlots:       map[ID]llvm.Value{},
-		CallResultSlots:   map[llvmCallResultKey]llvmStackSlot{},
-		ItabMethods:       map[ID]bool{},
-		ClosureCodeLoads:  map[ID]bool{},
-		DeferResults:      map[llvmLocalKey]bool{},
-		DeferResultKeys:   map[ID]llvmLocalKey{},
-		RequiredInlinePos: map[int]bool{},
-		OpenDeferSlots:    map[llvmLocalKey]int{},
-		F:                 f,
-		b:                 GlobalCtxt.NewBuilder(),
-		ReturnType:        sig.ReturnType,
-		ResultCount:       sig.ResultCount,
-		ReturnCount:       sig.ReturnCount,
-		Params:            sig.Params,
-		Results:           sig.Results,
+		BBs:                 map[ID]llvm.BasicBlock{},
+		Vs:                  map[ID]llvm.Value{},
+		Locals:              map[llvmLocalKey]llvmStackSlot{},
+		AddressedResults:    map[ID][]llvmAddressedResult{},
+		ResultSlots:         map[ID]llvm.Value{},
+		CallResultSlots:     map[llvmCallResultKey]llvmStackSlot{},
+		ItabMethods:         map[ID]bool{},
+		ClosureCodeLoads:    map[ID]bool{},
+		DeferResults:        map[llvmLocalKey]bool{},
+		DeferResultKeys:     map[ID]llvmLocalKey{},
+		RequiredInlinePos:   map[int]bool{},
+		OpenDeferSlots:      map[llvmLocalKey]int{},
+		RequiredCPUFeatures: map[string]bool{},
+		F:                   f,
+		b:                   GlobalCtxt.NewBuilder(),
+		ReturnType:          sig.ReturnType,
+		ResultCount:         sig.ResultCount,
+		ReturnCount:         sig.ReturnCount,
+		Params:              sig.Params,
+		Results:             sig.Results,
 	}
 	defer FCtxt.b.Dispose()
 
@@ -4447,6 +4483,11 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 		GlobalCtxt.MDNode(experimentMetadata),
 	})
 	CurrentModule.AddNamedMetadataOperand("goobj.config", config)
+	CurrentModule.AddNamedMetadataOperand(goCPUConfigMD, GlobalCtxt.MDNode([]llvm.Metadata{
+		GlobalCtxt.MDString("goallc.cpu.v1"),
+		GlobalCtxt.MDString(buildcfg.GOARCH),
+		GlobalCtxt.MDString(fmt.Sprintf("v%d", buildcfg.GOAMD64)),
+	}))
 	emitGoObjStaticRODataType()
 }
 

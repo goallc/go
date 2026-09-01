@@ -21,6 +21,7 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
 set(GOALLC_STATEPOINT_SOURCES
+  GoALLCCPUFeatures.cpp
   GoALLCAsyncPreemption.cpp
   GoALLCStackMapPrinter.cpp
   GoALLCInlineAnchors.cpp
@@ -101,6 +102,54 @@ if(BUILD_TESTING)
       "${INPUT}"
     )
   endfunction()
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.SSE41
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-sse41.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features,goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-sse41.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.FMAv2
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-fma-v2.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-fma-v2.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.IndependentGuards
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-independent.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-independent.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.InvalidRequirement
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-invalid.ll"
+    CHECK
+    "${GOALLC_NOT_EXECUTABLE}"
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -disable-output
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-invalid.ll"
+  )
 
   goallc_add_ir_filecheck_test(
     GoALLCStatepoints.MustTailTransfer

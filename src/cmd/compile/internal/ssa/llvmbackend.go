@@ -51,6 +51,20 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 		}
 	}
 
+	plugin := ""
+	if !llvm.UsesLinkedPassPlugin() {
+		plugin, err = llvmbackend.PassPlugin()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := CurrentModule.RunPassPluginEarlyIR(plugin); err != nil {
+		return nil, fmt.Errorf("run GoALLC early IR plugin: %w", err)
+	}
+	if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
+		return nil, fmt.Errorf("verify LLVM module after early IR pipeline: %w", err)
+	}
+
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
 	if pipeline != "" && pipeline != "none" {
 		options := llvm.NewPassBuilderOptions()
@@ -65,13 +79,6 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 		}
 	}
 
-	plugin := ""
-	if !llvm.UsesLinkedPassPlugin() {
-		plugin, err = llvmbackend.PassPlugin()
-		if err != nil {
-			return nil, err
-		}
-	}
 	if err := tm.RunPassPluginPreCodeGen(CurrentModule, llvm.ObjectFile, plugin); err != nil {
 		return nil, fmt.Errorf("run GoALLC pre-codegen plugin: %w", err)
 	}

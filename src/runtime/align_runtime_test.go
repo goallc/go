@@ -39,6 +39,7 @@ var AtomicFields = []uintptr{
 var AtomicVariables = []unsafe.Pointer{
 	unsafe.Pointer(&ncgocall),
 	unsafe.Pointer(&test_z64),
+	unsafe.Pointer(&goallcCPUFeatures),
 	unsafe.Pointer(&blockprofilerate),
 	unsafe.Pointer(&mutexprofilerate),
 	unsafe.Pointer(&gcController),

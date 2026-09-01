@@ -56,6 +56,139 @@ type importObjviewObject struct {
 	} `json:"symbols"`
 }
 
+func TestLLVMCPUFeatureMultiversion(t *testing.T) {
+	llc := os.Getenv("GOALLC_LLC")
+	plugin := os.Getenv("GOALLC_PASS_PLUGIN")
+	if llc == "" || plugin == "" {
+		t.Skip("requires GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	}
+	testenv.MustHaveGoBuild(t)
+
+	root := testenv.GOROOT(t)
+	goTool := testenv.GoToolPath(t)
+	wrapper := filepath.Join(t.TempDir(), "llvmtoolexec")
+	buildWrapper := testenv.Command(t, goTool, "build", "-o", wrapper, "./src/cmd/llvmtoolexec")
+	buildWrapper.Dir = root
+	if out, err := buildWrapper.CombinedOutput(); err != nil {
+		t.Fatalf("building llvmtoolexec: %v\n%s", err, out)
+	}
+
+	packagePath := "cmd/llvmtoolexec/testdata/cpufeatures"
+	packageArg := "./src/" + packagePath
+	cache := t.TempDir()
+	targetEnv := append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOCACHE="+cache,
+		"GOOS=linux",
+		"GOARCH=amd64",
+		"GOAMD64=v1",
+	)
+	type mode struct {
+		name     string
+		toolexec string
+	}
+	tests := []mode{
+		{name: "direct"},
+		{
+			name: "external-noopt",
+			toolexec: strings.Join([]string{
+				wrapper,
+				"-llc=" + llc,
+				"-pass-plugin=" + plugin,
+			}, " "),
+		},
+	}
+	if opt := os.Getenv("GOALLC_OPT"); opt != "" {
+		tests = append(tests, mode{
+			name: "external-opt",
+			toolexec: strings.Join([]string{
+				wrapper,
+				"-llc=" + llc,
+				"-opt=" + opt,
+				"-pass-plugin=" + plugin,
+				"-opt-passes=default<O2>",
+			}, " "),
+		})
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executable := filepath.Join(t.TempDir(), "cpufeatures")
+			args := []string{"build", "-a"}
+			if test.toolexec != "" {
+				args = append(args, "-toolexec="+test.toolexec)
+			}
+			args = append(args,
+				"-gcflags="+packagePath+"=-enablellvm",
+				"-o", executable,
+				packageArg,
+			)
+			build := testenv.Command(t, goTool, args...)
+			build.Dir = root
+			build.Env = targetEnv
+			if out, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("building CPU-feature fixture: %v\n%s", err, out)
+			}
+
+			nm := testenv.Command(t, goTool, "tool", "nm", executable)
+			nmOutput, err := nm.CombinedOutput()
+			if err != nil {
+				t.Fatalf("reading CPU-feature symbols: %v\n%s", err, nmOutput)
+			}
+			for _, want := range []string{
+				"main.cpuMath.goallc.fmv.baseline",
+				"main.cpuMath.goallc.fmv.sse41",
+				"main.cpuMath.goallc.fmv.fma",
+				"main.cpuMath.goallc.fmv.sse41-fma",
+				"main.cpuMath.goallc.fmv.slot",
+			} {
+				if !bytes.Contains(nmOutput, []byte(want)) {
+					t.Fatalf("CPU-feature executable has no %q symbol:\n%s", want, nmOutput)
+				}
+			}
+			if bytes.Contains(nmOutput, []byte("main.cpuMath.goallc.fmv.resolve")) {
+				t.Fatalf("CPU-feature resolver must be embedded in the public dispatcher:\n%s", nmOutput)
+			}
+
+			objdump := testenv.Command(t, goTool, "tool", "objdump", "-s", "main.cpuMath", executable)
+			objdumpOutput, err := objdump.CombinedOutput()
+			if err != nil {
+				t.Fatalf("disassembling CPU-feature fixture: %v\n%s", err, objdumpOutput)
+			}
+			for _, want := range []string{"ROUNDSD", "VFMADD"} {
+				if !bytes.Contains(objdumpOutput, []byte(want)) {
+					t.Fatalf("CPU-feature assembly has no %q instruction:\n%s", want, objdumpOutput)
+				}
+			}
+
+			if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+				for _, godebug := range []string{
+					"cpu.all=off",
+					"cpu.sse41=off",
+					"cpu.fma=off",
+				} {
+					run := testenv.Command(t, executable)
+					run.Env = append([]string(nil), targetEnv...)
+					updated := false
+					for i, entry := range run.Env {
+						if strings.HasPrefix(entry, "GODEBUG=") {
+							run.Env[i] = "GODEBUG=" + godebug
+							updated = true
+							break
+						}
+					}
+					if !updated {
+						run.Env = append(run.Env, "GODEBUG="+godebug)
+					}
+					if out, err := run.CombinedOutput(); err != nil {
+						t.Fatalf("CPU-feature fixture with GODEBUG=%s: %v\n%s", godebug, err, out)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestLLVMReflectMethodReachability(t *testing.T) {
 	llc := os.Getenv("GOALLC_LLC")
 	plugin := os.Getenv("GOALLC_PASS_PLUGIN")

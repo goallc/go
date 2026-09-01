@@ -13,6 +13,7 @@ package llvm
 LLVMErrorRef LLVMGoALLCRunPreCodeGen(LLVMModuleRef Module,
                                      LLVMTargetMachineRef TargetMachine,
                                      LLVMCodeGenFileType FileType);
+LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef Module);
 */
 import "C"
 
@@ -23,6 +24,20 @@ import (
 // UsesLinkedPassPlugin reports whether the GoALLC pass implementation is
 // linked into the current process instead of loaded from a shared library.
 func UsesLinkedPassPlugin() bool { return true }
+
+// RunPassPluginEarlyIR invokes the statically linked GoALLC early IR pipeline.
+func (m Module) RunPassPluginEarlyIR(plugin string) error {
+	if plugin != "" {
+		return errors.New("linked GoALLC early IR callback does not accept a plugin path")
+	}
+	err := C.LLVMGoALLCRunEarlyIR(m.C)
+	if err == nil {
+		return nil
+	}
+	cstr := C.LLVMGetErrorMessage(err)
+	defer C.LLVMDisposeErrorMessage(cstr)
+	return errors.New(C.GoString(cstr))
+}
 
 // RunPassPluginPreCodeGen invokes the statically linked GoALLC pre-codegen
 // callback. A static toolchain cannot replace this callback with a DSO without

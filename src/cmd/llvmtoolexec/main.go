@@ -121,7 +121,10 @@ func main() {
 		if err != nil {
 			fatalf("%v", err)
 		}
-		optArgs := []string{"-passes=" + *optPasses}
+		optArgs := []string{
+			"-load-pass-plugin=" + pluginPath,
+			"-passes=goallc-cpu-features," + *optPasses,
+		}
 		if !*enableLSR {
 			optArgs = append(optArgs, "-disable-lsr")
 		}

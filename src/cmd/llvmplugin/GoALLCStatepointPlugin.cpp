@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCPreCodeGen.h"
+#include "GoALLCCPUFeatures.h"
 #include "GoALLCStatepoints.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Error.h"
@@ -15,6 +16,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/CommandLine.h"
@@ -43,6 +45,17 @@ cl::opt<bool>
 
 void registerGoALLCTargetPasses();
 
+void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
+  PB.registerPipelineParsingCallback(
+      [](StringRef Name, ModulePassManager &MPM,
+         ArrayRef<PassBuilder::PipelineElement>) {
+        if (Name != "goallc-cpu-features")
+          return false;
+        MPM.addPass(goallc::CPUFeaturesPass());
+        return true;
+      });
+}
+
 bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
                            raw_pwrite_stream &) {
   // A dynamically loaded plugin runs its static constructors immediately
@@ -50,6 +63,11 @@ bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
   // before LLVM has initialized its callback registry. Register lazily from
   // the common callback so both linkage modes observe the same lifetime.
   registerGoALLCTargetPasses();
+
+  if (Error Err = goallc::runEarlyIRPipeline(M)) {
+    M.getContext().emitError(toString(std::move(Err)));
+    return true;
+  }
 
   // Keep the early callback only as an IR-emission test facility. Production
   // compilation performs only module-wide preparation here, then rewrites
@@ -136,6 +154,15 @@ void registerGoALLCTargetPasses() {
 
 } // namespace
 
+extern "C" LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef ModuleRef) {
+  Module &M = *unwrap(ModuleRef);
+  if (Error Err = goallc::runEarlyIRPipeline(M)) {
+    std::string Message = toString(std::move(Err));
+    return LLVMCreateStringError(Message.c_str());
+  }
+  return LLVMErrorSuccess;
+}
+
 extern "C" LLVMErrorRef
 LLVMGoALLCRunPreCodeGen(LLVMModuleRef ModuleRef,
                         LLVMTargetMachineRef TargetMachineRef,
@@ -154,5 +181,5 @@ LLVMGoALLCRunPreCodeGen(LLVMModuleRef ModuleRef,
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "GoALLCStatepoints", LLVM_VERSION_STRING,
-          nullptr, runPreCodeGenCallback};
+          registerGoALLCPassBuilderCallbacks, runPreCodeGenCallback};
 }

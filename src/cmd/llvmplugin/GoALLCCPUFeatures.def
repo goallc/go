@@ -1,0 +1,10 @@
+// Keep the bit numbers synchronized with runtime/cpuflags.go. This registry is
+// deliberately append-only: generated dispatchers persist the numeric ABI in
+// object files and may be linked with a separately built runtime archive.
+GOALLC_CPU_FEATURE(SSE3, 0)
+GOALLC_CPU_FEATURE(SSSE3, 1)
+GOALLC_CPU_FEATURE(SSE41, 2)
+GOALLC_CPU_FEATURE(SSE42, 3)
+GOALLC_CPU_FEATURE(AVX, 4)
+GOALLC_CPU_FEATURE(FMA, 5)
+GOALLC_CPU_FEATURE(INITIALIZED, 6)

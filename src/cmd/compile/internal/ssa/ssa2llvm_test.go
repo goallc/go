@@ -767,6 +767,31 @@ func TestLLVMTargetCPU(t *testing.T) {
 	}
 }
 
+func TestLLVMRequiredCPUProfiles(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		arch          string
+		goamd64       int
+		baselineLevel int
+		profile       string
+		want          string
+	}{
+		{"arm64-round", "arm64", 1, 2, goCPUProfileX86SSE41, ""},
+		{"v1-round", "amd64", 1, 2, goCPUProfileX86SSE41, goCPUProfileX86SSE41},
+		{"v2-round", "amd64", 2, 2, goCPUProfileX86SSE41, ""},
+		{"v1-fma", "amd64", 1, 3, goCPUProfileX86FMA, goCPUProfileX86FMA},
+		{"v2-fma", "amd64", 2, 3, goCPUProfileX86FMA, goCPUProfileX86FMA},
+		{"v3-fma", "amd64", 3, 3, goCPUProfileX86FMA, ""},
+		{"v4-fma", "amd64", 4, 3, goCPUProfileX86FMA, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := llvmRequiredCPUProfile(test.arch, test.goamd64, test.baselineLevel, test.profile); got != test.want {
+				t.Fatalf("llvmRequiredCPUProfile(%q, %d, %d, %q) = %q, want %q", test.arch, test.goamd64, test.baselineLevel, test.profile, got, test.want)
+			}
+		})
+	}
+}
+
 func TestLLVMRuntimeGorecoverUsesLinkSymbolName(t *testing.T) {
 	recoverFn := &Func{
 		Name:   "gorecover",

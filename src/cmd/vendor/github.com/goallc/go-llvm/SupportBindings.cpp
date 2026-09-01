@@ -15,6 +15,8 @@
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/DiagnosticHandler.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/DynamicLibrary.h"
@@ -26,6 +28,35 @@
 #include <string.h>
 
 using namespace llvm;
+
+LLVMErrorRef LLVMRunPassPluginEarlyIR(LLVMModuleRef ModuleRef,
+                                      const char *Filename) {
+  Expected<PassPlugin> Plugin = PassPlugin::Load(Filename);
+  if (!Plugin)
+    return wrap(Plugin.takeError());
+
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+  PassBuilder PB;
+  Plugin->registerPassBuilderCallbacks(PB);
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  ModulePassManager MPM;
+  if (Error Err = PB.parsePassPipeline(MPM, "goallc-cpu-features"))
+    return wrap(std::move(Err));
+  Module &M = *unwrap(ModuleRef);
+  bool HadErrors = M.getContext().getDiagHandlerPtr()->HasErrors;
+  MPM.run(M, MAM);
+  if (!HadErrors && M.getContext().getDiagHandlerPtr()->HasErrors)
+    return LLVMCreateStringError("GoALLC early IR pass reported an error");
+  return LLVMErrorSuccess;
+}
 
 void LLVMLoadLibraryPermanently2(const char *Filename, char **ErrMsg) {
   std::string ErrMsgStr;

@@ -85,6 +85,7 @@ type symsStruct struct {
 	X86HasFMA            *obj.LSym
 	X86HasPOPCNT         *obj.LSym
 	X86HasSSE41          *obj.LSym
+	GoALLCCPUFeatures    *obj.LSym
 	// Wasm
 	WasmDiv *obj.LSym
 	// Wasm

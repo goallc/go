@@ -780,6 +780,26 @@ func cpuinit(env string) {
 		x86HasFMA = cpu.X86.HasFMA
 		x86HasPOPCNT = cpu.X86.HasPOPCNT
 		x86HasSSE41 = cpu.X86.HasSSE41
+		var goallcFeatures uint64
+		if cpu.X86.HasSSE3 {
+			goallcFeatures |= goallcCPUFeatureSSE3
+		}
+		if cpu.X86.HasSSSE3 {
+			goallcFeatures |= goallcCPUFeatureSSSE3
+		}
+		if cpu.X86.HasSSE41 {
+			goallcFeatures |= goallcCPUFeatureSSE41
+		}
+		if cpu.X86.HasSSE42 {
+			goallcFeatures |= goallcCPUFeatureSSE42
+		}
+		if cpu.X86.HasAVX {
+			goallcFeatures |= goallcCPUFeatureAVX
+		}
+		if cpu.X86.HasFMA {
+			goallcFeatures |= goallcCPUFeatureFMA
+		}
+		atomic.Store64(&goallcCPUFeatures, goallcFeatures|goallcCPUFeaturesInitialized)
 
 	case "arm":
 		armHasVFPv4 = cpu.ARM.HasVFPv4
