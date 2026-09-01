@@ -507,9 +507,10 @@ Function *cloneResolver(Function &Source) {
   Resolver->setDSOLocal(true);
   Resolver->removeFnAttr(MultiversionAttr);
   eraseGoObjSourceSymbolIdentity(*Resolver);
-  // The resolver only selects and tail-transfers to an executable variant; it
-  // is not another semantic instance of the source function.
-  Resolver->setMetadata(GoObjFuncInfoMD, nullptr);
+  // The resolver is frameless and tail-only, but it still executes Go code and
+  // may be sampled or asynchronously preempted before the transfer. Retain the
+  // source FuncInfo so GoObj emits valid PCSP and the source FuncID/FuncFlag
+  // semantics also cover the first invocation.
   if (DuplicateOK)
     markGoObjDuplicateOK(*Resolver);
   eraseFunctionBodyPreservingMetadata(*Resolver);

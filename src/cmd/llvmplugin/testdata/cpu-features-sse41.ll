@@ -95,9 +95,9 @@ entry:
 ; CHECK-NOT: call double @fallback
 ; CHECK: ret double
 
-; CHECK-NOT: define internal double @round.goallc.fmv.resolve{{.*}}!goobj.func.info
 ; CHECK-LABEL: define internal double @round.goallc.fmv.resolve(
 ; CHECK-SAME: #[[RESOLVER_ATTRS:[0-9]+]]
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
 ; CHECK: load i64, ptr @runtime.goallcCPUFeatures
 ; CHECK: and i64 %features, 64
@@ -124,7 +124,7 @@ entry:
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
 ; CHECK: ![[SYMINDEX]] = !{i32 17}
 ; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
-; The dispatcher and executable variants inherit the source FuncID and flags.
+; Every executable source representation inherits its FuncID and flags.
 ; CHECK: ![[FUNCINFO]] = !{i8 10, i8 3}
 
 attributes #0 = { "goallc.cpu.multiversion"="x86.sse41" "target-cpu"="x86-64" }
