@@ -8,65 +8,84 @@ target triple = "x86_64-unknown-linux-gnu"
 
 @runtime.goallcCPUFeatures = external global i8
 
-; CHECK: @round.goallc.fmv.slot = internal global ptr null
+; CHECK: @round.goallc.fmv.slot = internal global ptr null, section ".noptrdata", align 8, !goobj.symbol.nonpackage ![[NONPACKAGE:[0-9]+]]
 
 declare double @fallback(double)
 declare double @llvm.floor.f64(double)
 
 ; CHECK-LABEL: define double @round(
+; CHECK-SAME: !dbg ![[SUBPROGRAM:[0-9]+]]
+; CHECK-SAME: !goobj.symbol.index ![[SYMINDEX:[0-9]+]]
+; CHECK-SAME: !goobj.symbol.flags ![[SYMFLAGS:[0-9]+]]
 ; CHECK: entry:
 ; CHECK: load atomic ptr, ptr @round.goallc.fmv.slot acquire
 ; CHECK: br i1 {{.*}}, label %dispatch, label %resolve
 ; CHECK: dispatch:
-; CHECK: musttail call double %target(double %x)
+; CHECK: musttail call double %target(double %x), !dbg ![[DISPATCHLOC:[0-9]+]]
 ; CHECK-NEXT: ret double
 ; CHECK: resolve:
 ; CHECK: load atomic i64, ptr @runtime.goallcCPUFeatures acquire
 ; CHECK: and i64 %features, 64
 ; CHECK: br i1
 ; CHECK: uninitialized:
-; CHECK: musttail call double @round.goallc.fmv.baseline(double %x)
+; CHECK: musttail call double @round.goallc.fmv.baseline(double %x), !dbg ![[DISPATCHLOC]]
 ; CHECK: select:
 ; CHECK: and i64 %features, 4
 ; CHECK: select i1 {{.*}}, ptr @round.goallc.fmv.sse41, ptr @round.goallc.fmv.baseline
 ; CHECK: store atomic ptr {{.*}}, ptr @round.goallc.fmv.slot release
-; CHECK: musttail call double {{.*}}(double %x)
-define double @round(double %x) #0 {
+; CHECK: musttail call double {{.*}}(double %x), !dbg ![[DISPATCHLOC]]
+define double @round(double %x) #0 !goobj.symbol.index !2 !goobj.symbol.flags !3 !dbg !9 {
 entry:
-  %flag = load i8, ptr @runtime.goallcCPUFeatures, align 1, !goallc.cpu.guard !1
-  %enabled = icmp ne i8 %flag, 0
-  br i1 %enabled, label %feature, label %fallback
+  %flag = load i8, ptr @runtime.goallcCPUFeatures, align 1, !goallc.cpu.guard !1, !dbg !10
+  %enabled = icmp ne i8 %flag, 0, !dbg !10
+  br i1 %enabled, label %feature, label %fallback, !dbg !10
 
 feature:
-  %rounded = call double @llvm.floor.f64(double %x), !goallc.cpu.requires !1
-  br label %done
+  %rounded = call double @llvm.floor.f64(double %x), !goallc.cpu.requires !1, !dbg !10
+  br label %done, !dbg !10
 
 fallback:
-  %soft = call double @fallback(double %x)
-  br label %done
+  %soft = call double @fallback(double %x), !dbg !10
+  br label %done, !dbg !10
 
 done:
   %result = phi double [ %rounded, %feature ], [ %soft, %fallback ]
-  ret double %result
+  ret double %result, !dbg !10
 }
 
 ; CHECK-LABEL: define internal double @round.goallc.fmv.baseline(
+; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
 ; CHECK-NOT: llvm.floor
 ; CHECK: call double @fallback(double %x)
 ; CHECK: ret double
 
 ; CHECK-LABEL: define internal double @round.goallc.fmv.sse41(
 ; CHECK-SAME: #[[SSE41:[0-9]+]]
-; CHECK: call double @llvm.floor.f64(double %x), !goallc.cpu.requires
+; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
+; CHECK: call double @llvm.floor.f64(double %x){{.*}}!goallc.cpu.requires
 ; CHECK-NOT: call double @fallback
 ; CHECK: ret double
 
 ; CHECK: attributes #[[SSE41]] = {{.*}}"target-cpu"="x86-64" {{.*}}"target-features"="+sse4.1"
 ; CHECK: !goallc.cpu.fmv.done = !{![[DONE:[0-9]+]]}
+; CHECK: ![[NONPACKAGE]] = !{i1 true}
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
+; CHECK: ![[SYMINDEX]] = !{i32 17}
+; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
 
 attributes #0 = { "goallc.cpu.multiversion"="x86.sse41" "target-cpu"="x86-64" }
 
 !goallc.cpu.config = !{!0}
+!llvm.dbg.cu = !{!7}
+!llvm.module.flags = !{!8}
 !0 = !{!"goallc.cpu.v1", !"amd64", !"v1"}
 !1 = !{!"x86.sse41"}
+!2 = !{i32 17}
+!3 = !{i32 8, i32 0}
+!4 = !DIFile(filename: "round.go", directory: "/tmp/goallc-cpu-features")
+!5 = !{}
+!6 = !DISubroutineType(types: !5)
+!7 = distinct !DICompileUnit(language: DW_LANG_Go, file: !4, producer: "goallc-test", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !5, splitDebugInlining: true, nameTableKind: None)
+!8 = !{i32 2, !"Debug Info Version", i32 3}
+!9 = distinct !DISubprogram(name: "round", linkageName: "round", scope: !4, file: !4, line: 1, type: !6, scopeLine: 1, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !7, retainedNodes: !5)
+!10 = !DILocation(line: 1, column: 1, scope: !9)

@@ -39,6 +39,7 @@ constexpr StringLiteral MultiversionAttr = "goallc.cpu.multiversion";
 constexpr StringLiteral RuntimeFeatureMask = "runtime.goallcCPUFeatures";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoObjDebugFuncsMD = "goobj.debug.funcs";
+constexpr StringLiteral GoObjNonPackageMD = "goobj.symbol.nonpackage";
 
 enum FeatureBit : uint64_t {
 #define GOALLC_CPU_FEATURE(Name, Bit) Feature##Name = uint64_t{1} << Bit,
@@ -132,6 +133,12 @@ Expected<uint64_t> baselineMask(const Module &M) {
                            "unsupported GOAMD64 level " + *Level);
 }
 
+void markGoObjNonPackage(GlobalObject &GO) {
+  Metadata *Operands[] = {ConstantAsMetadata::get(
+      ConstantInt::getTrue(GO.getContext()))};
+  GO.setMetadata(GoObjNonPackageMD, MDNode::get(GO.getContext(), Operands));
+}
+
 void eraseGoObjDefinitionIdentity(Function &F) {
   // Variants are internal implementation symbols, not additional Go source
   // definitions. Preserve code-generation attributes and instruction metadata,
@@ -140,6 +147,17 @@ void eraseGoObjDefinitionIdentity(Function &F) {
        {"goobj.symbol.index", "goobj.symbol.name", "goobj.symbol.flags",
         "goobj.func.info", "goobj.import", "goobj.builtin"})
     F.setMetadata(Name, nullptr);
+  markGoObjNonPackage(F);
+}
+
+void eraseFunctionBodyPreservingMetadata(Function &F) {
+  // Function::deleteBody clears all function metadata, including the package
+  // symbol index used by cross-package GoObj references. Remove only the old
+  // basic blocks so the dispatcher retains the source definition's identity.
+  for (BasicBlock &BB : F)
+    BB.dropAllReferences();
+  while (!F.empty())
+    F.begin()->eraseFromParent();
 }
 
 void addTargetFeature(Function &F, StringRef Feature) {
@@ -369,8 +387,9 @@ Error multiversionFunction(Function &F, uint64_t Baseline,
   Slot->setAlignment(Align(M.getDataLayout().getPointerABIAlignment(0)));
   Slot->setDSOLocal(true);
   Slot->setSection(".noptrdata");
+  markGoObjNonPackage(*Slot);
 
-  F.deleteBody();
+  eraseFunctionBodyPreservingMetadata(F);
   F.removeFnAttr(MultiversionAttr);
   BasicBlock *Entry = BasicBlock::Create(C, "entry", &F);
   BasicBlock *Dispatch = BasicBlock::Create(C, "dispatch", &F);
@@ -378,6 +397,9 @@ Error multiversionFunction(Function &F, uint64_t Baseline,
   BasicBlock *Uninitialized = BasicBlock::Create(C, "uninitialized", &F);
   BasicBlock *Select = BasicBlock::Create(C, "select", &F);
   IRBuilder<> B(Entry);
+  if (DISubprogram *SP = F.getSubprogram())
+    B.SetCurrentDebugLocation(
+        DILocation::get(C, SP->getScopeLine(), 0, SP));
   LoadInst *Target = B.CreateLoad(PointerType::getUnqual(C), Slot, "target");
   Target->setAtomic(AtomicOrdering::Acquire);
   Target->setAlignment(Slot->getAlign().valueOrOne());
