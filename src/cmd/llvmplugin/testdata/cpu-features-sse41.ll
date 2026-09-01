@@ -18,15 +18,16 @@ declare double @llvm.floor.f64(double)
 ; CHECK-SAME: !dbg ![[SUBPROGRAM:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.index ![[SYMINDEX:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.flags ![[SYMFLAGS:[0-9]+]]
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO:[0-9]+]]
 ; CHECK: entry:
-; CHECK-NEXT: load atomic ptr, ptr @round.goallc.fmv.slot monotonic
-; CHECK: tail call double %target(double %x), !dbg ![[DISPATCHLOC:[0-9]+]]
+; CHECK-NEXT: %target = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8{{$}}
+; CHECK-NEXT: %{{.*}} = tail call double %target(double %x){{$}}
 ; CHECK-NEXT: ret double
 
 ; CHECK-INLINE-LABEL: define double @round.caller(
-; CHECK-INLINE: load atomic ptr, ptr @round.goallc.fmv.slot monotonic
+; CHECK-INLINE: %target.i = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8{{$}}
 ; CHECK-INLINE-NOT: call double @round(
-; CHECK-INLINE: tail call double %target.i(double %x)
+; CHECK-INLINE: %{{.*}} = tail call double %target.i(double %x), !callees !{{[0-9]+}}, !inline_history !{{[0-9]+}}{{$}}
 ; CHECK-INLINE: fadd double
 
 ; CHECK-FINAL-LABEL: define double @round(
@@ -45,7 +46,7 @@ declare double @llvm.floor.f64(double)
 ; CHECK-X86-ASM: jmpq *%rdx
 ; CHECK-X86-ASM-NOT: callq
 ; CHECK-X86-ASM: jmp round.goallc.fmv.baseline
-define double @round(double %x) #0 !goobj.symbol.index !2 !goobj.symbol.flags !3 !dbg !9 {
+define double @round(double %x) #0 !goobj.symbol.index !2 !goobj.symbol.flags !3 !goobj.func.info !15 !dbg !9 {
 entry:
   %flag = load i8, ptr @runtime.goallcCPUFeatures, align 1, !goallc.cpu.guard !1, !dbg !10
   %enabled = icmp ne i8 %flag, 0, !dbg !10
@@ -72,6 +73,9 @@ entry:
 }
 
 ; CHECK-LABEL: define internal double @round.goallc.fmv.baseline(
+; CHECK-NOT: !goobj.symbol.flags
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
+; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
 ; CHECK-NOT: llvm.floor
 ; CHECK: call double @fallback(double %x)
@@ -79,11 +83,15 @@ entry:
 
 ; CHECK-LABEL: define internal double @round.goallc.fmv.sse41(
 ; CHECK-SAME: #[[SSE41:[0-9]+]]
+; CHECK-NOT: !goobj.symbol.flags
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
+; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
 ; CHECK: call double @llvm.floor.f64(double %x){{.*}}!goallc.cpu.requires
 ; CHECK-NOT: call double @fallback
 ; CHECK: ret double
 
+; CHECK-NOT: define internal double @round.goallc.fmv.resolve{{.*}}!goobj.func.info
 ; CHECK-LABEL: define internal double @round.goallc.fmv.resolve(
 ; CHECK-SAME: #[[RESOLVER_ATTRS:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
@@ -112,6 +120,8 @@ entry:
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
 ; CHECK: ![[SYMINDEX]] = !{i32 17}
 ; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
+; The executable variants inherit both the source FuncID and all FuncFlag bits.
+; CHECK: ![[FUNCINFO]] = !{i8 10, i8 3}
 
 attributes #0 = { "goallc.cpu.multiversion"="x86.sse41" "target-cpu"="x86-64" }
 attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
@@ -136,3 +146,4 @@ attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
 !12 = !{ptr @round, !14}
 !13 = !{!9, ptr @round}
 !14 = !DILocation(line: 10, column: 1, scope: !11, inlinedAt: !10)
+!15 = !{i8 10, i8 3}

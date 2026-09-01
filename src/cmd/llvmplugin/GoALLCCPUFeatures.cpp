@@ -45,6 +45,7 @@ constexpr StringLiteral GoObjDebugInlineRequiredMD =
     "goobj.debug.inline.required";
 constexpr StringLiteral GoObjNonPackageMD = "goobj.symbol.nonpackage";
 constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
+constexpr StringLiteral GoObjFuncInfoMD = "goobj.func.info";
 constexpr StringLiteral GoNoSplitAttr = "go-nosplit";
 constexpr StringLiteral TailTransferAttr = "goallc.cpu.tail-transfers";
 constexpr uint64_t GoObjSymFlagDupok = uint64_t{1} << 0;
@@ -195,13 +196,14 @@ void markGoObjDuplicateOK(GlobalObject &GO) {
   GO.setMetadata(GoObjSymbolFlagsMD, MDNode::get(GO.getContext(), Operands));
 }
 
-void eraseGoObjDefinitionIdentity(Function &F) {
+void eraseGoObjSourceSymbolIdentity(Function &F) {
   // Variants are internal implementation symbols, not additional Go source
-  // definitions. Preserve code-generation attributes and instruction metadata,
-  // but do not duplicate package symbol indexes or semantic FuncInfo records.
+  // definitions. Preserve code-generation attributes, instruction metadata,
+  // and FuncInfo, but do not duplicate package-level symbol identity such as
+  // PkgInit, Linkname, or ReflectMethod.
   for (StringRef Name :
        {"goobj.symbol.index", "goobj.symbol.name", "goobj.symbol.flags",
-        "goobj.func.info", "goobj.import", "goobj.builtin"})
+        "goobj.import", "goobj.builtin"})
     F.setMetadata(Name, nullptr);
   markGoObjNonPackage(F);
 }
@@ -464,7 +466,10 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
   Clone->setLinkage(GlobalValue::InternalLinkage);
   Clone->setDSOLocal(true);
   Clone->removeFnAttr(MultiversionAttr);
-  eraseGoObjDefinitionIdentity(*Clone);
+  // This clone is the source function's physical execution frame. Retain the
+  // complete FuncInfo node so every FuncID and FuncFlag keeps its runtime stack
+  // semantics (gopanic, Wrapper, TopFrame, SPWrite, and future additions).
+  eraseGoObjSourceSymbolIdentity(*Clone);
   if (DuplicateOK)
     markGoObjDuplicateOK(*Clone);
   if (Error Err = cloneRequiredInlineLocations(Source, *Clone, VMap))
@@ -499,7 +504,10 @@ Function *cloneResolver(Function &Source) {
   Resolver->setLinkage(GlobalValue::InternalLinkage);
   Resolver->setDSOLocal(true);
   Resolver->removeFnAttr(MultiversionAttr);
-  eraseGoObjDefinitionIdentity(*Resolver);
+  eraseGoObjSourceSymbolIdentity(*Resolver);
+  // The resolver only selects and tail-transfers to an executable variant; it
+  // is not another semantic instance of the source function.
+  Resolver->setMetadata(GoObjFuncInfoMD, nullptr);
   if (DuplicateOK)
     markGoObjDuplicateOK(*Resolver);
   eraseFunctionBodyPreservingMetadata(*Resolver);
@@ -591,7 +599,9 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   makeFramelessDispatcher(F);
   BasicBlock *Entry = BasicBlock::Create(C, "entry", &F);
   IRBuilder<> B(Entry);
-  setSyntheticDebugLocation(B, F);
+  // Keep the synthetic load and tail transfer locationless. If this tiny
+  // dispatcher is inlined, attributing those instructions to the source
+  // function would add a second logical frame beside the physical variant.
   LoadInst *Target = B.CreateLoad(PointerType::getUnqual(C), Slot, "target");
   Target->setAtomic(AtomicOrdering::Monotonic);
   Target->setAlignment(Slot->getAlign().valueOrOne());

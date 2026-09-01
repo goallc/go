@@ -322,7 +322,7 @@ func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[lo
 	writeFuncNameTab := func(ctxt *Link, s loader.Sym) {
 		symtab := ctxt.loader.MakeSymbolUpdater(s)
 		for s, off := range nameOffsets {
-			symtab.AddCStringAt(int64(off), ctxt.loader.SymName(s))
+			symtab.AddCStringAt(int64(off), runtimeFuncName(ctxt.loader.SymName(s)))
 		}
 	}
 
@@ -330,11 +330,25 @@ func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[lo
 	var size int64
 	walkFuncs(ctxt, funcs, func(s loader.Sym) {
 		nameOffsets[s] = uint32(size)
-		size += int64(len(ctxt.loader.SymName(s)) + 1) // NULL terminate
+		size += int64(len(runtimeFuncName(ctxt.loader.SymName(s))) + 1) // NULL terminate
 	})
 
 	state.funcnametab = state.addGeneratedSym(ctxt, "runtime.funcnametab", size, 1, writeFuncNameTab)
 	return nameOffsets
+}
+
+// runtimeFuncName returns the logical Go function name recorded in pclntab.
+// CPU-feature implementation symbols are private code-generation details: the
+// dispatcher and resolver tail-transfer to them, while the variant supplies
+// the source function's physical frame and FuncInfo. Keep their object-symbol
+// names unique, but expose the source name to stack traces, profiles, and
+// runtime.FuncForPC.
+func runtimeFuncName(name string) string {
+	const marker = ".goallc.fmv."
+	if i := strings.LastIndex(name, marker); i >= 0 && i+len(marker) < len(name) {
+		return name[:i]
+	}
+	return name
 }
 
 // walkFilenames walks funcs, calling a function for each filename used in each
