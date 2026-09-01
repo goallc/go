@@ -18,16 +18,16 @@ declare double @llvm.floor.f64(double)
 ; CHECK-SAME: !dbg ![[SUBPROGRAM:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.index ![[SYMINDEX:[0-9]+]]
 ; CHECK-SAME: !goobj.symbol.flags ![[SYMFLAGS:[0-9]+]]
-; CHECK-SAME: !goobj.func.info ![[FUNCINFO:[0-9]+]]
+; CHECK-SAME: !goobj.func.info ![[WRAPPER:[0-9]+]]
 ; CHECK: entry:
-; CHECK-NEXT: %target = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8{{$}}
-; CHECK-NEXT: %{{.*}} = tail call double %target(double %x){{$}}
+; CHECK-NEXT: %target = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8, !dbg ![[DISPATCHLOC:[0-9]+]]
+; CHECK-NEXT: %{{.*}} = tail call double %target(double %x), !dbg ![[DISPATCHLOC]]
 ; CHECK-NEXT: ret double
 
 ; CHECK-INLINE-LABEL: define double @round.caller(
-; CHECK-INLINE: %target.i = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8{{$}}
+; CHECK-INLINE: %target.i = load atomic ptr, ptr @round.goallc.fmv.slot monotonic, align 8, !dbg ![[INLINELOC:[0-9]+]]
 ; CHECK-INLINE-NOT: call double @round(
-; CHECK-INLINE: %{{.*}} = tail call double %target.i(double %x), !callees !{{[0-9]+}}, !inline_history !{{[0-9]+}}{{$}}
+; CHECK-INLINE: %{{.*}} = tail call double %target.i(double %x), !dbg ![[INLINELOC]], !callees !{{[0-9]+}}, !inline_history !{{[0-9]+}}
 ; CHECK-INLINE: fadd double
 
 ; CHECK-FINAL-LABEL: define double @round(
@@ -74,7 +74,7 @@ entry:
 
 ; CHECK-LABEL: define internal double @round.goallc.fmv.baseline(
 ; CHECK-NOT: !goobj.symbol.flags
-; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
+; CHECK-SAME: !goobj.func.info ![[FUNCINFO:[0-9]+]]
 ; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
 ; CHECK-NOT: llvm.floor
@@ -120,6 +120,8 @@ entry:
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
 ; CHECK: ![[SYMINDEX]] = !{i32 17}
 ; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
+; The frameless dispatcher is a logical wrapper, not another source frame.
+; CHECK: ![[WRAPPER]] = !{i8 23, i8 0}
 ; The executable variants inherit both the source FuncID and all FuncFlag bits.
 ; CHECK: ![[FUNCINFO]] = !{i8 10, i8 3}
 

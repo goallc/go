@@ -49,6 +49,9 @@ constexpr StringLiteral GoObjFuncInfoMD = "goobj.func.info";
 constexpr StringLiteral GoNoSplitAttr = "go-nosplit";
 constexpr StringLiteral TailTransferAttr = "goallc.cpu.tail-transfers";
 constexpr uint64_t GoObjSymFlagDupok = uint64_t{1} << 0;
+// Keep in sync with internal/abi.FuncIDWrapper. This pass consumes and emits
+// the Go 1.27 GoObj function-info ABI directly.
+constexpr uint8_t GoFuncIDWrapper = 23;
 
 enum FeatureBit : uint64_t {
 #define GOALLC_CPU_FEATURE(Name, Bit) Feature##Name = uint64_t{1} << Bit,
@@ -206,6 +209,16 @@ void eraseGoObjSourceSymbolIdentity(Function &F) {
         "goobj.import", "goobj.builtin"})
     F.setMetadata(Name, nullptr);
   markGoObjNonPackage(F);
+}
+
+void markGoObjWrapper(Function &F) {
+  LLVMContext &C = F.getContext();
+  Metadata *Operands[] = {
+      ConstantAsMetadata::get(ConstantInt::get(Type::getInt8Ty(C),
+                                               GoFuncIDWrapper)),
+      ConstantAsMetadata::get(ConstantInt::get(Type::getInt8Ty(C), 0)),
+  };
+  F.setMetadata(GoObjFuncInfoMD, MDNode::get(C, Operands));
 }
 
 void eraseFunctionBodyPreservingMetadata(Function &F) {
@@ -595,13 +608,15 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   F.removeFnAttr(MultiversionAttr);
   // This synthetic dispatcher has no stack frame. Its terminal tail transfer
   // is not a safepoint, while normal optimization may inline it into a
-  // same-module caller where a non-terminal call is rewritten as usual.
+  // same-module caller where a non-terminal call is rewritten as usual. Mark
+  // its logical inline scope as a wrapper: traceback then ignores only this
+  // synthetic layer while retaining the real caller chain. Executable variants
+  // already captured the source FuncInfo above.
+  markGoObjWrapper(F);
   makeFramelessDispatcher(F);
   BasicBlock *Entry = BasicBlock::Create(C, "entry", &F);
   IRBuilder<> B(Entry);
-  // Keep the synthetic load and tail transfer locationless. If this tiny
-  // dispatcher is inlined, attributing those instructions to the source
-  // function would add a second logical frame beside the physical variant.
+  setSyntheticDebugLocation(B, F);
   LoadInst *Target = B.CreateLoad(PointerType::getUnqual(C), Slot, "target");
   Target->setAtomic(AtomicOrdering::Monotonic);
   Target->setAlignment(Slot->getAlign().valueOrOne());
