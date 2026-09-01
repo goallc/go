@@ -5,14 +5,10 @@ target triple = "x86_64-unknown-linux-gnu"
 declare double @fallback(double, double, double)
 declare double @llvm.fma.f64(double, double, double)
 
-; CHECK: @fma.goallc.fmv.slot = internal global ptr null
+; CHECK: @fma.goallc.fmv.slot = internal global ptr @fma.goallc.fmv.resolve
 ; CHECK-LABEL: define double @fma(
-; CHECK: musttail call double %target(double %x, double %y, double %z)
-; CHECK: resolve:
-; CHECK: and i64 %features, 64
-; CHECK: and i64 %features, 32
-; CHECK: icmp eq i64 {{.*}}, 32
-; CHECK: select i1 {{.*}}, ptr @fma.goallc.fmv.fma, ptr @fma.goallc.fmv.baseline
+; CHECK: load atomic ptr, ptr @fma.goallc.fmv.slot monotonic
+; CHECK: tail call double %target(double %x, double %y, double %z)
 
 define double @fma(double %x, double %y, double %z) #0 {
 entry:
@@ -41,6 +37,14 @@ done:
 ; CHECK-SAME: #[[FMA:[0-9]+]]
 ; CHECK: call double @llvm.fma.f64
 ; CHECK-NOT: call double @fallback
+
+; CHECK-LABEL: define internal double @fma.goallc.fmv.resolve(
+; CHECK: load i64, ptr @runtime.goallcCPUFeatures
+; CHECK: and i64 %features, 64
+; CHECK: and i64 %features, 32
+; CHECK: icmp eq i64 {{.*}}, 32
+; CHECK: select i1 {{.*}}, ptr @fma.goallc.fmv.fma, ptr @fma.goallc.fmv.baseline
+; CHECK: store atomic ptr {{.*}}, ptr @fma.goallc.fmv.slot monotonic
 
 ; CHECK: attributes #[[FMA]] = {{.*}}"target-cpu"="x86-64-v2" {{.*}}"target-features"="+fma"
 

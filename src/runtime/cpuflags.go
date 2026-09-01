@@ -30,9 +30,10 @@ var (
 	// GoALLC-generated function multiversion dispatchers. Keep the bit numbers
 	// in sync with src/cmd/llvmplugin/GoALLCCPUFeatures.def.
 	//
-	// The initialized bit is published together with the effective feature
-	// bits, after internal/cpu has applied GODEBUG overrides. A dispatcher that
-	// runs before publication must use its baseline implementation and must not
+	// cpuinit assigns the initialized bit together with the effective feature
+	// bits after internal/cpu has applied GODEBUG overrides. Runtime startup is
+	// single-threaded here, and the snapshot is immutable afterwards. A resolver
+	// that runs before cpuinit must use its baseline implementation and must not
 	// cache that choice.
 	goallcCPUFeatures uint64
 

@@ -18,11 +18,13 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/TrackingMDRef.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <cstdint>
 #include <string>
@@ -39,8 +41,11 @@ constexpr StringLiteral MultiversionAttr = "goallc.cpu.multiversion";
 constexpr StringLiteral RuntimeFeatureMask = "runtime.goallcCPUFeatures";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoObjDebugFuncsMD = "goobj.debug.funcs";
+constexpr StringLiteral GoObjDebugInlineRequiredMD =
+    "goobj.debug.inline.required";
 constexpr StringLiteral GoObjNonPackageMD = "goobj.symbol.nonpackage";
 constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
+constexpr StringLiteral GoNoSplitAttr = "go-nosplit";
 constexpr uint64_t GoObjSymFlagDupok = uint64_t{1} << 0;
 
 enum FeatureBit : uint64_t {
@@ -77,12 +82,11 @@ constexpr uint64_t V3Baseline = V2Baseline | FeatureAVX | FeatureFMA;
 
 constexpr Profile SSE41Profile = {"x86.sse41", "sse41", "+sse4.1", "amd64",
                                   SSE41Closure};
-constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64",
-                                FMAClosure};
+constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64", FMAClosure};
 constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt", "+popcnt", "amd64",
                                    POPCNTClosure};
 constexpr Profile ARM64LSEProfile = {"arm64.lse", "lse", "+lse", "arm64",
-                                    ARM64LSEClosure};
+                                     ARM64LSEClosure};
 
 const Profile *findProfile(StringRef Name) {
   if (Name == FMAProfile.Name)
@@ -166,8 +170,8 @@ Expected<CPUConfig> getCPUConfig(const Module &M) {
 }
 
 void markGoObjNonPackage(GlobalObject &GO) {
-  Metadata *Operands[] = {ConstantAsMetadata::get(
-      ConstantInt::getTrue(GO.getContext()))};
+  Metadata *Operands[] = {
+      ConstantAsMetadata::get(ConstantInt::getTrue(GO.getContext()))};
   GO.setMetadata(GoObjNonPackageMD, MDNode::get(GO.getContext(), Operands));
 }
 
@@ -183,12 +187,11 @@ bool isGoObjDuplicateOK(const GlobalObject &GO) {
 
 void markGoObjDuplicateOK(GlobalObject &GO) {
   Metadata *Operands[] = {
-      ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(GO.getContext()),
-                                               GoObjSymFlagDupok)),
+      ConstantAsMetadata::get(ConstantInt::get(
+          Type::getInt32Ty(GO.getContext()), GoObjSymFlagDupok)),
       ConstantAsMetadata::get(
           ConstantInt::get(Type::getInt32Ty(GO.getContext()), 0))};
-  GO.setMetadata(GoObjSymbolFlagsMD,
-                 MDNode::get(GO.getContext(), Operands));
+  GO.setMetadata(GoObjSymbolFlagsMD, MDNode::get(GO.getContext(), Operands));
 }
 
 void eraseGoObjDefinitionIdentity(Function &F) {
@@ -210,6 +213,87 @@ void eraseFunctionBodyPreservingMetadata(Function &F) {
     BB.dropAllReferences();
   while (!F.empty())
     F.begin()->eraseFromParent();
+}
+
+Error cloneRequiredInlineLocations(Function &Source, Function &Clone,
+                                   ValueToValueMapTy &VMap) {
+  NamedMDNode *Locations =
+      Source.getParent()->getNamedMetadata(GoObjDebugInlineRequiredMD);
+  if (!Locations)
+    return Error::success();
+
+  SmallVector<DILocation *, 16> MappedLocations;
+  for (const MDNode *Entry : Locations->operands()) {
+    if (Entry->getNumOperands() != 2)
+      return createStringError(
+          inconvertibleErrorCode(),
+          "expected !goobj.debug.inline.required entries to have two operands");
+    const auto *CAM =
+        dyn_cast_or_null<ConstantAsMetadata>(Entry->getOperand(0));
+    const auto *GV = CAM ? dyn_cast<GlobalValue>(CAM->getValue()) : nullptr;
+    const auto *Loc = dyn_cast_or_null<DILocation>(Entry->getOperand(1));
+    if (!GV || !Loc || !Loc->getInlinedAt())
+      return createStringError(inconvertibleErrorCode(),
+                               "invalid !goobj.debug.inline.required entry");
+    if (GV != &Source)
+      continue;
+
+    auto *Mapped = dyn_cast_or_null<DILocation>(MapMetadata(Loc, VMap));
+    if (!Mapped || !Mapped->getInlinedAt())
+      return createStringError(inconvertibleErrorCode(),
+                               "failed to map required inline location from " +
+                                   Source.getName() + " to " + Clone.getName());
+    MappedLocations.push_back(Mapped);
+  }
+
+  for (DILocation *Loc : MappedLocations) {
+    Metadata *Operands[] = {ConstantAsMetadata::get(&Clone), Loc};
+    Locations->addOperand(MDNode::get(Source.getContext(), Operands));
+  }
+  return Error::success();
+}
+
+Error eraseRequiredInlineLocations(Function &F) {
+  NamedMDNode *Locations =
+      F.getParent()->getNamedMetadata(GoObjDebugInlineRequiredMD);
+  if (!Locations)
+    return Error::success();
+
+  SmallVector<TrackingMDNodeRef, 16> Kept;
+  for (MDNode *Entry : Locations->operands()) {
+    if (Entry->getNumOperands() != 2)
+      return createStringError(
+          inconvertibleErrorCode(),
+          "expected !goobj.debug.inline.required entries to have two operands");
+    const auto *CAM =
+        dyn_cast_or_null<ConstantAsMetadata>(Entry->getOperand(0));
+    const auto *GV = CAM ? dyn_cast<GlobalValue>(CAM->getValue()) : nullptr;
+    const auto *Loc = dyn_cast_or_null<DILocation>(Entry->getOperand(1));
+    if (!GV || !Loc || !Loc->getInlinedAt())
+      return createStringError(inconvertibleErrorCode(),
+                               "invalid !goobj.debug.inline.required entry");
+    if (GV != &F)
+      Kept.emplace_back(Entry);
+  }
+
+  Locations->clearOperands();
+  for (const TrackingMDNodeRef &Entry : Kept)
+    Locations->addOperand(Entry.get());
+  return Error::success();
+}
+
+void makeFramelessDispatcher(Function &F) { F.addFnAttr(GoNoSplitAttr); }
+
+void makeFramelessResolver(Function &F) {
+  F.removeFnAttr(Attribute::AlwaysInline);
+  F.addFnAttr(Attribute::NoInline);
+  F.addFnAttr(GoNoSplitAttr);
+}
+
+void setSyntheticDebugLocation(IRBuilder<> &B, Function &F) {
+  if (DISubprogram *SP = F.getSubprogram())
+    B.SetCurrentDebugLocation(
+        DILocation::get(F.getContext(), SP->getScopeLine(), 0, SP));
 }
 
 void addTargetFeature(Function &F, StringRef Feature) {
@@ -293,20 +377,19 @@ AttributeList callAttributes(const Function &F) {
                             Source.getRetAttrs(), Params);
 }
 
-CallInst *createMustTailCall(IRBuilder<> &B, Function &Signature,
-                             Value *Callee) {
+CallInst *createTailCall(IRBuilder<> &B, Function &Signature, Value *Callee) {
   SmallVector<Value *, 8> Args;
   for (Argument &Arg : Signature.args())
     Args.push_back(&Arg);
   CallInst *Call = B.CreateCall(Signature.getFunctionType(), Callee, Args);
   Call->setCallingConv(Signature.getCallingConv());
   Call->setAttributes(callAttributes(Signature));
-  Call->setTailCallKind(CallInst::TCK_MustTail);
+  Call->setTailCallKind(CallInst::TCK_Tail);
   return Call;
 }
 
 void createTailReturn(IRBuilder<> &B, Function &Signature, Value *Callee) {
-  CallInst *Call = createMustTailCall(B, Signature, Callee);
+  CallInst *Call = createTailCall(B, Signature, Callee);
   if (Signature.getReturnType()->isVoidTy())
     B.CreateRetVoid();
   else
@@ -362,6 +445,8 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
   eraseGoObjDefinitionIdentity(*Clone);
   if (DuplicateOK)
     markGoObjDuplicateOK(*Clone);
+  if (Error Err = cloneRequiredInlineLocations(Source, *Clone, VMap))
+    return std::move(Err);
   for (const Profile *P : EnabledProfiles)
     addTargetFeature(*Clone, P->TargetFeature);
   Expected<bool> Specialized = specializeGuards(*Clone, Available);
@@ -382,6 +467,22 @@ Error registerGoObjDebugFunction(Function &F) {
   Metadata *Operands[] = {SP, ConstantAsMetadata::get(&F)};
   Funcs->addOperand(MDNode::get(F.getContext(), Operands));
   return Error::success();
+}
+
+Function *cloneResolver(Function &Source) {
+  const bool DuplicateOK = isGoObjDuplicateOK(Source);
+  ValueToValueMapTy VMap;
+  Function *Resolver = CloneFunction(&Source, VMap);
+  Resolver->setName(Source.getName() + ".goallc.fmv.resolve");
+  Resolver->setLinkage(GlobalValue::InternalLinkage);
+  Resolver->setDSOLocal(true);
+  Resolver->removeFnAttr(MultiversionAttr);
+  eraseGoObjDefinitionIdentity(*Resolver);
+  if (DuplicateOK)
+    markGoObjDuplicateOK(*Resolver);
+  eraseFunctionBodyPreservingMetadata(*Resolver);
+  makeFramelessResolver(*Resolver);
+  return Resolver;
 }
 
 Error multiversionFunction(Function &F, const CPUConfig &Config,
@@ -444,10 +545,13 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
 
   LLVMContext &C = F.getContext();
   Module &M = *F.getParent();
-  auto *Slot = new GlobalVariable(
-      M, PointerType::getUnqual(C), false, GlobalValue::InternalLinkage,
-      ConstantPointerNull::get(PointerType::getUnqual(C)),
-      F.getName() + ".goallc.fmv.slot");
+  Function *Resolver = cloneResolver(F);
+  if (Error Err = registerGoObjDebugFunction(*Resolver))
+    return Err;
+
+  auto *Slot = new GlobalVariable(M, PointerType::getUnqual(C), false,
+                                  GlobalValue::InternalLinkage, Resolver,
+                                  F.getName() + ".goallc.fmv.slot");
   Slot->setAlignment(Align(M.getDataLayout().getPointerABIAlignment(0)));
   Slot->setDSOLocal(true);
   Slot->setSection(".noptrdata");
@@ -455,35 +559,28 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   if (DuplicateOK)
     markGoObjDuplicateOK(*Slot);
 
+  if (Error Err = eraseRequiredInlineLocations(F))
+    return Err;
   eraseFunctionBodyPreservingMetadata(F);
   F.removeFnAttr(MultiversionAttr);
-  // The resolver's musttail transfer is valid only in the dispatcher's own
-  // calling convention. Keep this stable call boundary: inlining it into a
-  // runtime helper with a different convention would make the transfer
-  // invalid, and every call must also observe the single published slot.
-  F.addFnAttr(Attribute::NoInline);
+  // This synthetic dispatcher has no stack frame. Its terminal tail transfer
+  // is not a safepoint, while normal optimization may inline it into a
+  // same-module caller where a non-terminal call is rewritten as usual.
+  makeFramelessDispatcher(F);
   BasicBlock *Entry = BasicBlock::Create(C, "entry", &F);
-  BasicBlock *Dispatch = BasicBlock::Create(C, "dispatch", &F);
-  BasicBlock *Resolve = BasicBlock::Create(C, "resolve", &F);
-  BasicBlock *Uninitialized = BasicBlock::Create(C, "uninitialized", &F);
-  BasicBlock *Select = BasicBlock::Create(C, "select", &F);
   IRBuilder<> B(Entry);
-  if (DISubprogram *SP = F.getSubprogram())
-    B.SetCurrentDebugLocation(
-        DILocation::get(C, SP->getScopeLine(), 0, SP));
+  setSyntheticDebugLocation(B, F);
   LoadInst *Target = B.CreateLoad(PointerType::getUnqual(C), Slot, "target");
-  Target->setAtomic(AtomicOrdering::Acquire);
+  Target->setAtomic(AtomicOrdering::Monotonic);
   Target->setAlignment(Slot->getAlign().valueOrOne());
-  B.CreateCondBr(B.CreateICmpNE(Target, ConstantPointerNull::get(
-                                            PointerType::getUnqual(C))),
-                 Dispatch, Resolve);
-
-  B.SetInsertPoint(Dispatch);
   createTailReturn(B, F, Target);
 
-  B.SetInsertPoint(Resolve);
+  BasicBlock *ResolveEntry = BasicBlock::Create(C, "entry", Resolver);
+  BasicBlock *Uninitialized = BasicBlock::Create(C, "uninitialized", Resolver);
+  BasicBlock *Select = BasicBlock::Create(C, "select", Resolver);
+  B.SetInsertPoint(ResolveEntry);
+  setSyntheticDebugLocation(B, *Resolver);
   LoadInst *Mask = B.CreateLoad(Type::getInt64Ty(C), &RuntimeMask, "features");
-  Mask->setAtomic(AtomicOrdering::Acquire);
   Mask->setAlignment(Align(8));
   Value *Initialized = B.CreateICmpNE(
       B.CreateAnd(Mask, ConstantInt::get(Mask->getType(), FeatureINITIALIZED)),
@@ -491,7 +588,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   B.CreateCondBr(Initialized, Select, Uninitialized);
 
   B.SetInsertPoint(Uninitialized);
-  createTailReturn(B, F, BaselineImpl);
+  createTailReturn(B, *Resolver, BaselineImpl);
 
   B.SetInsertPoint(Select);
   Value *Selected = BaselineImpl;
@@ -501,9 +598,9 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     Selected = B.CreateSelect(Supported, V.F, Selected);
   }
   StoreInst *Publish = B.CreateStore(Selected, Slot);
-  Publish->setAtomic(AtomicOrdering::Release);
+  Publish->setAtomic(AtomicOrdering::Monotonic);
   Publish->setAlignment(Slot->getAlign().valueOrOne());
-  createTailReturn(B, F, Selected);
+  createTailReturn(B, *Resolver, Selected);
   return Error::success();
 }
 

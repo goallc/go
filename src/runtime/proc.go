@@ -802,7 +802,7 @@ func cpuinit(env string) {
 		if cpu.X86.HasPOPCNT {
 			goallcFeatures |= goallcCPUFeaturePOPCNT
 		}
-		atomic.Store64(&goallcCPUFeatures, goallcFeatures|goallcCPUFeaturesInitialized)
+		goallcCPUFeatures = goallcFeatures | goallcCPUFeaturesInitialized
 
 	case "arm":
 		armHasVFPv4 = cpu.ARM.HasVFPv4
@@ -813,7 +813,7 @@ func cpuinit(env string) {
 		if cpu.ARM64.HasATOMICS {
 			goallcFeatures |= goallcCPUFeatureARM64LSE
 		}
-		atomic.Store64(&goallcCPUFeatures, goallcFeatures|goallcCPUFeaturesInitialized)
+		goallcCPUFeatures = goallcFeatures | goallcCPUFeaturesInitialized
 
 	case "loong64":
 		loong64HasLAMCAS = cpu.Loong64.HasLAMCAS

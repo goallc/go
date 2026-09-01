@@ -3,11 +3,21 @@ target triple = "aarch64-unknown-linux-gnu"
 @runtime.goallcCPUFeatures = external global i64
 @runtime.arm64HasATOMICS = external global i8
 
-; CHECK: @add.goallc.fmv.slot = internal global ptr null
+; CHECK: @add.goallc.fmv.slot = internal global ptr @add.goallc.fmv.resolve
 ; CHECK-LABEL: define i64 @add(
 ; CHECK-SAME: #[[DISPATCH:[0-9]+]]
-; CHECK: and i64 %features, 256
-; CHECK: select i1 {{.*}}, ptr @add.goallc.fmv.lse, ptr @add.goallc.fmv.baseline
+; CHECK: load atomic ptr, ptr @add.goallc.fmv.slot monotonic
+; CHECK: tail call i64 %target
+
+; CHECK-ARM64-ASM-LABEL: add:
+; CHECK-ARM64-ASM: ldr x2, [x8, :lo12:add.goallc.fmv.slot]
+; CHECK-ARM64-ASM-NEXT: br x2
+; CHECK-ARM64-ASM-NOT: {{^[[:space:]]*bl[[:space:]]}}
+; CHECK-ARM64-ASM-LABEL: add.goallc.fmv.resolve:
+; CHECK-ARM64-ASM-NOT: {{^[[:space:]]*bl[[:space:]]}}
+; CHECK-ARM64-ASM: br x2
+; CHECK-ARM64-ASM-NOT: {{^[[:space:]]*bl[[:space:]]}}
+; CHECK-ARM64-ASM: b add.goallc.fmv.baseline
 
 define i64 @add(ptr %address, i64 %delta) #0 {
 entry:
@@ -37,7 +47,13 @@ done:
 ; CHECK: %old = atomicrmw add
 ; CHECK-NOT: %soft.old = atomicrmw add
 
-; CHECK: attributes #[[DISPATCH]] = {{.*}}noinline
+; CHECK-LABEL: define internal i64 @add.goallc.fmv.resolve(
+; CHECK: load i64, ptr @runtime.goallcCPUFeatures
+; CHECK: and i64 %features, 256
+; CHECK: select i1 {{.*}}, ptr @add.goallc.fmv.lse, ptr @add.goallc.fmv.baseline
+; CHECK: store atomic ptr {{.*}}, ptr @add.goallc.fmv.slot monotonic
+
+; CHECK: attributes #[[DISPATCH]] = {{.*}}"go-nosplit" {{.*}}"target-cpu"="generic"
 ; CHECK: attributes #[[LSE]] = {{.*}}"target-features"="+lse"
 
 attributes #0 = { "goallc.cpu.multiversion"="arm64.lse" "target-cpu"="generic" }

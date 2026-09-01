@@ -4,8 +4,6 @@
 
 package runtime
 
-import "internal/runtime/atomic"
-
 const (
 	GoALLCCPUFeatureSSE3ForTest         = goallcCPUFeatureSSE3
 	GoALLCCPUFeatureSSSE3ForTest        = goallcCPUFeatureSSSE3
@@ -19,5 +17,5 @@ const (
 )
 
 func GoALLCCPUFeaturesForTest() uint64 {
-	return atomic.Load64(&goallcCPUFeatures)
+	return goallcCPUFeatures
 }

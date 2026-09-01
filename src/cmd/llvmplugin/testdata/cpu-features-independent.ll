@@ -12,6 +12,31 @@ declare double @llvm.floor.f64(double)
 declare double @llvm.fma.f64(double, double, double)
 
 ; CHECK-LABEL: define double @mixed(
+; CHECK: load atomic ptr, ptr @mixed.goallc.fmv.slot monotonic
+; CHECK: tail call double %target
+
+; CHECK-LABEL: define internal double @mixed.goallc.fmv.baseline(
+; CHECK-NOT: llvm.floor
+; CHECK-NOT: llvm.fma
+; CHECK: call double @fallback.round
+; CHECK: call double @fallback.fma
+
+; CHECK-LABEL: define internal double @mixed.goallc.fmv.sse41(
+; CHECK: call double @llvm.floor.f64
+; CHECK-NOT: llvm.fma
+; CHECK: call double @fallback.fma
+
+; CHECK-LABEL: define internal double @mixed.goallc.fmv.fma(
+; CHECK-NOT: llvm.floor
+; CHECK: call double @fallback.round
+; CHECK: call double @llvm.fma.f64
+
+; CHECK-LABEL: define internal double @mixed.goallc.fmv.sse41-fma(
+; CHECK: call double @llvm.floor.f64
+; CHECK: call double @llvm.fma.f64
+
+; CHECK-LABEL: define internal double @mixed.goallc.fmv.resolve(
+; CHECK: load i64, ptr @runtime.goallcCPUFeatures
 ; CHECK: and i64 %features, 4
 ; CHECK: select i1 {{.*}}, ptr @mixed.goallc.fmv.sse41, ptr @mixed.goallc.fmv.baseline
 ; CHECK: and i64 %features, 32
@@ -51,26 +76,6 @@ done:
   %result = phi double [ %fused, %fma ], [ %soft.fused, %soft.fma ]
   ret double %result
 }
-
-; CHECK-LABEL: define internal double @mixed.goallc.fmv.baseline(
-; CHECK-NOT: llvm.floor
-; CHECK-NOT: llvm.fma
-; CHECK: call double @fallback.round
-; CHECK: call double @fallback.fma
-
-; CHECK-LABEL: define internal double @mixed.goallc.fmv.sse41(
-; CHECK: call double @llvm.floor.f64
-; CHECK-NOT: llvm.fma
-; CHECK: call double @fallback.fma
-
-; CHECK-LABEL: define internal double @mixed.goallc.fmv.fma(
-; CHECK-NOT: llvm.floor
-; CHECK: call double @fallback.round
-; CHECK: call double @llvm.fma.f64
-
-; CHECK-LABEL: define internal double @mixed.goallc.fmv.sse41-fma(
-; CHECK: call double @llvm.floor.f64
-; CHECK: call double @llvm.fma.f64
 
 attributes #0 = { "goallc.cpu.multiversion"="x86.fma,x86.sse41" "target-cpu"="x86-64" }
 
