@@ -637,6 +637,32 @@ func TestEmitLateGoObjBuiltinDeclarations(t *testing.T) {
 	}
 }
 
+func TestLLVMGoObjImportsDeduplicateMidwayImports(t *testing.T) {
+	simdFingerprint := goobj.FingerprintType{1, 2, 3, 4, 5, 6, 7, 8}
+	bridgeFingerprint := goobj.FingerprintType{8, 7, 6, 5, 4, 3, 2, 1}
+	imports := []goobj.ImportedPkg{
+		{Pkg: "simd", Fingerprint: simdFingerprint},
+		{Pkg: "simd/internal/bridge", Fingerprint: bridgeFingerprint},
+		{Pkg: "simd", Fingerprint: simdFingerprint},
+	}
+
+	got, err := llvmGoObjImports(imports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("unique import count = %d, want 2", len(got))
+	}
+	if got[0] != imports[0] || got[1] != imports[1] {
+		t.Fatalf("unique imports = %v, want first-seen order %v", got, imports[:2])
+	}
+
+	imports[2].Fingerprint = bridgeFingerprint
+	if _, err := llvmGoObjImports(imports); err == nil {
+		t.Fatal("conflicting duplicate import was accepted")
+	}
+}
+
 func TestLLVMAMD64MapPackedByteLowering(t *testing.T) {
 	oldTypes := type2lTypes
 	oldModule := CurrentModule

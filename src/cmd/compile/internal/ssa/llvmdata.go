@@ -91,13 +91,37 @@ func llvmGoObjReferenceName(s *obj.LSym) string {
 // fingerprint already decoded by the Go importer. LLVM must not rediscover
 // either value from an importcfg file or a symbol-name prefix.
 func emitGoObjImportMetadata() {
-	for _, imp := range base.Ctxt.Imports {
+	imports, err := llvmGoObjImports(base.Ctxt.Imports)
+	if err != nil {
+		base.Fatalf("emitting GoObj import metadata: %v", err)
+	}
+	for _, imp := range imports {
 		CurrentModule.AddNamedMetadataOperand("goobj.imports", GlobalCtxt.MDNode([]llvm.Metadata{
 			GlobalCtxt.MDString(imp.Pkg),
 			GlobalCtxt.MDString(objabi.PathToPrefix(imp.Pkg)),
 			GlobalCtxt.MDString(hex.EncodeToString(imp.Fingerprint[:])),
 		}))
 	}
+}
+
+// llvmGoObjImports removes the duplicate imports produced when Midway rewrites
+// a package and type checking imports again. Preserve first-seen order so the
+// LLVM GoObj autolib block remains deterministic, and reject any disagreement
+// instead of silently choosing one package fingerprint.
+func llvmGoObjImports(imports []goobj.ImportedPkg) ([]goobj.ImportedPkg, error) {
+	unique := make([]goobj.ImportedPkg, 0, len(imports))
+	seen := make(map[string]goobj.FingerprintType, len(imports))
+	for _, imp := range imports {
+		if fingerprint, ok := seen[imp.Pkg]; ok {
+			if fingerprint != imp.Fingerprint {
+				return nil, fmt.Errorf("conflicting fingerprints for imported package %q", imp.Pkg)
+			}
+			continue
+		}
+		seen[imp.Pkg] = imp.Fingerprint
+		unique = append(unique, imp)
+	}
+	return unique, nil
 }
 
 func emitGoObjCgoModuleAsm() {
