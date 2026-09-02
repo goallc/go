@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"simd/archsimd/_gen/sgutil"
 )
 
@@ -41,13 +42,21 @@ func writeSIMDGenericOps(ops []Operation, genericOpsFilePath string) *bytes.Buff
 			genericImm = VarImm
 		}
 
+		genericName := gOp.GenericName()
+		simd := goALLCSIMDDescriptor(op, gOp, genericIn, genericOut, genericMask, genericImm)
+		if simd.IsZero() {
+			if _, ok := goALLCSIMDPlanForGenericOp(genericName); !ok {
+				panic(fmt.Errorf("simdgen: generic op %q has neither an LLVM lowering nor a reviewed GoALLC plan", genericName))
+			}
+		}
+
 		newOps = append(newOps, sgutil.GenericOpsData{
-			OpName:  gOp.GenericName(),
+			OpName:  genericName,
 			OpInLen: len(gOp.In),
 			Comm:    op.Commutative,
 			HasAux:  immType == VarImm || immType == VarImmLim || immType == ConstVarImm,
 			Archs:   []string{currentArch},
-			SIMD:    goALLCSIMDDescriptor(op, gOp, genericIn, genericOut, genericMask, genericImm),
+			SIMD:    simd,
 		})
 	}
 
