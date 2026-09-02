@@ -824,7 +824,7 @@ func (lfc *LLVMFuncContext) markRequiredCPUFeatureGuards() {
 	}
 }
 
-func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(v *Value, instruction llvm.Value, info goALLCSIMDOpInfo) {
+func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(instruction llvm.Value, info goALLCSIMDOpInfo) {
 	arch := lfc.F.Config.arch
 	profile := info.archInfo(arch).cpuProfile
 	if profile == "" || llvmCPUProfileCoveredByBaseline(arch, profile) {
@@ -834,9 +834,11 @@ func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(v *Value, instruction
 	if llvmCPUProfileCoveredByFloor(profile, floor) {
 		return
 	}
-	if _, midway := llvmMidwaySIMDFeatureFloor(lfc.F); midway {
-		v.Fatalf("%s requires CPU profile %q beyond Midway feature floor %q", v.Op, profile, floor)
-	}
+	// A Midway width floor and an optional instruction feature are separate
+	// contracts. Let the shared FMV pass specialize a matching explicit guard
+	// inside the selected width. Its baseline-clone requirement verifier rejects
+	// an unguarded instruction, so exceeding the floor cannot silently make the
+	// Midway variant unsafe.
 	lfc.requireCPUFeature(instruction, profile)
 }
 
@@ -2059,7 +2061,7 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	laneBits := int(info.laneBits)
 	isFloat := info.lane == goALLCSIMDLaneFloat
 	finish := func(result llvm.Value) (llvm.Value, bool) {
-		lfc.requireGeneratedSIMDCPUFeature(v, result, info)
+		lfc.requireGeneratedSIMDCPUFeature(result, info)
 		return result, true
 	}
 
