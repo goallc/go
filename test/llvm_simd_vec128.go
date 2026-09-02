@@ -58,6 +58,15 @@ func llvmVec128FloatPhi(useY bool, x, y archsimd.Float32x4) archsimd.Float32x4 {
 }
 
 //go:noinline
+func llvmVec128FloatOpPhi(useY bool, x, y archsimd.Float32x4) archsimd.Float32x4 {
+	selected := x.Add(x)
+	if useY {
+		selected = y.Add(y)
+	}
+	return selected.Mul(x)
+}
+
+//go:noinline
 func llvmVec128CoreCompareSelect(x, y archsimd.Int8x16) archsimd.Int8x16 {
 	return x.IfElse(x.Greater(y), y)
 }
@@ -65,6 +74,16 @@ func llvmVec128CoreCompareSelect(x, y archsimd.Int8x16) archsimd.Int8x16 {
 //go:noinline
 func llvmVec128CoreFloatNotEqual(x, y archsimd.Float32x4) archsimd.Int32x4 {
 	return x.NotEqual(y).ToInt32x4()
+}
+
+//go:noinline
+func llvmVec128FloatBits(x archsimd.Float32x4) archsimd.Uint32x4 {
+	return x.ToBits()
+}
+
+//go:noinline
+func llvmVec128ReshapeBytes(x archsimd.Uint8x16) archsimd.Uint16x8 {
+	return x.ReshapeToUint16s()
 }
 
 func main() {
@@ -132,6 +151,18 @@ func main() {
 		}
 	}
 
+	floatOpPhiWant := [4]float32{8, 16, 64, 128}
+	llvmVec128FloatOpPhi(
+		true,
+		archsimd.LoadFloat32x4Array(&floatX),
+		archsimd.LoadFloat32x4Array(&floatY),
+	).StoreArray(&floatGot)
+	for i := range floatGot {
+		if floatGot[i] != floatOpPhiWant[i] {
+			panic(44 + i)
+		}
+	}
+
 	selectX := [16]int8{-8, 7, -6, 5, -4, 3, -2, 1, 0, -1, 2, -3, 4, -5, 6, -7}
 	selectY := [16]int8{8, -7, 6, -5, 4, -3, 2, -1, 0, 1, -2, 3, -4, 5, -6, 7}
 	var selectGot [16]int8
@@ -162,6 +193,26 @@ func main() {
 	for i := range compareGot {
 		if compareGot[i] != compareWant[i] {
 			panic(64 + i)
+		}
+	}
+
+	bitsInput := [4]float32{1, -2, 0.5, 0}
+	bitsWant := [4]uint32{0x3f800000, 0xc0000000, 0x3f000000, 0}
+	var bitsGot [4]uint32
+	llvmVec128FloatBits(archsimd.LoadFloat32x4Array(&bitsInput)).StoreArray(&bitsGot)
+	for i := range bitsGot {
+		if bitsGot[i] != bitsWant[i] {
+			panic(72 + i)
+		}
+	}
+
+	bytesInput := [16]uint8{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	var reshapeGot [8]uint16
+	llvmVec128ReshapeBytes(archsimd.LoadUint8x16Array(&bytesInput)).StoreArray(&reshapeGot)
+	for i := range reshapeGot {
+		want := uint16(bytesInput[2*i]) | uint16(bytesInput[2*i+1])<<8
+		if reshapeGot[i] != want {
+			panic(80 + i)
 		}
 	}
 }

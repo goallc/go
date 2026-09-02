@@ -136,6 +136,111 @@ func TestLLVMNaturalSIMDABIType(t *testing.T) {
 	}
 }
 
+func TestLLVMWidthOnlySIMDValuesKeepNaturalOperationTypes(t *testing.T) {
+	if !buildcfg.Experiment.SIMD {
+		t.Skip("requires GOEXPERIMENT=simd")
+	}
+
+	oldTypes := type2lTypes
+	oldModule := CurrentModule
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() {
+		type2lTypes = oldTypes
+		CurrentModule = oldModule
+	}()
+
+	floatType := llvmTestSIMDType("float32x4", types.Types[types.TFLOAT32], 4)
+	vectorType := getLLVMType(floatType)
+	module := GlobalCtxt.NewModule("width_only_simd_values")
+	CurrentModule = module
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	function := llvm.AddFunction(module, "chain", llvm.FunctionType(vectorType, []llvm.Type{vectorType, vectorType}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+	context := &LLVMFuncContext{
+		F:  &Func{Config: &Config{arch: "arm64"}},
+		Vs: make(map[ID]llvm.Value),
+		b:  builder,
+	}
+	x := &Value{ID: 1, Op: OpArg, Type: floatType}
+	y := &Value{ID: 2, Op: OpArg, Type: floatType}
+	context.Vs[x.ID] = function.Param(0)
+	context.Vs[y.ID] = function.Param(1)
+	add := &Value{ID: 3, Op: OpAddFloat32x4, Type: types.TypeVec128, Args: []*Value{x, y}}
+	mul := &Value{ID: 4, Op: OpMulFloat32x4, Type: types.TypeVec128, Args: []*Value{add, y}}
+	builder.CreateRet(context.GenLV(mul))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected width-only SIMD values: %v\n%s", err, module.String())
+	}
+	ir := module.String()
+	for _, want := range []string{"fadd <4 x float>", "fmul <4 x float>", "ret <4 x float>"} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("LLVM IR does not contain %q\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, "bitcast ") {
+		t.Fatalf("same-shape SIMD chain introduced a carrier bitcast\n%s", ir)
+	}
+}
+
+func TestLLVMSIMDLaneViewsAreOnDemand(t *testing.T) {
+	if !buildcfg.Experiment.SIMD {
+		t.Skip("requires GOEXPERIMENT=simd")
+	}
+
+	oldTypes := type2lTypes
+	oldModule := CurrentModule
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() {
+		type2lTypes = oldTypes
+		CurrentModule = oldModule
+	}()
+
+	floatType := llvmTestSIMDType("float32x4", types.Types[types.TFLOAT32], 4)
+	intType := llvmTestSIMDType("int32x4", types.Types[types.TINT32], 4)
+	floatVectorType := getLLVMType(floatType)
+	intVectorType := getLLVMType(intType)
+	module := GlobalCtxt.NewModule("on_demand_simd_lane_views")
+	CurrentModule = module
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+
+	function := llvm.AddFunction(module, "chain", llvm.FunctionType(intVectorType, []llvm.Type{floatVectorType, floatVectorType}, false))
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+	context := &LLVMFuncContext{
+		F:  &Func{Config: &Config{arch: "arm64"}},
+		Vs: make(map[ID]llvm.Value),
+		b:  builder,
+	}
+	x := &Value{ID: 1, Op: OpArg, Type: floatType}
+	y := &Value{ID: 2, Op: OpArg, Type: floatType}
+	context.Vs[x.ID] = function.Param(0)
+	context.Vs[y.ID] = function.Param(1)
+	add := &Value{ID: 3, Op: OpAddInt32x4, Type: types.TypeVec128, Args: []*Value{x, y}}
+	xor := &Value{ID: 4, Op: OpXorInt32x4, Type: types.TypeVec128, Args: []*Value{add, add}}
+	builder.CreateRet(context.GenLV(xor))
+
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("LLVM verifier rejected on-demand SIMD lane views: %v\n%s", err, module.String())
+	}
+	ir := module.String()
+	for _, want := range []string{"add <4 x i32>", "xor <4 x i32>", "ret <4 x i32>"} {
+		if !strings.Contains(ir, want) {
+			t.Errorf("LLVM IR does not contain %q\n%s", want, ir)
+		}
+	}
+	if got := strings.Count(ir, "bitcast <4 x float>"); got != 2 {
+		t.Fatalf("lane reinterpretation emitted %d float-to-int views, want 2\n%s", got, ir)
+	}
+	if got := strings.Count(ir, "bitcast "); got != 2 {
+		t.Fatalf("integer SIMD chain emitted %d total bitcasts after its two input views, want 2\n%s", got, ir)
+	}
+}
+
 func TestLLVMABICarrierBridgesPromotedReceiverAtCaller(t *testing.T) {
 	module := GlobalCtxt.NewModule("promoted_receiver_carrier")
 	builder := GlobalCtxt.NewBuilder()

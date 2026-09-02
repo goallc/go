@@ -199,23 +199,25 @@ func llvmTypeContainsABIPad(typ llvm.Type) bool {
 // llvmNaturalSIMDType extracts the lane shape retained by a concrete source
 // SIMD declaration. Width-only compiler-internal TypeVec values return false.
 func llvmNaturalSIMDType(typ *types.Type) (llvm.Type, bool) {
-	if !typ.IsStruct() {
+	// Generated archsimd values have exactly two fields: a zero-sized SIMD tag
+	// and a full-width [lanes]element field. Validate that canonical layout
+	// instead of accepting an arbitrary struct containing a conveniently-sized
+	// array.
+	if !typ.IsStruct() || typ.NumFields() != 2 {
 		return llvm.Type{}, false
 	}
-	for i := 0; i < typ.NumFields(); i++ {
-		field := typ.FieldType(i)
-		if !field.IsArray() || field.Size() != typ.Size() || field.NumElem() == 0 {
-			continue
-		}
-		elem := field.Elem()
-		if (!elem.IsInteger() && !elem.IsFloat()) || elem.Size()*field.NumElem() != typ.Size() {
-			continue
-		}
-		lane := getLLVMType(elem)
-		switch lane.TypeKind() {
-		case llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
-			return llvm.VectorType(lane, int(field.NumElem())), true
-		}
+	tag, field := typ.FieldType(0), typ.FieldType(1)
+	if !tag.IsSIMD() || tag.Size() != 0 || !field.IsArray() || field.Size() != typ.Size() || field.NumElem() == 0 {
+		return llvm.Type{}, false
+	}
+	elem := field.Elem()
+	if (!elem.IsInteger() && !elem.IsFloat()) || elem.Size()*field.NumElem() != typ.Size() {
+		return llvm.Type{}, false
+	}
+	lane := getLLVMType(elem)
+	switch lane.TypeKind() {
+	case llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
+		return llvm.VectorType(lane, int(field.NumElem())), true
 	}
 	return llvm.Type{}, false
 }
@@ -1714,6 +1716,23 @@ func llvmAMD64ByteVectorType() llvm.Type {
 	return llvm.VectorType(GlobalCtxt.Int8Type(), 16)
 }
 
+// llvmSIMDCarrierType is the fallback representation for Go's width-only SSA
+// SIMD types. Concrete source SIMD types use their natural lane vector; only
+// values whose Go SSA type has intentionally forgotten that shape need this
+// carrier.
+func llvmSIMDCarrierType(typ *types.Type) llvm.Type {
+	if typ == types.TypeMask {
+		return GlobalCtxt.Int64Type()
+	}
+	switch size := typ.Size(); size {
+	case 16, 32, 64:
+		return llvm.VectorType(GlobalCtxt.Int8Type(), int(size))
+	default:
+		base.Fatalf("unsupported SIMD width %d for %v in LLVM lowering", typ.Size(), typ)
+		return llvm.Type{}
+	}
+}
+
 type llvmSIMDBinaryBuilder func(llvm.Value, llvm.Value, string) llvm.Value
 
 type llvmSIMDUnaryBuilder func(llvm.Value, string) llvm.Value
@@ -1732,22 +1751,52 @@ func llvmSIMDLaneWidth(typ llvm.Type) int {
 	}
 }
 
+func llvmSIMDVectorWidth(typ llvm.Type) (int, bool) {
+	if typ.TypeKind() != llvm.VectorTypeKind {
+		return 0, false
+	}
+	lane := typ.ElementType()
+	switch lane.TypeKind() {
+	case llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
+		return typ.VectorSize() * llvmSIMDLaneWidth(lane), true
+	default:
+		return 0, false
+	}
+}
+
+// simdValueAs returns the lane view required by one LLVM operation. The Go
+// SSA value remains unchanged; a bitcast is emitted only when its currently
+// materialized LLVM value has a different equal-width vector shape.
+func (lfc *LLVMFuncContext) simdValueAs(user, value *Value, want llvm.Type, suffix string) llvm.Value {
+	lVal := lfc.GenLV(value)
+	if lVal.Type() == want {
+		return lVal
+	}
+	if !value.Type.IsSIMD() {
+		user.Fatalf("%s has non-SIMD operand %s", user.Op, value.LongString())
+	}
+	gotWidth, gotOK := llvmSIMDVectorWidth(lVal.Type())
+	wantWidth, wantOK := llvmSIMDVectorWidth(want)
+	if !gotOK || !wantOK || gotWidth != wantWidth || int64(wantWidth) != value.Type.Size()*8 {
+		user.Fatalf("%s cannot view LLVM operand %v as %v", user.Op, lVal.Type(), want)
+	}
+	return lfc.b.CreateBitCast(lVal, want, user.String()+suffix)
+}
+
 func (lfc *LLVMFuncContext) simdLaneOperands(v *Value, laneType llvm.Type, lanes int) (llvm.Value, llvm.Value) {
-	x, y := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1])
 	operationType := llvm.VectorType(laneType, lanes)
 	if lanes*llvmSIMDLaneWidth(laneType) != int(v.Type.Size())*8 {
 		v.Fatalf("%s lane type does not match its SIMD width", v.Op)
 	}
-	if x.Type() != operationType || y.Type() != operationType {
-		v.Fatalf("%s has LLVM operands %v and %v, want %v", v.Op, x.Type(), y.Type(), operationType)
-	}
+	x := lfc.simdValueAs(v, v.Args[0], operationType, ".x")
+	y := lfc.simdValueAs(v, v.Args[1], operationType, ".y")
 	return x, y
 }
 
 func (lfc *LLVMFuncContext) simdLaneResult(v *Value, result llvm.Value) llvm.Value {
-	want := getLLVMType(v.Type)
-	if result.Type() != want {
-		v.Fatalf("%s has LLVM result %v, want %v", v.Op, result.Type(), want)
+	width, ok := llvmSIMDVectorWidth(result.Type())
+	if !ok || int64(width) != v.Type.Size()*8 {
+		v.Fatalf("%s has LLVM result %v with the wrong SIMD width", v.Op, result.Type())
 	}
 	return result
 }
@@ -1758,14 +1807,11 @@ func (lfc *LLVMFuncContext) simdBinary(v *Value, laneType llvm.Type, lanes int, 
 }
 
 func (lfc *LLVMFuncContext) simdUnary(v *Value, laneType llvm.Type, lanes int, build llvmSIMDUnaryBuilder) llvm.Value {
-	x := lfc.GenLV(v.Args[0])
 	operationType := llvm.VectorType(laneType, lanes)
 	if lanes*llvmSIMDLaneWidth(laneType) != int(v.Type.Size())*8 {
 		v.Fatalf("%s lane type does not match its SIMD width", v.Op)
 	}
-	if x.Type() != operationType {
-		v.Fatalf("%s has LLVM operand %v, want %v", v.Op, x.Type(), operationType)
-	}
+	x := lfc.simdValueAs(v, v.Args[0], operationType, ".x")
 	return lfc.simdLaneResult(v, build(x, v.String()+".lanes"))
 }
 
@@ -1971,11 +2017,24 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 }
 
 func (lfc *LLVMFuncContext) simdBitSelect(v *Value, invertMask bool) llvm.Value {
-	resultType := getLLVMType(v.Type)
-	x, y, mask := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1]), lfc.GenLV(v.Args[2])
-	if resultType.TypeKind() != llvm.VectorTypeKind || resultType.ElementType().TypeKind() != llvm.IntegerTypeKind || x.Type() != resultType || y.Type() != resultType || mask.Type() != resultType {
-		v.Fatalf("%s requires matching integer SIMD operands and result", v.Op)
+	var laneType llvm.Type
+	var lanes int
+	switch v.Op {
+	case OpBitSelectInt8x16, OpBitSelectUint8x16, OpbitSelectInt8x16, OpbitSelectNotInt8x16:
+		laneType, lanes = GlobalCtxt.Int8Type(), 16
+	case OpBitSelectInt16x8, OpBitSelectUint16x8:
+		laneType, lanes = GlobalCtxt.Int16Type(), 8
+	case OpBitSelectInt32x4, OpBitSelectUint32x4:
+		laneType, lanes = GlobalCtxt.Int32Type(), 4
+	case OpBitSelectInt64x2, OpBitSelectUint64x2:
+		laneType, lanes = GlobalCtxt.Int64Type(), 2
+	default:
+		v.Fatalf("unsupported SIMD bit-select operation %s", v.Op)
 	}
+	resultType := llvm.VectorType(laneType, lanes)
+	x := lfc.simdValueAs(v, v.Args[0], resultType, ".x")
+	y := lfc.simdValueAs(v, v.Args[1], resultType, ".y")
+	mask := lfc.simdValueAs(v, v.Args[2], resultType, ".mask")
 	if invertMask {
 		x, y = y, x
 	}
@@ -1985,11 +2044,10 @@ func (lfc *LLVMFuncContext) simdBitSelect(v *Value, invertMask bool) llvm.Value 
 }
 
 func (lfc *LLVMFuncContext) simdBlendBytes(v *Value) llvm.Value {
-	carrier := getLLVMType(v.Type)
-	x, y, mask := lfc.GenLV(v.Args[0]), lfc.GenLV(v.Args[1]), lfc.GenLV(v.Args[2])
-	if carrier != llvmAMD64ByteVectorType() || x.Type() != carrier || y.Type() != carrier || mask.Type() != carrier {
-		v.Fatalf("%s requires <16 x i8> operands and result", v.Op)
-	}
+	carrier := llvmAMD64ByteVectorType()
+	x := lfc.simdValueAs(v, v.Args[0], carrier, ".x")
+	y := lfc.simdValueAs(v, v.Args[1], carrier, ".y")
+	mask := lfc.simdValueAs(v, v.Args[2], carrier, ".mask")
 	// VPBLENDVB selects y when the high bit of the corresponding mask byte is
 	// set. Go SIMD masks are canonical zero/all-ones bytes, but retaining the
 	// sign-bit rule here also preserves the exact private intrinsic semantics.
@@ -3279,6 +3337,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		lVal = lfc.populationCount(v)
 	case OpCondSelect:
 		x, y := arg0(), arg1()
+		if v.Type.IsSIMD() && x.Type().TypeKind() == llvm.VectorTypeKind {
+			y = lfc.simdValueAs(v, v.Args[1], x.Type(), ".y")
+			cond := lfc.llvmCondition(lfc.GenLV(v.Args[2]), v.String()+".cond")
+			lVal = lfc.b.CreateSelect(cond, x, y, v.String())
+			break
+		}
 		if x.Type() != y.Type() || x.Type() != getLLVMType(v.Type) {
 			v.Fatalf("%s has incompatible LLVM value types", v.Op)
 		}
@@ -3320,6 +3384,12 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	case OpCopy:
 		lVal = arg0()
 		if v.Type.IsMemory() || v.Type.IsVoid() {
+			break
+		}
+		if v.Type.IsSIMD() && lVal.Type().TypeKind() == llvm.VectorTypeKind {
+			if width, ok := llvmSIMDVectorWidth(lVal.Type()); !ok || int64(width) != v.Type.Size()*8 {
+				v.Fatalf("%s has incompatible LLVM SIMD operand %v", v.Op, lVal.Type())
+			}
 			break
 		}
 		lVal = lfc.reshapeLLVMValue(v, lVal, v.Args[0].Type, v.Type, v.String()+".reshape")
@@ -4703,8 +4773,7 @@ func getLLVMType(typ *types.Type) llvm.Type {
 	if typ.IsSIMD() {
 		lType, ok := llvmNaturalSIMDType(typ)
 		if !ok {
-			base.Fatalf("compiler-internal SIMD type %v reached LLVM lowering", typ)
-			return llvm.Type{}
+			lType = llvmSIMDCarrierType(typ)
 		}
 		type2lTypes[typ] = lType
 		return lType
