@@ -58,6 +58,58 @@ func TestLLVMABICarrierPreservesNamedAggregateIdentity(t *testing.T) {
 	}
 }
 
+func TestLLVMNaturalSIMDABIType(t *testing.T) {
+	if !buildcfg.Experiment.SIMD {
+		t.Skip("requires GOEXPERIMENT=simd")
+	}
+
+	oldTypes := type2lTypes
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() {
+		type2lTypes = oldTypes
+	}()
+
+	for _, test := range []struct {
+		name  string
+		elem  *types.Type
+		lanes int64
+		tag   string
+		kind  llvm.TypeKind
+		bits  int
+	}{
+		{name: "int32x4", elem: types.Types[types.TINT32], lanes: 4, tag: "v128", kind: llvm.IntegerTypeKind, bits: 32},
+		{name: "float32x8", elem: types.Types[types.TFLOAT32], lanes: 8, tag: "v256", kind: llvm.FloatTypeKind},
+		{name: "float64x8", elem: types.Types[types.TFLOAT64], lanes: 8, tag: "v512", kind: llvm.DoubleTypeKind},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := types.NewPkg("simd/archsimd", "archsimd")
+			tag := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup(test.tag)})
+			tag.SetUnderlying(types.NewStruct([]*types.Field{
+				types.NewField(src.NoXPos, nil, types.NewArray(types.NewSignature(nil, nil, nil), 0)),
+			}))
+			types.CalcStructSize(tag)
+
+			values := types.NewArray(test.elem, test.lanes)
+			typ := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup(test.name)})
+			typ.SetUnderlying(types.NewStruct([]*types.Field{
+				types.NewField(src.NoXPos, pkg.Lookup("simd"), tag),
+				types.NewField(src.NoXPos, pkg.Lookup("vals"), values),
+			}))
+			types.CalcStructSize(typ)
+			if !typ.IsSIMD() {
+				t.Fatalf("test type %v was not recognized as SIMD", typ)
+			}
+			got := getLLVMABIType(typ)
+			if got.TypeKind() != llvm.VectorTypeKind || got.VectorSize() != int(test.lanes) || got.ElementType().TypeKind() != test.kind {
+				t.Fatalf("natural SIMD type = %v, want %d lanes of kind %v", got, test.lanes, test.kind)
+			}
+			if test.bits != 0 && got.ElementType().IntTypeWidth() != test.bits {
+				t.Fatalf("natural SIMD element width = %d, want %d", got.ElementType().IntTypeWidth(), test.bits)
+			}
+		})
+	}
+}
+
 func TestLLVMABICarrierBridgesPromotedReceiverAtCaller(t *testing.T) {
 	module := GlobalCtxt.NewModule("promoted_receiver_carrier")
 	builder := GlobalCtxt.NewBuilder()
@@ -1194,12 +1246,8 @@ func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
 		t.Fatalf("generated AndNot operand orders = amd64:%q arm64:%q wasm:%q", andNot.amd64.operandOrder, andNot.arm64.operandOrder, andNot.wasm.operandOrder)
 	}
 
-	saturated, ok := goALLCSIMDInfo(OpAddSaturatedInt8x16)
-	if !ok {
-		t.Fatal("missing source descriptor for unlowered saturated add")
-	}
-	if saturated.lowering != goALLCSIMDLowerNone {
-		t.Fatalf("unmarked saturated add received inferred lowering %d", saturated.lowering)
+	if _, ok := goALLCSIMDInfo(OpAddSaturatedInt8x16); ok {
+		t.Fatal("unmarked saturated add unexpectedly received a lowering descriptor")
 	}
 }
 

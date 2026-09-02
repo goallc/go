@@ -196,12 +196,44 @@ func llvmTypeContainsABIPad(typ llvm.Type) bool {
 	return false
 }
 
-// getLLVMABIType makes a non-empty carrier only at a top-level zero-sized ABI
-// boundary. The original zero-sized layout remains in the wrapper, so
-// DataLayout supplies its Go alignment without storing that alignment in an
-// attribute.
+// llvmNaturalSIMDType recovers the lane type retained by a source SIMD
+// declaration. Go SSA deliberately collapses SIMD values of the same width to
+// one carrier type, but a source type still contains its generated vals array.
+// Keeping that lane type at LLVM call boundaries lets the target's Go calling
+// convention assign the natural vector directly to XMM/YMM/ZMM or Q registers.
+func llvmNaturalSIMDType(typ *types.Type) (llvm.Type, bool) {
+	if !typ.IsStruct() {
+		return llvm.Type{}, false
+	}
+	for i := 0; i < typ.NumFields(); i++ {
+		field := typ.FieldType(i)
+		if !field.IsArray() || field.Size() != typ.Size() || field.NumElem() == 0 {
+			continue
+		}
+		elem := field.Elem()
+		if (!elem.IsInteger() && !elem.IsFloat()) || elem.Size()*field.NumElem() != typ.Size() {
+			continue
+		}
+		lane := getLLVMType(elem)
+		switch lane.TypeKind() {
+		case llvm.IntegerTypeKind, llvm.FloatTypeKind, llvm.DoubleTypeKind:
+			return llvm.VectorType(lane, int(field.NumElem())), true
+		}
+	}
+	return llvm.Type{}, false
+}
+
+// getLLVMABIType selects the physical call-boundary carrier. Source SIMD types
+// use their natural lane vectors; width-only internal SSA SIMD types retain the
+// canonical carrier chosen by getLLVMType. A top-level zero-sized boundary gets
+// a non-empty carrier so DataLayout can preserve its Go alignment.
 func getLLVMABIType(typ *types.Type) llvm.Type {
 	storage := getLLVMType(typ)
+	if typ.IsSIMD() {
+		if natural, ok := llvmNaturalSIMDType(typ); ok {
+			storage = natural
+		}
+	}
 	if typ.Size() == 0 {
 		return llvm.StructType([]llvm.Type{storage, getLLVMABIPadType()}, false)
 	}
@@ -1691,11 +1723,11 @@ func llvmAMD64ByteVectorType() llvm.Type {
 	return llvm.VectorType(GlobalCtxt.Int8Type(), 16)
 }
 
-// llvmSIMDType is the canonical first-class carrier used at Go SSA and ABI
-// boundaries. Lane-sensitive operations bitcast this byte vector locally;
-// keeping one carrier type prevents source-level Int8x16, Uint32x4, and
-// Float64x2 names from creating distinct calling conventions for the same Go
-// register value.
+// llvmSIMDType is the canonical first-class carrier used inside Go SSA.
+// Lane-sensitive operations bitcast this byte vector locally. Source-level
+// function ABI boundaries recover their natural lane vector in getLLVMABIType;
+// the width-only TypeVec values used by intrinsic lowering cannot retain that
+// source identity.
 func llvmSIMDType(typ *types.Type) llvm.Type {
 	if typ == types.TypeMask {
 		return GlobalCtxt.Int64Type()

@@ -73,23 +73,13 @@ func TestMergeSIMDOpData(t *testing.T) {
 	}
 }
 
-func TestMergeUnloweredSIMDOpDataPreservesArchFacts(t *testing.T) {
-	left := testSIMDOpData()
-	left.Lowering = ""
-	right := left
-	right.Input = "vreg-immediate"
-	right.Immediate = "const"
-	right.Arch = map[string]SIMDArchData{
-		"arm64": {CPUFeature: "NEON", Input: "vreg-immediate", Immediate: "const"},
-	}
-	merged, err := MergeSIMDOpData("ArchitectureDependent", left, right)
+func TestMergeSIMDOpDataWithUnsupportedArchitecture(t *testing.T) {
+	want := testSIMDOpData()
+	merged, err := MergeSIMDOpData("AddInt8x32", SIMDOpData{}, want)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if merged.Input != "invalid" || merged.Immediate != "invalid" {
-		t.Fatalf("architecture-dependent common shape was not invalidated: %#v", merged)
-	}
-	if len(merged.Arch) != 2 || merged.Arch["amd64"].CPUFeature != "AVX2" || merged.Arch["arm64"].CPUFeature != "NEON" {
-		t.Fatalf("architecture-specific shape was lost: %#v", merged.Arch)
+	if !reflect.DeepEqual(merged, want) {
+		t.Fatalf("merging an unsupported architecture changed the descriptor:\n got: %#v\nwant: %#v", merged, want)
 	}
 }

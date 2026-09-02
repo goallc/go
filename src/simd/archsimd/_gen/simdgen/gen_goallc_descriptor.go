@@ -184,6 +184,9 @@ func validateGoALLCLowering(op Operation, d sgutil.SIMDOpData) {
 }
 
 func goALLCSIMDDescriptor(op, genericOp Operation, shapeIn inShape, shapeOut outShape, maskType maskShape, immType immShape, genericIn inShape, genericOut outShape, genericMask maskShape, genericImm immShape) sgutil.SIMDOpData {
+	if op.LLVMLowering == nil {
+		return sgutil.SIMDOpData{}
+	}
 	arch := CurrentArch().Arch
 	base, elemBits, lanes := goALLCPrimaryLane(genericOp)
 	operandOrder := ""
@@ -198,12 +201,8 @@ func goALLCSIMDDescriptor(op, genericOp Operation, shapeIn inShape, shapeOut out
 	if op.MemFeaturesData != nil {
 		memoryFeatureData = *op.MemFeaturesData
 	}
-	lowering := ""
-	if op.LLVMLowering != nil {
-		lowering = *op.LLVMLowering
-	}
 	d := sgutil.SIMDOpData{
-		Lowering:  lowering,
+		Lowering:  *op.LLVMLowering,
 		Width:     genericOp.VectorWidth(),
 		Lane:      base,
 		LaneBits:  elemBits,
@@ -231,8 +230,6 @@ func goALLCSIMDDescriptor(op, genericOp Operation, shapeIn inShape, shapeOut out
 			},
 		},
 	}
-	if d.Lowering != "" {
-		validateGoALLCLowering(genericOp, d)
-	}
+	validateGoALLCLowering(genericOp, d)
 	return d
 }

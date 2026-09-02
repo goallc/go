@@ -29,8 +29,9 @@ type SIMDArchData struct {
 }
 
 // SIMDOpData is the GoALLC lowering descriptor carried from simdgen through
-// the generic SSA generator. Inputs and Outputs are compact, lossless shape
-// descriptions of the operands relevant to generic lowering.
+// the generic SSA generator for an explicitly supported operation. Inputs and
+// Outputs are compact, lossless shape descriptions of the operands relevant to
+// generic lowering.
 type SIMDOpData struct {
 	Lowering  string
 	Width     int
@@ -83,35 +84,10 @@ func MergeSIMDOpData(opName string, left, right SIMDOpData) (SIMDOpData, error) 
 	if left.Lowering != right.Lowering {
 		return SIMDOpData{}, fmt.Errorf("simdgen: op %q has inconsistent GoALLC lowering kinds: existing=%q, new=%q", opName, left.Lowering, right.Lowering)
 	}
-	merged := left
-	if left.Lowering != "" {
-		if !left.EqualGeneric(right) {
-			return SIMDOpData{}, fmt.Errorf("simdgen: LLVM-lowered op %q has inconsistent generic descriptors: existing=%q, new=%q", opName, EncodeSIMDOpData(left), EncodeSIMDOpData(right))
-		}
-	} else {
-		// Some of Go 1.27's architecture-specific APIs intentionally share
-		// one generic op name despite differing scalar/result or immediate
-		// details. Preserve the exact facts in Arch and mark only the common
-		// view as unknown where they differ.
-		if merged.Width != right.Width {
-			merged.Width = 0
-		}
-		if merged.Lane != right.Lane || merged.LaneBits != right.LaneBits || merged.Lanes != right.Lanes {
-			merged.Lane, merged.LaneBits, merged.Lanes = "none", 0, 0
-		}
-		mergeString := func(dst *string, other, unknown string) {
-			if *dst != other {
-				*dst = unknown
-			}
-		}
-		mergeString(&merged.Input, right.Input, "invalid")
-		mergeString(&merged.Output, right.Output, "invalid")
-		mergeString(&merged.Immediate, right.Immediate, "invalid")
-		mergeString(&merged.Mask, right.Mask, "invalid")
-		mergeString(&merged.Memory, right.Memory, "arch-dependent")
-		mergeString(&merged.Inputs, right.Inputs, "")
-		mergeString(&merged.Outputs, right.Outputs, "")
+	if !left.EqualGeneric(right) {
+		return SIMDOpData{}, fmt.Errorf("simdgen: LLVM-lowered op %q has inconsistent generic descriptors: existing=%q, new=%q", opName, EncodeSIMDOpData(left), EncodeSIMDOpData(right))
 	}
+	merged := left
 	if merged.Arch == nil {
 		merged.Arch = make(map[string]SIMDArchData)
 	}
