@@ -404,8 +404,8 @@ cd /path/to/simple-main-package
 ```sh
 cd "$GOROOT/src"
 go test cmd/internal/llvmbackend cmd/go/internal/work cmd/dist
-go test cmd/internal/testdir -run '^TestLLVMTestPolicy$'
-go test cmd/internal/testdir -run '^TestLLVM/codegen/'
+go test cmd/internal/testdir -run '^TestLLVM$/^policy$'
+go test cmd/internal/testdir -run '^TestLLVM$/^testdir$/^codegen$'
 
 cd /path/to/llvm-project
 llvm/cmake-build-debug/bin/llvm-lit -sv \
@@ -498,17 +498,17 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
 
 ### 包级 CI 策略
 
-`test/llvm_stdlib_packages.json` 单独管理入口包层次的标准库白名单和黑名单。
-精确白名单优先于 `*` 黑名单；白名单包是 CI 的 required tests，黑名单包不运行，
-并保留最早失败边界或“尚未资格化”的原因。CI 整个任务共享一个隔离
+`test/llvm_stdlib_packages.json` 单独管理标准库入口包的 blacklist。`go list std`
+发现的包默认都是 CI required tests；公共或平台精确 blacklist 中的包不运行，并
+保留最早失败边界或“尚未资格化”的原因。CI 整个任务共享一个隔离
 `GOCACHE`；目标包、`-gcflags` 和 compiler backend identity 都进入 cmd/go action
 ID，因此包和构建模式仍使用不同缓存条目。工具链、payload 或同一路径下的 pass
 plugin 发生变化时会使 LLVM action 失效。任务使用 `default<O2>` 和
 `-gcflags='all=-enablellvm'`，因此目标包、测试入口、`runtime`、`testing`
-及完整依赖闭包都由 LLVM backend 编译。每个白名单包会在独立的
+及完整依赖闭包都由 LLVM backend 编译。每个启用包会在独立的
 `go test -count=1` 进程中运行并共享编译缓存。runner 先预热 LLVM runtime，再按
-`NumCPU()/2` 并行运行 package；每个 cmd/go 使用 `-p=1` 仅限制 package 构建并发，
-不会改变测试二进制的 `GOMAXPROCS` 或 `-test.parallel`。任一白名单包失败都会使
+`NumCPU()` 并行运行 package；每个 cmd/go 使用 `-p=1` 仅限制 package 构建并发，
+不会改变测试二进制的 `GOMAXPROCS` 或 `-test.parallel`。任一启用包失败都会使
 门禁失败。
 
 本地使用与 CI 相同的策略运行器：
@@ -516,7 +516,7 @@ plugin 发生变化时会使 LLVM action 失效。任务使用 `default<O2>` 和
 ```sh
 env GOALLC_RUN_LLVM_STDLIB=1 GOALLC_LLVM_DIR="$LLVM_ROOT" \
   "$GOROOT/bin/go" test cmd/internal/testdir \
-  -run '^TestLLVMStdlib$' -count=1 -timeout=100m -v
+  -run '^TestLLVM$/^stdlib$' -count=1 -timeout=100m -v
 ```
 
 ### Darwin/arm64 开发载荷阶段结果
@@ -638,29 +638,19 @@ GoALLC 不维护一套与 Go 仓库重复的测试源码。LLVM 测试由
 
 - codegen 候选是 `test/codegen` 下 recipe 为 `// asmcheck` 的文件；
 - run 候选是 testdir 原本扫描目录中 recipe 为 `// run` 的文件；
-- `test/llvm_tests.json` 分别维护 codegen 和 run 的白名单、灰名单与黑名单；
+- `test/llvm_tests.json` 分别维护 codegen 和 run 的公共及平台 blacklist；
 - codegen source 出现 `// LLVM-OPT` directive 时，runner 会读取进程内
   `default<O2>` pipeline 留下的 `.opt.ll`，并用 `LLVM-OPT` prefix 检查；
-- 白名单是当前必须通过的用例，任何失败都会使 CI 失败；
-- 灰名单是可以执行但尚未要求通过的用例，runner 会记录每个失败和汇总，
-  并为每个用例明确输出 `PASS`、`FAIL (allowed)` 或 `SKIP`，但不会因此使
-  CI 失败；验证稳定后通过把精确条目加入白名单来提升覆盖；
-- 黑名单完全不执行，用于已知会超时、耗尽内存、超过一分钟 CI 单例预算，
-  或当前统一关闭的 defer/recover 用例；runner 会校验 blacklist reason
-  明确说明 timeout、OOM、slow 或 defer/recover，并在日志中输出 `NOT RUN`；
-- 三类的匹配优先级为黑名单、精确白名单、灰名单。灰名单可以用 glob 覆盖
-  尚未支持的范围，黑名单中的精确资源限制或 defer/recover 条目仍能阻止执行；
-- `platform_graylist` 把公共白名单项在指定平台降为灰名单，普通编译或运行失败
-  不再使用 platform blacklist；如确需使用，`platform_blacklist` 遵循相同的
-  资源限制和暂时关闭特性规则；
-- runner 会拒绝拼错的白名单、无匹配项的灰/黑名单，以及未被三类之一分类的
-  候选，并报告白、灰、黑三类文件数。
-- Linux CI 将策略统计、必过项失败、灰名单逐用例结果和黑名单未运行原因写入
+- 所有发现的候选默认启用，任何失败都会使 CI 失败；
+- blacklist 完全不执行，只用于已知不支持的能力、超时、OOM 或慢速 CI 用例；
+  runner 会校验 reason 和 pattern，并在日志中输出 `NOT RUN`；
+- `platform_blacklist` 只在对应平台合并到公共 blacklist；
+- Linux CI 将启用/blacklist 统计、必过项失败和 blacklist 未运行原因写入
   GitHub Actions Job Summary；完整命令输出仍保留在 step 日志中。
 
 ### LLVM IR codegen 检查
 
-codegen 白名单文件直接在原 Go 源码中使用 LLVM `FileCheck` 指令，例如：
+codegen 候选文件直接在原 Go 源码中使用 LLVM `FileCheck` 指令，例如：
 
 ```go
 // LLVM-DAG: define goabiinternal { i64, i8 } @codegen.div_ndivis6_int64
@@ -689,7 +679,7 @@ JSON、与原生 object 的关键字段一致性、符号表以及最终链接�
 
 ### LLVM run 检查
 
-run 白名单和灰名单都不增加新的 recipe，也不复制测试源码。runner 仍解析原文件的
+启用的 run 候选不增加新的 recipe，也不复制测试源码。runner 仍解析原文件的
 `// run` 参数、build constraint、超时和期望输出。LLVM 的 `TestLLVM` 薄入口复用
 原 `Test` 的 `test.run()`，在原有 `go run` 命令上增加 `-gcflags=all=-enablellvm`
 和 `-ldflags=-w`：
@@ -719,25 +709,26 @@ fixture 的已验证边界，不能用来掩盖一个原本要求完整 LLVM 编
 
 1. 先确认整个现有测试文件都能由当前 LLVM lowering 处理；
 2. codegen 文件在源码中增加针对 LLVM IR 的 FileCheck 指令；
-3. 新候选默认由灰名单 glob 执行；修复后在 `test/llvm_tests.json` 中增加精确
-   白名单项和简短能力说明；
-4. 既有 runtime 文件从灰名单提升到白名单时，不修改其原有 `// run` recipe；
-5. 运行 LLVM 定向测试，并同时运行对应的原生 asmcheck/run 测试。
+3. 新候选会自动成为 required test；合入前修复普通失败；
+4. 只有已知不支持、超时、OOM 或慢速 CI 用例才能加入 blacklist，并写明原因；
+5. 既有 runtime 文件解除 blacklist 时，不修改其原有 `// run` recipe；
+6. 运行 LLVM 定向测试，并同时运行对应的原生 asmcheck/run 测试。
 
-定向运行完整 LLVM 策略（白名单和灰名单执行，黑名单跳过）：
+定向运行完整 LLVM 策略（所有候选执行，blacklist 跳过）：
 
 ```sh
-go test cmd/internal/testdir -run='^TestLLVM$' -v
+go test cmd/internal/testdir -run='^TestLLVM$/^(policy|testdir)$' -v
 ```
 
-`TestLLVM` 和原生 `Test` 共用 `testdir_test.go` 的目录扫描、recipe 解析和用例调度；
-LLVM 模式只从策略文件选择用例，并向原有 `go run` 命令增加 backend 参数。只运行
-一个 LLVM 用例时，可继续在 `-run` 中追加原 testdir 的 slash-separated 名称。
-普通失败留在灰名单；只有确认会导致超时或 OOM 时才进入黑名单。
+`TestLLVM/testdir` 和原生 `Test` 共用 `testdir_test.go` 的目录扫描、recipe 解析和
+用例调度；LLVM 模式只从策略文件排除 blacklist，并向原有 `go run` 命令增加
+backend 参数。只运行一个 LLVM 用例时，可在 `TestLLVM/testdir` 后继续追加原
+testdir 的 slash-separated 名称。普通失败必须修复；只有上述允许原因才能进入
+blacklist。
 
 ## 当前范围与后续工作
 
-- 当前 target triple 仅配置了 `darwin/arm64` 和 `linux/amd64`。
+- 当前 target triple 配置了 `darwin/arm64`、`linux/amd64` 和 `linux/arm64`。
 - LLVM SSA lowering 仍不完整；复杂 SSA op、GC pointer liveness、defer/panic、
   closure、完整 ABI/DWARF 等尚未达到通用正确性。
 - 当前 interface 范围包括 compiler 能静态生成 itab 的 concrete-to-interface

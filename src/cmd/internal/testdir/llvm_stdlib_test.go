@@ -5,9 +5,7 @@
 package testdir_test
 
 import (
-	"bytes"
 	stdcontext "context"
-	"encoding/json"
 	"internal/testenv"
 	"os"
 	"path/filepath"
@@ -41,28 +39,15 @@ const llvmPprofSkip = `^(TestCPUProfileRecursion|TestGenericsInlineLocations|Tes
 // original testPrint call sites expected by the file-line assertions.
 const llvmLogSkip = `^TestAll$`
 
-type llvmStdlibTestSet struct {
-	Blacklist         map[string]string            `json:"blacklist"`
-	PlatformBlacklist map[string]map[string]string `json:"platform_blacklist,omitempty"`
-}
-
 type llvmStdlibPolicy struct {
-	Packages llvmStdlibTestSet `json:"packages"`
+	Packages llvmPolicySet `json:"packages"`
 }
 
 func readLLVMStdlibPolicy(t *testing.T) llvmStdlibPolicy {
 	t.Helper()
 	filename := filepath.Join(testenv.GOROOT(t), "test", "llvm_stdlib_packages.json")
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var policy llvmStdlibPolicy
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&policy); err != nil {
-		t.Fatalf("parse llvm_stdlib_packages.json: %v", err)
-	}
+	readLLVMPolicyFile(t, filename, &policy)
 	return policy
 }
 
@@ -89,18 +74,7 @@ func llvmStdlibGoTool(t *testing.T) string {
 	return goTool
 }
 
-func effectiveLLVMStdlibBlacklist(set llvmStdlibTestSet, platform string) map[string]string {
-	effective := make(map[string]string, len(set.Blacklist)+len(set.PlatformBlacklist[platform]))
-	for name, reason := range set.Blacklist {
-		effective[name] = reason
-	}
-	for name, reason := range set.PlatformBlacklist[platform] {
-		effective[name] = reason
-	}
-	return effective
-}
-
-func validateLLVMStdlibPolicy(t *testing.T, packages map[string]bool, set llvmStdlibTestSet, currentPlatform string) {
+func validateLLVMStdlibPolicy(t *testing.T, packages map[string]bool, set llvmPolicySet, currentPlatform string) {
 	t.Helper()
 	failed := false
 	for name, reason := range set.Blacklist {
@@ -146,19 +120,19 @@ func validateLLVMStdlibPolicy(t *testing.T, packages map[string]bool, set llvmSt
 	}
 }
 
-func TestLLVMStdlibPolicy(t *testing.T) {
+func testLLVMStdlibPolicy(t *testing.T) {
 	packages := llvmStdlibPackages(t)
 	validateLLVMStdlibPolicy(t, packages, readLLVMStdlibPolicy(t).Packages, runtime.GOOS+"/"+runtime.GOARCH)
 }
 
-func TestEffectiveLLVMStdlibBlacklist(t *testing.T) {
-	set := llvmStdlibTestSet{
+func testEffectiveLLVMStdlibBlacklist(t *testing.T) {
+	set := llvmPolicySet{
 		Blacklist: map[string]string{"bytes": "known failure"},
 		PlatformBlacklist: map[string]map[string]string{
 			"linux/amd64": {"cmp": "platform failure"},
 		},
 	}
-	effective := effectiveLLVMStdlibBlacklist(set, "linux/amd64")
+	effective := effectiveLLVMBlacklist(set, "linux/amd64")
 	for name, want := range map[string]string{"bytes": "known failure", "cmp": "platform failure"} {
 		if got := effective[name]; got != want {
 			t.Errorf("effective blacklist reason for %q = %q, want %q", name, got, want)
@@ -186,7 +160,7 @@ func llvmStdlibCapabilitySkip(name, goarch string) string {
 	}
 }
 
-func TestLLVMRuntimeAsyncPreemptionQualification(t *testing.T) {
+func testLLVMRuntimeAsyncPreemptionQualification(t *testing.T) {
 	skip := regexp.MustCompile(llvmRuntimeSkip + llvmRuntimeAMD64Skip)
 	for _, name := range []string{
 		"TestPreemption",
@@ -200,7 +174,7 @@ func TestLLVMRuntimeAsyncPreemptionQualification(t *testing.T) {
 	}
 }
 
-func TestLLVMPprofBadPointerQualification(t *testing.T) {
+func testLLVMPprofBadPointerQualification(t *testing.T) {
 	skip := regexp.MustCompile(llvmPprofSkip)
 	for _, name := range []string{
 		"TestMemoryProfiler/proto",
@@ -212,7 +186,7 @@ func TestLLVMPprofBadPointerQualification(t *testing.T) {
 	}
 }
 
-func TestLLVMStdlib(t *testing.T) {
+func testLLVMStdlib(t *testing.T) {
 	if os.Getenv(llvmStdlibPolicyEnv) != "1" {
 		t.Skipf("set %s=1 to run the LLVM standard library package policy", llvmStdlibPolicyEnv)
 	}
@@ -227,7 +201,7 @@ func TestLLVMStdlib(t *testing.T) {
 	packages := llvmStdlibPackages(t)
 	policySet := readLLVMStdlibPolicy(t).Packages
 	validateLLVMStdlibPolicy(t, packages, policySet, platform)
-	blacklist := effectiveLLVMStdlibBlacklist(policySet, platform)
+	blacklist := effectiveLLVMBlacklist(policySet, platform)
 	configureLLVMTestToolchain(t)
 
 	candidates := make([]string, 0, len(packages)-len(blacklist))

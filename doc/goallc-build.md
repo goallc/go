@@ -189,7 +189,7 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 `$GOROOT/pkg/goallc-llvm-payload`，最后才是兼容入口 `$GOROOT/llvm`。测试框架只把
 该根目录交给 compiler，不再解析或注入 `llc`、`opt`、pass plugin 或 toolexec。
 
-测试启动日志只打印 Go、payload 和进程内优化 pipeline。白名单、灰名单和标准库
+测试启动日志只打印 Go、payload 和进程内优化 pipeline。testdir 启用用例和标准库
 runtime 用例只通过 `-gcflags=all=-enablellvm` 选择 LLVM；codegen 用例也运行完整
 进程内 pipeline，并以 `-llvm-keep-ir` 读取 compiler 留下的优化前/后 IR。
 `FileCheck` 是唯一额外测试工具，其选择仍被约束在同一 payload；外部
@@ -240,13 +240,13 @@ cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
 cmake --build "$PLUGIN_BUILD" --target GoALLCStatepoints
 ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
 "$GOROOT/bin/go" test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
-"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVMTestPolicy$'
-"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM/codegen/'
+"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM$/^policy$'
+"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM$/^testdir$/^codegen$'
 ```
 
-完整语言特性矩阵仍由 LLVM 白/灰/黑名单测试负责。白名单失败会让 CI 失败；
-灰名单总是运行并报告结果，但失败不影响 CI；黑名单完全不运行，并且只允许记录
-已知会超时或耗尽内存的用例。
+完整语言特性矩阵默认运行所有已发现的 LLVM 候选，任一失败都会让 CI 失败；
+blacklist 用例完全不运行，并且只允许记录已知不支持的能力、超时、OOM 或慢速
+CI 用例。
 
 ## Go action cache
 

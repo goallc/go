@@ -7,14 +7,11 @@ import sys
 from pathlib import Path
 
 
-GRAY_RESULT = re.compile(
-    r"LLVM (codegen|run) graylist result: (PASS|FAIL \(allowed\)|SKIP)"
-)
 POLICY = re.compile(r"LLVM (codegen|run) policy: (.*)")
-GRAY_SUMMARY = re.compile(r"LLVM (codegen|run) graylist summary: (.*)")
 BLACK_RESULT = re.compile(
     r'LLVM (codegen|run) blacklist result: NOT RUN test="([^"]+)" reason="([^"]+)"'
 )
+TESTDIR_PREFIX = "TestLLVM/testdir/"
 
 
 def markdown(value):
@@ -51,9 +48,7 @@ def main():
     actions = {}
     elapsed = {}
     package_action = None
-    gray_results = {}
     policies = {}
-    gray_summaries = {}
     black_results = []
 
     with report_path.open(encoding="utf-8") as report:
@@ -74,16 +69,9 @@ def main():
                 package_action = action
 
             output = event.get("Output", "")
-            if test:
-                match = GRAY_RESULT.search(output)
-                if match:
-                    gray_results[test] = match.groups()
             match = POLICY.search(output)
             if match:
                 policies[match.group(1)] = match.group(2)
-            match = GRAY_SUMMARY.search(output)
-            if match:
-                gray_summaries[match.group(1)] = match.group(2)
             match = BLACK_RESULT.search(output)
             if match:
                 black_results.append(match.groups())
@@ -104,7 +92,7 @@ def main():
     required_actions = {
         name: action
         for name, action in actions.items()
-        if name.startswith("TestLLVM/") and name not in gray_results
+        if name.startswith(TESTDIR_PREFIX)
     }
     required = leaf_results(required_actions)
     required_counts = {
@@ -121,27 +109,8 @@ def main():
     failed_required = [name for name, action in required if action == "fail"]
     if failed_required:
         lines.extend(["Failed required tests:", ""])
-        lines.extend(f"- `{markdown(name.removeprefix('TestLLVM/'))}`" for name in failed_required)
+        lines.extend(f"- `{markdown(name.removeprefix(TESTDIR_PREFIX))}`" for name in failed_required)
         lines.append("")
-
-    if gray_summaries:
-        lines.extend(["### Graylist", ""])
-        for suite in ("codegen", "run"):
-            if suite in gray_summaries:
-                lines.append(f"- {suite}: {markdown(gray_summaries[suite])}")
-        lines.append("")
-
-    if gray_results:
-        lines.extend([
-            f"<details><summary>Graylist case results ({len(gray_results)})</summary>",
-            "",
-            "| Suite | Test | Result |",
-            "| --- | --- | --- |",
-        ])
-        for name, (suite, result) in sorted(gray_results.items()):
-            test_name = name.removeprefix("TestLLVM/")
-            lines.append(f"| {markdown(suite)} | `{markdown(test_name)}` | {markdown(result)} |")
-        lines.extend(["", "</details>", ""])
 
     if black_results:
         lines.extend([
@@ -160,7 +129,7 @@ def main():
             (duration, name, actions[name])
             for name, duration in elapsed.items()
             if name in leaf_names
-            and name.startswith("TestLLVM/")
+            and name.startswith(TESTDIR_PREFIX)
             and duration >= 10
         ),
         reverse=True,
@@ -175,7 +144,7 @@ def main():
             "| --- | --- | ---: |",
         ])
         for duration, name, action in slow_cases:
-            test_name = name.removeprefix("TestLLVM/")
+            test_name = name.removeprefix(TESTDIR_PREFIX)
             lines.append(
                 f"| `{markdown(test_name)}` | {markdown(action)} | {duration:.2f}s |"
             )

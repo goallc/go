@@ -255,12 +255,12 @@ jobs:
           fi
           echo "LLVM standard library test mode: $GOALLC_STDLIB_TEST_MODE"
           ./bin/go test "${mode_args[@]}" cmd/internal/testdir \
-            -run '^TestLLVMStdlib$' \
+            -run '^TestLLVM$/^stdlib$' \
             -count=1 \
             -timeout=100m \
             -v
 
-      - name: Test LLVM policy (white required, gray advisory)
+      - name: Test LLVM testdir policy
         shell: bash
         env:
           GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
@@ -268,7 +268,7 @@ jobs:
         run: |
           set -o pipefail
           ./bin/go test cmd/internal/testdir \
-            -run '^TestLLVM$' \
+            -run '^TestLLVM$/^(policy|testdir)$' \
             -count=1 \
             -timeout=100m \
             -json \

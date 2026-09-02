@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"go/build/constraint"
 	"internal/testenv"
 	"os"
 	"os/exec"
@@ -32,7 +31,7 @@ func llvmCaseTimeoutSeconds(recipeTimeout int) int {
 	return recipeTimeout
 }
 
-func TestLLVMCaseTimeoutSeconds(t *testing.T) {
+func testLLVMCaseTimeoutSeconds(t *testing.T) {
 	for _, tc := range []struct {
 		recipeTimeout int
 		want          int
@@ -50,14 +49,14 @@ func TestLLVMCaseTimeoutSeconds(t *testing.T) {
 	}
 }
 
-type llvmTestSet struct {
+type llvmPolicySet struct {
 	Blacklist         map[string]string            `json:"blacklist"`
 	PlatformBlacklist map[string]map[string]string `json:"platform_blacklist,omitempty"`
 }
 
 type llvmTestPolicy struct {
-	Codegen llvmTestSet `json:"codegen"`
-	Run     llvmTestSet `json:"run"`
+	Codegen llvmPolicySet `json:"codegen"`
+	Run     llvmPolicySet `json:"run"`
 }
 
 type llvmTestMode struct {
@@ -133,22 +132,44 @@ func warmLLVMExecutionRuntime(t *testing.T, cache string) {
 	}
 }
 
-func readLLVMTestPolicy(t *testing.T, gorootTestDir string) llvmTestPolicy {
+func readLLVMPolicyFile(t *testing.T, filename string, policy any) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(gorootTestDir, "llvm_tests.json"))
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var policy llvmTestPolicy
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&policy); err != nil {
-		t.Fatalf("parse llvm_tests.json: %v", err)
+	if err := dec.Decode(policy); err != nil {
+		t.Fatalf("parse %s: %v", filepath.Base(filename), err)
 	}
+}
+
+func readLLVMTestPolicy(t *testing.T, gorootTestDir string) llvmTestPolicy {
+	t.Helper()
+	var policy llvmTestPolicy
+	readLLVMPolicyFile(t, filepath.Join(gorootTestDir, "llvm_tests.json"), &policy)
 	return policy
 }
 
-func TestLLVMTestPolicy(t *testing.T) {
+func testLLVMPolicy(t *testing.T) {
+	t.Run("testdir", func(t *testing.T) {
+		t.Run("configuration", testLLVMTestPolicy)
+		t.Run("recipe", testParseTestRecipe)
+		t.Run("case-timeout", testLLVMCaseTimeoutSeconds)
+		t.Run("platform-policy", testApplyLLVMPlatformPolicy)
+		t.Run("blacklist-match", testIsLLVMTestBlacklisted)
+		t.Run("blacklist-reason", testValidLLVMBlacklistReason)
+	})
+	t.Run("stdlib", func(t *testing.T) {
+		t.Run("configuration", testLLVMStdlibPolicy)
+		t.Run("effective-blacklist", testEffectiveLLVMStdlibBlacklist)
+		t.Run("runtime-async-preemption", testLLVMRuntimeAsyncPreemptionQualification)
+		t.Run("pprof-bad-pointer", testLLVMPprofBadPointerQualification)
+	})
+}
+
+func testLLVMTestPolicy(t *testing.T) {
 	gorootTestDir := filepath.Join(testenv.GOROOT(t), "test")
 	if _, err := os.Stat(filepath.Join(gorootTestDir, "llvm_tests.json")); err != nil {
 		t.Skipf("LLVM test policy is not installed: %v", err)
@@ -182,7 +203,18 @@ func TestLLVMTestPolicy(t *testing.T) {
 	}
 }
 
-func applyLLVMPlatformPolicy(name, platform string, set *llvmTestSet) error {
+func effectiveLLVMBlacklist(set llvmPolicySet, platform string) map[string]string {
+	effective := make(map[string]string, len(set.Blacklist)+len(set.PlatformBlacklist[platform]))
+	for name, reason := range set.Blacklist {
+		effective[name] = reason
+	}
+	for name, reason := range set.PlatformBlacklist[platform] {
+		effective[name] = reason
+	}
+	return effective
+}
+
+func applyLLVMPlatformPolicy(name, platform string, set *llvmPolicySet) error {
 	if set.Blacklist == nil {
 		set.Blacklist = make(map[string]string)
 	}
@@ -200,14 +232,12 @@ func applyLLVMPlatformPolicy(name, platform string, set *llvmTestSet) error {
 		}
 	}
 
-	for filename, reason := range set.PlatformBlacklist[platform] {
-		set.Blacklist[filename] = reason
-	}
+	set.Blacklist = effectiveLLVMBlacklist(*set, platform)
 	return nil
 }
 
-func TestApplyLLVMPlatformPolicy(t *testing.T) {
-	set := llvmTestSet{
+func testApplyLLVMPlatformPolicy(t *testing.T) {
+	set := llvmPolicySet{
 		Blacklist: map[string]string{
 			"common.go": "unsupported: common limitation",
 		},
@@ -227,26 +257,26 @@ func TestApplyLLVMPlatformPolicy(t *testing.T) {
 
 	tests := []struct {
 		name string
-		set  llvmTestSet
+		set  llvmPolicySet
 		want string
 	}{
 		{
 			name: "empty platform",
-			set: llvmTestSet{
+			set: llvmPolicySet{
 				PlatformBlacklist: map[string]map[string]string{"": {"test.go": "unsupported: reason"}},
 			},
 			want: "empty platform",
 		},
 		{
 			name: "empty reason",
-			set: llvmTestSet{
+			set: llvmPolicySet{
 				PlatformBlacklist: map[string]map[string]string{"linux/amd64": {"test.go": " "}},
 			},
 			want: "has no reason",
 		},
 		{
 			name: "blacklist ordinary failure",
-			set: llvmTestSet{
+			set: llvmPolicySet{
 				PlatformBlacklist: map[string]map[string]string{"linux/amd64": {"test.go": "ordinary failure"}},
 			},
 			want: "is not a known unsupported capability, timeout, OOM, or slow CI case",
@@ -262,8 +292,8 @@ func TestApplyLLVMPlatformPolicy(t *testing.T) {
 	}
 }
 
-func TestIsLLVMTestBlacklisted(t *testing.T) {
-	set := llvmTestSet{
+func testIsLLVMTestBlacklisted(t *testing.T) {
+	set := llvmPolicySet{
 		Blacklist: map[string]string{"black.go": "timeout: does not terminate"},
 	}
 	for _, tc := range []struct {
@@ -308,26 +338,18 @@ func llvmTestAction(t *testing.T, filename string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for src := string(data); src != ""; {
-		var line string
-		line, src, _ = strings.Cut(src, "\n")
-		if constraint.IsGoBuild(line) || constraint.IsPlusBuild(line) || strings.TrimSpace(line) == "" {
-			continue
-		}
-		action := strings.TrimSpace(strings.TrimPrefix(line, "//"))
-		fields, err := splitQuoted(action)
-		if err != nil {
-			t.Fatalf("%s: invalid test recipe: %v", filename, err)
-		}
-		if len(fields) == 0 {
-			return ""
-		}
-		return fields[0]
+	recipe, err := testRecipe(string(data))
+	if err != nil {
+		t.Fatalf("%s: %v", filename, err)
 	}
-	return ""
+	fields, err := parseTestRecipe(recipe)
+	if err != nil {
+		t.Fatalf("%s: %v", filename, err)
+	}
+	return fields[0]
 }
 
-func validateLLVMTestSet(t *testing.T, name string, candidates map[string]bool, set llvmTestSet) {
+func validateLLVMTestSet(t *testing.T, name string, candidates map[string]bool, set llvmPolicySet) {
 	t.Helper()
 	failed := false
 	for pattern, reason := range set.Blacklist {
@@ -365,7 +387,7 @@ func validLLVMBlacklistReason(reason string) bool {
 		strings.Contains(reason, "unsupported")
 }
 
-func TestValidLLVMBlacklistReason(t *testing.T) {
+func testValidLLVMBlacklistReason(t *testing.T) {
 	for _, tc := range []struct {
 		reason string
 		want   bool
@@ -382,7 +404,7 @@ func TestValidLLVMBlacklistReason(t *testing.T) {
 	}
 }
 
-func isLLVMTestBlacklisted(t *testing.T, set llvmTestSet, filename string) bool {
+func isLLVMTestBlacklisted(t *testing.T, set llvmPolicySet, filename string) bool {
 	t.Helper()
 	for pattern := range set.Blacklist {
 		if llvmPathMatch(t, pattern, filename) {
@@ -392,7 +414,7 @@ func isLLVMTestBlacklisted(t *testing.T, set llvmTestSet, filename string) bool 
 	return false
 }
 
-func logLLVMTestPolicy(t *testing.T, name string, candidates map[string]bool, set llvmTestSet) {
+func logLLVMTestPolicy(t *testing.T, name string, candidates map[string]bool, set llvmPolicySet) {
 	t.Helper()
 	black := 0
 	for filename := range candidates {
@@ -404,7 +426,7 @@ func logLLVMTestPolicy(t *testing.T, name string, candidates map[string]bool, se
 		name, len(candidates)-black, black, len(candidates))
 }
 
-func logLLVMBlacklist(t *testing.T, name string, candidates map[string]bool, set llvmTestSet) {
+func logLLVMBlacklist(t *testing.T, name string, candidates map[string]bool, set llvmPolicySet) {
 	t.Helper()
 	for _, filename := range sortedLLVMBlacklistedTests(t, candidates, set) {
 		reason := ""
@@ -434,7 +456,7 @@ func llvmPathMatch(t *testing.T, pattern, filename string) bool {
 	return matched
 }
 
-func sortedLLVMBlacklistedTests(t *testing.T, candidates map[string]bool, set llvmTestSet) []string {
+func sortedLLVMBlacklistedTests(t *testing.T, candidates map[string]bool, set llvmPolicySet) []string {
 	t.Helper()
 	names := make([]string, 0, len(candidates))
 	for name := range candidates {

@@ -82,10 +82,16 @@ func Test(t *testing.T) {
 	runTestDir(t, false)
 }
 
-// TestLLVM runs the same testdir recipes and orchestration as Test while using
-// the LLVM backend for the cases selected by test/llvm_tests.json.
+// TestLLVM is the single entrypoint for LLVM qualification in this package.
+// Its subtests keep policy checks, standard library qualification, and the
+// shared GOROOT/test runner independently selectable without maintaining
+// separate top-level LLVM test drivers.
 func TestLLVM(t *testing.T) {
-	runTestDir(t, true)
+	t.Run("policy", testLLVMPolicy)
+	t.Run("stdlib", testLLVMStdlib)
+	t.Run("testdir", func(t *testing.T) {
+		runTestDir(t, true)
+	})
 }
 
 func runTestDir(t *testing.T, useLLVM bool) {
@@ -629,6 +635,85 @@ func TestGoGcflags(t *testing.T) {
 
 var errTimeout = errors.New("command exceeded time limit")
 
+func testRecipe(src string) (string, error) {
+	// The execution recipe is contained in a comment in the first non-empty
+	// line that is not a build constraint.
+	var recipe string
+	for recipeSrc := src; recipe == "" && recipeSrc != ""; {
+		var line string
+		line, recipeSrc, _ = strings.Cut(recipeSrc, "\n")
+		if constraint.IsGoBuild(line) || constraint.IsPlusBuild(line) {
+			continue
+		}
+		recipe = strings.TrimSpace(strings.TrimPrefix(line, "//"))
+	}
+	if recipe == "" {
+		return "", errors.New("execution recipe not found")
+	}
+	return recipe, nil
+}
+
+func parseTestRecipe(recipe string) ([]string, error) {
+	fields, err := splitQuoted(recipe)
+	if err != nil {
+		return nil, fmt.Errorf("invalid test recipe: %w", err)
+	}
+	if len(fields) == 0 {
+		return nil, errors.New("execution recipe not found")
+	}
+	return fields, nil
+}
+
+func testParseTestRecipe(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		src     string
+		want    []string
+		wantErr string
+	}{
+		{
+			name: "plain",
+			src:  "// run -t 30 argument\n\npackage main\n",
+			want: []string{"run", "-t", "30", "argument"},
+		},
+		{
+			name: "build constraint and quoted argument",
+			src:  "//go:build linux\n\n// run \"two words\"\n\npackage main\n",
+			want: []string{"run", "two words"},
+		},
+		{
+			name:    "missing",
+			src:     "//go:build linux\n\n",
+			wantErr: "execution recipe not found",
+		},
+		{
+			name:    "invalid quoting",
+			src:     "// run \"unterminated\n\npackage main\n",
+			wantErr: "invalid test recipe",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recipe, err := testRecipe(tc.src)
+			var got []string
+			if err == nil {
+				got, err = parseTestRecipe(recipe)
+			}
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("recipe error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("parsed recipe = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // run runs the test case.
 //
 // When there is a problem, run uses t.Fatal to signify that it's an unskippable
@@ -647,43 +732,30 @@ func (t test) run() error {
 	}
 	src := string(srcBytes)
 
-	// Execution recipe is contained in a comment in
-	// the first non-empty line that is not a build constraint.
-	var action string
-	for actionSrc := src; action == "" && actionSrc != ""; {
-		var line string
-		line, actionSrc, _ = strings.Cut(actionSrc, "\n")
-		if constraint.IsGoBuild(line) || constraint.IsPlusBuild(line) {
-			continue
-		}
-		action = strings.TrimSpace(strings.TrimPrefix(line, "//"))
-	}
-	if action == "" {
-		t.Fatalf("execution recipe not found in GOROOT/test/%s", t.goFileName())
+	recipe, err := testRecipe(src)
+	if err != nil {
+		t.Fatalf("%v in GOROOT/test/%s", err, t.goFileName())
 	}
 
 	// Check for build constraints only up to the actual code.
 	header, _, ok := strings.Cut(src, "\npackage")
 	if !ok {
-		header = action // some files are intentionally malformed
+		header = recipe // some files are intentionally malformed
 	}
 	if ok, why := shouldTest(header, goos, goarch); !ok {
 		t.Skip(why)
 	}
+	fields, err := parseTestRecipe(recipe)
+	if err != nil {
+		t.Fatalf("%v in GOROOT/test/%s", err, t.goFileName())
+	}
+	action, args := fields[0], fields[1:]
 
-	var args, flags, runenv []string
+	var flags, runenv []string
 	var tim int
 	wantError := false
 	wantAuto := false
 	singlefilepkgs := false
-	f, err := splitQuoted(action)
-	if err != nil {
-		t.Fatal("invalid test recipe:", err)
-	}
-	if len(f) > 0 {
-		action = f[0]
-		args = f[1:]
-	}
 
 	// TODO: Clean up/simplify this switch statement.
 	switch action {
