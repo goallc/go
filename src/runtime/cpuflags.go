@@ -66,4 +66,6 @@ const (
 	goallcCPUFeaturesInitialized
 	goallcCPUFeaturePOPCNT
 	goallcCPUFeatureARM64LSE
+	goallcCPUFeatureAVX2
+	goallcCPUFeatureAVX512
 )

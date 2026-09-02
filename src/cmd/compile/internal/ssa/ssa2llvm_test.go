@@ -9,6 +9,7 @@ package ssa
 import (
 	"bytes"
 	"cmd/compile/internal/abi"
+	"fmt"
 	"internal/buildcfg"
 	"os"
 	"strings"
@@ -1062,22 +1063,86 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 	})
 }
 
+func TestLLVMGenericWideSIMDLowering(t *testing.T) {
+	oldTypes := type2lTypes
+	oldModule := CurrentModule
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() {
+		type2lTypes = oldTypes
+		CurrentModule = oldModule
+	}()
+
+	for _, test := range []struct {
+		name  string
+		typ   *types.Type
+		op    Op
+		lanes int
+	}{
+		{name: "vec256", typ: types.TypeVec256, op: OpAddInt8x32, lanes: 32},
+		{name: "vec512", typ: types.TypeVec512, op: OpAddInt8x64, lanes: 64},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			carrier := getLLVMType(test.typ)
+			if carrier.TypeKind() != llvm.VectorTypeKind || carrier.VectorSize() != test.lanes || carrier.ElementType() != GlobalCtxt.Int8Type() {
+				t.Fatalf("%s LLVM carrier is not <%d x i8>", test.name, test.lanes)
+			}
+
+			module := GlobalCtxt.NewModule("generic_" + test.name)
+			CurrentModule = module
+			builder := GlobalCtxt.NewBuilder()
+			t.Cleanup(module.Dispose)
+			t.Cleanup(builder.Dispose)
+
+			function := llvm.AddFunction(module, test.name, llvm.FunctionType(carrier, []llvm.Type{carrier, carrier}, false))
+			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+			context := &LLVMFuncContext{
+				F:  &Func{Config: &Config{arch: "amd64"}},
+				Vs: make(map[ID]llvm.Value),
+				b:  builder,
+			}
+			x := &Value{ID: 1, Op: OpArg, Type: test.typ}
+			y := &Value{ID: 2, Op: OpArg, Type: test.typ}
+			context.Vs[x.ID] = function.Param(0)
+			context.Vs[y.ID] = function.Param(1)
+			result := &Value{ID: 3, Op: test.op, Type: test.typ, Args: []*Value{x, y}}
+			builder.CreateRet(context.GenLV(result))
+
+			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("LLVM verifier rejected %s lowering: %v\n%s", test.name, err, module.String())
+			}
+			want := fmt.Sprintf("add <%d x i8>", test.lanes)
+			if ir := module.String(); !strings.Contains(ir, want) {
+				t.Errorf("%s IR does not contain %q\n%s", test.name, want, ir)
+			}
+		})
+	}
+}
+
 func TestLLVMSIMDFeatureFloor(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		arch     string
 		features CPUfeatures
+		funcName string
 		want     string
 	}{
 		{name: "amd64-avx", arch: "amd64", features: CPUavx, want: goCPUProfileX86AVX},
-		{name: "amd64-avx2-closure", arch: "amd64", features: CPUavx | CPUavx2, want: goCPUProfileX86AVX},
+		{name: "amd64-avx2", arch: "amd64", features: CPUavx | CPUavx2, want: goCPUProfileX86AVX2},
+		{name: "amd64-avx512", arch: "amd64", features: CPUavx | CPUavx2 | CPUavx512, want: goCPUProfileX86AVX512},
+		{name: "amd64-midway-128", arch: "amd64", funcName: "simd.Int8s.Add@simd128", want: goCPUProfileX86AVX},
+		{name: "amd64-midway-256", arch: "amd64", features: CPUavx, funcName: "simd.Int8s.Add@simd256", want: goCPUProfileX86AVX2},
+		{name: "amd64-midway-512", arch: "amd64", features: CPUavx, funcName: "simd.Int8s.Add@simd512", want: goCPUProfileX86AVX512},
 		{name: "amd64-none", arch: "amd64", features: CPUNone},
-		{name: "arm64", arch: "arm64", features: CPUavx},
+		{name: "arm64", arch: "arm64", features: CPUavx, funcName: "simd.Int8s.Add@simd512"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := &Func{
 				Config: &Config{arch: test.arch},
 				Entry:  &Block{CPUfeatures: test.features},
+				Name:   test.funcName,
+			}
+			if test.funcName != "" {
+				f.OwnAux = &AuxCall{Fn: &obj.LSym{Name: test.funcName}}
 			}
 			if got := llvmSIMDFeatureFloor(f); got != test.want {
 				t.Fatalf("llvmSIMDFeatureFloor() = %q, want %q", got, test.want)

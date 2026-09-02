@@ -1,4 +1,4 @@
-//go:build arm64
+//go:build amd64 || arm64
 
 // run -goexperiment simd -godebug simd=+128 -llvm-package-only
 

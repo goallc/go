@@ -128,6 +128,42 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.FeatureFloorWide
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-wide.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-wide.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.AVX2v3Baseline
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx2-v3.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx2-v3.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.AVX512v4Baseline
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx512-v4.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx512-v4.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.AVX
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx.ll"
     CHECK

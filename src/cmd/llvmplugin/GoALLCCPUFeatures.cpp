@@ -77,8 +77,9 @@ struct FeatureFloor {
 
 // Profiles describe Go's effective feature booleans, not a CPUID implication
 // graph. internal/cpu already folds the hardware and OS requirements into
-// HasFMA, while GODEBUG may independently disable sse41, avx, or fma. Treating
-// one enabled boolean as another would therefore change Go program semantics.
+// HasFMA and the virtual HasAVX512, while GODEBUG may independently disable
+// individual features. Treating one enabled boolean as another would therefore
+// change Go program semantics.
 constexpr uint64_t SSE41Closure = FeatureSSE41;
 constexpr uint64_t FMAClosure = FeatureFMA;
 constexpr uint64_t POPCNTClosure = FeaturePOPCNT;
@@ -86,11 +87,19 @@ constexpr uint64_t ARM64LSEClosure = FeatureARM64LSE;
 
 constexpr uint64_t V2Baseline =
     FeatureSSE3 | FeatureSSSE3 | FeatureSSE41 | FeatureSSE42 | FeaturePOPCNT;
-constexpr uint64_t V3Baseline = V2Baseline | FeatureAVX | FeatureFMA;
+constexpr uint64_t V3Baseline =
+    V2Baseline | FeatureAVX | FeatureAVX2 | FeatureFMA;
+constexpr uint64_t V4Baseline = V3Baseline | FeatureAVX512;
 
 constexpr Profile SSE41Profile = {"x86.sse41", "sse41", "+sse4.1", "amd64",
                                   SSE41Closure};
 constexpr Profile AVXProfile = {"x86.avx", "avx", "+avx", "amd64", FeatureAVX};
+constexpr Profile AVX2Profile = {"x86.avx2", "avx2", "+avx,+avx2", "amd64",
+                                 FeatureAVX2};
+constexpr Profile AVX512Profile = {
+    "x86.avx512", "avx512",
+    "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl", "amd64",
+    FeatureAVX512};
 constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64", FMAClosure};
 constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt", "+popcnt", "amd64",
                                    POPCNTClosure};
@@ -100,6 +109,10 @@ constexpr Profile ARM64LSEProfile = {"arm64.lse", "lse", "+lse", "arm64",
 const Profile *findProfile(StringRef Name) {
   if (Name == AVXProfile.Name)
     return &AVXProfile;
+  if (Name == AVX2Profile.Name)
+    return &AVX2Profile;
+  if (Name == AVX512Profile.Name)
+    return &AVX512Profile;
   if (Name == FMAProfile.Name)
     return &FMAProfile;
   if (Name == SSE41Profile.Name)
@@ -160,8 +173,10 @@ Expected<CPUConfig> getCPUConfig(const Module &M) {
       return CPUConfig{*Arch, uint64_t{0}};
     if (*Level == "v2")
       return CPUConfig{*Arch, V2Baseline};
-    if (*Level == "v3" || *Level == "v4")
+    if (*Level == "v3")
       return CPUConfig{*Arch, V3Baseline};
+    if (*Level == "v4")
+      return CPUConfig{*Arch, V4Baseline};
     return createStringError(inconvertibleErrorCode(),
                              "unsupported GOAMD64 level " + *Level);
   }
@@ -513,8 +528,9 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     return Err;
 
   SmallVector<const Profile *, 4> OrderedProfiles;
-  for (const Profile *P : {&SSE41Profile, &AVXProfile, &FMAProfile,
-                           &POPCNTProfile, &ARM64LSEProfile}) {
+  for (const Profile *P :
+       {&SSE41Profile, &AVXProfile, &AVX2Profile, &AVX512Profile, &FMAProfile,
+        &POPCNTProfile, &ARM64LSEProfile}) {
     if (llvm::find(*Requested, P) != Requested->end())
       OrderedProfiles.push_back(P);
   }

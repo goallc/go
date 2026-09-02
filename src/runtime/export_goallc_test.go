@@ -14,6 +14,8 @@ const (
 	GoALLCCPUFeaturesInitializedForTest = goallcCPUFeaturesInitialized
 	GoALLCCPUFeaturePOPCNTForTest       = goallcCPUFeaturePOPCNT
 	GoALLCCPUFeatureARM64LSEForTest     = goallcCPUFeatureARM64LSE
+	GoALLCCPUFeatureAVX2ForTest         = goallcCPUFeatureAVX2
+	GoALLCCPUFeatureAVX512ForTest       = goallcCPUFeatureAVX512
 )
 
 func GoALLCCPUFeaturesForTest() uint64 {
