@@ -1041,7 +1041,7 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		function := llvm.AddFunction(module, "andnot", llvm.FunctionType(vectorType, []llvm.Type{vectorType, vectorType}, false))
 		builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
 		context := &LLVMFuncContext{
-			F:  &Func{Config: &Config{arch: "amd64"}},
+			F:  &Func{Config: &Config{arch: "amd64"}, Entry: &Block{CPUfeatures: CPUavx}},
 			Vs: make(map[ID]llvm.Value),
 			b:  builder,
 		}
@@ -1121,15 +1121,10 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		wants    []string
 	}{
 		{"equal-int8", types.Types[types.TINT8], types.Types[types.TINT8], 16, OpEqualInt8x16, []string{"icmp eq <16 x i8>", "sext <16 x i1>"}},
-		{"not-equal-int64", types.Types[types.TUINT64], types.Types[types.TINT64], 2, OpNotEqualUint64x2, []string{"icmp ne <2 x i64>", "sext <2 x i1>"}},
 		{"greater-signed", types.Types[types.TINT16], types.Types[types.TINT16], 8, OpGreaterInt16x8, []string{"icmp sgt <8 x i16>", "sext <8 x i1>"}},
 		{"greater-unsigned", types.Types[types.TUINT32], types.Types[types.TINT32], 4, OpGreaterUint32x4, []string{"icmp ugt <4 x i32>", "sext <4 x i1>"}},
 		{"greater-equal-signed", types.Types[types.TINT64], types.Types[types.TINT64], 2, OpGreaterEqualInt64x2, []string{"icmp sge <2 x i64>", "sext <2 x i1>"}},
 		{"greater-equal-unsigned", types.Types[types.TUINT8], types.Types[types.TINT8], 16, OpGreaterEqualUint8x16, []string{"icmp uge <16 x i8>", "sext <16 x i1>"}},
-		{"less-signed", types.Types[types.TINT32], types.Types[types.TINT32], 4, OpLessInt32x4, []string{"icmp slt <4 x i32>", "sext <4 x i1>"}},
-		{"less-unsigned", types.Types[types.TUINT16], types.Types[types.TINT16], 8, OpLessUint16x8, []string{"icmp ult <8 x i16>", "sext <8 x i1>"}},
-		{"less-equal-signed", types.Types[types.TINT8], types.Types[types.TINT8], 16, OpLessEqualInt8x16, []string{"icmp sle <16 x i8>", "sext <16 x i1>"}},
-		{"less-equal-unsigned", types.Types[types.TUINT32], types.Types[types.TINT32], 4, OpLessEqualUint32x4, []string{"icmp ule <4 x i32>", "sext <4 x i1>"}},
 		{"equal-float32", types.Types[types.TFLOAT32], types.Types[types.TINT32], 4, OpEqualFloat32x4, []string{"fcmp oeq <4 x float>", "sext <4 x i1>"}},
 		{"not-equal-float64", types.Types[types.TFLOAT64], types.Types[types.TINT64], 2, OpNotEqualFloat64x2, []string{"fcmp une <2 x double>", "sext <2 x i1>"}},
 		{"greater-float32", types.Types[types.TFLOAT32], types.Types[types.TINT32], 4, OpGreaterFloat32x4, []string{"fcmp ogt <4 x float>", "sext <4 x i1>"}},
@@ -1186,7 +1181,6 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 	}{
 		{"bit-select", types.Types[types.TINT8], 16, OpbitSelectInt8x16, []string{"and <16 x i8> %0, %2", "xor <16 x i8> %2", "and <16 x i8> %1"}},
 		{"bit-select-not", types.Types[types.TINT8], 16, OpbitSelectNotInt8x16, []string{"and <16 x i8> %1, %2", "xor <16 x i8> %2", "and <16 x i8> %0"}},
-		{"wasm-bit-select", types.Types[types.TUINT32], 4, OpBitSelectUint32x4, []string{"and <4 x i32> %0, %2", "and <4 x i32> %1"}},
 		{"amd64-blend", types.Types[types.TINT8], 16, OpblendInt8x16, []string{"icmp slt <16 x i8> %2", "select <16 x i1>"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1330,7 +1324,7 @@ func TestLLVMGenericWideSIMDLowering(t *testing.T) {
 			function := llvm.AddFunction(module, test.name, llvm.FunctionType(resultVectorType, params, false))
 			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
 			context := &LLVMFuncContext{
-				F:  &Func{Config: &Config{arch: "amd64"}},
+				F:  &Func{Config: &Config{arch: "amd64"}, Entry: &Block{CPUfeatures: CPUavx | CPUavx2 | CPUavx512}},
 				Vs: make(map[ID]llvm.Value),
 				b:  builder,
 			}
@@ -1363,32 +1357,27 @@ func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
 		name       string
 		op         Op
 		lowering   goALLCSIMDLowering
-		archs      goALLCSIMDArch
-		width      uint16
 		lane       goALLCSIMDLane
 		laneBits   uint8
-		lanes      uint8
 		amdProfile string
 	}{
 		{
-			name: "128-bit-three-architecture-add", op: OpAddInt8x16,
-			lowering: goALLCSIMDLowerAdd, archs: goALLCSIMDArchAmd64 | goALLCSIMDArchArm64 | goALLCSIMDArchWasm,
-			width: 128, lane: goALLCSIMDLaneInt, laneBits: 8, lanes: 16, amdProfile: goCPUProfileX86AVX,
+			name: "128-bit-add", op: OpAddInt8x16,
+			lowering: goALLCSIMDLowerAdd,
+			lane:     goALLCSIMDLaneInt, laneBits: 8,
+			amdProfile: goCPUProfileX86AVX,
 		},
 		{
 			name: "256-bit-avx2-add", op: OpAddInt8x32,
-			lowering: goALLCSIMDLowerAdd, archs: goALLCSIMDArchAmd64,
-			width: 256, lane: goALLCSIMDLaneInt, laneBits: 8, lanes: 32, amdProfile: goCPUProfileX86AVX2,
+			lowering: goALLCSIMDLowerAdd,
+			lane:     goALLCSIMDLaneInt, laneBits: 8,
+			amdProfile: goCPUProfileX86AVX2,
 		},
 		{
 			name: "512-bit-avx512-add", op: OpAddInt8x64,
-			lowering: goALLCSIMDLowerAdd, archs: goALLCSIMDArchAmd64,
-			width: 512, lane: goALLCSIMDLaneInt, laneBits: 8, lanes: 64, amdProfile: goCPUProfileX86AVX512,
-		},
-		{
-			name: "wasm-derived-not-equal", op: OpNotEqualUint64x2,
-			lowering: goALLCSIMDLowerNotEqual, archs: goALLCSIMDArchWasm,
-			width: 128, lane: goALLCSIMDLaneUint, laneBits: 64, lanes: 2,
+			lowering: goALLCSIMDLowerAdd,
+			lane:     goALLCSIMDLaneInt, laneBits: 8,
+			amdProfile: goCPUProfileX86AVX512,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1396,7 +1385,7 @@ func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
 			if !ok {
 				t.Fatalf("missing generated descriptor for %s", test.op)
 			}
-			if info.lowering != test.lowering || info.archs != test.archs || info.width != test.width || info.lane != test.lane || info.laneBits != test.laneBits || info.lanes != test.lanes {
+			if info.lowering != test.lowering || info.lane != test.lane || info.laneBits != test.laneBits {
 				t.Fatalf("generated descriptor for %s = %#v", test.op, info)
 			}
 			if info.amd64.cpuProfile != test.amdProfile {
@@ -1409,12 +1398,60 @@ func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
 	if !ok {
 		t.Fatal("missing generated AndNot descriptor")
 	}
-	if andNot.amd64.operandOrder != "21" || andNot.arm64.operandOrder != "" || andNot.wasm.operandOrder != "" {
-		t.Fatalf("generated AndNot operand orders = amd64:%q arm64:%q wasm:%q", andNot.amd64.operandOrder, andNot.arm64.operandOrder, andNot.wasm.operandOrder)
+	if andNot.amd64.operandOrder != "21" || andNot.arm64.operandOrder != "" {
+		t.Fatalf("generated AndNot operand orders = amd64:%q arm64:%q", andNot.amd64.operandOrder, andNot.arm64.operandOrder)
+	}
+
+	if _, ok := goALLCSIMDInfo(OpNotEqualUint64x2); ok {
+		t.Fatal("wasm-only op unexpectedly received an LLVM lowering descriptor")
 	}
 
 	if _, ok := goALLCSIMDInfo(OpAddSaturatedInt8x16); ok {
 		t.Fatal("unmarked saturated add unexpectedly received a lowering descriptor")
+	}
+}
+
+func TestLLVMCPUProfileCoverage(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		required string
+		floor    string
+		want     bool
+	}{
+		{name: "same", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX2, want: true},
+		{name: "avx2-covers-avx", required: goCPUProfileX86AVX, floor: goCPUProfileX86AVX2, want: true},
+		{name: "avx512-covers-avx2", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX512, want: true},
+		{name: "avx-does-not-cover-avx2", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX, want: false},
+		{name: "width-floor-does-not-cover-fma", required: goCPUProfileX86FMA, floor: goCPUProfileX86AVX2, want: false},
+		{name: "no-floor", required: goCPUProfileX86AVX, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := llvmCPUProfileCoveredByFloor(test.required, test.floor); got != test.want {
+				t.Fatalf("llvmCPUProfileCoveredByFloor(%q, %q) = %v, want %v", test.required, test.floor, got, test.want)
+			}
+		})
+	}
+}
+
+func TestLLVMX86CPUFeatureProfile(t *testing.T) {
+	for _, test := range []struct {
+		field string
+		want  string
+	}{
+		{field: "HasAVX", want: goCPUProfileX86AVX},
+		{field: "HasAVX2", want: goCPUProfileX86AVX2},
+		{field: "HasAVX512", want: goCPUProfileX86AVX512},
+		{field: "HasFMA", want: goCPUProfileX86FMA},
+		{field: "HasSSE41", want: goCPUProfileX86SSE41},
+		{field: "HasPOPCNT", want: goCPUProfileX86POPCNT},
+		{field: "HasAVX512GFNI"},
+		{field: "HasAVXVNNI"},
+	} {
+		t.Run(test.field, func(t *testing.T) {
+			if got := llvmX86CPUFeatureProfile(test.field); got != test.want {
+				t.Fatalf("llvmX86CPUFeatureProfile(%q) = %q, want %q", test.field, got, test.want)
+			}
+		})
 	}
 }
 

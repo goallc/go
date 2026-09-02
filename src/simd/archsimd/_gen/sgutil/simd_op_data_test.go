@@ -12,29 +12,12 @@ import (
 
 func testSIMDOpData() SIMDOpData {
 	return SIMDOpData{
-		Lowering:  "add",
-		Width:     256,
-		Lane:      "int",
-		LaneBits:  8,
-		Lanes:     32,
-		Input:     "pure-vreg",
-		Output:    "vreg",
-		Immediate: "none",
-		Mask:      "none",
-		Memory:    "none",
-		Inputs:    "vreg:Int8x32|vreg:Int8x32",
-		Outputs:   "vreg:Int8x32",
+		Lowering: "add",
+		Lane:     "int",
+		LaneBits: 8,
 		Arch: map[string]SIMDArchData{
 			"amd64": {
-				CPUFeature:    "AVX2",
-				CPUProfile:    "x86.avx2",
-				Input:         "pure-vreg",
-				Output:        "vreg",
-				Immediate:     "none",
-				Mask:          "none",
-				Inputs:        "vreg:Int8x32|vreg:Int8x32",
-				Outputs:       "vreg:Int8x32",
-				MemoryFeature: "vbcst",
+				CPUProfile: "x86.avx2",
 			},
 		},
 	}
@@ -56,19 +39,19 @@ func TestMergeSIMDOpData(t *testing.T) {
 	amd64 := testSIMDOpData()
 	arm64 := testSIMDOpData()
 	arm64.Arch = map[string]SIMDArchData{
-		"arm64": {CPUFeature: "SVE", Input: "pure-vreg", Output: "vreg", Immediate: "none", Mask: "none"},
+		"arm64": {},
 	}
 	merged, err := MergeSIMDOpData("AddInt8x32", amd64, arm64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(merged.Arch) != 2 || merged.Arch["amd64"].CPUProfile != "x86.avx2" || merged.Arch["arm64"].CPUFeature != "SVE" {
+	if len(merged.Arch) != 2 || merged.Arch["amd64"].CPUProfile != "x86.avx2" {
 		t.Fatalf("merged descriptor lost architecture data: %#v", merged.Arch)
 	}
 
 	mismatch := arm64
-	mismatch.Lanes = 16
-	if _, err := MergeSIMDOpData("AddInt8x32", amd64, mismatch); err == nil || !strings.Contains(err.Error(), "inconsistent generic descriptors") {
+	mismatch.Lowering = "sub"
+	if _, err := MergeSIMDOpData("AddInt8x32", amd64, mismatch); err == nil || !strings.Contains(err.Error(), "inconsistent GoALLC lowering kinds") {
 		t.Fatalf("inconsistent LLVM descriptor was accepted: %v", err)
 	}
 }
@@ -81,5 +64,12 @@ func TestMergeSIMDOpDataWithUnsupportedArchitecture(t *testing.T) {
 	}
 	if !reflect.DeepEqual(merged, want) {
 		t.Fatalf("merging an unsupported architecture changed the descriptor:\n got: %#v\nwant: %#v", merged, want)
+	}
+}
+
+func TestSIMDOpDataWithoutLastArchPreservesGenericSemantics(t *testing.T) {
+	d := testSIMDOpData().WithoutArch("amd64")
+	if d.Lowering != "add" || d.Lane != "int" || d.LaneBits != 8 || len(d.Arch) != 0 {
+		t.Fatalf("removing architecture-specific data changed generic semantics: %#v", d)
 	}
 }

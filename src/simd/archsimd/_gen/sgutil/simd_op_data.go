@@ -11,45 +11,27 @@ import (
 	"strings"
 )
 
-// SIMDArchData records the architecture-specific part of a generic SIMD
-// operation. The generic operation's semantics and shape live in SIMDOpData;
-// these fields describe the instruction selection contract that produced it.
+// SIMDArchData records the architecture-specific facts needed after generic
+// SSA construction. Source instruction shapes stay in simdgen, where they are
+// validated, rather than being copied into the compiler's generated tables.
 type SIMDArchData struct {
-	CPUFeature        string
-	CPUProfile        string
-	OperandOrder      string
-	Input             string
-	Output            string
-	Immediate         string
-	Mask              string
-	Inputs            string
-	Outputs           string
-	MemoryFeature     string
-	MemoryFeatureData string
+	CPUProfile   string
+	OperandOrder string
 }
 
-// SIMDOpData is the GoALLC lowering descriptor carried from simdgen through
-// the generic SSA generator for an explicitly supported operation. Inputs and
-// Outputs are compact, lossless shape descriptions of the operands relevant to
-// generic lowering.
+// SIMDOpData is the minimal GoALLC lowering descriptor carried from simdgen
+// through the generic SSA generator. The Go SSA type carries vector width;
+// lane kind and width select the operation semantics. opData already carries
+// arity, Aux, and commutativity.
 type SIMDOpData struct {
-	Lowering  string
-	Width     int
-	Lane      string
-	LaneBits  int
-	Lanes     int
-	Input     string
-	Output    string
-	Immediate string
-	Mask      string
-	Memory    string
-	Inputs    string
-	Outputs   string
-	Arch      map[string]SIMDArchData
+	Lowering string
+	Lane     string
+	LaneBits int
+	Arch     map[string]SIMDArchData
 }
 
 func (d SIMDOpData) IsZero() bool {
-	return d.Width == 0 && d.Input == "" && d.Output == "" && len(d.Arch) == 0
+	return d.Lowering == "" && len(d.Arch) == 0
 }
 
 // EqualGeneric reports whether two architecture implementations describe the
@@ -57,17 +39,8 @@ func (d SIMDOpData) IsZero() bool {
 // details are intentionally excluded.
 func (d SIMDOpData) EqualGeneric(other SIMDOpData) bool {
 	return d.Lowering == other.Lowering &&
-		d.Width == other.Width &&
 		d.Lane == other.Lane &&
-		d.LaneBits == other.LaneBits &&
-		d.Lanes == other.Lanes &&
-		d.Input == other.Input &&
-		d.Output == other.Output &&
-		d.Immediate == other.Immediate &&
-		d.Mask == other.Mask &&
-		d.Memory == other.Memory &&
-		d.Inputs == other.Inputs &&
-		d.Outputs == other.Outputs
+		d.LaneBits == other.LaneBits
 }
 
 // MergeSIMDOpData combines architecture implementations of one generic op.
@@ -113,9 +86,6 @@ func (d SIMDOpData) WithoutArch(arch string) SIMDOpData {
 			copyArch[name] = data
 		}
 	}
-	if len(copyArch) == 0 {
-		return SIMDOpData{}
-	}
 	d.Arch = copyArch
 	return d
 }
@@ -128,32 +98,20 @@ func EncodeSIMDOpData(d SIMDOpData) string {
 		return ""
 	}
 	v := make(url.Values)
-	v.Set("v", "1")
 	v.Set("lower", d.Lowering)
-	v.Set("width", strconv.Itoa(d.Width))
 	v.Set("lane", d.Lane)
 	v.Set("laneBits", strconv.Itoa(d.LaneBits))
-	v.Set("lanes", strconv.Itoa(d.Lanes))
-	v.Set("in", d.Input)
-	v.Set("out", d.Output)
-	v.Set("imm", d.Immediate)
-	v.Set("mask", d.Mask)
-	v.Set("mem", d.Memory)
-	v.Set("inputs", d.Inputs)
-	v.Set("outputs", d.Outputs)
 	for arch, data := range d.Arch {
+		if data == (SIMDArchData{}) {
+			continue
+		}
 		prefix := "arch." + arch + "."
-		v.Set(prefix+"cpu", data.CPUFeature)
-		v.Set(prefix+"profile", data.CPUProfile)
-		v.Set(prefix+"order", data.OperandOrder)
-		v.Set(prefix+"in", data.Input)
-		v.Set(prefix+"out", data.Output)
-		v.Set(prefix+"imm", data.Immediate)
-		v.Set(prefix+"mask", data.Mask)
-		v.Set(prefix+"inputs", data.Inputs)
-		v.Set(prefix+"outputs", data.Outputs)
-		v.Set(prefix+"mem", data.MemoryFeature)
-		v.Set(prefix+"memdata", data.MemoryFeatureData)
+		if data.CPUProfile != "" {
+			v.Set(prefix+"profile", data.CPUProfile)
+		}
+		if data.OperandOrder != "" {
+			v.Set(prefix+"order", data.OperandOrder)
+		}
 	}
 	return v.Encode()
 }
@@ -168,61 +126,30 @@ func DecodeSIMDOpData(encoded string) (SIMDOpData, error) {
 	if err != nil {
 		return SIMDOpData{}, err
 	}
-	if version := v.Get("v"); version != "1" {
-		return SIMDOpData{}, fmt.Errorf("unsupported GoALLC SIMD descriptor version %q", version)
-	}
-	parseInt := func(name string) (int, error) {
-		n, err := strconv.Atoi(v.Get(name))
-		if err != nil {
-			return 0, fmt.Errorf("invalid %s %q: %w", name, v.Get(name), err)
-		}
-		return n, nil
-	}
-	width, err := parseInt("width")
-	if err != nil {
-		return SIMDOpData{}, err
-	}
-	laneBits, err := parseInt("laneBits")
-	if err != nil {
-		return SIMDOpData{}, err
-	}
-	lanes, err := parseInt("lanes")
-	if err != nil {
-		return SIMDOpData{}, err
-	}
 	d := SIMDOpData{
-		Lowering:  v.Get("lower"),
-		Width:     width,
-		Lane:      v.Get("lane"),
-		LaneBits:  laneBits,
-		Lanes:     lanes,
-		Input:     v.Get("in"),
-		Output:    v.Get("out"),
-		Immediate: v.Get("imm"),
-		Mask:      v.Get("mask"),
-		Memory:    v.Get("mem"),
-		Inputs:    v.Get("inputs"),
-		Outputs:   v.Get("outputs"),
-		Arch:      make(map[string]SIMDArchData),
+		Lowering: v.Get("lower"),
+		Lane:     v.Get("lane"),
+		Arch:     make(map[string]SIMDArchData),
 	}
+	d.LaneBits, err = strconv.Atoi(v.Get("laneBits"))
+	if err != nil {
+		return SIMDOpData{}, fmt.Errorf("invalid laneBits %q: %w", v.Get("laneBits"), err)
+	}
+	seen := make(map[string]bool)
 	for key := range v {
-		if !strings.HasPrefix(key, "arch.") || !strings.HasSuffix(key, ".cpu") {
+		if !strings.HasPrefix(key, "arch.") {
 			continue
 		}
-		arch := strings.TrimSuffix(strings.TrimPrefix(key, "arch."), ".cpu")
+		name := strings.TrimPrefix(key, "arch.")
+		if i := strings.IndexByte(name, '.'); i >= 0 {
+			seen[name[:i]] = true
+		}
+	}
+	for arch := range seen {
 		prefix := "arch." + arch + "."
 		d.Arch[arch] = SIMDArchData{
-			CPUFeature:        v.Get(prefix + "cpu"),
-			CPUProfile:        v.Get(prefix + "profile"),
-			OperandOrder:      v.Get(prefix + "order"),
-			Input:             v.Get(prefix + "in"),
-			Output:            v.Get(prefix + "out"),
-			Immediate:         v.Get(prefix + "imm"),
-			Mask:              v.Get(prefix + "mask"),
-			Inputs:            v.Get(prefix + "inputs"),
-			Outputs:           v.Get(prefix + "outputs"),
-			MemoryFeature:     v.Get(prefix + "mem"),
-			MemoryFeatureData: v.Get(prefix + "memdata"),
+			CPUProfile:   v.Get(prefix + "profile"),
+			OperandOrder: v.Get(prefix + "order"),
 		}
 	}
 	return d, nil

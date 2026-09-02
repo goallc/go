@@ -288,12 +288,6 @@ type wasmOp struct {
 	immName  string // The parameter name for an immediate operations
 	arg1Name string // The 1st (non-immediate) arg name. Arg1Name() defaults to "y"
 	arg2Name string // The 2nd (non-immediate) arg name. Arg2Name() defaults to "z"
-
-	// llvmLowering is an explicit, target-independent semantic annotation.
-	// Only operations listed in wasmLLVMLowerings may use the generated LLVM
-	// IR lowering; an unlisted operation remains unsupported instead of being
-	// inferred from its Go or SSA name.
-	llvmLowering string
 }
 
 func (o *wasmOp) String() string {
@@ -1017,46 +1011,13 @@ func initWasmOps() {
 
 var wasmOps = []*wasmOp{}
 
-// wasmLLVMLowerings is the WebAssembly source of truth for the subset of
-// generic SIMD operations that can be expressed directly with standard LLVM
-// vector IR. Keep this list in sync with the explicit llvmLowering annotations
-// in simdgen's semantic category files.
-var wasmLLVMLowerings = map[string]string{
-	"add":    "add",
-	"sub":    "sub",
-	"mul":    "mul",
-	"div":    "div",
-	"and":    "and",
-	"or":     "or",
-	"xor":    "xor",
-	"andnot": "andnot",
-	"not":    "not",
-	"neg":    "neg",
-	"abs":    "abs",
-
-	"eq":   "equal",
-	"ne":   "not-equal",
-	"gt":   "greater",
-	"gt_s": "greater",
-	"gt_u": "greater",
-	"ge":   "greater-equal",
-	"ge_s": "greater-equal",
-	"ge_u": "greater-equal",
-	"lt":   "less",
-	"lt_s": "less",
-	"lt_u": "less",
-	"le":   "less-equal",
-	"le_s": "less-equal",
-	"le_u": "less-equal",
-}
-
 // Given a slice of simd types and a slice of operations with the specified argCount,
 // add the resulting wasm operations to wasmOps.  after is a function that applies
 // operation-specific customization to the generated wasmOp.
 func addWasmOpsDetail(types []*simdType, ops []string, argCount int, after func(op *wasmOp)) {
 	for _, t := range types {
 		for _, o := range ops {
-			op := &wasmOp{t: t, op: o, argCount: argCount, llvmLowering: wasmLLVMLowerings[o]}
+			op := &wasmOp{t: t, op: o, argCount: argCount}
 			after(op)
 			if t.Methods[o] != nil {
 				panic("Double addition of method " + o + " for " + t.Name)
@@ -1909,81 +1870,6 @@ func genWasmSSA() (f *bytes.Buffer) {
 	return f
 }
 
-func (o *wasmOp) goALLCGenericType() *simdType {
-	t := o.T()
-	if t.IsMask() || o.Flag(NonSigned) {
-		t = t.IntShaped
-	}
-	return t
-}
-
-func (o *wasmOp) goALLCDescriptor() sgutil.SIMDOpData {
-	if o.llvmLowering == "" {
-		return sgutil.SIMDOpData{}
-	}
-	wantArity := 2
-	switch o.llvmLowering {
-	case "not", "neg", "abs":
-		wantArity = 1
-	case "add", "sub", "mul", "div", "and", "or", "xor", "andnot",
-		"equal", "not-equal", "greater", "greater-equal", "less", "less-equal":
-	default:
-		panic(fmt.Errorf("wasmgen: unknown LLVM lowering %q for %s", o.llvmLowering, o.SsaGenOp()))
-	}
-	if o.ArgCount() != wantArity || o.ImmRange() != 0 || o.Flag(IsTest) || o.Flag(IsConversion) {
-		panic(fmt.Errorf("wasmgen: LLVM lowering %q requires an unmasked register-only operation: %s", o.llvmLowering, o))
-	}
-
-	t := o.goALLCGenericType()
-	lane := "int"
-	if t.Float {
-		lane = "float"
-	} else if t.Unsigned {
-		lane = "uint"
-	}
-	input := "vreg:" + t.Name
-	inputs := make([]string, o.ArgCount())
-	for i := range inputs {
-		inputs[i] = input
-	}
-	outputClass := "vreg"
-	outputType := t.Name
-	if o.Flag(IsRelation) {
-		outputClass = "mask"
-		outputType = t.MaskFor().Name
-	}
-	outputs := outputClass + ":" + outputType
-	d := sgutil.SIMDOpData{
-		Lowering:  o.llvmLowering,
-		Width:     t.ElemSize * t.Count,
-		Lane:      lane,
-		LaneBits:  t.ElemSize,
-		Lanes:     t.Count,
-		Input:     "pure-vreg",
-		Output:    "vreg",
-		Immediate: "none",
-		Mask:      "none",
-		Memory:    "none",
-		Inputs:    strings.Join(inputs, "|"),
-		Outputs:   outputs,
-		Arch: map[string]sgutil.SIMDArchData{
-			"wasm": {
-				CPUFeature: "simd128",
-				Input:      "pure-vreg",
-				Output:     "vreg",
-				Immediate:  "none",
-				Mask:       "none",
-				Inputs:     strings.Join(inputs, "|"),
-				Outputs:    outputs,
-			},
-		},
-	}
-	if d.Width != 128 {
-		panic(fmt.Errorf("wasmgen: LLVM lowering %q has non-128-bit shape for %s", o.llvmLowering, o.SsaGenOp()))
-	}
-	return d
-}
-
 // genGenerics creates SSA generic ops that are implied by WASM SIMD instructions
 // that were not previously implied by AMD64 SIMD instructions.
 // The expected target directory is cmd/compile/internal/ssa/_gen
@@ -2002,7 +1888,6 @@ func genGenerics() *bytes.Buffer {
 			OpInLen: op.ArgCount(),
 			Comm:    op.Flag(IsCommutative),
 			HasAux:  op.ImmRange() > 0,
-			SIMD:    op.goALLCDescriptor(),
 		}
 		newOps = append(newOps, newOp)
 	}

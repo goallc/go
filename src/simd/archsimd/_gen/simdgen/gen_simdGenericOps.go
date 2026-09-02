@@ -23,7 +23,7 @@ func writeSIMDGenericOps(ops []Operation, genericOpsFilePath string) *bytes.Buff
 		if op.SkipMaskedMethod() {
 			continue
 		}
-		shapeIn, shapeOut, maskType, immType, gOp, _ := op.shape()
+		_, _, _, immType, gOp, _ := op.shape()
 		genericIn, genericOut, genericMask, _, _, _ := gOp.shape()
 		// Generic SSA output representation follows the Go result type, not
 		// an architecture's destructive output or mask/scalar register bank.
@@ -47,7 +47,7 @@ func writeSIMDGenericOps(ops []Operation, genericOpsFilePath string) *bytes.Buff
 			Comm:    op.Commutative,
 			HasAux:  immType == VarImm || immType == VarImmLim || immType == ConstVarImm,
 			Archs:   []string{currentArch},
-			SIMD:    goALLCSIMDDescriptor(op, gOp, shapeIn, shapeOut, maskType, immType, genericIn, genericOut, genericMask, genericImm),
+			SIMD:    goALLCSIMDDescriptor(op, gOp, genericIn, genericOut, genericMask, genericImm),
 		})
 	}
 

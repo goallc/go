@@ -258,8 +258,17 @@ func goALLCSIMDConst(kind, value string, values map[string]string) string {
 }
 
 func goALLCSIMDArchLiteral(d sgutil.SIMDArchData) string {
-	return fmt.Sprintf("goALLCSIMDArchInfo{cpuFeature:%q, cpuProfile:%q, operandOrder:%q, input:%q, output:%q, immediate:%q, mask:%q, inputs:%q, outputs:%q, memoryFeature:%q, memoryFeatureData:%q}",
-		d.CPUFeature, d.CPUProfile, d.OperandOrder, d.Input, d.Output, d.Immediate, d.Mask, d.Inputs, d.Outputs, d.MemoryFeature, d.MemoryFeatureData)
+	fields := ""
+	if d.CPUProfile != "" {
+		fields = fmt.Sprintf("cpuProfile:%q", d.CPUProfile)
+	}
+	if d.OperandOrder != "" {
+		if fields != "" {
+			fields += ", "
+		}
+		fields += fmt.Sprintf("operandOrder:%q", d.OperandOrder)
+	}
+	return "goALLCSIMDArchInfo{" + fields + "}"
 }
 
 func goALLCSIMDOpLiteral(encoded string) string {
@@ -267,8 +276,8 @@ func goALLCSIMDOpLiteral(encoded string) string {
 	if err != nil {
 		log.Fatalf("invalid GoALLC SIMD descriptor: %v", err)
 	}
-	if d.Width < 0 || d.Width > 65535 || d.LaneBits < 0 || d.LaneBits > 255 || d.Lanes < 0 || d.Lanes > 255 {
-		log.Fatalf("GoALLC SIMD descriptor dimensions do not fit: width=%d laneBits=%d lanes=%d", d.Width, d.LaneBits, d.Lanes)
+	if d.LaneBits <= 0 || d.LaneBits > 255 {
+		log.Fatalf("GoALLC SIMD descriptor lane width does not fit: %d", d.LaneBits)
 	}
 	lowering := goALLCSIMDConst("lowering", d.Lowering, map[string]string{
 		"": "goALLCSIMDLowerNone", "add": "goALLCSIMDLowerAdd", "sub": "goALLCSIMDLowerSub",
@@ -280,48 +289,24 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"less": "goALLCSIMDLowerLess", "less-equal": "goALLCSIMDLowerLessEqual",
 	})
 	lane := goALLCSIMDConst("lane", d.Lane, map[string]string{
-		"none": "goALLCSIMDLaneNone", "int": "goALLCSIMDLaneInt", "uint": "goALLCSIMDLaneUint", "float": "goALLCSIMDLaneFloat",
+		"int": "goALLCSIMDLaneInt", "uint": "goALLCSIMDLaneUint", "float": "goALLCSIMDLaneFloat",
 	})
-	input := goALLCSIMDConst("input shape", d.Input, map[string]string{
-		"invalid": "goALLCSIMDInputInvalid", "pure-vreg": "goALLCSIMDInputPureVreg",
-		"vreg-mask": "goALLCSIMDInputVregMask", "vreg-immediate": "goALLCSIMDInputVregImmediate",
-		"vreg-mask-immediate": "goALLCSIMDInputVregMaskImmediate", "pure-mask": "goALLCSIMDInputPureMask",
-		"vreg-list": "goALLCSIMDInputVregList",
-	})
-	output := goALLCSIMDConst("output shape", d.Output, map[string]string{
-		"invalid": "goALLCSIMDOutputInvalid", "none": "goALLCSIMDOutputNone", "vreg": "goALLCSIMDOutputVreg",
-		"greg": "goALLCSIMDOutputGreg", "mask": "goALLCSIMDOutputMask", "vreg-at-input": "goALLCSIMDOutputVregAtInput",
-		"vreg-scalar": "goALLCSIMDOutputVregScalar",
-	})
-	immediate := goALLCSIMDConst("immediate shape", d.Immediate, map[string]string{
-		"invalid": "goALLCSIMDImmediateInvalid", "none": "goALLCSIMDImmediateNone", "const": "goALLCSIMDImmediateConst",
-		"variable": "goALLCSIMDImmediateVariable", "const-variable": "goALLCSIMDImmediateConstVariable",
-		"variable-limited": "goALLCSIMDImmediateVariableLimited",
-	})
-	mask := goALLCSIMDConst("mask shape", d.Mask, map[string]string{
-		"invalid": "goALLCSIMDMaskInvalid", "none": "goALLCSIMDMaskNone", "one": "goALLCSIMDMaskOne", "all": "goALLCSIMDMaskAll",
-	})
-	archs := make([]string, 0, len(d.Arch))
 	archFields := ""
-	for _, arch := range []string{"amd64", "arm64", "wasm"} {
+	for _, arch := range []string{"amd64", "arm64"} {
 		data, ok := d.Arch[arch]
 		if !ok {
 			continue
 		}
-		archs = append(archs, "goALLCSIMDArch"+strings.ToUpper(arch[:1])+arch[1:])
-		archFields += fmt.Sprintf(", %s:%s", arch, goALLCSIMDArchLiteral(data))
+		if data != (sgutil.SIMDArchData{}) {
+			archFields += fmt.Sprintf(", %s:%s", arch, goALLCSIMDArchLiteral(data))
+		}
 	}
 	for arch := range d.Arch {
-		if arch != "amd64" && arch != "arm64" && arch != "wasm" {
+		if arch != "amd64" && arch != "arm64" {
 			log.Fatalf("unknown GoALLC SIMD architecture %q", arch)
 		}
 	}
-	archMask := "goALLCSIMDArchNone"
-	if len(archs) != 0 {
-		archMask = strings.Join(archs, "|")
-	}
-	return fmt.Sprintf("goALLCSIMDOpInfo{lowering:%s, archs:%s, width:%d, lane:%s, laneBits:%d, lanes:%d, input:%s, output:%s, immediate:%s, mask:%s, memory:%q, inputs:%q, outputs:%q%s}",
-		lowering, archMask, d.Width, lane, d.LaneBits, d.Lanes, input, output, immediate, mask, d.Memory, d.Inputs, d.Outputs, archFields)
+	return fmt.Sprintf("goALLCSIMDOpInfo{lowering:%s, lane:%s, laneBits:%d%s}", lowering, lane, d.LaneBits, archFields)
 }
 
 func genOp() {

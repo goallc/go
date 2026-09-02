@@ -34,50 +34,6 @@ func goALLCPointerString[T ~int | ~string](p *T) string {
 	return fmt.Sprint(*p)
 }
 
-// goALLCOperandShape preserves the generic-lowering-relevant portion of an
-// operand. The compact form is embedded inside the versioned descriptor and is
-// compared across architectures by the merge step.
-func goALLCOperandShape(o Operand) string {
-	return strings.Join([]string{
-		o.Class,
-		goALLCPointerString(o.Go),
-		goALLCPointerString(o.Base),
-		goALLCPointerString(o.ElemBits),
-		goALLCPointerString(o.Bits),
-		goALLCPointerString(o.Lanes),
-		goALLCPointerString(o.Const),
-		goALLCPointerString(o.ImmOffset),
-		goALLCPointerString(o.ImmMax),
-		goALLCPointerString(o.TreatLikeAScalarOfSize),
-		goALLCPointerString(o.OverwriteClass),
-		goALLCPointerString(o.OverwriteBase),
-		goALLCPointerString(o.OverwriteElementBits),
-		goALLCPointerString(o.OverwriteBits),
-		goALLCPointerString(o.ListNumber),
-		goALLCPointerString(o.FixedReg),
-	}, ":")
-}
-
-func goALLCOperandShapes(ops []Operand) string {
-	shapes := make([]string, len(ops))
-	for i, op := range ops {
-		shapes[i] = goALLCOperandShape(op)
-	}
-	return strings.Join(shapes, "|")
-}
-
-func goALLCGenericOperandShapes(ops []Operand) string {
-	shapes := make([]string, len(ops))
-	for i, op := range ops {
-		class := op.Class
-		if op.OverwriteClass != nil {
-			class = *op.OverwriteClass
-		}
-		shapes[i] = class + ":" + goALLCPointerString(op.Go)
-	}
-	return strings.Join(shapes, "|")
-}
-
 func goALLCCPUProfile(arch, feature string) string {
 	if arch != "amd64" {
 		return ""
@@ -151,85 +107,61 @@ var goALLCLoweringArity = map[string]int{
 	"greater-equal": 2, "less": 2, "less-equal": 2,
 }
 
-func validateGoALLCLowering(op Operation, d sgutil.SIMDOpData) {
-	wantArity, ok := goALLCLoweringArity[d.Lowering]
+func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn inShape, genericOut outShape, genericMask maskShape, genericImm immShape) {
+	wantArity, ok := goALLCLoweringArity[lowering]
 	if !ok {
-		panic(fmt.Errorf("simdgen: unknown LLVM lowering %q for %s", d.Lowering, op.GenericName()))
+		panic(fmt.Errorf("simdgen: unknown LLVM lowering %q for %s", lowering, op.GenericName()))
 	}
-	if d.Input != "pure-vreg" || d.Output != "vreg" || d.Immediate != "none" || d.Mask != "none" || d.Memory != "none" {
-		panic(fmt.Errorf("simdgen: LLVM lowering %q requires an unmasked register-only operation: %s has in=%s out=%s imm=%s mask=%s mem=%s", d.Lowering, op.GenericName(), d.Input, d.Output, d.Immediate, d.Mask, d.Memory))
+	if genericIn != PureVregIn || genericOut != OneVregOut || genericImm != NoImm || genericMask != NoMask {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q requires an unmasked register-only operation: %s has in=%s out=%s imm=%s mask=%s", lowering, op.GenericName(), goALLCShapeName(genericIn), goALLCShapeName(genericOut), goALLCShapeName(genericImm), goALLCShapeName(genericMask)))
 	}
-	if len(op.In) != wantArity {
-		panic(fmt.Errorf("simdgen: LLVM lowering %q for %s has %d inputs, want %d", d.Lowering, op.GenericName(), len(op.In), wantArity))
+	if len(genericOp.In) != wantArity {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q for %s has %d inputs, want %d", lowering, op.GenericName(), len(genericOp.In), wantArity))
 	}
-	if len(op.Out) != 1 {
-		panic(fmt.Errorf("simdgen: LLVM lowering %q for %s has %d outputs, want 1", d.Lowering, op.GenericName(), len(op.Out)))
+	if len(genericOp.Out) != 1 {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q for %s has %d outputs, want 1", lowering, op.GenericName(), len(genericOp.Out)))
 	}
-	if d.Width != d.LaneBits*d.Lanes || (d.Lane != "int" && d.Lane != "uint" && d.Lane != "float") {
-		panic(fmt.Errorf("simdgen: LLVM lowering %q has invalid lane shape %s%d x %d for %s", d.Lowering, d.Lane, d.LaneBits, d.Lanes, op.GenericName()))
+	wantBase, wantElemBits, wantLanes := goALLCPrimaryLane(genericOp)
+	width := genericOp.VectorWidth()
+	if width != wantElemBits*wantLanes || (wantBase != "int" && wantBase != "uint" && wantBase != "float") {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q has invalid lane shape %s%d x %d for %s", lowering, wantBase, wantElemBits, wantLanes, op.GenericName()))
 	}
-	for _, in := range op.In {
+	for _, in := range genericOp.In {
 		base, elemBits, lanes, ok := goALLCLaneFromGoType(in.Go)
 		if !ok && in.Base != nil && in.ElemBits != nil && in.Lanes != nil {
 			base, elemBits, lanes, ok = *in.Base, *in.ElemBits, *in.Lanes, true
 		}
-		if in.Class != "vreg" || in.Bits == nil || *in.Bits != d.Width || !ok || elemBits != d.LaneBits || lanes != d.Lanes || base != d.Lane {
-			panic(fmt.Errorf("simdgen: LLVM lowering %q has heterogeneous input shape for %s", d.Lowering, op.GenericName()))
+		if in.Class != "vreg" || in.Bits == nil || *in.Bits != width || !ok || base != wantBase || elemBits != wantElemBits || lanes != wantLanes {
+			panic(fmt.Errorf("simdgen: LLVM lowering %q has heterogeneous input shape for %s", lowering, op.GenericName()))
 		}
 	}
-	out := op.Out[0]
-	if out.Class != "mask" && (out.Class != "vreg" || out.Bits == nil || *out.Bits != d.Width) {
-		panic(fmt.Errorf("simdgen: LLVM lowering %q has incompatible output shape for %s", d.Lowering, op.GenericName()))
+	out := genericOp.Out[0]
+	if out.Class != "mask" && (out.Class != "vreg" || out.Bits == nil || *out.Bits != width) {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q has incompatible output shape for %s", lowering, op.GenericName()))
 	}
 }
 
-func goALLCSIMDDescriptor(op, genericOp Operation, shapeIn inShape, shapeOut outShape, maskType maskShape, immType immShape, genericIn inShape, genericOut outShape, genericMask maskShape, genericImm immShape) sgutil.SIMDOpData {
+func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut outShape, genericMask maskShape, genericImm immShape) sgutil.SIMDOpData {
 	if op.LLVMLowering == nil {
 		return sgutil.SIMDOpData{}
 	}
 	arch := CurrentArch().Arch
-	base, elemBits, lanes := goALLCPrimaryLane(genericOp)
+	base, elemBits, _ := goALLCPrimaryLane(genericOp)
 	operandOrder := ""
 	if op.OperandOrder != nil {
 		operandOrder = *op.OperandOrder
 	}
-	memoryFeature := ""
-	if op.MemFeatures != nil {
-		memoryFeature = *op.MemFeatures
-	}
-	memoryFeatureData := ""
-	if op.MemFeaturesData != nil {
-		memoryFeatureData = *op.MemFeaturesData
-	}
 	d := sgutil.SIMDOpData{
-		Lowering:  *op.LLVMLowering,
-		Width:     genericOp.VectorWidth(),
-		Lane:      base,
-		LaneBits:  elemBits,
-		Lanes:     lanes,
-		Input:     goALLCShapeName(genericIn),
-		Output:    goALLCShapeName(genericOut),
-		Immediate: goALLCShapeName(genericImm),
-		Mask:      goALLCShapeName(genericMask),
-		Memory:    "none",
-		Inputs:    goALLCGenericOperandShapes(genericOp.In),
-		Outputs:   goALLCGenericOperandShapes(genericOp.Out),
+		Lowering: *op.LLVMLowering,
+		Lane:     base,
+		LaneBits: elemBits,
 		Arch: map[string]sgutil.SIMDArchData{
 			arch: {
-				CPUFeature:        op.CPUFeature,
-				CPUProfile:        goALLCCPUProfile(arch, op.CPUFeature),
-				OperandOrder:      operandOrder,
-				Input:             goALLCShapeName(shapeIn),
-				Output:            goALLCShapeName(shapeOut),
-				Immediate:         goALLCShapeName(immType),
-				Mask:              goALLCShapeName(maskType),
-				Inputs:            goALLCOperandShapes(op.In),
-				Outputs:           goALLCOperandShapes(op.Out),
-				MemoryFeature:     memoryFeature,
-				MemoryFeatureData: memoryFeatureData,
+				CPUProfile:   goALLCCPUProfile(arch, op.CPUFeature),
+				OperandOrder: operandOrder,
 			},
 		},
 	}
-	validateGoALLCLowering(genericOp, d)
+	validateGoALLCLowering(op, genericOp, d.Lowering, genericIn, genericOut, genericMask, genericImm)
 	return d
 }
