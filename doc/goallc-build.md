@@ -240,7 +240,6 @@ cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
 cmake --build "$PLUGIN_BUILD" --target GoALLCStatepoints
 ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
 "$GOROOT/bin/go" test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
-"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM$/^policy$'
 "$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM$/^testdir$/^codegen$'
 ```
 

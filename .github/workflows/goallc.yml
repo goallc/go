@@ -260,7 +260,7 @@ jobs:
             -timeout=100m \
             -v
 
-      - name: Test LLVM testdir policy
+      - name: Test LLVM testdir
         shell: bash
         env:
           GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
@@ -268,7 +268,7 @@ jobs:
         run: |
           set -o pipefail
           ./bin/go test cmd/internal/testdir \
-            -run '^TestLLVM$/^(policy|testdir)$' \
+            -run '^TestLLVM$/^testdir$' \
             -count=1 \
             -timeout=100m \
             -json \

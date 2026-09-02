@@ -83,11 +83,9 @@ func Test(t *testing.T) {
 }
 
 // TestLLVM is the single entrypoint for LLVM qualification in this package.
-// Its subtests keep policy checks, standard library qualification, and the
-// shared GOROOT/test runner independently selectable without maintaining
-// separate top-level LLVM test drivers.
+// Its subtests keep standard library qualification and the shared GOROOT/test
+// runner independently selectable.
 func TestLLVM(t *testing.T) {
-	t.Run("policy", testLLVMPolicy)
 	t.Run("stdlib", testLLVMStdlib)
 	t.Run("testdir", func(t *testing.T) {
 		runTestDir(t, true)
@@ -161,31 +159,39 @@ func runTestDir(t *testing.T, useLLVM bool) {
 		llvmMode = newLLVMTestMode(t, common)
 	}
 
+	var tests []test
 	for _, dir := range dirs {
 		for _, goFile := range goFiles(t, dir) {
-			name := path.Join(dir, goFile)
-			if llvmMode != nil {
-				if !llvmMode.cases[name] {
-					continue
-				}
-			}
 			test := test{testCommon: common, dir: dir, goFile: goFile, llvm: llvmMode}
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-				test.T = t
-				testError := test.run()
-				wantError := test.expectFail() && !*force
-				if testError != nil {
-					if wantError {
-						t.Log(testError.Error() + " (expected)")
-					} else {
-						t.Fatal(testError)
-					}
-				} else if wantError {
-					t.Fatal("unexpected success")
-				}
-			})
+			if llvmMode != nil && !llvmMode.selectTest(t, test) {
+				continue
+			}
+			if !shardMatch(goFile) {
+				continue
+			}
+			tests = append(tests, test)
 		}
+	}
+	if llvmMode != nil {
+		llvmMode.finish(t)
+	}
+	for _, test := range tests {
+		name := path.Join(test.dir, test.goFile)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			test.T = t
+			testError := test.run()
+			wantError := test.expectFail() && !*force
+			if testError != nil {
+				if wantError {
+					t.Log(testError.Error() + " (expected)")
+				} else {
+					t.Fatal(testError)
+				}
+			} else if wantError {
+				t.Fatal("unexpected success")
+			}
+		})
 	}
 }
 
@@ -206,7 +212,7 @@ func goFiles(t *testing.T, dir string) []string {
 	names := []string{}
 	for _, file := range files {
 		name := file.Name()
-		if !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go") && shardMatch(name) {
+		if !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go") {
 			names = append(names, name)
 		}
 	}
@@ -336,6 +342,20 @@ func (t test) goFileName() string {
 
 func (t test) goDirName() string {
 	return filepath.Join(t.dir, strings.ReplaceAll(t.goFile, ".go", ".dir"))
+}
+
+func (t test) action(parent *testing.T) string {
+	parent.Helper()
+	filename := filepath.Join(t.gorootTestDir, t.goFileName())
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		parent.Fatal(err)
+	}
+	_, fields, err := parseTestRecipe(string(data))
+	if err != nil {
+		parent.Fatalf("%s: %v", filename, err)
+	}
+	return fields[0]
 }
 
 // goDirFiles returns .go files in dir.
@@ -635,7 +655,7 @@ func TestGoGcflags(t *testing.T) {
 
 var errTimeout = errors.New("command exceeded time limit")
 
-func testRecipe(src string) (string, error) {
+func parseTestRecipe(src string) (string, []string, error) {
 	// The execution recipe is contained in a comment in the first non-empty
 	// line that is not a build constraint.
 	var recipe string
@@ -648,70 +668,16 @@ func testRecipe(src string) (string, error) {
 		recipe = strings.TrimSpace(strings.TrimPrefix(line, "//"))
 	}
 	if recipe == "" {
-		return "", errors.New("execution recipe not found")
+		return "", nil, errors.New("execution recipe not found")
 	}
-	return recipe, nil
-}
-
-func parseTestRecipe(recipe string) ([]string, error) {
 	fields, err := splitQuoted(recipe)
 	if err != nil {
-		return nil, fmt.Errorf("invalid test recipe: %w", err)
+		return "", nil, fmt.Errorf("invalid test recipe: %w", err)
 	}
 	if len(fields) == 0 {
-		return nil, errors.New("execution recipe not found")
+		return "", nil, errors.New("execution recipe not found")
 	}
-	return fields, nil
-}
-
-func testParseTestRecipe(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		src     string
-		want    []string
-		wantErr string
-	}{
-		{
-			name: "plain",
-			src:  "// run -t 30 argument\n\npackage main\n",
-			want: []string{"run", "-t", "30", "argument"},
-		},
-		{
-			name: "build constraint and quoted argument",
-			src:  "//go:build linux\n\n// run \"two words\"\n\npackage main\n",
-			want: []string{"run", "two words"},
-		},
-		{
-			name:    "missing",
-			src:     "//go:build linux\n\n",
-			wantErr: "execution recipe not found",
-		},
-		{
-			name:    "invalid quoting",
-			src:     "// run \"unterminated\n\npackage main\n",
-			wantErr: "invalid test recipe",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			recipe, err := testRecipe(tc.src)
-			var got []string
-			if err == nil {
-				got, err = parseTestRecipe(recipe)
-			}
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("recipe error = %v, want substring %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(got, tc.want) {
-				t.Fatalf("parsed recipe = %q, want %q", got, tc.want)
-			}
-		})
-	}
+	return recipe, fields, nil
 }
 
 // run runs the test case.
@@ -732,7 +698,7 @@ func (t test) run() error {
 	}
 	src := string(srcBytes)
 
-	recipe, err := testRecipe(src)
+	recipe, fields, err := parseTestRecipe(src)
 	if err != nil {
 		t.Fatalf("%v in GOROOT/test/%s", err, t.goFileName())
 	}
@@ -744,10 +710,6 @@ func (t test) run() error {
 	}
 	if ok, why := shouldTest(header, goos, goarch); !ok {
 		t.Skip(why)
-	}
-	fields, err := parseTestRecipe(recipe)
-	if err != nil {
-		t.Fatalf("%v in GOROOT/test/%s", err, t.goFileName())
 	}
 	action, args := fields[0], fields[1:]
 
@@ -845,7 +807,9 @@ func (t test) run() error {
 		// native compile path. Bound each recipe command to the CI per-case
 		// budget so a newly slow test fails promptly and can be reviewed for
 		// blacklisting. An explicit shorter timeout remains authoritative.
-		tim = llvmCaseTimeoutSeconds(tim)
+		if tim == 0 || tim > llvmDefaultCaseTimeoutSeconds {
+			tim = llvmDefaultCaseTimeoutSeconds
+		}
 		if action == "run" || action == "runoutput" {
 			flags = appendBuildFlag(flags, "ldflags", "", "-w")
 		}

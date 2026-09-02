@@ -404,7 +404,6 @@ cd /path/to/simple-main-package
 ```sh
 cd "$GOROOT/src"
 go test cmd/internal/llvmbackend cmd/go/internal/work cmd/dist
-go test cmd/internal/testdir -run '^TestLLVM$/^policy$'
 go test cmd/internal/testdir -run '^TestLLVM$/^testdir$/^codegen$'
 
 cd /path/to/llvm-project
@@ -717,7 +716,7 @@ fixture 的已验证边界，不能用来掩盖一个原本要求完整 LLVM 编
 定向运行完整 LLVM 策略（所有候选执行，blacklist 跳过）：
 
 ```sh
-go test cmd/internal/testdir -run='^TestLLVM$/^(policy|testdir)$' -v
+go test cmd/internal/testdir -run='^TestLLVM$/^testdir$' -v
 ```
 
 `TestLLVM/testdir` 和原生 `Test` 共用 `testdir_test.go` 的目录扫描、recipe 解析和

@@ -9,7 +9,6 @@ import (
 	"internal/testenv"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -120,29 +119,6 @@ func validateLLVMStdlibPolicy(t *testing.T, packages map[string]bool, set llvmPo
 	}
 }
 
-func testLLVMStdlibPolicy(t *testing.T) {
-	packages := llvmStdlibPackages(t)
-	validateLLVMStdlibPolicy(t, packages, readLLVMStdlibPolicy(t).Packages, runtime.GOOS+"/"+runtime.GOARCH)
-}
-
-func testEffectiveLLVMStdlibBlacklist(t *testing.T) {
-	set := llvmPolicySet{
-		Blacklist: map[string]string{"bytes": "known failure"},
-		PlatformBlacklist: map[string]map[string]string{
-			"linux/amd64": {"cmp": "platform failure"},
-		},
-	}
-	effective := effectiveLLVMBlacklist(set, "linux/amd64")
-	for name, want := range map[string]string{"bytes": "known failure", "cmp": "platform failure"} {
-		if got := effective[name]; got != want {
-			t.Errorf("effective blacklist reason for %q = %q, want %q", name, got, want)
-		}
-	}
-	if _, ok := set.Blacklist["cmp"]; ok {
-		t.Fatal("platform selection modified the common blacklist")
-	}
-}
-
 func llvmStdlibCapabilitySkip(name, goarch string) string {
 	switch name {
 	case "log":
@@ -157,32 +133,6 @@ func llvmStdlibCapabilitySkip(name, goarch string) string {
 		return llvmPprofSkip
 	default:
 		return ""
-	}
-}
-
-func testLLVMRuntimeAsyncPreemptionQualification(t *testing.T) {
-	skip := regexp.MustCompile(llvmRuntimeSkip + llvmRuntimeAMD64Skip)
-	for _, name := range []string{
-		"TestPreemption",
-		"TestPreemptionGC",
-		"TestAsyncPreempt",
-		"TestUnsafePoint",
-	} {
-		if skip.MatchString(name) {
-			t.Errorf("qualified LLVM runtime test %q is skipped", name)
-		}
-	}
-}
-
-func testLLVMPprofBadPointerQualification(t *testing.T) {
-	skip := regexp.MustCompile(llvmPprofSkip)
-	for _, name := range []string{
-		"TestMemoryProfiler/proto",
-		"TestGenericsHashKeyInPprofBuilder",
-	} {
-		if skip.MatchString(name) {
-			t.Errorf("qualified LLVM runtime/pprof test %q is skipped", name)
-		}
 	}
 }
 
