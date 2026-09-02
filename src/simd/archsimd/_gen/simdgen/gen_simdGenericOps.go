@@ -23,7 +23,23 @@ func writeSIMDGenericOps(ops []Operation, genericOpsFilePath string) *bytes.Buff
 		if op.SkipMaskedMethod() {
 			continue
 		}
-		_, _, _, immType, gOp, _ := op.shape()
+		shapeIn, shapeOut, maskType, immType, gOp, _ := op.shape()
+		genericIn, genericOut, genericMask, _, _, _ := gOp.shape()
+		// Generic SSA output representation follows the Go result type, not
+		// an architecture's destructive output or mask/scalar register bank.
+		genericOut = goALLCGenericOutputShape(gOp, genericOut)
+		genericImm := immType
+		switch immType {
+		case ConstImm:
+			// A constant instruction predicate is part of the named generic
+			// operation's semantics rather than an SSA Aux value.
+			genericImm = NoImm
+		case VarImm, VarImmLim, ConstVarImm:
+			// Generic SSA carries each user-visible immediate in the same
+			// UInt8 Aux slot. Instruction offsets and limits remain in the
+			// architecture-specific descriptor.
+			genericImm = VarImm
+		}
 
 		newOps = append(newOps, sgutil.GenericOpsData{
 			OpName:  gOp.GenericName(),
@@ -31,6 +47,7 @@ func writeSIMDGenericOps(ops []Operation, genericOpsFilePath string) *bytes.Buff
 			Comm:    op.Commutative,
 			HasAux:  immType == VarImm || immType == VarImmLim || immType == ConstVarImm,
 			Archs:   []string{currentArch},
+			SIMD:    goALLCSIMDDescriptor(op, gOp, shapeIn, shapeOut, maskType, immType, genericIn, genericOut, genericMask, genericImm),
 		})
 	}
 

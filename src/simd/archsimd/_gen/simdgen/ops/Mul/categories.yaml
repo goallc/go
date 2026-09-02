@@ -1,5 +1,6 @@
 !sum
 - go: Mul
+  llvmLowering: mul
   commutative: true
   documentation: !string |-
     // NAME multiplies corresponding elements of two vectors, modulo 2ⁿ.

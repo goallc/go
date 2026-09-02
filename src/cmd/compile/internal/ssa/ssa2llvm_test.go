@@ -1076,15 +1076,29 @@ func TestLLVMGenericWideSIMDLowering(t *testing.T) {
 		name  string
 		typ   *types.Type
 		op    Op
-		lanes int
+		bytes int
+		arity int
+		wants []string
 	}{
-		{name: "vec256", typ: types.TypeVec256, op: OpAddInt8x32, lanes: 32},
-		{name: "vec512", typ: types.TypeVec512, op: OpAddInt8x64, lanes: 64},
+		{name: "vec256-add-int8", typ: types.TypeVec256, op: OpAddInt8x32, bytes: 32, arity: 2, wants: []string{"add <32 x i8>"}},
+		{name: "vec256-sub-int16", typ: types.TypeVec256, op: OpSubInt16x16, bytes: 32, arity: 2, wants: []string{"sub <16 x i16>"}},
+		{name: "vec256-mul-int32", typ: types.TypeVec256, op: OpMulInt32x8, bytes: 32, arity: 2, wants: []string{"mul <8 x i32>"}},
+		{name: "vec256-div-float64", typ: types.TypeVec256, op: OpDivFloat64x4, bytes: 32, arity: 2, wants: []string{"fdiv <4 x double>"}},
+		{name: "vec256-and", typ: types.TypeVec256, op: OpAndInt64x4, bytes: 32, arity: 2, wants: []string{"and <32 x i8>"}},
+		{name: "vec256-abs-int64", typ: types.TypeVec256, op: OpAbsInt64x4, bytes: 32, arity: 1, wants: []string{"icmp slt <4 x i64>", "select <4 x i1>"}},
+		{name: "vec256-greater-int16", typ: types.TypeVec256, op: OpGreaterInt16x16, bytes: 32, arity: 2, wants: []string{"icmp sgt <16 x i16>", "sext <16 x i1>"}},
+		{name: "vec512-add-int8", typ: types.TypeVec512, op: OpAddInt8x64, bytes: 64, arity: 2, wants: []string{"add <64 x i8>"}},
+		{name: "vec512-sub-int16", typ: types.TypeVec512, op: OpSubInt16x32, bytes: 64, arity: 2, wants: []string{"sub <32 x i16>"}},
+		{name: "vec512-mul-int32", typ: types.TypeVec512, op: OpMulInt32x16, bytes: 64, arity: 2, wants: []string{"mul <16 x i32>"}},
+		{name: "vec512-div-float64", typ: types.TypeVec512, op: OpDivFloat64x8, bytes: 64, arity: 2, wants: []string{"fdiv <8 x double>"}},
+		{name: "vec512-xor", typ: types.TypeVec512, op: OpXorInt64x8, bytes: 64, arity: 2, wants: []string{"xor <64 x i8>"}},
+		{name: "vec512-abs-int64", typ: types.TypeVec512, op: OpAbsInt64x8, bytes: 64, arity: 1, wants: []string{"icmp slt <8 x i64>", "select <8 x i1>"}},
+		{name: "vec512-less-equal-uint16", typ: types.TypeVec512, op: OpLessEqualUint16x32, bytes: 64, arity: 2, wants: []string{"icmp ule <32 x i16>", "sext <32 x i1>"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			carrier := getLLVMType(test.typ)
-			if carrier.TypeKind() != llvm.VectorTypeKind || carrier.VectorSize() != test.lanes || carrier.ElementType() != GlobalCtxt.Int8Type() {
-				t.Fatalf("%s LLVM carrier is not <%d x i8>", test.name, test.lanes)
+			if carrier.TypeKind() != llvm.VectorTypeKind || carrier.VectorSize() != test.bytes || carrier.ElementType() != GlobalCtxt.Int8Type() {
+				t.Fatalf("%s LLVM carrier is not <%d x i8>", test.name, test.bytes)
 			}
 
 			module := GlobalCtxt.NewModule("generic_" + test.name)
@@ -1093,28 +1107,99 @@ func TestLLVMGenericWideSIMDLowering(t *testing.T) {
 			t.Cleanup(module.Dispose)
 			t.Cleanup(builder.Dispose)
 
-			function := llvm.AddFunction(module, test.name, llvm.FunctionType(carrier, []llvm.Type{carrier, carrier}, false))
+			params := make([]llvm.Type, test.arity)
+			for i := range params {
+				params[i] = carrier
+			}
+			function := llvm.AddFunction(module, test.name, llvm.FunctionType(carrier, params, false))
 			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
 			context := &LLVMFuncContext{
 				F:  &Func{Config: &Config{arch: "amd64"}},
 				Vs: make(map[ID]llvm.Value),
 				b:  builder,
 			}
-			x := &Value{ID: 1, Op: OpArg, Type: test.typ}
-			y := &Value{ID: 2, Op: OpArg, Type: test.typ}
-			context.Vs[x.ID] = function.Param(0)
-			context.Vs[y.ID] = function.Param(1)
-			result := &Value{ID: 3, Op: test.op, Type: test.typ, Args: []*Value{x, y}}
+			args := make([]*Value, test.arity)
+			for i := range args {
+				args[i] = &Value{ID: ID(i + 1), Op: OpArg, Type: test.typ}
+				context.Vs[args[i].ID] = function.Param(i)
+			}
+			result := &Value{ID: ID(test.arity + 1), Op: test.op, Type: test.typ, Args: args}
 			builder.CreateRet(context.GenLV(result))
 
 			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("LLVM verifier rejected %s lowering: %v\n%s", test.name, err, module.String())
 			}
-			want := fmt.Sprintf("add <%d x i8>", test.lanes)
-			if ir := module.String(); !strings.Contains(ir, want) {
-				t.Errorf("%s IR does not contain %q\n%s", test.name, want, ir)
+			ir := module.String()
+			for _, want := range append(test.wants, fmt.Sprintf("ret <%d x i8>", test.bytes)) {
+				if !strings.Contains(ir, want) {
+					t.Errorf("%s IR does not contain %q\n%s", test.name, want, ir)
+				}
 			}
 		})
+	}
+}
+
+func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		op         Op
+		lowering   goALLCSIMDLowering
+		archs      goALLCSIMDArch
+		width      uint16
+		lane       goALLCSIMDLane
+		laneBits   uint8
+		lanes      uint8
+		amdProfile string
+	}{
+		{
+			name: "128-bit-three-architecture-add", op: OpAddInt8x16,
+			lowering: goALLCSIMDLowerAdd, archs: goALLCSIMDArchAmd64 | goALLCSIMDArchArm64 | goALLCSIMDArchWasm,
+			width: 128, lane: goALLCSIMDLaneInt, laneBits: 8, lanes: 16, amdProfile: goCPUProfileX86AVX,
+		},
+		{
+			name: "256-bit-avx2-add", op: OpAddInt8x32,
+			lowering: goALLCSIMDLowerAdd, archs: goALLCSIMDArchAmd64,
+			width: 256, lane: goALLCSIMDLaneInt, laneBits: 8, lanes: 32, amdProfile: goCPUProfileX86AVX2,
+		},
+		{
+			name: "512-bit-avx512-add", op: OpAddInt8x64,
+			lowering: goALLCSIMDLowerAdd, archs: goALLCSIMDArchAmd64,
+			width: 512, lane: goALLCSIMDLaneInt, laneBits: 8, lanes: 64, amdProfile: goCPUProfileX86AVX512,
+		},
+		{
+			name: "wasm-derived-not-equal", op: OpNotEqualUint64x2,
+			lowering: goALLCSIMDLowerNotEqual, archs: goALLCSIMDArchWasm,
+			width: 128, lane: goALLCSIMDLaneUint, laneBits: 64, lanes: 2,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			info, ok := goALLCSIMDInfo(test.op)
+			if !ok {
+				t.Fatalf("missing generated descriptor for %s", test.op)
+			}
+			if info.lowering != test.lowering || info.archs != test.archs || info.width != test.width || info.lane != test.lane || info.laneBits != test.laneBits || info.lanes != test.lanes {
+				t.Fatalf("generated descriptor for %s = %#v", test.op, info)
+			}
+			if info.amd64.cpuProfile != test.amdProfile {
+				t.Fatalf("generated AMD64 profile for %s = %q, want %q", test.op, info.amd64.cpuProfile, test.amdProfile)
+			}
+		})
+	}
+
+	andNot, ok := goALLCSIMDInfo(OpAndNotInt8x16)
+	if !ok {
+		t.Fatal("missing generated AndNot descriptor")
+	}
+	if andNot.amd64.operandOrder != "21" || andNot.arm64.operandOrder != "" || andNot.wasm.operandOrder != "" {
+		t.Fatalf("generated AndNot operand orders = amd64:%q arm64:%q wasm:%q", andNot.amd64.operandOrder, andNot.arm64.operandOrder, andNot.wasm.operandOrder)
+	}
+
+	saturated, ok := goALLCSIMDInfo(OpAddSaturatedInt8x16)
+	if !ok {
+		t.Fatal("missing source descriptor for unlowered saturated add")
+	}
+	if saturated.lowering != goALLCSIMDLowerNone {
+		t.Fatalf("unmarked saturated add received inferred lowering %d", saturated.lowering)
 	}
 }
 

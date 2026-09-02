@@ -4,6 +4,7 @@
   documentation: !string |-
     // NAME computes the rounded average of corresponding elements.
 - go: Abs
+  llvmLowering: abs
   commutative: false
   # Unary operation, not commutative
   documentation: !string |-

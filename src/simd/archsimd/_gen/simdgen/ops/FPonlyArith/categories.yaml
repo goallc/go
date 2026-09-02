@@ -1,5 +1,6 @@
 !sum
 - go: Div
+  llvmLowering: div
   commutative: false
   documentation: !string |-
     // NAME divides elements of two vectors. Division by zero follows IEEE 754 and does not panic.

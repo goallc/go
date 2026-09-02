@@ -1,5 +1,6 @@
 !sum
 - go: Add
+  llvmLowering: add
   commutative: true
   documentation: !string |-
     // NAME adds corresponding elements of two vectors.
@@ -8,6 +9,7 @@
   documentation: !string |-
     // NAME adds corresponding elements of two vectors with saturation.
 - go: Sub
+  llvmLowering: sub
   commutative: false
   documentation: !string |-
     // NAME subtracts corresponding elements of two vectors.

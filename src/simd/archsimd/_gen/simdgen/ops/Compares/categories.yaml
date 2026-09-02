@@ -7,31 +7,37 @@
 # 5: GreaterEqual
 # 6: Greater
 - go: Equal
+  llvmLowering: equal
   constImm: 0
   commutative: true
   documentation: !string |-
     // NAME returns a mask whose elements indicate whether x == y.
 - go: Less
+  llvmLowering: less
   constImm: 1
   commutative: false
   documentation: !string |-
     // NAME returns a mask whose elements indicate whether x < y.
 - go: LessEqual
+  llvmLowering: less-equal
   constImm: 2
   commutative: false
   documentation: !string |-
     // NAME returns a mask whose elements indicate whether x <= y.
 - go: NotEqual
+  llvmLowering: not-equal
   constImm: 4
   commutative: true
   documentation: !string |-
     // NAME returns a mask whose elements indicate whether x != y.
 - go: GreaterEqual
+  llvmLowering: greater-equal
   constImm: 13
   commutative: false
   documentation: !string |-
     // NAME returns a mask whose elements indicate whether x >= y.
 - go: Greater
+  llvmLowering: greater
   constImm: 14
   commutative: false
   documentation: !string |-

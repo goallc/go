@@ -32,10 +32,10 @@ package main
 func simdGenericOps() []opData {
 	return []opData{
 {{- range .Ops }}
-		{name: "{{.OpName}}", argLength: {{.OpInLen}}{{if .Comm}}, commutative: true{{end}}}, // ARCH:{{.ArchTag}}
+		{name: "{{.OpName}}", argLength: {{.OpInLen}}{{if .Comm}}, commutative: true{{end}}{{if .HasSIMD}}, simd: "{{.SIMDEncoded}}"{{end}}}, // ARCH:{{.ArchTag}}
 {{- end }}
 {{- range .OpsImm }}
-		{name: "{{.OpName}}", argLength: {{.OpInLen}}{{if .Comm}}, commutative: true{{end}}, aux: "UInt8"}, // ARCH:{{.ArchTag}}
+		{name: "{{.OpName}}", argLength: {{.OpInLen}}{{if .Comm}}, commutative: true{{end}}, aux: "UInt8"{{if .HasSIMD}}, simd: "{{.SIMDEncoded}}"{{end}}}, // ARCH:{{.ArchTag}}
 {{- end }}
 	}
 }
@@ -60,6 +60,7 @@ type GenericOpsData struct {
 	Comm    bool
 	HasAux  bool
 	Archs   []string // e.g. ["amd64","arm64"]
+	SIMD    SIMDOpData
 }
 
 // ArchTag returns the comma-separated arch list for the template comment.
@@ -67,11 +68,19 @@ func (d GenericOpsData) ArchTag() string {
 	return strings.Join(d.Archs, ",")
 }
 
+func (d GenericOpsData) HasSIMD() bool {
+	return !d.SIMD.IsZero()
+}
+
+func (d GenericOpsData) SIMDEncoded() string {
+	return EncodeSIMDOpData(d.SIMD)
+}
+
 // Match lines like:
 //
 //	{name: "GetElemFloat32x4", argLength: 2, aux: "UInt8"}, // ARCH:amd64,arm64
 //	{name: "MulInt8x16", argLength: 2, commutative: true}, // ARCH:arm64
-var reEntry = regexp.MustCompile(`^\s*\{name:\s*"([^"]+)",\s*argLength:\s*(\d+)(?:,\s*commutative:\s*(true|false))?(?:,\s*aux:\s*"[^"]+")?\s*\}\s*,\s*(?://\s*ARCH:(\S+))?`)
+var reEntry = regexp.MustCompile(`^\s*\{name:\s*"([^"]+)",\s*argLength:\s*(\d+)(?:,\s*commutative:\s*(true|false))?(?:,\s*aux:\s*"[^"]+")?(?:,\s*simd:\s*"([^"]*)")?\s*\}\s*,\s*(?://\s*ARCH:(\S+))?`)
 
 // parseOps reads an existing simdgenericOps.go and extracts op entries along with
 // their ARCH: tags. It strips currentArch from all parsed entries and drops those
@@ -103,7 +112,11 @@ func parseOps(oldFile, currentArch string) ([]GenericOpsData, error) {
 		argLen, _ := strconv.Atoi(matches[2])
 		comm := matches[3] == "true" // matches[3] may be empty if commutative is omitted
 		hasAux := strings.Contains(line, `aux: "UInt8"`)
-		archTag := matches[4]
+		simd, err := DecodeSIMDOpData(matches[4])
+		if err != nil {
+			return nil, fmt.Errorf("simdgen: invalid GoALLC SIMD descriptor for %q: %w", name, err)
+		}
+		archTag := matches[5]
 
 		if archTag == "" {
 			untagged++
@@ -112,6 +125,7 @@ func parseOps(oldFile, currentArch string) ([]GenericOpsData, error) {
 		}
 
 		archs := slices.DeleteFunc(strings.Split(archTag, ","), func(a string) bool { return a == currentArch })
+		simd = simd.WithoutArch(currentArch)
 		if len(archs) == 0 {
 			noarch++
 			continue
@@ -123,6 +137,7 @@ func parseOps(oldFile, currentArch string) ([]GenericOpsData, error) {
 			Comm:    comm,
 			HasAux:  hasAux,
 			Archs:   archs,
+			SIMD:    simd,
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -177,9 +192,14 @@ func mergeOps(currentArch string, existing, new []GenericOpsData) ([]GenericOpsD
 			if e.HasAux != n.HasAux {
 				return nil, fmt.Errorf("simdgen: op %q has inconsistent HasAux: existing=%v, new=%v", e.OpName, e.HasAux, n.HasAux)
 			}
+			simd, err := MergeSIMDOpData(e.OpName, e.SIMD, n.SIMD)
+			if err != nil {
+				return nil, err
+			}
 			entry = e
 			entry.Archs = append(entry.Archs, currentArch)
 			sort.Strings(entry.Archs)
+			entry.SIMD = simd
 			i++
 			j++
 		}

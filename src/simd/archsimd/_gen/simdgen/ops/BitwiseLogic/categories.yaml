@@ -1,25 +1,31 @@
 !sum
 - go: And
+  llvmLowering: and
   commutative: true
   documentation: !string |-
     // NAME performs a bitwise x & y.
 - go: Or
+  llvmLowering: or
   commutative: true
   documentation: !string |-
     // NAME performs a bitwise x | y.
 - go: AndNot
+  llvmLowering: andnot
   commutative: false
   documentation: !string |-
     // NAME performs a bitwise x &^ y.
 - go: Xor
+  llvmLowering: xor
   commutative: true
   documentation: !string |-
     // NAME performs a bitwise x ^ y.
 - go: OrNot
+  llvmLowering: ornot
   commutative: false
   documentation: !string |-
     // NAME performs a bitwise x | ^y.
 - go: Not
+  llvmLowering: not
   commutative: false
   documentation: !string |-
     // NAME returns the bitwise complement of x.

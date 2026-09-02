@@ -1,5 +1,6 @@
 !sum
 - go: Neg
+  llvmLowering: neg
   commutative: false
   documentation: !string |-
     // NAME returns the elementwise negation of x.
