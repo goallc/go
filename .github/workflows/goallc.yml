@@ -215,7 +215,7 @@ jobs:
           GOALLC_LLC="$LLVM_ROOT/bin/llc" \
           GOALLC_PASS_PLUGIN="$LLVM_ROOT/lib/GoALLCStatepoints.so" \
             ./bin/go test -count=1 \
-              -run '^TestLLVMInitTaskOrder$' cmd/llvmtoolexec
+              -run '^(TestLLVMExplicitNilCheckGoObj|TestLLVMInitTaskOrder)$' cmd/llvmtoolexec
 
       - name: Test linker DWARF with LLVM fixtures
         shell: bash
