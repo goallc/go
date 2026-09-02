@@ -546,16 +546,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 	}
 }
 
-func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
-	pos := llvmSourcePos(xpos)
-	if !pos.IsKnown() || pos.RelLine() == 0 {
-		lfc.b.ClearCurrentDebugLocation()
-		return
-	}
-
-	scope := lfc.DISubprogram
-	var inlinedAt llvm.Metadata
-	inlIndex := pos.Base().InliningIndex()
+func llvmInlineChain(inlIndex int) []int {
 	var chain []int
 	for inlIndex >= 0 {
 		chain = append(chain, inlIndex)
@@ -564,7 +555,12 @@ func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
 	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
 		chain[left], chain[right] = chain[right], chain[left]
 	}
+	return chain
+}
 
+func (lfc *LLVMFuncContext) llvmDebugScope(pos src.Pos, chain []int) (llvm.Metadata, llvm.Metadata) {
+	scope := lfc.DISubprogram
+	var inlinedAt llvm.Metadata
 	for i, index := range chain {
 		callPos := llvmSourcePos(base.Ctxt.InlTree.CallPos(index))
 		if !callPos.IsKnown() || callPos.RelLine() == 0 {
@@ -581,23 +577,44 @@ func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
 		callee := base.Ctxt.InlTree.InlinedFunction(index)
 		scope = llvmDebugSubprogram(callee, calleePos, nil)
 	}
+	return scope, inlinedAt
+}
 
+func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
+	pos := llvmSourcePos(xpos)
+	if !pos.IsKnown() || pos.RelLine() == 0 {
+		lfc.b.ClearCurrentDebugLocation()
+		return
+	}
+
+	chain := llvmInlineChain(pos.Base().InliningIndex())
+	scope, inlinedAt := lfc.llvmDebugScope(pos, chain)
 	locationScope := llvmDIScopeForPos(scope, pos, 0)
 	location := GlobalCtxt.CreateDebugLocation(
 		pos.RelLine(), pos.RelCol(), locationScope, inlinedAt)
 	lfc.b.SetCurrentDebugLocationMetadata(location)
+}
 
-	// LLVM may combine instructions from distinct frontend inline frames and
-	// retain only one DILocation. Keep one representative location per frontend
-	// inline node so the final machine pass can restore a node only when its
-	// complete edge has otherwise disappeared. This metadata does not constrain
-	// optimization or choose a machine-code insertion point.
-	if len(chain) != 0 && !lfc.RequiredInlinePos[pos.Base().InliningIndex()] {
-		lfc.RequiredInlinePos[pos.Base().InliningIndex()] = true
-		CurrentModule.AddNamedMetadataOperand(goObjDebugInlineRequiredMD,
-			GlobalCtxt.MDNode([]llvm.Metadata{
-				lfc.LF.ConstantAsMetadata(),
-				location,
-			}))
+// emitInlineMark preserves Go's exact source-level inline-body boundary using
+// LLVM's standard debug-label representation. The label is only a boundary
+// hint: final GoObj inline ranges still require a real machine instruction with
+// the corresponding DILocation/inlinedAt chain.
+func (lfc *LLVMFuncContext) emitInlineMark(v *Value) {
+	index := int(v.AuxInt32())
+	callPos := llvmSourcePos(base.Ctxt.InlTree.CallPos(index))
+	if !callPos.IsKnown() || callPos.RelLine() == 0 {
+		v.Fatalf("inline mark %d has no LLVM debug position", index)
 	}
+	chain := llvmInlineChain(index)
+	scope, inlinedAt := lfc.llvmDebugScope(callPos, chain)
+	label := llvmDIBuilder.CreateLabel(scope, llvm.DILabel{
+		Name:           fmt.Sprintf("$go.inlmark.%d", index),
+		File:           llvmDIFile(callPos),
+		Line:           int(callPos.RelLine()),
+		Artificial:     true,
+		AlwaysPreserve: true,
+	})
+	location := GlobalCtxt.CreateDebugLocation(
+		callPos.RelLine(), callPos.RelCol(), scope, inlinedAt)
+	llvmDIBuilder.InsertLabelAtEnd(label, location, lfc.BBs[v.Block.ID])
 }

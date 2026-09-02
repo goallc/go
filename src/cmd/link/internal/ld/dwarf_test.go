@@ -540,6 +540,8 @@ func TestInlinedRoutineCallFileLine(t *testing.T) {
 
 	t.Parallel()
 
+	// Keep notinlined side-effecting so interprocedural optimization cannot
+	// erase the only concrete instruction in the inlined frame.
 	const prog = `
 package main
 
@@ -547,7 +549,8 @@ var G int
 
 //go:noinline
 func notinlined() int {
-	return 42
+	G++
+	return G
 }
 
 func inlined() int {
@@ -570,7 +573,7 @@ func main() {
 			name: "normal",
 			prog: fmt.Sprintf(prog, ""),
 			file: "test.go",
-			line: 17,
+			line: 18,
 		},
 		{
 			name: "line-directive",

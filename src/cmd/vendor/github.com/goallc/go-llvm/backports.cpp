@@ -1,5 +1,7 @@
 
 #include "backports.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Instructions.h"
 #if LLVM_VERSION_MAJOR >= 16
 #include "llvm/IR/PassManager.h"
@@ -73,4 +75,14 @@ void LLVMGoDIBuilderInsertDeclareRecordAtEnd(
   LLVMDIBuilderInsertDeclareAtEnd(Builder, Storage, VarInfo, Expr, DebugLoc,
                                   Block);
 #endif
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateLabel(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, LLVMMetadataRef File, unsigned LineNo,
+    LLVMBool IsArtificial, LLVMBool AlwaysPreserve) {
+  return llvm::wrap(llvm::unwrap(Builder)->createLabel(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen),
+      llvm::unwrap<llvm::DIFile>(File), LineNo, /*Column=*/0, IsArtificial,
+      /*CoroSuspendIdx=*/std::nullopt, AlwaysPreserve));
 }

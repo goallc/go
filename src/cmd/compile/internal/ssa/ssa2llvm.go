@@ -31,7 +31,6 @@ type LLVMFuncContext struct {
 	ClosureCodeLoads    map[ID]bool
 	DeferResults        map[llvmLocalKey]bool
 	DeferResultKeys     map[ID]llvmLocalKey
-	RequiredInlinePos   map[int]bool
 	OpenDeferBits       llvmLocalKey
 	HasOpenDeferBits    bool
 	OpenDeferSlots      map[llvmLocalKey]int
@@ -99,7 +98,6 @@ const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolIndexMD = "goobj.symbol.index"
 const goObjStaticRODataTypeMD = "goobj.static_rodata_type"
-const goObjDebugInlineRequiredMD = "goobj.debug.inline.required"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
@@ -2765,9 +2763,11 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }
 	arg1 := func() llvm.Value { return lfc.GenLV(v.Args[1]) }
 	switch v.Op {
-	case OpInitMem, OpSB, OpInlMark, OpWBend:
+	case OpInitMem, OpSB, OpWBend:
 		// LLVM models memory ordering through instruction dependencies, not an
 		// explicit SSA memory value. SB is only an address-space token here.
+	case OpInlMark:
+		lfc.emitInlineMark(v)
 	case OpSP:
 		// Unlike SB, SP can participate in integer expressions such as the
 		// caller-frame-size calculation emitted for GetCallerSP.
@@ -4087,7 +4087,6 @@ func LLVMCompile(f *Func) {
 		ClosureCodeLoads:    map[ID]bool{},
 		DeferResults:        map[llvmLocalKey]bool{},
 		DeferResultKeys:     map[ID]llvmLocalKey{},
-		RequiredInlinePos:   map[int]bool{},
 		OpenDeferSlots:      map[llvmLocalKey]int{},
 		RequiredCPUFeatures: map[string]bool{},
 		F:                   f,

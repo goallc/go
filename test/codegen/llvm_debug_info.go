@@ -16,8 +16,11 @@ type llvmDebugPair struct {
 // LLVM-DAG: DICompositeType(tag: DW_TAG_structure_type, name: "codegen.llvmDebugPair"
 // LLVM-DAG: DILocalVariable(name: "local"
 // LLVM-DAG: #dbg_declare
+// LLVM-DAG: #dbg_label(
+// LLVM-DAG: DILabel(scope: {{.*}}, name: "$go.inlmark.{{[0-9]+}}"{{.*}}isArtificial: true)
 // LLVM-DAG: !goobj.debug.funcs
 // LLVM-DAG: inlinedAt:
+// LLVM-NOT: !goobj.debug.inline.required
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFFCN
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFABSFCN
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFLINES

@@ -2,18 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
-#include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
-#include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -45,141 +43,43 @@ bool isSameSourcePosition(const DILocation *Loc, const DILocation *CallSite) {
          Loc->getLine() == CallSite->getLine();
 }
 
-struct InlineInsertionPoint {
-  MachineBasicBlock *Block = nullptr;
-  MachineBasicBlock::iterator At;
-};
+using InlineEdge = std::pair<const DILocation *, const DISubprogram *>;
 
-InlineInsertionPoint fallbackInlineInsertionPoint(MachineFunction &MF) {
-  // A frontend edge whose complete inline frame disappeared has no final
-  // child instruction to anchor. Keep that compatibility range beside a
-  // normal return, before frame teardown, rather than at function entry.
-  for (MachineBasicBlock &MBB : MF) {
-    for (MachineInstr &MI : MBB) {
-      if (!MI.isReturn())
-        continue;
-      auto At = MI.getIterator();
-      while (At != MBB.begin()) {
-        auto Prev = std::prev(At);
-        if (!Prev->isMetaInstruction() &&
-            !Prev->getFlag(MachineInstr::FrameDestroy))
-          break;
-        At = Prev;
-      }
-      return {&MBB, At};
-    }
+SmallVector<InlineEdge, 4> inlineEdges(const DILocation *Loc) {
+  SmallVector<InlineEdge, 4> Edges;
+  while (const DILocation *CallSite = Loc->getInlinedAt()) {
+    const DISubprogram *Callee = Loc->getScope()->getSubprogram();
+    if (!Callee)
+      report_fatal_error("GoALLC inline location has no callee subprogram");
+    Edges.emplace_back(CallSite, Callee);
+    Loc = CallSite;
   }
-
-  for (MachineBasicBlock &MBB : llvm::reverse(MF))
-    for (MachineInstr &MI : llvm::reverse(MBB))
-      if (!MI.isMetaInstruction())
-        return {&MBB, MI.getIterator()};
-  return {};
+  std::reverse(Edges.begin(), Edges.end());
+  return Edges;
 }
 
-struct CanonicalInlineSite {
-  const DILocation *Original = nullptr;
-  const DISubprogram *Callee = nullptr;
-  const DILocation *Parent = nullptr;
-  DILocation *Canonical = nullptr;
-};
+bool containsInlineEdge(const DILocation *Loc, InlineEdge Edge) {
+  if (!Loc)
+    return false;
+  for (InlineEdge Candidate : inlineEdges(Loc))
+    if (Candidate == Edge)
+      return true;
+  return false;
+}
+
+bool isGoInlineMark(const MachineInstr &MI) {
+  if (!MI.isDebugLabel())
+    return false;
+  const DILabel *Label = MI.getDebugLabel();
+  return Label && Label->isArtificial() &&
+         Label->getName().starts_with("$go.inlmark.");
+}
 
 /// Record one real parent instruction for every inline edge that remains after
 /// all generic machine layout passes. Go's inline unwinder needs a final PC in
 /// the parent frame; reuse an adjacent instruction when possible and insert a
 /// NOP only when the surviving child has no suitable predecessor.
 class GoALLCInlineAnchorPass final : public MachineFunctionPass {
-  SmallVector<CanonicalInlineSite, 16> CanonicalSites;
-
-  DILocation *canonicalizeInlineSite(const DILocation *CallSite,
-                                     const DISubprogram *Callee) {
-    if (!CallSite || !Callee)
-      report_fatal_error("GoALLC inline site has no callsite or callee");
-
-    DILocation *Parent = nullptr;
-    if (const DILocation *Outer = CallSite->getInlinedAt())
-      Parent =
-          canonicalizeInlineSite(Outer, CallSite->getScope()->getSubprogram());
-
-    for (const CanonicalInlineSite &Site : CanonicalSites)
-      if (Site.Original == CallSite && Site.Callee == Callee &&
-          Site.Parent == Parent)
-        return Site.Canonical;
-
-    // GoObj identifies a surviving inline edge by its DILocation pointer.
-    // LLVM may otherwise share one callsite node between different inlinees,
-    // so give every (callsite, callee, parent) edge a stable distinct node.
-    DILocation *Canonical = DILocation::getDistinct(
-        CallSite->getContext(), CallSite->getLine(), CallSite->getColumn(),
-        CallSite->getScope(), Parent, CallSite->isImplicitCode(),
-        CallSite->getAtomGroup(), CallSite->getAtomRank());
-    CanonicalSites.push_back({CallSite, Callee, Parent, Canonical});
-    return Canonical;
-  }
-
-  DILocation *canonicalizeLocation(const DILocation *Loc) {
-    const DILocation *CallSite = Loc->getInlinedAt();
-    if (!CallSite)
-      return const_cast<DILocation *>(Loc);
-    const DISubprogram *Callee = Loc->getScope()->getSubprogram();
-    DILocation *CanonicalCallSite = canonicalizeInlineSite(CallSite, Callee);
-    return DILocation::get(Loc->getContext(), Loc->getLine(), Loc->getColumn(),
-                           Loc->getScope(), CanonicalCallSite,
-                           Loc->isImplicitCode(), Loc->getAtomGroup(),
-                           Loc->getAtomRank());
-  }
-
-  SmallVector<const DILocation *, 16>
-  requiredInlineLocations(const MachineFunction &MF) const {
-    SmallVector<const DILocation *, 16> Required;
-    const Module *M = MF.getFunction().getParent();
-    const NamedMDNode *Locations =
-        M ? M->getNamedMetadata("goobj.debug.inline.required") : nullptr;
-    if (!Locations)
-      return Required;
-
-    for (const MDNode *Entry : Locations->operands()) {
-      if (Entry->getNumOperands() != 2)
-        report_fatal_error("expected !goobj.debug.inline.required entries to "
-                           "have two operands");
-      const auto *CAM =
-          dyn_cast_or_null<ConstantAsMetadata>(Entry->getOperand(0));
-      const auto *GV = CAM ? dyn_cast<GlobalValue>(CAM->getValue()) : nullptr;
-      const auto *Loc = dyn_cast_or_null<DILocation>(Entry->getOperand(1));
-      if (!GV || !Loc || !Loc->getInlinedAt())
-        report_fatal_error("invalid !goobj.debug.inline.required entry");
-      if (GV == &MF.getFunction())
-        Required.push_back(Loc);
-    }
-
-    llvm::stable_sort(
-        Required, [](const DILocation *LHS, const DILocation *RHS) {
-          auto Depth = [](const DILocation *Loc) {
-            unsigned Result = 0;
-            for (; Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
-              ++Result;
-            return Result;
-          };
-          return Depth(LHS) > Depth(RHS);
-        });
-    return Required;
-  }
-
-  InlineInsertionPoint
-  insertionPointForMissingEdge(MachineFunction &MF,
-                               const DILocation *CallSite) const {
-    // For a nested edge, stay inside the surviving immediate parent frame.
-    // Root edges have no structural parent range to identify, so use the
-    // return-side compatibility point instead of guessing from source lines.
-    if (CallSite->getInlinedAt())
-      for (MachineBasicBlock &MBB : MF)
-        for (MachineInstr &MI : MBB)
-          if (!MI.isMetaInstruction() && MI.getDebugLoc() &&
-              isSameInlineFrame(MI.getDebugLoc().get(), CallSite))
-            return {&MBB, MI.getIterator()};
-    return fallbackInlineInsertionPoint(MF);
-  }
-
 public:
   static char ID;
 
@@ -195,46 +95,99 @@ public:
       return false;
 
     const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
-    CanonicalSites.clear();
-
-    DenseSet<const DILocation *> SurvivingCallsites;
-    for (MachineBasicBlock &MBB : MF)
-      for (MachineInstr &MI : MBB)
-        if (!MI.isMetaInstruction())
-          for (const DILocation *Loc = MI.getDebugLoc().get();
-               Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
-            SurvivingCallsites.insert(Loc->getInlinedAt());
-
     bool Changed = false;
-    // LLVM can merge code from different frontend inline frames and keep just
-    // one of their locations. Recreate only a frontend edge that vanished
-    // completely; surviving edges continue to use their real instructions.
-    for (const DILocation *Loc : requiredInlineLocations(MF)) {
-      const DILocation *Innermost = Loc->getInlinedAt();
-      if (SurvivingCallsites.contains(Innermost))
-        continue;
 
-      InlineInsertionPoint Insert = insertionPointForMissingEdge(MF, Innermost);
-      if (!Insert.Block)
-        report_fatal_error(
-            "GoALLC required inline location has no insertion point");
-      TII.insertNoop(*Insert.Block, Insert.At);
-      std::prev(Insert.At)->setDebugLoc(DebugLoc(Loc));
-      for (const DILocation *Site = Loc; Site && Site->getInlinedAt();
-           Site = Site->getInlinedAt())
-        SurvivingCallsites.insert(Site->getInlinedAt());
-      Changed = true;
-    }
-
-    // Normalize complete inline chains before inspecting them. This keeps the
-    // anchor pass and the later GoObj debug handler on the same edge identity.
+    DenseSet<InlineEdge> SurvivingEdges;
     for (MachineBasicBlock &MBB : MF)
       for (MachineInstr &MI : MBB)
         if (!MI.isMetaInstruction() && MI.getDebugLoc())
-          MI.setDebugLoc(
-              DebugLoc(canonicalizeLocation(MI.getDebugLoc().get())));
+          for (InlineEdge Edge : inlineEdges(MI.getDebugLoc().get()))
+            SurvivingEdges.insert(Edge);
 
-    DenseSet<const DILocation *> AnchoredCallsites;
+    struct CoalescedInlineChild {
+      MachineInstr *Before;
+      DebugLoc Location;
+    };
+    SmallVector<CoalescedInlineChild, 4> CoalescedInlineChildren;
+    for (MachineBasicBlock &MBB : MF) {
+      for (auto It = MBB.begin(), End = MBB.end(); It != End; ++It) {
+        if (!isGoInlineMark(*It) || !It->getDebugLoc() ||
+            !It->getDebugLoc()->getInlinedAt())
+          continue;
+        const DISubprogram *Callee =
+            It->getDebugLabel()->getScope()->getSubprogram();
+        if (!Callee)
+          report_fatal_error("GoALLC inline mark has no callee subprogram");
+        SmallVector<InlineEdge, 4> MarkedEdges =
+            inlineEdges(It->getDebugLoc().get());
+        InlineEdge Edge = MarkedEdges.back();
+        auto Next = std::next(It);
+        while (Next != End && Next->isMetaInstruction())
+          ++Next;
+        if (Next == End || !Next->getDebugLoc() ||
+            containsInlineEdge(Next->getDebugLoc().get(), Edge))
+          continue;
+
+        const DILocation *NextLoc = Next->getDebugLoc().get();
+        SmallVector<InlineEdge, 4> NextEdges = inlineEdges(NextLoc);
+        if (NextLoc->getScope()->getSubprogram() != Callee ||
+            !NextLoc->getInlinedAt() || MarkedEdges.size() <= NextEdges.size())
+          continue;
+        bool ParentSurvives = true;
+        for (auto Parent = MarkedEdges.begin();
+             Parent != std::prev(MarkedEdges.end()); ++Parent)
+          ParentSurvives &= SurvivingEdges.contains(*Parent);
+        if (!ParentSurvives)
+          continue;
+
+        // LLVM may coalesce equivalent instructions from differently nested
+        // instances of the same inline callee and retain only the shallower
+        // instance's inlinedAt chain on the combined instruction. A surviving
+        // parent chain, the adjacent preserved label, and the final
+        // instruction's identical callee together prove that the deeper
+        // instance contributed code. Recreate only its location on a final
+        // NOP; ambiguous same-depth labels and fully optimized-out bodies do
+        // not manufacture Go frames.
+        auto *Location = DILocation::get(
+            MF.getFunction().getContext(), NextLoc->getLine(),
+            NextLoc->getColumn(), NextLoc->getScope(),
+            It->getDebugLoc()->getInlinedAt(), /*ImplicitCode=*/true,
+            NextLoc->getAtomGroup(), NextLoc->getAtomRank());
+        CoalescedInlineChildren.push_back({&*Next, DebugLoc(Location)});
+      }
+    }
+    for (const CoalescedInlineChild &Child : CoalescedInlineChildren) {
+      MachineBasicBlock &MBB = *Child.Before->getParent();
+      auto Before = Child.Before->getIterator();
+      TII.insertNoop(MBB, Before);
+      std::prev(Before)->setDebugLoc(Child.Location);
+      Changed = true;
+    }
+
+    DenseMap<InlineEdge, MachineInstr *> PreferredChildren;
+    for (MachineBasicBlock &MBB : MF) {
+      for (auto It = MBB.begin(), End = MBB.end(); It != End; ++It) {
+        if (!isGoInlineMark(*It) || !It->getDebugLoc() ||
+            !It->getDebugLoc()->getInlinedAt())
+          continue;
+        const DISubprogram *Callee =
+            It->getDebugLabel()->getScope()->getSubprogram();
+        if (!Callee)
+          report_fatal_error("GoALLC inline mark has no callee subprogram");
+        InlineEdge Edge{It->getDebugLoc()->getInlinedAt(), Callee};
+        auto Next = std::next(It);
+        while (Next != End && Next->isMetaInstruction())
+          ++Next;
+        // A preserved debug label is only a preferred boundary when final real
+        // code still proves the same inline edge. Labels for fully optimized-
+        // out bodies remain debug history and must not manufacture Go frames.
+        if (Next != End && Next->getDebugLoc() &&
+            containsInlineEdge(Next->getDebugLoc().get(), Edge))
+          PreferredChildren.try_emplace(Edge, &*Next);
+      }
+    }
+
+    DenseSet<InlineEdge> AnchoredEdges;
     DenseSet<MachineInstr *> AnchorInstructions;
 
     for (MachineBasicBlock &MBB : MF) {
@@ -243,20 +196,40 @@ public:
         if (MI.isMetaInstruction() || !MI.getDebugLoc())
           continue;
 
-        SmallVector<const DILocation *, 4> CallSites;
-        for (const DILocation *Loc = MI.getDebugLoc().get();
-             Loc && Loc->getInlinedAt(); Loc = Loc->getInlinedAt())
-          CallSites.push_back(Loc->getInlinedAt());
-        std::reverse(CallSites.begin(), CallSites.end());
+        SmallVector<InlineEdge, 4> Edges = inlineEdges(MI.getDebugLoc().get());
+
+        // A function value points at the first machine byte. Never let a
+        // later preferred debug label move the outer function's only parent
+        // range past a child instruction scheduled at byte zero: FuncForPC
+        // must still resolve the entry PC to the concrete function. A real
+        // prologue or any earlier emitted instruction already provides that
+        // range and keeps the ordinary preferred-boundary behavior.
+        bool AtFunctionEntry = &MBB == &MF.front();
+        if (AtFunctionEntry)
+          for (auto Prev = MBB.begin(); Prev != It; ++Prev)
+            if (!Prev->isMetaInstruction() &&
+                (Prev->getFlag(MachineInstr::FrameSetup) ||
+                 (Prev->getDebugLoc() && Prev->getDebugLoc().getLine() != 0)) &&
+                TII.getInstSizeInBytes(*Prev) != 0) {
+              AtFunctionEntry = false;
+              break;
+            }
 
         // Handle outer-to-inner before the first surviving instruction in the
         // child. Native Go reuses an emitted instruction for an inline mark
         // whenever possible. Do the same at the structural child boundary:
         // reuse the immediately preceding non-zero-width parent instruction
         // only when it also carries the callsite's source position.
-        for (const DILocation *CallSite : CallSites) {
-          if (!AnchoredCallsites.insert(CallSite).second)
+        for (InlineEdge Edge : Edges) {
+          if (AnchoredEdges.contains(Edge))
             continue;
+          if (auto Preferred = PreferredChildren.find(Edge);
+              Preferred != PreferredChildren.end() &&
+              Preferred->second != &MI && !AtFunctionEntry)
+            continue;
+          AnchoredEdges.insert(Edge);
+
+          const DILocation *CallSite = Edge.first;
 
           MachineInstr *Anchor = nullptr;
           bool InsertedAnchor = false;

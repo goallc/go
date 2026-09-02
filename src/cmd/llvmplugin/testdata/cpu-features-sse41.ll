@@ -52,6 +52,7 @@ declare double @llvm.floor.f64(double)
 ; CHECK-X86-ASM: jmp "round<goallc.fmv.baseline>"
 define double @round(double %x) #0 !goobj.symbol.index !2 !goobj.symbol.flags !3 !goobj.func.info !15 !dbg !9 {
 entry:
+  #dbg_label(!18, !14)
   %flag = load i8, ptr @runtime.goallcCPUFeatures, align 1, !goallc.cpu.guard !1, !dbg !10
   %enabled = icmp ne i8 %flag, 0, !dbg !10
   br i1 %enabled, label %feature, label %fallback, !dbg !10
@@ -81,6 +82,7 @@ entry:
 ; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
 ; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
+; CHECK: #dbg_label(!{{[0-9]+}}, !{{[0-9]+}})
 ; CHECK-NOT: llvm.floor
 ; CHECK: call double @fallback(double %x)
 ; CHECK: ret double
@@ -91,6 +93,7 @@ entry:
 ; CHECK-SAME: !goobj.func.info ![[FUNCINFO]]
 ; CHECK-NOT: !goobj.symbol.flags
 ; CHECK-SAME: !goobj.symbol.nonpackage ![[NONPACKAGE]]
+; CHECK: #dbg_label(!{{[0-9]+}}, !{{[0-9]+}})
 ; CHECK: call double @llvm.floor.f64(double %x){{.*}}!goallc.cpu.requires
 ; CHECK-NOT: call double @fallback
 ; CHECK: ret double
@@ -113,14 +116,9 @@ entry:
 ; CHECK-DAG: attributes #[[EARLY_DISPATCH]] = {{.*}}"go-nosplit" "goallc.cpu.tail-transfers" {{.*}}"target-cpu"="x86-64"
 ; CHECK-DAG: attributes #[[RESOLVER_ATTRS]] = {{.*}}noinline{{.*}}"go-nosplit"
 ; CHECK-DAG: attributes #[[SSE41]] = {{.*}}"target-cpu"="x86-64" {{.*}}"target-features"="+sse4.1"
-; CHECK: !goobj.debug.inline.required = !{![[BASE_REQUIRED:[0-9]+]], ![[SSE_REQUIRED:[0-9]+]]}
+; CHECK-NOT: !goobj.debug.inline.required
 ; CHECK: !goallc.cpu.fmv.done = !{![[DONE:[0-9]+]]}
 ; CHECK: ![[NONPACKAGE]] = !{i1 true}
-; CHECK-DAG: ![[BASE_REQUIRED]] = !{ptr @"round<goallc.fmv.baseline>", ![[BASE_INLINE:[0-9]+]]}
-; CHECK-DAG: ![[SSE_REQUIRED]] = !{ptr @"round<goallc.fmv.sse41>", ![[SSE_INLINE:[0-9]+]]}
-; CHECK-DAG: ![[BASE_INLINE]] = !DILocation(line: 10, column: 1, scope: ![[HELPER:[0-9]+]], inlinedAt: !{{[0-9]+}})
-; CHECK-DAG: ![[SSE_INLINE]] = !DILocation(line: 10, column: 1, scope: ![[HELPER]], inlinedAt: !{{[0-9]+}})
-; CHECK-DAG: ![[HELPER]] = distinct !DISubprogram(name: "helper", linkageName: "helper"
 ; CHECK: ![[DONE]] = !{!"goallc.cpu.v1"}
 ; CHECK: ![[SYMINDEX]] = !{i32 17}
 ; CHECK: ![[SYMFLAGS]] = !{i32 8, i32 0}
@@ -134,7 +132,6 @@ attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
 !llvm.dbg.cu = !{!7}
 !llvm.module.flags = !{!8}
 !goobj.debug.funcs = !{!13}
-!goobj.debug.inline.required = !{!12}
 !0 = !{!"goallc.cpu.v1", !"amd64", !"v1"}
 !1 = !{!"x86.sse41"}
 !2 = !{i32 17}
@@ -153,3 +150,4 @@ attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
 !15 = !{i8 10, i8 3}
 !16 = distinct !DISubprogram(name: "round.caller", linkageName: "round.caller", scope: !4, file: !4, line: 20, type: !6, scopeLine: 20, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !7, retainedNodes: !5)
 !17 = !DILocation(line: 20, column: 1, scope: !16)
+!18 = !DILabel(scope: !11, name: "$go.inlmark.0", file: !4, line: 10, isArtificial: true)

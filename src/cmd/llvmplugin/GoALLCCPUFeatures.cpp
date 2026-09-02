@@ -19,7 +19,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/TrackingMDRef.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Error.h"
@@ -44,8 +43,6 @@ constexpr StringLiteral FeatureFloorAttr = "goallc.cpu.feature-floor";
 constexpr StringLiteral RuntimeFeatureMask = "runtime.goallcCPUFeatures";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
 constexpr StringLiteral GoObjDebugFuncsMD = "goobj.debug.funcs";
-constexpr StringLiteral GoObjDebugInlineRequiredMD =
-    "goobj.debug.inline.required";
 constexpr StringLiteral GoObjNonPackageMD = "goobj.symbol.nonpackage";
 constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
 constexpr StringLiteral GoObjFuncInfoMD = "goobj.func.info";
@@ -228,89 +225,6 @@ void eraseFunctionBodyPreservingMetadata(Function &F) {
     BB.dropAllReferences();
   while (!F.empty())
     F.begin()->eraseFromParent();
-}
-
-Error cloneRequiredInlineLocations(Function &Source, Function &Clone,
-                                   ValueToValueMapTy &VMap) {
-  NamedMDNode *Locations =
-      Source.getParent()->getNamedMetadata(GoObjDebugInlineRequiredMD);
-  if (!Locations)
-    return Error::success();
-
-  SmallVector<DILocation *, 16> MappedLocations;
-  for (const MDNode *Entry : Locations->operands()) {
-    if (Entry->getNumOperands() != 2)
-      return createStringError(
-          inconvertibleErrorCode(),
-          "expected !goobj.debug.inline.required entries to have two operands");
-    const auto *CAM =
-        dyn_cast_or_null<ConstantAsMetadata>(Entry->getOperand(0));
-    const auto *GV = CAM ? dyn_cast<GlobalValue>(CAM->getValue()) : nullptr;
-    const auto *Loc = dyn_cast_or_null<DILocation>(Entry->getOperand(1));
-    if (!GV || !Loc || !Loc->getInlinedAt())
-      return createStringError(inconvertibleErrorCode(),
-                               "invalid !goobj.debug.inline.required entry");
-    if (GV != &Source)
-      continue;
-
-    // Match CloneFunction's same-module debug mapping policy. In particular,
-    // keep subprograms and lexical scopes belonging to an inlined callee by
-    // identity. Required locations can describe an edge whose last real
-    // instruction has already disappeared, so those scopes are not
-    // necessarily present in VMap even though CloneFunction normally keeps
-    // them. Cloning such a scope creates a second DISubprogram with no entry
-    // in !goobj.debug.funcs, leaving GoObj unable to resolve its exact symbol.
-    DISubprogram *SourceSP = Source.getSubprogram();
-    MetadataPredicate IdentityMD = [SourceSP](const Metadata *MD) {
-      if (isa<DICompileUnit>(MD))
-        return true;
-      if (const auto *Scope = dyn_cast<DILocalScope>(MD))
-        return Scope->getSubprogram() != SourceSP;
-      return false;
-    };
-    auto *Mapped = dyn_cast_or_null<DILocation>(
-        MapMetadata(Loc, VMap, RF_None, nullptr, nullptr, &IdentityMD));
-    if (!Mapped || !Mapped->getInlinedAt())
-      return createStringError(inconvertibleErrorCode(),
-                               "failed to map required inline location from " +
-                                   Source.getName() + " to " + Clone.getName());
-    MappedLocations.push_back(Mapped);
-  }
-
-  for (DILocation *Loc : MappedLocations) {
-    Metadata *Operands[] = {ConstantAsMetadata::get(&Clone), Loc};
-    Locations->addOperand(MDNode::get(Source.getContext(), Operands));
-  }
-  return Error::success();
-}
-
-Error eraseRequiredInlineLocations(Function &F) {
-  NamedMDNode *Locations =
-      F.getParent()->getNamedMetadata(GoObjDebugInlineRequiredMD);
-  if (!Locations)
-    return Error::success();
-
-  SmallVector<TrackingMDNodeRef, 16> Kept;
-  for (MDNode *Entry : Locations->operands()) {
-    if (Entry->getNumOperands() != 2)
-      return createStringError(
-          inconvertibleErrorCode(),
-          "expected !goobj.debug.inline.required entries to have two operands");
-    const auto *CAM =
-        dyn_cast_or_null<ConstantAsMetadata>(Entry->getOperand(0));
-    const auto *GV = CAM ? dyn_cast<GlobalValue>(CAM->getValue()) : nullptr;
-    const auto *Loc = dyn_cast_or_null<DILocation>(Entry->getOperand(1));
-    if (!GV || !Loc || !Loc->getInlinedAt())
-      return createStringError(inconvertibleErrorCode(),
-                               "invalid !goobj.debug.inline.required entry");
-    if (GV != &F)
-      Kept.emplace_back(Entry);
-  }
-
-  Locations->clearOperands();
-  for (const TrackingMDNodeRef &Entry : Kept)
-    Locations->addOperand(Entry.get());
-  return Error::success();
 }
 
 void makeFramelessDispatcher(Function &F) {
@@ -536,8 +450,6 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
   eraseGoObjSourceSymbolIdentity(*Clone);
   if (DuplicateOK)
     markGoObjDuplicateOK(*Clone);
-  if (Error Err = cloneRequiredInlineLocations(Source, *Clone, VMap))
-    return std::move(Err);
   addTargetFeatures(*Clone, FloorProfiles);
   addTargetFeatures(*Clone, EnabledProfiles);
   Expected<bool> Specialized = specializeGuards(*Clone, Available);
@@ -657,8 +569,6 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   if (DuplicateOK)
     markGoObjDuplicateOK(*Slot);
 
-  if (Error Err = eraseRequiredInlineLocations(F))
-    return Err;
   eraseFunctionBodyPreservingMetadata(F);
   F.removeFnAttr(MultiversionAttr);
   // The public function remains the source function and retains its complete

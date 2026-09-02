@@ -219,6 +219,41 @@ func (d *DIBuilder) CreateLexicalBlockFile(diScope Metadata, diFile Metadata, di
 	return Metadata{C: result}
 }
 
+// DILabel holds the values for creating source label debug metadata.
+type DILabel struct {
+	Name           string
+	File           Metadata
+	Line           int
+	Artificial     bool
+	AlwaysPreserve bool
+}
+
+// CreateLabel creates source label debug metadata.
+func (d *DIBuilder) CreateLabel(diScope Metadata, l DILabel) Metadata {
+	name := C.CString(l.Name)
+	defer C.free(unsafe.Pointer(name))
+	result := C.LLVMGoDIBuilderCreateLabel(
+		d.ref,
+		diScope.C,
+		name, C.size_t(len(l.Name)),
+		l.File.C,
+		C.unsigned(l.Line),
+		C.LLVMBool(boolToCInt(l.Artificial)),
+		C.LLVMBool(boolToCInt(l.AlwaysPreserve)),
+	)
+	return Metadata{C: result}
+}
+
+// InsertLabelBefore inserts a debug label record before an instruction.
+func (d *DIBuilder) InsertLabelBefore(label, location Metadata, before Value) {
+	C.LLVMDIBuilderInsertLabelBefore(d.ref, label.C, location.C, before.C)
+}
+
+// InsertLabelAtEnd inserts a debug label record at the end of a basic block.
+func (d *DIBuilder) InsertLabelAtEnd(label, location Metadata, bb BasicBlock) {
+	C.LLVMDIBuilderInsertLabelAtEnd(d.ref, label.C, location.C, bb.C)
+}
+
 // DIFunction holds the values for creating function debug metadata.
 type DIFunction struct {
 	Name         string

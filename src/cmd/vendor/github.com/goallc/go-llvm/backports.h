@@ -18,6 +18,11 @@ void LLVMGoDIBuilderInsertDeclareRecordAtEnd(
     LLVMDIBuilderRef Builder, LLVMValueRef Storage, LLVMMetadataRef VarInfo,
     LLVMMetadataRef Expr, LLVMMetadataRef DebugLoc, LLVMBasicBlockRef Block);
 
+LLVMMetadataRef LLVMGoDIBuilderCreateLabel(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, LLVMMetadataRef File, unsigned LineNo,
+    LLVMBool IsArtificial, LLVMBool AlwaysPreserve);
+
 #ifdef __cplusplus
 }
 #endif /* defined(__cplusplus) */
