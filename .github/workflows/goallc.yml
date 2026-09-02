@@ -192,12 +192,16 @@ jobs:
         run: |
           set -euo pipefail
           plugin_build="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin"
+          test -f "$plugin_build/lib/GoALLCStatepoints.so"
+          test -f "$plugin_build/lib/libGoALLCStatepointsStatic.a"
+          test ! -e "$LLVM_ROOT/lib/GoALLCStatepoints.so"
+          test ! -e "$LLVM_ROOT/lib/libGoALLCStatepointsStatic.a"
           "$GITHUB_WORKSPACE/bin/go" build \
             -o "$plugin_build/goallc-objview" cmd/objview
           cmake -S "$GITHUB_WORKSPACE/src/cmd/llvmplugin" \
             -B "$plugin_build" -G Ninja \
             -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm" \
-            -DCMAKE_INSTALL_PREFIX="$LLVM_ROOT" \
+            -DCMAKE_INSTALL_PREFIX="$plugin_build" \
             -DBUILD_TESTING=ON \
             -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
             -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
@@ -211,11 +215,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./bin/go test cmd/dist cmd/llvmtoolexec
-          GOALLC_LLC="$LLVM_ROOT/bin/llc" \
-          GOALLC_PASS_PLUGIN="$LLVM_ROOT/lib/GoALLCStatepoints.so" \
-            ./bin/go test -count=1 \
-              -run '^(TestLLVMExplicitNilCheckGoObj|TestLLVMInitTaskOrder|TestLLVMVec128ABI)$' cmd/llvmtoolexec
+          ./bin/go test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
 
       - name: Test linker DWARF with LLVM fixtures
         shell: bash

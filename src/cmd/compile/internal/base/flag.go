@@ -129,7 +129,6 @@ type CmdFlags struct {
 	PgoProfile         string       "help:\"read profile or pre-process profile from `file`\""
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
 	EnableLLVM         bool         "help:\"compile with the in-process LLVM backend\""
-	LLVMExternal       bool         "flag:\"llvm-external-codegen\" help:\"emit LLVM IR and export data for the llvmtoolexec external codegen pipeline (requires -enablellvm)\""
 	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep pre-optimization and optimized LLVM IR beside the output archive\""
 	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline used by the in-process backend\""
 	// Configuration derived from flags; not a flag itself.
@@ -180,7 +179,6 @@ func ParseFlags() {
 	Flag.Shared = &Ctxt.Flag_shared
 	Flag.WB = true
 	Flag.EnableLLVM = false
-	Flag.LLVMExternal = false
 	Flag.LLVMOptPasses = "default<O2>"
 
 	Debug.ConcurrentOk = true

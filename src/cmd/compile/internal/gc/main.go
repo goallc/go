@@ -84,9 +84,6 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 
 	base.DebugSSA = ssa.PhaseOption
 	base.ParseFlags()
-	if base.Flag.LLVMExternal && !base.Flag.EnableLLVM {
-		base.Fatalf("-llvm-external-codegen requires -enablellvm")
-	}
 	if !base.Flag.EnableLLVM && (base.Flag.LLVMKeepIR || base.Flag.LLVMOptPasses != "default<O2>") {
 		base.Fatalf("LLVM backend options require -enablellvm")
 	}
@@ -383,9 +380,8 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	}
 
 	// Write object data to disk. When LLVM replaces native code generation,
-	// dumpdata still prepares reflect/type linker data as LSyms, but LLVM lowers
-	// that closure into the module consumed either in-process or by the retained
-	// external-codegen/toolexec path.
+	// dumpdata still prepares reflect/type linker data as LSyms, then the
+	// in-process backend lowers that closure into its module.
 	base.Timer.Start("be", "dumpobj")
 	if base.Flag.EnableLLVM {
 		dumpdata()

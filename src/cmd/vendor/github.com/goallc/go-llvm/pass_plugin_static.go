@@ -3,8 +3,8 @@
 package llvm
 
 /*
-#cgo darwin LDFLAGS: -L${SRCDIR}/llvm/lib -lGoALLCStatepointsStatic
-#cgo linux LDFLAGS: -L${SRCDIR}/llvm/lib -Wl,--whole-archive -lGoALLCStatepointsStatic -Wl,--no-whole-archive
+#cgo darwin LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -lGoALLCStatepointsStatic
+#cgo linux LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -Wl,--whole-archive -lGoALLCStatepointsStatic -Wl,--no-whole-archive
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Error.h"

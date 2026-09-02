@@ -10,9 +10,9 @@ lives in the Go repository: LLVM only supplies the generic `llc`
 repository. The core entry point remains separate from the plugin adapter.
 The default `cmd/compile -enablellvm` path invokes the same pre-codegen callback
 in-process before constructing LLVM code generation. Dynamic LLVM builds load
-the module from the selected payload; static LLVM builds call the linked
-implementation directly. The retained `llvmtoolexec` path reaches it through
-`llc`.
+the module from the Go toolchain's `pkg/goallc-llvmplugin/lib` directory; static
+LLVM builds call the linked implementation directly. Both artifacts are built
+against the selected LLVM payload, but neither is installed in it.
 
 The SSA-to-LLVM lowering owns the function-level contract: Go ABI definitions
 carry `gc "goallc"`, and only source-level exceptions to the native Go stack
@@ -405,16 +405,17 @@ cd "$GOROOT/src"
   -llvm-link=dynamic
 ```
 
-For standalone plugin development, build, test, and install it into the LLVM
-payload that contains `llc`:
+For standalone plugin development, build and test against the selected LLVM
+payload, but install it into the Go toolchain:
 
 ```sh
 LLVM_PAYLOAD=/path/to/goallc-llvm
 PLUGIN_BUILD=/path/to/empty/plugin-build
+PLUGIN_INSTALL="$GOROOT/pkg/goallc-llvmplugin"
 
 cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
   -DLLVM_DIR="$LLVM_PAYLOAD/lib/cmake/llvm" \
-  -DCMAKE_INSTALL_PREFIX="$LLVM_PAYLOAD"
+  -DCMAKE_INSTALL_PREFIX="$PLUGIN_INSTALL"
 cmake --build "$PLUGIN_BUILD"
 ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
 cmake --install "$PLUGIN_BUILD"
@@ -432,6 +433,8 @@ stack growth and `runtime.GC`. Exact rewritten IR, MIR, Args/Locals pointer
 maps, and `PCDATA_StackMapIndex` remain fixture-local checks in this plugin's
 test suite.
 
-The installed file is `lib/GoALLCStatepoints.dylib` on Darwin or
-`lib/GoALLCStatepoints.so` on Linux. Do not build the plugin against a different
-LLVM installation and copy it into the payload.
+The installed file is `$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.dylib`
+on Darwin or `$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.so` on Linux.
+The LLVM payload is not an installation or lookup location for the plugin. Do
+not build the plugin against a different LLVM installation and copy it into the
+Go toolchain.

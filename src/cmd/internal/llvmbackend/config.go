@@ -18,23 +18,21 @@ import (
 	"strings"
 )
 
-// PassPlugin resolves the GoALLC pre-codegen plugin from the payload recorded
-// by cmd/dist, with GOALLC_LLVM_DIR and GOROOT/llvm retained as development
-// payload-root fallbacks.
+// PassPlugin resolves the GoALLC pre-codegen plugin from the Go toolchain.
+// LLVM payload directories are deliberately not searched: the payload provides
+// LLVM itself, while the Go-owned plugin is installed below GOROOT/pkg.
 func PassPlugin() (string, error) {
 	name, err := passPluginFilename()
 	if err != nil {
 		return "", err
 	}
-	for _, root := range payloadRoots() {
-		for _, libdir := range []string{"lib", "lib64"} {
-			candidate := filepath.Join(root, libdir, name)
-			if requireRegularFile(candidate) == nil {
-				return candidate, nil
-			}
+	for _, root := range goRoots() {
+		candidate := filepath.Join(root, "pkg", "goallc-llvmplugin", "lib", name)
+		if requireRegularFile(candidate) == nil {
+			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("GoALLC pass plugin not found; rebuild the toolchain with -llvm-dir or select its payload with GOALLC_LLVM_DIR")
+	return "", fmt.Errorf("GoALLC pass plugin not found in the Go toolchain; rebuild the toolchain with make.bash")
 }
 
 // Identity hashes the runtime LLVM components which can change without
@@ -108,6 +106,36 @@ func payloadRoots() []string {
 		}
 		roots = append(roots, filepath.Join(goroot, "llvm"))
 	}
+	seen := make(map[string]bool)
+	unique := roots[:0]
+	for _, root := range roots {
+		path, err := filepath.Abs(root)
+		if err != nil || seen[path] {
+			continue
+		}
+		seen[path] = true
+		unique = append(unique, path)
+	}
+	return unique
+}
+
+func goRoots() []string {
+	if root := strings.TrimSpace(os.Getenv("GOROOT")); root != "" {
+		if path, err := filepath.Abs(root); err == nil {
+			return []string{path}
+		}
+		return nil
+	}
+
+	var roots []string
+	if executable, err := os.Executable(); err == nil {
+		toolDir := filepath.Dir(executable)
+		roots = append(roots, filepath.Dir(filepath.Dir(filepath.Dir(toolDir))))
+	}
+	if root := strings.TrimSpace(runtime.GOROOT()); root != "" {
+		roots = append(roots, root)
+	}
+
 	seen := make(map[string]bool)
 	unique := roots[:0]
 	for _, root := range roots {

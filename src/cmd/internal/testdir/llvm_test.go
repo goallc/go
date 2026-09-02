@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -470,53 +471,288 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 	// Existing asmcheck tests without LLVM directives still exercise the LLVM
 	// compiler path. Only tests that define LLVM expectations need FileCheck;
 	// do not invent LLVM-specific checks for the native assembly directives.
-	if !bytes.Contains(src, []byte("// LLVM")) {
+	if !hasLLVMFileCheckPrefix(src, "LLVM") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-OPT") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-ASM") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-OBJVIEW") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-OBJSUMMARY") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-NATIVE-OBJSUMMARY") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-NM") &&
+		!hasLLVMFileCheckPrefix(src, "LLVM-LINK") {
 		return nil
 	}
-	irBytes, err := os.ReadFile(archive + ".ll")
-	if err != nil {
-		return err
-	}
 	fileCheck := llvmToolPath(t, "FileCheck", "GOALLC_FILECHECK")
-	cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM", src), source)
-	cmd.Stdin = bytes.NewReader(irBytes)
-	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("FileCheck failed: %v\n%s", err, out)
+	if hasLLVMFileCheckPrefix(src, "LLVM") {
+		irBytes, err := os.ReadFile(archive + ".ll")
+		if err != nil {
+			return err
+		}
+		if err := runLLVMFileCheck(fileCheck, source, "LLVM", src, irBytes); err != nil {
+			return fmt.Errorf("LLVM IR FileCheck failed: %v", err)
+		}
 	}
 
-	if bytes.Contains(src, []byte("// LLVM-OPT")) {
+	if hasLLVMFileCheckPrefix(src, "LLVM-OPT") {
 		optimizedIR, err := os.ReadFile(archive + ".opt.ll")
 		if err != nil {
 			return err
 		}
-		cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-OPT", src), source)
-		cmd.Stdin = bytes.NewReader(optimizedIR)
-		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("optimized LLVM FileCheck failed: %v\n%s", err, out)
+		if err := runLLVMFileCheck(fileCheck, source, "LLVM-OPT", src, optimizedIR); err != nil {
+			return fmt.Errorf("optimized LLVM IR FileCheck failed: %v", err)
 		}
 	}
 
-	if bytes.Contains(src, []byte("// LLVM-ASM")) {
+	if hasLLVMFileCheckPrefix(src, "LLVM-ASM") {
 		cmd = exec.Command(goTool, "tool", "objdump", archive)
 		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
 		assembly, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("LLVM object disassembly failed: %v\n%s", err, assembly)
 		}
-		cmd = exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes("LLVM-ASM", src), source)
-		cmd.Stdin = bytes.NewReader(assembly)
-		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("LLVM assembly FileCheck failed: %v\n%s", err, out)
+		if err := runLLVMFileCheck(fileCheck, source, "LLVM-ASM", src, assembly); err != nil {
+			return fmt.Errorf("LLVM assembly FileCheck failed: %v", err)
+		}
+	}
+
+	if hasLLVMFileCheckPrefix(src, "LLVM-OBJVIEW") {
+		output, err := runLLVMCodegenTool(goTool, "tool", "objview", "-format=text", archive)
+		if err != nil {
+			return fmt.Errorf("LLVM GoObj inspection failed: %v\n%s", err, output)
+		}
+		if err := runLLVMFileCheck(fileCheck, source, "LLVM-OBJVIEW", src, output); err != nil {
+			return fmt.Errorf("LLVM GoObj FileCheck failed: %v", err)
+		}
+	}
+
+	if hasLLVMFileCheckPrefix(src, "LLVM-OBJSUMMARY") || hasLLVMFileCheckPrefix(src, "LLVM-NATIVE-OBJSUMMARY") {
+		llvmJSON, err := runLLVMCodegenTool(goTool, "tool", "objview", "-format=json", archive)
+		if err != nil {
+			return fmt.Errorf("LLVM GoObj JSON inspection failed: %v\n%s", err, llvmJSON)
+		}
+		if hasLLVMFileCheckPrefix(src, "LLVM-OBJSUMMARY") {
+			summary, err := llvmObjviewSummary("LLVM", llvmJSON)
+			if err != nil {
+				return err
+			}
+			if err := runLLVMFileCheck(fileCheck, source, "LLVM-OBJSUMMARY", src, summary); err != nil {
+				return fmt.Errorf("LLVM GoObj summary FileCheck failed: %v", err)
+			}
+		}
+		if hasLLVMFileCheckPrefix(src, "LLVM-NATIVE-OBJSUMMARY") {
+			nativeArchive := filepath.Join(t.TempDir(), "codegen-native.a")
+			nativeOutput, err := runLLVMCodegenTool(goTool, "tool", "compile",
+				"-p=codegen",
+				"-importcfg="+stdlibImportcfgFile(),
+				"-c=16",
+				"-o", nativeArchive,
+				source,
+			)
+			if err != nil {
+				return fmt.Errorf("native comparison compilation failed: %v\n%s", err, nativeOutput)
+			}
+			nativeJSON, err := runLLVMCodegenTool(goTool, "tool", "objview", "-format=json", nativeArchive)
+			if err != nil {
+				return fmt.Errorf("native GoObj JSON inspection failed: %v\n%s", err, nativeJSON)
+			}
+			nativeSummary, err := llvmObjviewSummary("NATIVE", nativeJSON)
+			if err != nil {
+				return err
+			}
+			llvmSummary, err := llvmObjviewSummary("LLVM", llvmJSON)
+			if err != nil {
+				return err
+			}
+			comparison := append(nativeSummary, llvmSummary...)
+			if err := runLLVMFileCheck(fileCheck, source, "LLVM-NATIVE-OBJSUMMARY", src, comparison); err != nil {
+				return fmt.Errorf("native/LLVM GoObj summary FileCheck failed: %v", err)
+			}
+		}
+	}
+
+	if hasLLVMFileCheckPrefix(src, "LLVM-NM") {
+		output, err := runLLVMCodegenTool(goTool, "tool", "nm", archive)
+		if err != nil {
+			return fmt.Errorf("LLVM GoObj symbol inspection failed: %v\n%s", err, output)
+		}
+		if err := runLLVMFileCheck(fileCheck, source, "LLVM-NM", src, output); err != nil {
+			return fmt.Errorf("LLVM symbol FileCheck failed: %v", err)
+		}
+	}
+
+	if hasLLVMFileCheckPrefix(src, "LLVM-LINK") {
+		executable := filepath.Join(t.TempDir(), "codegen-link")
+		output, err := runLLVMCodegenTool(goTool, "build",
+			"-gcflags=-enablellvm",
+			"-ldflags=-w -debugnosplit",
+			"-o", executable,
+			source,
+		)
+		if err != nil {
+			return fmt.Errorf("LLVM link check failed: %v\n%s", err, output)
+		}
+		if err := runLLVMFileCheck(fileCheck, source, "LLVM-LINK", src, output); err != nil {
+			return fmt.Errorf("LLVM linker output FileCheck failed: %v", err)
+		}
+		if output, err := runLLVMCodegenTool(executable); err != nil {
+			return fmt.Errorf("LLVM linked executable failed: %v\n%s", err, output)
 		}
 	}
 	return nil
 }
 
+func runLLVMCodegenTool(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+	return cmd.CombinedOutput()
+}
+
+func runLLVMFileCheck(fileCheck, source, prefix string, sourceBytes, input []byte) error {
+	cmd := exec.Command(fileCheck, "--check-prefixes="+llvmFileCheckPrefixes(prefix, sourceBytes), source)
+	cmd.Stdin = bytes.NewReader(input)
+	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%v\n%s", err, output)
+	}
+	return nil
+}
+
+func hasLLVMFileCheckPrefix(source []byte, base string) bool {
+	candidates := []string{base}
+	switch runtime.GOARCH {
+	case "amd64":
+		candidates = append(candidates, base+"-AMD64")
+	case "arm64":
+		candidates = append(candidates, base+"-ARM64")
+	}
+	for _, candidate := range candidates {
+		if hasLLVMFileCheckCandidate(source, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasLLVMFileCheckCandidate(source []byte, candidate string) bool {
+	for line := range strings.SplitSeq(string(source), "\n") {
+		comment := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "//"))
+		if strings.HasPrefix(comment, candidate+":") {
+			return true
+		}
+		if !strings.HasPrefix(comment, candidate+"-") {
+			continue
+		}
+		kind, _, ok := strings.Cut(strings.TrimPrefix(comment, candidate+"-"), ":")
+		if ok && llvmFileCheckDirectiveKind(kind) {
+			return true
+		}
+	}
+	return false
+}
+
+func llvmFileCheckDirectiveKind(kind string) bool {
+	switch kind {
+	case "DAG", "EMPTY", "LABEL", "NEXT", "NOT", "SAME":
+		return true
+	}
+	if count, ok := strings.CutPrefix(kind, "COUNT-"); ok {
+		_, err := strconv.Atoi(count)
+		return err == nil
+	}
+	return false
+}
+
+type llvmObjviewDocument struct {
+	Members []struct {
+		GoObject *llvmObjviewObject `json:"go_object"`
+	} `json:"members"`
+}
+
+type llvmObjviewObject struct {
+	Autolib []struct {
+		Package     string `json:"package"`
+		Fingerprint string `json:"fingerprint"`
+	} `json:"autolib"`
+	Packages   []string `json:"packages"`
+	References []struct {
+		Name  string `json:"name"`
+		Class string `json:"class"`
+	} `json:"references"`
+	Symbols []struct {
+		Name      string   `json:"name"`
+		Kind      string   `json:"kind"`
+		FlagNames []string `json:"flag_names"`
+		Aux       []struct {
+			Type   string `json:"type"`
+			Target struct {
+				Package  string `json:"package"`
+				Name     string `json:"name"`
+				Kind     string `json:"pkg_kind"`
+				SymIndex uint32 `json:"sym_index"`
+			} `json:"target"`
+		} `json:"aux"`
+		Relocations []struct {
+			Size   uint8  `json:"size"`
+			Type   string `json:"type"`
+			Target struct {
+				Package  string `json:"package"`
+				Name     string `json:"name"`
+				Kind     string `json:"pkg_kind"`
+				SymIndex uint32 `json:"sym_index"`
+			} `json:"target"`
+		} `json:"relocations"`
+	} `json:"symbols"`
+}
+
+func llvmObjviewSummary(label string, data []byte) ([]byte, error) {
+	var document llvmObjviewDocument
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("decoding objview JSON: %w", err)
+	}
+	var object *llvmObjviewObject
+	for _, member := range document.Members {
+		if member.GoObject != nil {
+			object = member.GoObject
+			break
+		}
+	}
+	if object == nil {
+		return nil, fmt.Errorf("objview JSON has no Go object member")
+	}
+	var lines []string
+	for _, imp := range object.Autolib {
+		lines = append(lines, fmt.Sprintf("%s autolib package=%q fingerprint=%s", label, imp.Package, imp.Fingerprint))
+	}
+	for index, pkg := range object.Packages {
+		lines = append(lines, fmt.Sprintf("%s package index=%d path=%q", label, index, pkg))
+	}
+	for _, ref := range object.References {
+		lines = append(lines, fmt.Sprintf("%s reference name=%q class=%s", label, ref.Name, ref.Class))
+	}
+	relocationCounts := make(map[string]int)
+	for _, symbol := range object.Symbols {
+		lines = append(lines, fmt.Sprintf("%s symbol name=%q kind=%s flags=%s", label, symbol.Name, symbol.Kind, strings.Join(symbol.FlagNames, ",")))
+		for _, aux := range symbol.Aux {
+			lines = append(lines, fmt.Sprintf("%s aux owner=%q type=%s target_kind=%s target_package=%q target_name=%q target_index=%d",
+				label, symbol.Name, aux.Type, aux.Target.Kind, aux.Target.Package, aux.Target.Name, aux.Target.SymIndex))
+		}
+		for _, reloc := range symbol.Relocations {
+			relocationCounts[reloc.Type]++
+			lines = append(lines, fmt.Sprintf("%s relocation owner=%q type=%s size=%d target_kind=%s target_package=%q target_name=%q target_index=%d",
+				label, symbol.Name, reloc.Type, reloc.Size, reloc.Target.Kind, reloc.Target.Package, reloc.Target.Name, reloc.Target.SymIndex))
+		}
+	}
+	for relocation, count := range relocationCounts {
+		lines = append(lines, fmt.Sprintf("%s relocation-count type=%s count=%d", label, relocation, count))
+	}
+	sort.Strings(lines)
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
+}
+
 func llvmFileCheckPrefixes(base string, source []byte) string {
-	prefixes := []string{base}
+	var prefixes []string
+	if hasLLVMFileCheckCandidate(source, base) {
+		prefixes = append(prefixes, base)
+	}
 	var architecturePrefix string
 	switch runtime.GOARCH {
 	case "amd64":
@@ -524,9 +760,7 @@ func llvmFileCheckPrefixes(base string, source []byte) string {
 	case "arm64":
 		architecturePrefix = base + "-ARM64"
 	}
-	if architecturePrefix != "" &&
-		(bytes.Contains(source, []byte(architecturePrefix+":")) ||
-			bytes.Contains(source, []byte(architecturePrefix+"-"))) {
+	if architecturePrefix != "" && hasLLVMFileCheckCandidate(source, architecturePrefix) {
 		prefixes = append(prefixes, architecturePrefix)
 	}
 	return strings.Join(prefixes, ",")
@@ -550,7 +784,7 @@ func configureLLVMTestToolchain(t *testing.T) {
 	}
 
 	// Freeze the compiler to the validated payload. Individual tests do not
-	// select opt, llc, a pass plugin, or toolexec; cmd/compile owns the complete
+	// select opt, llc, or a pass plugin; cmd/compile owns the complete
 	// optimization and code-generation pipeline. Codegen IR assertions resolve
 	// FileCheck lazily from this same payload.
 	t.Setenv("GOALLC_LLVM_DIR", root)

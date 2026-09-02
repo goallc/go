@@ -1410,6 +1410,17 @@ func toolenv() []string {
 	goallcTags := "llvm" + goallcLLVMVersion + "," + goallcLLVMLink + "llvm"
 	if goallcLLVMLink == "static" {
 		goallcTags += ",goallcplugin"
+		if goos == "linux" {
+			// The linked pass plugin must retain every archive member, but cgo
+			// rejects linker options from package directives unless they are
+			// explicitly allowed. Keep the exception limited to the two flags
+			// used by pass_plugin_static.go.
+			allow := `^-Wl,--(no-)?whole-archive$`
+			if existing := os.Getenv("CGO_LDFLAGS_ALLOW"); existing != "" {
+				allow = "(" + existing + ")|(" + allow + ")"
+			}
+			env = append(env, "CGO_LDFLAGS_ALLOW="+allow)
+		}
 	}
 	goFlags = append(goFlags, "-tags="+goallcTags)
 	if isRelease || os.Getenv("GO_BUILDER_NAME") != "" {
@@ -1437,11 +1448,9 @@ var (
 
 	// We could install all tools in "cmd", but is unnecessary because we will
 	// remove them in distpack, so instead install the tools that will actually
-	// be included in distpack, which is a superset of toolchain. GoALLC also
-	// installs llvmtoolexec as a host tool even though it is not distributed by
-	// upstream Go's distpack. Not installing unrelated tools helps us test what
-	// happens when tools aren't present.
-	toolsToInstall = slices.Concat(binExesIncludedInDistpack, toolsIncludedInDistpack, []string{"cmd/llvmtoolexec"})
+	// be included in distpack, which is a superset of toolchain. Not installing
+	// unrelated tools helps us test what happens when tools aren't present.
+	toolsToInstall = slices.Concat(binExesIncludedInDistpack, toolsIncludedInDistpack)
 )
 
 // The bootstrap command runs a build from scratch,

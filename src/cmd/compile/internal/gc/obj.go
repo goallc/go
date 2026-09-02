@@ -44,16 +44,6 @@ const (
 
 func dumpobj() {
 	if base.Flag.EnableLLVM {
-		if base.Flag.LLVMExternal {
-			if err := ssa.Output(base.Flag.LowerO + ".ll"); err != nil {
-				fmt.Printf("error writing LLVM IR %s: %v\n", base.Flag.LowerO+".ll", err)
-				base.ErrorExit()
-			}
-			// Keep import data available for downstream Go compilation. The
-			// toolexec wrapper appends the GoObj linker member produced by llc.
-			dumpobj1(base.Flag.LowerO, modeCompilerObj)
-			return
-		}
 		linkerObj, err := ssa.EmitLLVMGoObj(base.Flag.LowerO)
 		if err != nil {
 			fmt.Printf("error generating LLVM GoObj: %v\n", err)

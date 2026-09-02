@@ -19,6 +19,9 @@ package codegen
 // LLVM-NEXT: unreachable
 // LLVM: declare goabiinternal void @runtime.panicmem()
 //
+// LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckGoObj(ptr %p)
+// LLVM: call goabiinternal void @runtime.panicmem(), !dbg ![[PANIC_LOC:[0-9]+]]
+//
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckTwice(ptr %p, ptr %q)
 // LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: icmp eq ptr %p, null
@@ -61,6 +64,7 @@ package codegen
 // LLVM-OPT: load i64, ptr %p
 // LLVM-OPT-NOT: llvm.goallc.nilcheck
 // LLVM: [[GO_NILCHECK]] = !{!"goallc"}
+// LLVM: ![[PANIC_LOC]] = !DILocation(line: 95,
 // LLVM-OPT: [[GO_NILCHECK_OPT]] = !{!"goallc"}
 func llvmExplicitNilcheck(p *int) int {
 	return *p
@@ -76,4 +80,17 @@ func llvmExplicitNilcheckPhi(p *int, take bool) int {
 		value = *p
 	}
 	return value
+}
+
+// llvmExplicitNilcheckGoObj keeps its pointer live after an explicit panicmem
+// call. The load is outside the first page, so implicit-null-check folding
+// cannot remove the panic edge or its ordinary statepoint map.
+//
+// LLVM-OBJVIEW-LABEL: TEXT codegen.llvmExplicitNilcheckGoObj(SB)
+// LLVM-OBJVIEW: CALL {{.*}}runtime.panicmem{{.*}}pcsp={{[1-9][0-9]*}}{{.*}}PCDATA_StackMapIndex=1
+// LLVM-OBJVIEW: ordinary safepoint {{.*}}map[1]
+//
+//go:noinline
+func llvmExplicitNilcheckGoObj(p *[1024]int64) int64 {
+	return p[1023]
 }

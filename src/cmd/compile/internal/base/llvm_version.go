@@ -22,7 +22,7 @@ func init() {
 }
 
 func compileVersionFlagFullSuffix(buildID string) string {
-	if !llvmVersionEnabled(os.Args[1:]) || os.Getenv("GOALLC_EXTERNAL_BACKEND") == "1" {
+	if !llvmVersionEnabled(os.Args[1:]) {
 		return " buildID=" + buildID
 	}
 	identity, err := llvmbackend.Identity()

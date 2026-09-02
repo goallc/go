@@ -6,15 +6,23 @@
 
 package main
 
+import "runtime"
+
 var llvmInitTaskValue int
 var llvmInitOnlySeed = 42
 
 func init() {
+	// The runtime task must have completed before the package task starts.
+	runtime.Gosched()
 	llvmInitTaskValue = llvmInitOnlySeed
 }
 
+func init() {
+	llvmInitTaskValue++
+}
+
 func main() {
-	if llvmInitTaskValue != 42 {
-		panic("package init did not run")
+	if llvmInitTaskValue != 43 {
+		panic("package initialization order is incorrect")
 	}
 }

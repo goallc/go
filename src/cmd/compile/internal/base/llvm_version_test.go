@@ -13,21 +13,9 @@ func TestCompileVersionFlagFullSuffixUsesBuildID(t *testing.T) {
 	oldArgs := os.Args
 	t.Cleanup(func() { os.Args = oldArgs })
 
-	for _, test := range []struct {
-		name     string
-		args     []string
-		external string
-	}{
-		{name: "native", args: []string{"compile", "-V=full"}},
-		{name: "external LLVM", args: []string{"compile", "-enablellvm", "-V=full"}, external: "1"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			os.Args = test.args
-			t.Setenv("GOALLC_EXTERNAL_BACKEND", test.external)
-			if got, want := compileVersionFlagFullSuffix("compiler-build-id"), " buildID=compiler-build-id"; got != want {
-				t.Fatalf("compileVersionFlagFullSuffix() = %q, want %q", got, want)
-			}
-		})
+	os.Args = []string{"compile", "-V=full"}
+	if got, want := compileVersionFlagFullSuffix("compiler-build-id"), " buildID=compiler-build-id"; got != want {
+		t.Fatalf("compileVersionFlagFullSuffix() = %q, want %q", got, want)
 	}
 }
 

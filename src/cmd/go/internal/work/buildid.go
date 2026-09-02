@@ -150,8 +150,7 @@ func (b *Builder) toolID(name string) string {
 
 // compileToolID returns the compiler identity for gcflags. The LLVM compiler
 // version probe carries the backend selection so cmd/compile can include its
-// LLVM and pass-plugin artifacts in the identity. llvmtoolexec consumes the
-// same probe for the retained external debug pipeline.
+// LLVM and pass-plugin artifacts in the identity.
 func (b *Builder) compileToolID(gcflags []string) string {
 	if !boolToolFlag(gcflags, "-enablellvm") {
 		return b.toolID("compile")

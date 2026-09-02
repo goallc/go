@@ -4579,9 +4579,9 @@ func InitModule(pkg *types.Pkg) {
 	initLLVMDebugInfo(pkg)
 }
 
-// goObjTargetTriple identifies the GoObj target that llc should use when it
-// consumes the IR produced by this compiler. Keep this in the IR rather than
-// making the toolexec wrapper rediscover it from the build environment.
+// goObjTargetTriple identifies the GoObj target used by the in-process LLVM
+// target machine. Keep this in the IR so all code-generation consumers share
+// the same explicit target contract.
 func goObjTargetTriple() string {
 	switch buildcfg.GOOS + "/" + buildcfg.GOARCH {
 	case "darwin/arm64":

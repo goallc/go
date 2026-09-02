@@ -741,6 +741,16 @@ func (t test) run() error {
 			goexp += args[0]
 			runenv = append(runenv, "GOEXPERIMENT="+goexp)
 
+		case "-llvm-package-only":
+			// LLVM Test normally compiles the full dependency closure with
+			// -enablellvm. Some migrated fixtures intentionally exercised only
+			// the command-line package. Clear the all= rule for dependencies and
+			// restore LLVM for that package, while leaving the native Test recipe
+			// unchanged.
+			if t.llvm != nil {
+				flags = append(flags, "-gcflags=all=", "-gcflags=-enablellvm")
+			}
+
 		case "-godebug": // set GODEBUG environment
 			args = args[1:]
 			if godebug != "" {

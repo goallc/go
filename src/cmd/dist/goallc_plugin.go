@@ -53,14 +53,15 @@ func writeGoallcLLVMPayloadConfig() {
 }
 
 // ensureGoallcPassPlugin keeps the shared and static forms of the Go-owned pass
-// plugin synchronized with the selected LLVM payload.
+// plugin synchronized with the LLVM payload used to build the Go toolchain.
 func ensureGoallcPassPlugin() {
 	sourceDir := pathf("%s/src/cmd/llvmplugin", goroot)
 	buildDir := pathf("%s/pkg/goallc-llvmplugin", goroot)
+	installDir := pathf("%s/lib", buildDir)
 	llc := pathf("%s/bin/llc", goallcLLVMDir)
 	llvmConfig := pathf("%s/bin/llvm-config", goallcLLVMDir)
-	destination := pathf("%s/lib/%s", goallcLLVMDir, goallcPassPluginFilename(gohostos))
-	staticDestination := pathf("%s/lib/libGoALLCStatepointsStatic.a", goallcLLVMDir)
+	destination := pathf("%s/%s", installDir, goallcPassPluginFilename(gohostos))
+	staticDestination := pathf("%s/libGoALLCStatepointsStatic.a", installDir)
 	stampPath := pathf("%s/goallc-plugin.stamp", buildDir)
 
 	buildModeOutput, err := exec.Command(llvmConfig, "--build-mode").Output()
@@ -73,7 +74,7 @@ func ensureGoallcPassPlugin() {
 	}
 	configuration := []string{
 		"-DLLVM_DIR=" + pathf("%s/lib/cmake/llvm", goallcLLVMDir),
-		"-DCMAKE_INSTALL_PREFIX=" + goallcLLVMDir,
+		"-DCMAKE_INSTALL_PREFIX=" + buildDir,
 		"-DCMAKE_BUILD_TYPE=" + buildMode,
 		"-DBUILD_TESTING=OFF",
 	}
@@ -102,7 +103,7 @@ func ensureGoallcPassPlugin() {
 		}
 	}
 
-	xprintf("Building GoALLC pass plugin for LLVM payload.\n")
+	xprintf("Building GoALLC pass plugin for Go toolchain.\n")
 	// The input identity includes the installed LLVM headers and CMake package,
 	// but Ninja normally decides whether to rebuild from timestamps. An LLVM
 	// payload restored from an archive can therefore have different contents
@@ -110,6 +111,7 @@ func ensureGoallcPassPlugin() {
 	// but discard the CMake/Ninja state whenever the content identity changes.
 	xremoveall(buildDir)
 	xmkdirall(buildDir)
+	xmkdirall(installDir)
 	cmakeArgs := []string{
 		"cmake",
 		"-S", sourceDir,
@@ -144,7 +146,7 @@ func ensureGoallcPassPlugin() {
 
 func goallcPluginInputID(sourceDir, llc, llvmConfig string, configuration []string, runtimeLibraries ...string) (string, error) {
 	h := sha256.New()
-	io.WriteString(h, "goallc pass plugin input v4\x00")
+	io.WriteString(h, "goallc pass plugin input v5\x00")
 	for _, setting := range configuration {
 		io.WriteString(h, "configuration\x00"+setting+"\x00")
 	}

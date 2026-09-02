@@ -193,17 +193,22 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 runtime 用例只通过 `-gcflags=all=-enablellvm` 选择 LLVM；codegen 用例也运行完整
 进程内 pipeline，并以 `-llvm-keep-ir` 读取 compiler 留下的优化前/后 IR。
 `FileCheck` 是唯一额外测试工具，其选择仍被约束在同一 payload；外部
-`llvmtoolexec` 仅在自身的独立回归测试中使用。
+LLVM 工具只用于 LLVM 项目自身的格式级测试，不参与 Go 测试执行。
 
 ## plugin 的构建与缓存
 
 不需要在 `make.bash` 前手工构建或复制 plugin。`cmd/dist` 使用 payload 自己的
-`LLVMConfig.cmake` 配置 `src/cmd/llvmplugin`，生成后以新 inode 原子安装到：
+`LLVMConfig.cmake` 配置 `src/cmd/llvmplugin`，生成后以新 inode 原子安装到 Go
+toolchain 自己的目录：
 
 ```text
-$LLVM_PAYLOAD/lib/GoALLCStatepoints.dylib # Darwin
-$LLVM_PAYLOAD/lib/GoALLCStatepoints.so    # Linux
+$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.dylib # Darwin
+$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.so    # Linux
+$GOROOT/pkg/goallc-llvmplugin/lib/libGoALLCStatepointsStatic.a
 ```
+
+LLVM payload 只提供 LLVM headers、CMake package、库和工具；构建过程不向其中
+安装 plugin，compiler 运行时也不会去 payload 的 `lib`/`lib64` 中查找 plugin。
 
 plugin 输入身份包含：
 
@@ -224,20 +229,19 @@ $GOROOT/pkg/goallc-llvmplugin/goallc-plugin.stamp
 ```sh
 LLVM_PAYLOAD=/path/to/llvm-payload
 PLUGIN_BUILD="$GOROOT/pkg/goallc-llvmplugin"
-PLUGIN="$LLVM_PAYLOAD/lib/GoALLCStatepoints.dylib" # Linux 使用 .so
+PLUGIN="$PLUGIN_BUILD/lib/GoALLCStatepoints.dylib" # Linux 使用 .so
 
 "$GOROOT/bin/go" build -o "$PLUGIN_BUILD/goallc-objview" cmd/objview
 cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
   -DLLVM_DIR="$LLVM_PAYLOAD/lib/cmake/llvm" \
-  -DCMAKE_INSTALL_PREFIX="$LLVM_PAYLOAD" \
+  -DCMAKE_INSTALL_PREFIX="$PLUGIN_BUILD" \
   -DBUILD_TESTING=ON \
   -DGOALLC_OBJVIEW_EXECUTABLE="$PLUGIN_BUILD/goallc-objview"
 cmake --build "$PLUGIN_BUILD" --target GoALLCStatepoints
 ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
-"$GOROOT/bin/go" test cmd/dist cmd/llvmtoolexec
-GOALLC_LLC="$LLVM_PAYLOAD/bin/llc" \
-GOALLC_PASS_PLUGIN="$PLUGIN" \
-  "$GOROOT/bin/go" test -count=1 -run '^TestLLVMInitTaskOrder$' cmd/llvmtoolexec
+"$GOROOT/bin/go" test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
+"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVMTestPolicy$'
+"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM/codegen/'
 ```
 
 完整语言特性矩阵仍由 LLVM 白/灰/黑名单测试负责。白名单失败会让 CI 失败；
@@ -247,7 +251,7 @@ GOALLC_PASS_PLUGIN="$PLUGIN" \
 ## Go action cache
 
 LLVM 模式下，`cmd/go` 使用带 `-enablellvm` 的 `compile -V=full` probe。
-compiler 把自身 build ID、与 payload 同步安装的
+compiler 把自身 build ID、Go toolchain 目录中与 payload ABI 同步构建的
 plugin artifact，以及 payload 中存在的动态 `libLLVM` 内容合入 tool identity；
 optimization pipeline 等 compiler flags 仍由普通 action input 标识。因此在
 相同路径替换 LLVM 或 plugin 会使 LLVM package 失效重编，没有启用 LLVM 的
@@ -258,9 +262,6 @@ package 保持原生 Go cache key。静态模式的 plugin 和 LLVM archive 本�
 普通 compiler action 使用真实 binary build ID；LLVM action 在此基础上再合入
 上述运行时 artifacts。固定 `VERSION` 会让 fork 被误识别为 release compiler，
 从而可能只用不变的版本字符串判断工具身份。
-
-保留的 `llvmtoolexec` 外部模式继续由 wrapper 对 `llc`、可选 `opt`、pipeline、
-plugin 和 `libLLVM` 建立独立 identity，便于与进程内结果做可靠 A/B。
 
 不要用 `go clean -cache` 掩盖身份错误。只有在排查 action-cache 实现本身时才做
 clean-cache A/B 对比。
@@ -282,8 +283,9 @@ GOALLC_CCACHE=/path/to/ccache \
 `llvm-config --link-static --libfiles` 聚合它们。`-lm`、`-lz`、`-lzstd`、
 `-lxml2` 等平台 system libraries 不复制进 aggregate，而由 go-llvm 的平台
 LDFLAGS 在最终链接时解析，因此 Linux 仍需安装相应 development package。
-GoALLC plugin 同时构建为 `libGoALLCStatepointsStatic.a` 并直接链接进
-`cmd/compile`；静态模式不会再加载 plugin DSO。
+GoALLC plugin 同时构建为
+`$GOROOT/pkg/goallc-llvmplugin/lib/libGoALLCStatepointsStatic.a` 并直接链接进
+`cmd/compile`；静态模式不会再加载 plugin DSO，也不从 LLVM payload 取 plugin。
 `llvm-config` 返回未知 system library，或最终链接找不到依赖时必须失败，不能退回
 系统 LLVM。
 
