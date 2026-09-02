@@ -1713,7 +1713,7 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 				func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 					x, a, b, c, d, y := args[0], args[1], args[2], args[3], args[4], args[5]
 					if a.Op == ssa.OpConst8 && b.Op == ssa.OpConst8 && c.Op == ssa.OpConst8 && d.Op == ssa.OpConst8 {
-						z := select4FromPair(x, a, b, c, d, y, s, hwop, vectype)
+						z := select4FromPair(x, a, b, c, d, y, s, hwop, intrinsicResultType(n, vectype))
 						if z != nil {
 							return z
 						}
@@ -1741,7 +1741,7 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 				func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 					x, a, b, y := args[0], args[1], args[2], args[3]
 					if a.Op == ssa.OpConst8 && b.Op == ssa.OpConst8 {
-						z := select2FromPair(x, a, b, y, s, hwop, vectype, cscimm)
+						z := select2FromPair(x, a, b, y, s, hwop, intrinsicResultType(n, vectype), cscimm)
 						if z != nil {
 							return z
 						}
@@ -1904,26 +1904,47 @@ func se(x uint8) int64 {
 	return int64(int8(x))
 }
 
+// intrinsicResultType keeps the concrete source type of SIMD results in Go
+// SSA. The generated SIMD tables historically supplied TypeVec128/256/512 as
+// width-only placeholders, even though the call expression still knows the
+// exact lane and mask type. Retaining that type lets consumers such as the
+// LLVM backend use a natural vector representation without reconstructing it
+// from each operation.
+func intrinsicResultType(n *ir.CallExpr, t *types.Type) *types.Type {
+	if t != types.TypeVec128 && t != types.TypeVec256 && t != types.TypeVec512 {
+		return t
+	}
+	result := n.Type()
+	if !result.IsSIMD() || result.Size() != t.Size() {
+		base.FatalfAt(n.Pos(), "SIMD intrinsic result %v is incompatible with %v", result, t)
+	}
+	return result
+}
+
 func opLen1(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue1(op, t, args[0])
 	}
 }
 
 func opLen2(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue2(op, t, args[0], args[1])
 	}
 }
 
 func opLen2_21(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue2(op, t, args[1], args[0])
 	}
 }
 
 func opLen3(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue3(op, t, args[0], args[1], args[2])
 	}
 }
@@ -1936,7 +1957,8 @@ var ssaVecBySize = map[int64]*types.Type{
 
 func opLen3_31Zero3(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-		if t, ok := ssaVecBySize[args[1].Type.Size()]; !ok {
+		t := intrinsicResultType(n, t)
+		if _, ok := ssaVecBySize[args[1].Type.Size()]; !ok {
 			panic("unknown simd vector size")
 		} else {
 			return s.newValue3(op, t, s.newValue0(ssa.OpZeroSIMD, t), args[1], args[0])
@@ -1946,30 +1968,35 @@ func opLen3_31Zero3(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, arg
 
 func opLen3_21(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue3(op, t, args[1], args[0], args[2])
 	}
 }
 
 func opLen3_231(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue3(op, t, args[2], args[0], args[1])
 	}
 }
 
 func opLen4(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue4(op, t, args[0], args[1], args[2], args[3])
 	}
 }
 
 func opLen4_231(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue4(op, t, args[2], args[0], args[1], args[3])
 	}
 }
 
 func opLen4_31(op ssa.Op, t *types.Type) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		return s.newValue4(op, t, args[2], args[1], args[0], args[3])
 	}
 }
@@ -2164,6 +2191,7 @@ func immJumpTableN(s *state, idx *ssa.Value, intrinsicCall *ir.CallExpr, immLimi
 
 func opLen1Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64 {
 			return s.newValue1I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0])
 		}
@@ -2176,6 +2204,7 @@ func opLen1Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallE
 
 func opLen2Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64 {
 			return s.newValue2I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0], args[2])
 		}
@@ -2188,6 +2217,7 @@ func opLen2Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallE
 
 func opLen3Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64 {
 			return s.newValue3I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0], args[2], args[3])
 		}
@@ -2200,6 +2230,7 @@ func opLen3Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallE
 
 func opLen2Imm8_2I(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[2].Op == ssa.OpConst8 || args[2].Op == ssa.OpConst64 {
 			return s.newValue2I(op, t, int64(int8(args[2].AuxInt<<int64(offset))), args[0], args[1])
 		}
@@ -2213,6 +2244,7 @@ func opLen2Imm8_2I(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.Ca
 // Two immediates instead of just 1.  Offset is ignored, so it is a _ parameter instead.
 func opLen2Imm8_II(op ssa.Op, t *types.Type, _ int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if (args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64) && (args[2].Op == ssa.OpConst8 || args[2].Op == ssa.OpConst64) && args[1].AuxInt & ^3 == 0 && args[2].AuxInt & ^3 == 0 {
 			i1, i2 := args[1].AuxInt, args[2].AuxInt
 			return s.newValue2I(op, t, int64(int8(i1+i2<<4)), args[0], args[3])
@@ -2235,6 +2267,7 @@ func opLen2Imm8_II(op ssa.Op, t *types.Type, _ int) func(s *state, n *ir.CallExp
 // The assembler requires the imm value of a SHA1RNDS4 instruction to be one of 0,1,2,3...
 func opLen2Imm8_SHA1RNDS4(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64 {
 			return s.newValue2I(op, t, int64(int8((args[1].AuxInt<<int64(offset))&0b11)), args[0], args[2])
 		}
@@ -2247,6 +2280,7 @@ func opLen2Imm8_SHA1RNDS4(op ssa.Op, t *types.Type, offset int) func(s *state, n
 
 func opLen1Imm(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if (args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64) && uint64(args[1].AuxInt) <= immMax {
 			return s.newValue1I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0])
 		}
@@ -2259,6 +2293,7 @@ func opLen1Imm(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *stat
 
 func opLen2Imm(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if (args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64) && uint64(args[1].AuxInt) <= immMax {
 			return s.newValue2I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0], args[2])
 		}
@@ -2271,6 +2306,7 @@ func opLen2Imm(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *stat
 
 func opLen3Imm(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if (args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64) && uint64(args[1].AuxInt) <= immMax {
 			return s.newValue3I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0], args[2], args[3])
 		}
@@ -2283,6 +2319,7 @@ func opLen3Imm(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *stat
 
 func opLen2Imm_2I(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if (args[2].Op == ssa.OpConst8 || args[2].Op == ssa.OpConst64) && uint64(args[2].AuxInt) <= immMax {
 			return s.newValue2I(op, t, int64(int8(args[2].AuxInt<<int64(offset))), args[0], args[1])
 		}
@@ -2295,6 +2332,7 @@ func opLen2Imm_2I(op ssa.Op, t *types.Type, offset int, immMax uint64) func(s *s
 
 func opLen3Imm8_2I(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[2].Op == ssa.OpConst8 || args[2].Op == ssa.OpConst64 {
 			return s.newValue3I(op, t, int64(int8(args[2].AuxInt<<int64(offset))), args[0], args[1], args[3])
 		}
@@ -2307,6 +2345,7 @@ func opLen3Imm8_2I(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.Ca
 
 func opLen4Imm8(op ssa.Op, t *types.Type, offset int) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 	return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+		t := intrinsicResultType(n, t)
 		if args[1].Op == ssa.OpConst8 || args[1].Op == ssa.OpConst64 {
 			return s.newValue4I(op, t, int64(int8(args[1].AuxInt<<int64(offset))), args[0], args[2], args[3], args[4])
 		}

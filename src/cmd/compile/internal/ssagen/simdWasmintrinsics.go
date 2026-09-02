@@ -5,24 +5,23 @@ package ssagen
 import (
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/ssa"
-	"cmd/compile/internal/types"
 	"cmd/internal/sys"
 )
 
 func initWasmSIMD() {
 	makeSimdOp1 := func(op ssa.Op) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 		return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue1(op, types.TypeVec128, args[0])
+			return s.newValue1(op, n.Type(), args[0])
 		}
 	}
 	makeSimdOp2 := func(op ssa.Op) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 		return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue2(op, types.TypeVec128, args[0], args[1])
+			return s.newValue2(op, n.Type(), args[0], args[1])
 		}
 	}
 	makeSimdOp3 := func(op ssa.Op) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 		return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue3(op, types.TypeVec128, args[0], args[1], args[2])
+			return s.newValue3(op, n.Type(), args[0], args[1], args[2])
 		}
 	}
 
@@ -36,7 +35,8 @@ func initWasmSIMD() {
 	// converting to a mask is an not-equals comparison with zero, zero obtained by x XOR x.
 	makeToMask := func(op, xor ssa.Op) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 		return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue2(op, types.TypeVec128, args[0], s.newValue2(xor, n.Type(), args[0], args[0]))
+			zero := s.newValue2(xor, args[0].Type, args[0], args[0])
+			return s.newValue2(op, n.Type(), args[0], zero)
 		}
 	}
 
@@ -55,7 +55,7 @@ func initWasmSIMD() {
 
 	makeSimdOp2Imm8 := func(op ssa.Op, immLimit uint64) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 		return func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			t := types.TypeVec128
+			t := n.Type()
 			if args[1].Op == ssa.OpConst8 && uint64(args[1].AuxInt) < immLimit {
 				return s.newValue2I(op, t, args[1].AuxInt, args[0], args[2])
 			}

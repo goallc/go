@@ -49,6 +49,15 @@ func llvmVec128CoreFloatOps(x, y, z archsimd.Float32x4) archsimd.Float32x4 {
 }
 
 //go:noinline
+func llvmVec128FloatPhi(useY bool, x, y archsimd.Float32x4) archsimd.Float32x4 {
+	selected := x
+	if useY {
+		selected = y
+	}
+	return selected.Add(x)
+}
+
+//go:noinline
 func llvmVec128CoreCompareSelect(x, y archsimd.Int8x16) archsimd.Int8x16 {
 	return x.IfElse(x.Greater(y), y)
 }
@@ -108,6 +117,18 @@ func main() {
 	for i := range floatGot {
 		if floatGot[i] != floatWant[i] {
 			panic(32 + i)
+		}
+	}
+
+	floatPhiWant := [4]float32{4, 6, 12, 20}
+	llvmVec128FloatPhi(
+		true,
+		archsimd.LoadFloat32x4Array(&floatX),
+		archsimd.LoadFloat32x4Array(&floatY),
+	).StoreArray(&floatGot)
+	for i := range floatGot {
+		if floatGot[i] != floatPhiWant[i] {
+			panic(40 + i)
 		}
 	}
 
