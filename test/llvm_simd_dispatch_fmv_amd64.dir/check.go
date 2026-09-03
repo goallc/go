@@ -40,7 +40,7 @@ func checkDispatchFMVCase(test dispatchFMVCase) {
 			test.name, usedAVX2, usedAVX512, test.usedAVX2, test.usedAVX512))
 	}
 
-	for i := range lanes {
+	for i := 0; i < lanes; i++ {
 		if portableDst[i] != x[i]+y[i] {
 			panic(fmt.Sprintf("%s: portable lane %d = %d, want %d",
 				test.name, i, portableDst[i], x[i]+y[i]))
