@@ -60,10 +60,7 @@ func (p goALLCSIMDPlan) String() string {
 var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	// Operations expressible by one standard LLVM instruction or generic
 	// intrinsic, subject to the semantic checks in their eventual lowering.
-	goALLCSIMDPlanStandard: {
-		"Ceil", "Floor", "LeadingZeros", "Max", "Min", "OnesCount",
-		"Round", "Sqrt", "Trunc",
-	},
+	goALLCSIMDPlanStandard: {},
 
 	// Operations built from multiple target-independent LLVM instructions or
 	// generic intrinsics.

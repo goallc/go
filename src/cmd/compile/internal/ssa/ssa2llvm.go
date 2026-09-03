@@ -110,13 +110,15 @@ const goCPUMultiversionAttr = "goallc.cpu.multiversion"
 const goCPUFeatureFloorAttr = "goallc.cpu.feature-floor"
 
 const (
-	goCPUProfileX86AVX    = "x86.avx"
-	goCPUProfileX86AVX2   = "x86.avx2"
-	goCPUProfileX86AVX512 = "x86.avx512"
-	goCPUProfileX86FMA    = "x86.fma"
-	goCPUProfileX86SSE41  = "x86.sse41"
-	goCPUProfileX86POPCNT = "x86.popcnt"
-	goCPUProfileARM64LSE  = "arm64.lse"
+	goCPUProfileX86AVX             = "x86.avx"
+	goCPUProfileX86AVX2            = "x86.avx2"
+	goCPUProfileX86AVX512          = "x86.avx512"
+	goCPUProfileX86AVX512BITALG    = "x86.avx512bitalg"
+	goCPUProfileX86AVX512VPOPCNTDQ = "x86.avx512vpopcntdq"
+	goCPUProfileX86FMA             = "x86.fma"
+	goCPUProfileX86SSE41           = "x86.sse41"
+	goCPUProfileX86POPCNT          = "x86.popcnt"
+	goCPUProfileARM64LSE           = "arm64.lse"
 )
 
 // Keep fixed-size memmoves within the store expansion limits of the supported
@@ -731,7 +733,7 @@ func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile st
 		lfc.RequiredCPUFeatures = make(map[string]bool)
 	}
 	lfc.RequiredCPUFeatures[profile] = true
-	profiles := make([]string, 0, 7)
+	profiles := make([]string, 0, 9)
 	for _, candidate := range []string{
 		goCPUProfileX86FMA,
 		goCPUProfileX86SSE41,
@@ -739,6 +741,8 @@ func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile st
 		goCPUProfileX86AVX,
 		goCPUProfileX86AVX2,
 		goCPUProfileX86AVX512,
+		goCPUProfileX86AVX512BITALG,
+		goCPUProfileX86AVX512VPOPCNTDQ,
 		goCPUProfileARM64LSE,
 	} {
 		if lfc.RequiredCPUFeatures[candidate] {
@@ -756,6 +760,10 @@ func llvmX86CPUFeatureProfile(field string) string {
 		return goCPUProfileX86AVX2
 	case "HasAVX512":
 		return goCPUProfileX86AVX512
+	case "HasAVX512BITALG":
+		return goCPUProfileX86AVX512BITALG
+	case "HasAVX512VPOPCNTDQ":
+		return goCPUProfileX86AVX512VPOPCNTDQ
 	case "HasFMA":
 		return goCPUProfileX86FMA
 	case "HasSSE41":
@@ -2010,6 +2018,15 @@ func (lfc *LLVMFuncContext) simdBinaryIntrinsic(v *Value, laneType llvm.Type, la
 	})
 }
 
+func (lfc *LLVMFuncContext) simdLeadingZeros(v *Value, laneType llvm.Type, lanes int, name string) llvm.Value {
+	return lfc.simdUnary(v, laneType, lanes, func(x llvm.Value, valueName string) llvm.Value {
+		i1 := GlobalCtxt.Int1Type()
+		sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type(), i1}, false)
+		fn := getOrInsertLLVMIntrinsic(name, sig)
+		return lfc.b.CreateCall(sig, fn, []llvm.Value{x, llvm.ConstInt(i1, 0, false)}, valueName)
+	})
+}
+
 // simdReduction preserves the generic SSA contract used by Go's ARM64 SIMD
 // operations: the scalar reduction result is in lane zero and every other lane
 // is zero. The public API's following GetElem(0) lets LLVM eliminate this
@@ -2220,6 +2237,67 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 			return finish(lfc.simdUnaryIntrinsic(v, laneType, lanes, name))
 		}
 		return finish(lfc.simdIntegerAbs(v, laneType, lanes))
+	case goALLCSIMDLowerSqrt, goALLCSIMDLowerRoundEven, goALLCSIMDLowerFloor, goALLCSIMDLowerCeil, goALLCSIMDLowerTrunc:
+		if !isFloat {
+			v.Fatalf("%s generated SIMD floating-point intrinsic has non-floating lanes", v.Op)
+		}
+		operation := ""
+		switch info.lowering {
+		case goALLCSIMDLowerSqrt:
+			operation = "sqrt"
+		case goALLCSIMDLowerRoundEven:
+			operation = "roundeven"
+		case goALLCSIMDLowerFloor:
+			operation = "floor"
+		case goALLCSIMDLowerCeil:
+			operation = "ceil"
+		case goALLCSIMDLowerTrunc:
+			operation = "trunc"
+		}
+		name := fmt.Sprintf("llvm.%s.v%df%d", operation, lanes, laneBits)
+		return finish(lfc.simdUnaryIntrinsic(v, laneType, lanes, name))
+	case goALLCSIMDLowerOnesCount, goALLCSIMDLowerLeadingZeros:
+		if isFloat {
+			v.Fatalf("%s generated SIMD bit-count intrinsic has floating-point lanes", v.Op)
+		}
+		operation := "ctpop"
+		if info.lowering == goALLCSIMDLowerLeadingZeros {
+			operation = "ctlz"
+		}
+		name := fmt.Sprintf("llvm.%s.v%di%d", operation, lanes, laneBits)
+		if info.lowering == goALLCSIMDLowerLeadingZeros {
+			return finish(lfc.simdLeadingZeros(v, laneType, lanes, name))
+		}
+		return finish(lfc.simdUnaryIntrinsic(v, laneType, lanes, name))
+	case goALLCSIMDLowerMax, goALLCSIMDLowerMin:
+		operation := ""
+		switch info.lane {
+		case goALLCSIMDLaneInt:
+			operation = "smax"
+		case goALLCSIMDLaneUint:
+			operation = "umax"
+		case goALLCSIMDLaneFloat:
+			operation = "maximum"
+		}
+		if info.lowering == goALLCSIMDLowerMin {
+			switch info.lane {
+			case goALLCSIMDLaneInt:
+				operation = "smin"
+			case goALLCSIMDLaneUint:
+				operation = "umin"
+			case goALLCSIMDLaneFloat:
+				operation = "minimum"
+			}
+		}
+		if operation == "" {
+			v.Fatalf("%s has unsupported generated SIMD min/max lane kind %d", v.Op, info.lane)
+		}
+		typeName := fmt.Sprintf("i%d", laneBits)
+		if isFloat {
+			typeName = fmt.Sprintf("f%d", laneBits)
+		}
+		name := fmt.Sprintf("llvm.%s.v%d%s", operation, lanes, typeName)
+		return finish(lfc.simdBinaryIntrinsic(v, laneType, lanes, name))
 	}
 
 	if isFloat {

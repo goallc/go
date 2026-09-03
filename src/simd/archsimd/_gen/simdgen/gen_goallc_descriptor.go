@@ -39,6 +39,10 @@ func goALLCCPUProfile(arch, feature string) string {
 		return ""
 	}
 	switch {
+	case feature == "AVX512BITALG":
+		return "x86.avx512bitalg"
+	case feature == "AVX512VPOPCNTDQ":
+		return "x86.avx512vpopcntdq"
 	case strings.HasPrefix(feature, "AVX512"):
 		return "x86.avx512"
 	case feature == "AVX2" || feature == "AVXVNNI":
@@ -134,6 +138,9 @@ var goALLCLoweringArity = map[string]int{
 	"reduce-add": 1, "reduce-max": 1, "reduce-min": 1,
 	"and": 2, "or": 2, "xor": 2, "andnot": 2, "ornot": 2,
 	"not": 1, "neg": 1, "abs": 1,
+	"sqrt": 1, "round-even": 1, "floor": 1, "ceil": 1, "trunc": 1,
+	"ones-count": 1, "leading-zeros": 1,
+	"max": 2, "min": 2,
 	"equal": 2, "not-equal": 2, "greater": 2,
 	"greater-equal": 2, "less": 2, "less-equal": 2,
 }
@@ -172,6 +179,12 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires integer lanes for %s", lowering, op.GenericName()))
 	}
 	if lowering == "reduce-add" && wantBase != "int" && wantBase != "uint" {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q requires integer lanes for %s", lowering, op.GenericName()))
+	}
+	if (lowering == "sqrt" || lowering == "round-even" || lowering == "floor" || lowering == "ceil" || lowering == "trunc") && wantBase != "float" {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q requires floating-point lanes for %s", lowering, op.GenericName()))
+	}
+	if (lowering == "ones-count" || lowering == "leading-zeros") && wantBase != "int" && wantBase != "uint" {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires integer lanes for %s", lowering, op.GenericName()))
 	}
 	scalarInputs := 0

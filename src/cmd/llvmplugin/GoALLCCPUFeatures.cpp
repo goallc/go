@@ -100,6 +100,15 @@ constexpr Profile AVX512Profile = {
     "x86.avx512", "avx512",
     "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl", "amd64",
     FeatureAVX512};
+constexpr Profile AVX512BITALGProfile = {
+    "x86.avx512bitalg", "avx512bitalg",
+    "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512bitalg",
+    "amd64", FeatureAVX512BITALG};
+constexpr Profile AVX512VPOPCNTDQProfile = {
+    "x86.avx512vpopcntdq", "avx512vpopcntdq",
+    "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+"
+    "avx512vpopcntdq",
+    "amd64", FeatureAVX512VPOPCNTDQ};
 constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64", FMAClosure};
 constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt", "+popcnt", "amd64",
                                    POPCNTClosure};
@@ -113,6 +122,10 @@ const Profile *findProfile(StringRef Name) {
     return &AVX2Profile;
   if (Name == AVX512Profile.Name)
     return &AVX512Profile;
+  if (Name == AVX512BITALGProfile.Name)
+    return &AVX512BITALGProfile;
+  if (Name == AVX512VPOPCNTDQProfile.Name)
+    return &AVX512VPOPCNTDQProfile;
   if (Name == FMAProfile.Name)
     return &FMAProfile;
   if (Name == SSE41Profile.Name)
@@ -264,9 +277,22 @@ void addTargetFeature(Function &F, StringRef Feature) {
   Attribute Existing = F.getFnAttribute("target-features");
   if (Existing.isStringAttribute())
     Features = Existing.getValueAsString().str();
-  if (!Features.empty())
-    Features += ',';
-  Features += Feature;
+
+  StringMap<bool> Seen;
+  SmallVector<StringRef, 16> Parts;
+  StringRef(Features).split(Parts, ',', -1, false);
+  for (StringRef Part : Parts)
+    Seen.insert({Part, true});
+
+  Parts.clear();
+  Feature.split(Parts, ',', -1, false);
+  for (StringRef Part : Parts) {
+    if (!Seen.insert({Part, true}).second)
+      continue;
+    if (!Features.empty())
+      Features += ',';
+    Features += Part;
+  }
   F.addFnAttr("target-features", Features);
 }
 
@@ -529,7 +555,8 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
 
   SmallVector<const Profile *, 4> OrderedProfiles;
   for (const Profile *P :
-       {&SSE41Profile, &AVXProfile, &AVX2Profile, &AVX512Profile, &FMAProfile,
+       {&SSE41Profile, &AVXProfile, &AVX2Profile, &AVX512Profile,
+        &AVX512BITALGProfile, &AVX512VPOPCNTDQProfile, &FMAProfile,
         &POPCNTProfile, &ARM64LSEProfile}) {
     if (llvm::find(*Requested, P) != Requested->end())
       OrderedProfiles.push_back(P);

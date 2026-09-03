@@ -994,6 +994,10 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		{"xor", types.Types[types.TINT16], 8, OpXorInt16x8, []string{"xor <8 x i16>"}},
 		{"and-not", types.Types[types.TUINT8], 16, OpAndNotUint8x16, []string{"xor <16 x i8>", "and <16 x i8>"}},
 		{"or-not", types.Types[types.TINT32], 4, OpOrNotInt32x4, []string{"xor <4 x i32>", "or <4 x i32>"}},
+		{"max-signed", types.Types[types.TINT16], 8, OpMaxInt16x8, []string{"call <8 x i16> @llvm.smax.v8i16"}},
+		{"min-unsigned", types.Types[types.TUINT32], 4, OpMinUint32x4, []string{"call <4 x i32> @llvm.umin.v4i32"}},
+		{"max-float32", types.Types[types.TFLOAT32], 4, OpMaxFloat32x4, []string{"call <4 x float> @llvm.maximum.v4f32"}},
+		{"min-float64", types.Types[types.TFLOAT64], 2, OpMinFloat64x2, []string{"call <2 x double> @llvm.minimum.v2f64"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			typ := llvmTestSIMDType(test.name, test.elem, test.lanes)
@@ -1079,6 +1083,13 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		{"neg-float32", types.Types[types.TFLOAT32], 4, OpNegFloat32x4, []string{"fneg <4 x float>"}},
 		{"abs-int64", types.Types[types.TINT64], 2, OpAbsInt64x2, []string{"icmp slt <2 x i64>", "sub <2 x i64>", "select <2 x i1>"}},
 		{"abs-float64", types.Types[types.TFLOAT64], 2, OpAbsFloat64x2, []string{"call <2 x double> @llvm.fabs.v2f64"}},
+		{"sqrt-float32", types.Types[types.TFLOAT32], 4, OpSqrtFloat32x4, []string{"call <4 x float> @llvm.sqrt.v4f32"}},
+		{"round-even-float64", types.Types[types.TFLOAT64], 2, OpRoundFloat64x2, []string{"call <2 x double> @llvm.roundeven.v2f64"}},
+		{"floor-float32", types.Types[types.TFLOAT32], 4, OpFloorFloat32x4, []string{"call <4 x float> @llvm.floor.v4f32"}},
+		{"ceil-float64", types.Types[types.TFLOAT64], 2, OpCeilFloat64x2, []string{"call <2 x double> @llvm.ceil.v2f64"}},
+		{"trunc-float32", types.Types[types.TFLOAT32], 4, OpTruncFloat32x4, []string{"call <4 x float> @llvm.trunc.v4f32"}},
+		{"ones-count-int8", types.Types[types.TINT8], 16, OpOnesCountInt8x16, []string{"call <16 x i8> @llvm.ctpop.v16i8"}},
+		{"leading-zeros-uint32", types.Types[types.TUINT32], 4, OpLeadingZerosUint32x4, []string{"call <4 x i32> @llvm.ctlz.v4i32(<4 x i32> %0, i1 false)"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			typ := llvmTestSIMDType(test.name, test.elem, test.lanes)
@@ -1376,6 +1387,9 @@ func TestLLVMGenericWideSIMDLowering(t *testing.T) {
 		{name: "vec512-xor", elem: types.Types[types.TINT64], resultElem: types.Types[types.TINT64], lanes: 8, op: OpXorInt64x8, arity: 2, wants: []string{"xor <8 x i64>"}},
 		{name: "vec512-abs-int64", elem: types.Types[types.TINT64], resultElem: types.Types[types.TINT64], lanes: 8, op: OpAbsInt64x8, arity: 1, wants: []string{"icmp slt <8 x i64>", "select <8 x i1>"}},
 		{name: "vec512-less-equal-uint16", elem: types.Types[types.TUINT16], resultElem: types.Types[types.TINT16], lanes: 32, op: OpLessEqualUint16x32, arity: 2, wants: []string{"icmp ule <32 x i16>", "sext <32 x i1>"}},
+		{name: "vec256-round-float32", elem: types.Types[types.TFLOAT32], resultElem: types.Types[types.TFLOAT32], lanes: 8, op: OpRoundFloat32x8, arity: 1, wants: []string{"call <8 x float> @llvm.roundeven.v8f32"}},
+		{name: "vec512-leading-zeros-int64", elem: types.Types[types.TINT64], resultElem: types.Types[types.TINT64], lanes: 8, op: OpLeadingZerosInt64x8, arity: 1, wants: []string{"call <8 x i64> @llvm.ctlz.v8i64(<8 x i64> %0, i1 false)"}},
+		{name: "vec512-max-float64", elem: types.Types[types.TFLOAT64], resultElem: types.Types[types.TFLOAT64], lanes: 8, op: OpMaxFloat64x8, arity: 2, wants: []string{"call <8 x double> @llvm.maximum.v8f64"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inputType := llvmTestSIMDType(test.name+"-input", test.elem, test.lanes)
@@ -1550,6 +1564,42 @@ func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
 			lowering: goALLCSIMDLowerReduceMax,
 			lane:     goALLCSIMDLaneFloat, laneBits: 32,
 		},
+		{
+			name: "128-bit-round-even", op: OpRoundFloat64x2,
+			lowering: goALLCSIMDLowerRoundEven,
+			lane:     goALLCSIMDLaneFloat, laneBits: 64,
+			amdProfile: goCPUProfileX86AVX,
+		},
+		{
+			name: "512-bit-leading-zeros", op: OpLeadingZerosUint64x8,
+			lowering: goALLCSIMDLowerLeadingZeros,
+			lane:     goALLCSIMDLaneUint, laneBits: 64,
+			amdProfile: goCPUProfileX86AVX512,
+		},
+		{
+			name: "128-bit-bitalg-ones-count", op: OpOnesCountUint8x16,
+			lowering: goALLCSIMDLowerOnesCount,
+			lane:     goALLCSIMDLaneUint, laneBits: 8,
+			amdProfile: goCPUProfileX86AVX512BITALG,
+		},
+		{
+			name: "128-bit-vpopcntdq-ones-count", op: OpOnesCountUint32x4,
+			lowering: goALLCSIMDLowerOnesCount,
+			lane:     goALLCSIMDLaneUint, laneBits: 32,
+			amdProfile: goCPUProfileX86AVX512VPOPCNTDQ,
+		},
+		{
+			name: "128-bit-float-max", op: OpMaxFloat32x4,
+			lowering: goALLCSIMDLowerMax,
+			lane:     goALLCSIMDLaneFloat, laneBits: 32,
+			amdProfile: goCPUProfileX86AVX,
+		},
+		{
+			name: "128-bit-signed-min", op: OpMinInt16x8,
+			lowering: goALLCSIMDLowerMin,
+			lane:     goALLCSIMDLaneInt, laneBits: 16,
+			amdProfile: goCPUProfileX86AVX,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			info, ok := goALLCSIMDInfo(test.op)
@@ -1589,6 +1639,8 @@ func TestLLVMCPUProfileCoverage(t *testing.T) {
 		{name: "same", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX2, want: true},
 		{name: "avx2-covers-avx", required: goCPUProfileX86AVX, floor: goCPUProfileX86AVX2, want: true},
 		{name: "avx512-covers-avx2", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX512, want: true},
+		{name: "avx512-does-not-cover-bitalg", required: goCPUProfileX86AVX512BITALG, floor: goCPUProfileX86AVX512, want: false},
+		{name: "avx512-does-not-cover-vpopcntdq", required: goCPUProfileX86AVX512VPOPCNTDQ, floor: goCPUProfileX86AVX512, want: false},
 		{name: "avx-does-not-cover-avx2", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX, want: false},
 		{name: "width-floor-does-not-cover-fma", required: goCPUProfileX86FMA, floor: goCPUProfileX86AVX2, want: false},
 		{name: "no-floor", required: goCPUProfileX86AVX, want: false},
@@ -1609,6 +1661,8 @@ func TestLLVMX86CPUFeatureProfile(t *testing.T) {
 		{field: "HasAVX", want: goCPUProfileX86AVX},
 		{field: "HasAVX2", want: goCPUProfileX86AVX2},
 		{field: "HasAVX512", want: goCPUProfileX86AVX512},
+		{field: "HasAVX512BITALG", want: goCPUProfileX86AVX512BITALG},
+		{field: "HasAVX512VPOPCNTDQ", want: goCPUProfileX86AVX512VPOPCNTDQ},
 		{field: "HasFMA", want: goCPUProfileX86FMA},
 		{field: "HasSSE41", want: goCPUProfileX86SSE41},
 		{field: "HasPOPCNT", want: goCPUProfileX86POPCNT},

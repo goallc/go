@@ -1,5 +1,6 @@
 !sum
 - go: LeadingZeros
+  llvmLowering: leading-zeros
   commutative: false
   documentation: !string |-
     // NAME counts the leading zeros of each element in x.

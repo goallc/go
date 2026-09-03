@@ -27,6 +27,15 @@ const (
 	goALLCSIMDLowerNot
 	goALLCSIMDLowerNeg
 	goALLCSIMDLowerAbs
+	goALLCSIMDLowerSqrt
+	goALLCSIMDLowerRoundEven
+	goALLCSIMDLowerFloor
+	goALLCSIMDLowerCeil
+	goALLCSIMDLowerTrunc
+	goALLCSIMDLowerOnesCount
+	goALLCSIMDLowerLeadingZeros
+	goALLCSIMDLowerMax
+	goALLCSIMDLowerMin
 	goALLCSIMDLowerEqual
 	goALLCSIMDLowerNotEqual
 	goALLCSIMDLowerGreater

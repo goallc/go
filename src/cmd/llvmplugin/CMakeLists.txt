@@ -252,6 +252,18 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.AVX512BitCounts
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx512-bitcounts.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx512-bitcounts.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.ARM64LSE
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-arm64-lse.ll"
     CHECK

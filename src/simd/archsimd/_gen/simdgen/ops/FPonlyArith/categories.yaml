@@ -5,6 +5,7 @@
   documentation: !string |-
     // NAME divides elements of two vectors. Division by zero follows IEEE 754 and does not panic.
 - go: Sqrt
+  llvmLowering: sqrt
   commutative: false
   documentation: !string |-
     // NAME computes the square root of each element.
@@ -22,6 +23,7 @@
     // NAME multiplies each element of x by 2 raised to the power of the
     // floor of the corresponding element in y.
 - go: Round
+  llvmLowering: round-even
   commutative: false
   constImm: 0
   documentation: !string |-
@@ -37,6 +39,7 @@
   documentation: !string |-
     // NAME computes the difference after rounding with specified precision.
 - go: Floor
+  llvmLowering: floor
   commutative: false
   constImm: 1
   documentation: !string |-
@@ -52,6 +55,7 @@
   documentation: !string |-
     // NAME computes the difference after flooring with specified precision.
 - go: Ceil
+  llvmLowering: ceil
   commutative: false
   constImm: 2
   documentation: !string |-
@@ -67,6 +71,7 @@
   documentation: !string |-
     // NAME computes the difference after ceiling with specified precision.
 - go: Trunc
+  llvmLowering: trunc
   commutative: false
   constImm: 3
   documentation: !string |-

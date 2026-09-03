@@ -5,17 +5,19 @@
 package runtime
 
 const (
-	GoALLCCPUFeatureSSE3ForTest         = goallcCPUFeatureSSE3
-	GoALLCCPUFeatureSSSE3ForTest        = goallcCPUFeatureSSSE3
-	GoALLCCPUFeatureSSE41ForTest        = goallcCPUFeatureSSE41
-	GoALLCCPUFeatureSSE42ForTest        = goallcCPUFeatureSSE42
-	GoALLCCPUFeatureAVXForTest          = goallcCPUFeatureAVX
-	GoALLCCPUFeatureFMAForTest          = goallcCPUFeatureFMA
-	GoALLCCPUFeaturesInitializedForTest = goallcCPUFeaturesInitialized
-	GoALLCCPUFeaturePOPCNTForTest       = goallcCPUFeaturePOPCNT
-	GoALLCCPUFeatureARM64LSEForTest     = goallcCPUFeatureARM64LSE
-	GoALLCCPUFeatureAVX2ForTest         = goallcCPUFeatureAVX2
-	GoALLCCPUFeatureAVX512ForTest       = goallcCPUFeatureAVX512
+	GoALLCCPUFeatureSSE3ForTest            = goallcCPUFeatureSSE3
+	GoALLCCPUFeatureSSSE3ForTest           = goallcCPUFeatureSSSE3
+	GoALLCCPUFeatureSSE41ForTest           = goallcCPUFeatureSSE41
+	GoALLCCPUFeatureSSE42ForTest           = goallcCPUFeatureSSE42
+	GoALLCCPUFeatureAVXForTest             = goallcCPUFeatureAVX
+	GoALLCCPUFeatureFMAForTest             = goallcCPUFeatureFMA
+	GoALLCCPUFeaturesInitializedForTest    = goallcCPUFeaturesInitialized
+	GoALLCCPUFeaturePOPCNTForTest          = goallcCPUFeaturePOPCNT
+	GoALLCCPUFeatureARM64LSEForTest        = goallcCPUFeatureARM64LSE
+	GoALLCCPUFeatureAVX2ForTest            = goallcCPUFeatureAVX2
+	GoALLCCPUFeatureAVX512ForTest          = goallcCPUFeatureAVX512
+	GoALLCCPUFeatureAVX512BITALGForTest    = goallcCPUFeatureAVX512BITALG
+	GoALLCCPUFeatureAVX512VPOPCNTDQForTest = goallcCPUFeatureAVX512VPOPCNTDQ
 )
 
 func GoALLCCPUFeaturesForTest() uint64 {

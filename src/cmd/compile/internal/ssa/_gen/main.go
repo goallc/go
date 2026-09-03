@@ -288,6 +288,10 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"or": "goALLCSIMDLowerOr", "xor": "goALLCSIMDLowerXor", "andnot": "goALLCSIMDLowerAndNot",
 		"ornot": "goALLCSIMDLowerOrNot", "not": "goALLCSIMDLowerNot", "neg": "goALLCSIMDLowerNeg",
 		"abs": "goALLCSIMDLowerAbs", "equal": "goALLCSIMDLowerEqual", "not-equal": "goALLCSIMDLowerNotEqual",
+		"sqrt": "goALLCSIMDLowerSqrt", "round-even": "goALLCSIMDLowerRoundEven",
+		"floor": "goALLCSIMDLowerFloor", "ceil": "goALLCSIMDLowerCeil", "trunc": "goALLCSIMDLowerTrunc",
+		"ones-count": "goALLCSIMDLowerOnesCount", "leading-zeros": "goALLCSIMDLowerLeadingZeros",
+		"max": "goALLCSIMDLowerMax", "min": "goALLCSIMDLowerMin",
 		"greater": "goALLCSIMDLowerGreater", "greater-equal": "goALLCSIMDLowerGreaterEqual",
 		"less": "goALLCSIMDLowerLess", "less-equal": "goALLCSIMDLowerLessEqual",
 	})

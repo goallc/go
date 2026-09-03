@@ -68,4 +68,6 @@ const (
 	goallcCPUFeatureARM64LSE
 	goallcCPUFeatureAVX2
 	goallcCPUFeatureAVX512
+	goallcCPUFeatureAVX512BITALG
+	goallcCPUFeatureAVX512VPOPCNTDQ
 )

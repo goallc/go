@@ -1,9 +1,11 @@
 !sum
 - go: Max
+  llvmLowering: max
   commutative: true
   documentation: !string |-
     // NAME computes the maximum of each pair of corresponding elements in x and y.
 - go: Min
+  llvmLowering: min
   commutative: true
   documentation: !string |-
     // NAME computes the minimum of each pair of corresponding elements in x and y.

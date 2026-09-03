@@ -20,7 +20,7 @@ func TestGoALLCSIMDPlanLookup(t *testing.T) {
 		want goALLCSIMDPlan
 		ok   bool
 	}{
-		{"SqrtFloat32x4", goALLCSIMDPlanStandard, true},
+		{"AverageUint8x16", goALLCSIMDPlanCompose, true},
 		{"ConvertToInt32Float32x4", goALLCSIMDPlanConvert, true},
 		{"PermuteUint8x16", goALLCSIMDPlanShuffle, true},
 		{"blendInt8x16", goALLCSIMDPlanLegacy, true},
