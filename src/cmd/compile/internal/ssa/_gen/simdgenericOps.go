@@ -129,16 +129,16 @@ func simdGenericOps() []opData {
 		{name: "AndUint64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=and"},                  // ARCH:amd64,arm64,wasm
 		{name: "AndUint64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=and"},                 // ARCH:amd64
 		{name: "AndUint64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=and"},               // ARCH:amd64
-		{name: "AverageInt8x16", argLength: 2, commutative: true},                                                                                   // ARCH:arm64
-		{name: "AverageInt16x8", argLength: 2, commutative: true},                                                                                   // ARCH:arm64
-		{name: "AverageInt32x4", argLength: 2, commutative: true},                                                                                   // ARCH:arm64
-		{name: "AverageUint8x16", argLength: 2, commutative: true},                                                                                  // ARCH:amd64,arm64,wasm
-		{name: "AverageUint8x32", argLength: 2, commutative: true},                                                                                  // ARCH:amd64
-		{name: "AverageUint8x64", argLength: 2, commutative: true},                                                                                  // ARCH:amd64
-		{name: "AverageUint16x8", argLength: 2, commutative: true},                                                                                  // ARCH:amd64,arm64,wasm
-		{name: "AverageUint16x16", argLength: 2, commutative: true},                                                                                 // ARCH:amd64
-		{name: "AverageUint16x32", argLength: 2, commutative: true},                                                                                 // ARCH:amd64
-		{name: "AverageUint32x4", argLength: 2, commutative: true},                                                                                  // ARCH:arm64
+		{name: "AverageInt8x16", argLength: 2, commutative: true, simd: "lane=int&laneBits=8&lower=average"},                                        // ARCH:arm64
+		{name: "AverageInt16x8", argLength: 2, commutative: true, simd: "lane=int&laneBits=16&lower=average"},                                       // ARCH:arm64
+		{name: "AverageInt32x4", argLength: 2, commutative: true, simd: "lane=int&laneBits=32&lower=average"},                                       // ARCH:arm64
+		{name: "AverageUint8x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=average"},           // ARCH:amd64,arm64,wasm
+		{name: "AverageUint8x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=average"},          // ARCH:amd64
+		{name: "AverageUint8x64", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=average"},        // ARCH:amd64
+		{name: "AverageUint16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=average"},          // ARCH:amd64,arm64,wasm
+		{name: "AverageUint16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=average"},        // ARCH:amd64
+		{name: "AverageUint16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=average"},      // ARCH:amd64
+		{name: "AverageUint32x4", argLength: 2, commutative: true, simd: "lane=uint&laneBits=32&lower=average"},                                     // ARCH:arm64
 		{name: "BitSelectInt8x16", argLength: 3},   // ARCH:wasm
 		{name: "BitSelectInt16x8", argLength: 3},   // ARCH:wasm
 		{name: "BitSelectInt32x4", argLength: 3},   // ARCH:wasm
@@ -580,12 +580,12 @@ func simdGenericOps() []opData {
 		{name: "InterleaveOddUint16x8", argLength: 2},                                                                                               // ARCH:arm64
 		{name: "InterleaveOddUint32x4", argLength: 2},                                                                                               // ARCH:arm64
 		{name: "InterleaveOddUint64x2", argLength: 2},                                                                                               // ARCH:arm64
-		{name: "LeadingSignBitsInt8x16", argLength: 1},                                                                                              // ARCH:arm64
-		{name: "LeadingSignBitsInt16x8", argLength: 1},                                                                                              // ARCH:arm64
-		{name: "LeadingSignBitsInt32x4", argLength: 1},                                                                                              // ARCH:arm64
-		{name: "LeadingSignBitsUint8x16", argLength: 1},                                                                                             // ARCH:arm64
-		{name: "LeadingSignBitsUint16x8", argLength: 1},                                                                                             // ARCH:arm64
-		{name: "LeadingSignBitsUint32x4", argLength: 1},                                                                                             // ARCH:arm64
+		{name: "LeadingSignBitsInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=leading-sign-bits"},                                         // ARCH:arm64
+		{name: "LeadingSignBitsInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=leading-sign-bits"},                                        // ARCH:arm64
+		{name: "LeadingSignBitsInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=leading-sign-bits"},                                        // ARCH:arm64
+		{name: "LeadingSignBitsUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=leading-sign-bits"},                                       // ARCH:arm64
+		{name: "LeadingSignBitsUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=leading-sign-bits"},                                      // ARCH:arm64
+		{name: "LeadingSignBitsUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=leading-sign-bits"},                                      // ARCH:arm64
 		{name: "LeadingZerosInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=leading-zeros"},                                                // ARCH:arm64
 		{name: "LeadingZerosInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=leading-zeros"},                                               // ARCH:arm64
 		{name: "LeadingZerosInt32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=leading-zeros"},                 // ARCH:amd64,arm64
@@ -736,12 +736,12 @@ func simdGenericOps() []opData {
 		{name: "MulFloat64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=mul"},                // ARCH:amd64,arm64,wasm
 		{name: "MulFloat64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=mul"},                // ARCH:amd64
 		{name: "MulFloat64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=mul"},             // ARCH:amd64
-		{name: "MulHighInt16x8", argLength: 2, commutative: true},                                                                                   // ARCH:amd64
-		{name: "MulHighInt16x16", argLength: 2, commutative: true},                                                                                  // ARCH:amd64
-		{name: "MulHighInt16x32", argLength: 2, commutative: true},                                                                                  // ARCH:amd64
-		{name: "MulHighUint16x8", argLength: 2, commutative: true},                                                                                  // ARCH:amd64
-		{name: "MulHighUint16x16", argLength: 2, commutative: true},                                                                                 // ARCH:amd64
-		{name: "MulHighUint16x32", argLength: 2, commutative: true},                                                                                 // ARCH:amd64
+		{name: "MulHighInt16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=mul-high"},           // ARCH:amd64
+		{name: "MulHighInt16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=mul-high"},         // ARCH:amd64
+		{name: "MulHighInt16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=mul-high"},       // ARCH:amd64
+		{name: "MulHighUint16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=mul-high"},         // ARCH:amd64
+		{name: "MulHighUint16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=mul-high"},       // ARCH:amd64
+		{name: "MulHighUint16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=mul-high"},     // ARCH:amd64
 		{name: "MulInt8x16", argLength: 2, commutative: true, simd: "lane=int&laneBits=8&lower=mul"},                                                // ARCH:arm64
 		{name: "MulInt16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=mul"},                    // ARCH:amd64,arm64,wasm
 		{name: "MulInt16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=mul"},                  // ARCH:amd64
@@ -752,12 +752,12 @@ func simdGenericOps() []opData {
 		{name: "MulInt64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=mul"},                 // ARCH:amd64,wasm
 		{name: "MulInt64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=mul"},                 // ARCH:amd64
 		{name: "MulInt64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=mul"},                 // ARCH:amd64
-		{name: "MulSignInt8x16", argLength: 2},                                                                                                      // ARCH:amd64
-		{name: "MulSignInt8x32", argLength: 2},                                                                                                      // ARCH:amd64
-		{name: "MulSignInt16x8", argLength: 2},                                                                                                      // ARCH:amd64
-		{name: "MulSignInt16x16", argLength: 2},                                                                                                     // ARCH:amd64
-		{name: "MulSignInt32x4", argLength: 2},                                                                                                      // ARCH:amd64
-		{name: "MulSignInt32x8", argLength: 2},                                                                                                      // ARCH:amd64
+		{name: "MulSignInt8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=mul-sign"},                               // ARCH:amd64
+		{name: "MulSignInt8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=mul-sign"},                              // ARCH:amd64
+		{name: "MulSignInt16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=mul-sign"},                              // ARCH:amd64
+		{name: "MulSignInt16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=mul-sign"},                            // ARCH:amd64
+		{name: "MulSignInt32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=mul-sign"},                              // ARCH:amd64
+		{name: "MulSignInt32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=mul-sign"},                             // ARCH:amd64
 		{name: "MulUint8x16", argLength: 2, commutative: true, simd: "lane=uint&laneBits=8&lower=mul"},                                              // ARCH:arm64
 		{name: "MulUint16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=mul"},                  // ARCH:amd64,arm64,wasm
 		{name: "MulUint16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=mul"},                // ARCH:amd64
