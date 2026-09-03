@@ -1653,6 +1653,56 @@ func TestLLVMCPUProfileCoverage(t *testing.T) {
 	}
 }
 
+func TestLLVMWideVectorTypeWidth(t *testing.T) {
+	vec256 := llvmTestSIMDType("Uint8x32", types.Types[types.TUINT8], 32)
+	vec512 := llvmTestSIMDType("Uint8x64", types.Types[types.TUINT8], 64)
+	aggregate := types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, nil, types.Types[types.TUINT64]),
+		types.NewField(src.NoXPos, nil, types.NewArray(vec512, 2)),
+	})
+	types.CalcStructSize(aggregate)
+
+	for _, test := range []struct {
+		name string
+		typ  *types.Type
+		want int64
+	}{
+		{name: "scalar", typ: types.Types[types.TUINT64]},
+		{name: "vec256", typ: vec256, want: 32},
+		{name: "aggregate-vec512", typ: aggregate, want: 64},
+		{name: "pointer-stops-walk", typ: types.NewPtr(vec512)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := llvmWideVectorTypeWidth(test.typ); got != test.want {
+				t.Fatalf("llvmWideVectorTypeWidth(%v) = %d, want %d", test.typ, got, test.want)
+			}
+		})
+	}
+}
+
+func TestLLVMCPUProfileSuppliesWideVector(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		profile  string
+		required string
+		want     bool
+	}{
+		{name: "avx", profile: goCPUProfileX86AVX, required: goCPUProfileX86AVX, want: true},
+		{name: "avx2-supplies-avx", profile: goCPUProfileX86AVX2, required: goCPUProfileX86AVX, want: true},
+		{name: "avx512-supplies-avx", profile: goCPUProfileX86AVX512, required: goCPUProfileX86AVX, want: true},
+		{name: "bitalg-supplies-avx512", profile: goCPUProfileX86AVX512BITALG, required: goCPUProfileX86AVX512, want: true},
+		{name: "vpopcntdq-supplies-avx512", profile: goCPUProfileX86AVX512VPOPCNTDQ, required: goCPUProfileX86AVX512, want: true},
+		{name: "fma-does-not-supply-avx", profile: goCPUProfileX86FMA, required: goCPUProfileX86AVX},
+		{name: "avx2-does-not-supply-avx512", profile: goCPUProfileX86AVX2, required: goCPUProfileX86AVX512},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := llvmCPUProfileSuppliesWideVector(test.profile, test.required); got != test.want {
+				t.Fatalf("llvmCPUProfileSuppliesWideVector(%q, %q) = %v, want %v", test.profile, test.required, got, test.want)
+			}
+		})
+	}
+}
+
 func TestLLVMX86CPUFeatureProfile(t *testing.T) {
 	for _, test := range []struct {
 		field string
@@ -1674,6 +1724,37 @@ func TestLLVMX86CPUFeatureProfile(t *testing.T) {
 				t.Fatalf("llvmX86CPUFeatureProfile(%q) = %q, want %q", test.field, got, test.want)
 			}
 		})
+	}
+}
+
+func TestLLVMX86CPUFeatureGuard(t *testing.T) {
+	pkg := types.NewPkg("internal/cpu", "cpu")
+	x86Type := types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("HasAVX2"), types.Types[types.TBOOL]),
+	})
+	types.CalcStructSize(x86Type)
+	sb := &Value{Op: OpSB}
+	addr := &Value{Op: OpAddr, Type: types.NewPtr(x86Type), Aux: &obj.LSym{Name: "internal/cpu.X86"}, Args: []*Value{sb}}
+	offPtr := &Value{Op: OpOffPtr, AuxInt: x86Type.Field(0).Offset, Args: []*Value{addr}}
+	load := &Value{Op: OpLoad, Args: []*Value{offPtr}}
+	enabled := &Block{ID: 2}
+	disabled := &Block{ID: 3}
+
+	guard := &Block{
+		Kind:     BlockIf,
+		Controls: [2]*Value{load, nil},
+		Succs:    []Edge{{b: enabled}, {b: disabled}},
+	}
+	profile, successor := llvmX86CPUFeatureGuard(guard)
+	if profile != goCPUProfileX86AVX2 || successor != enabled {
+		t.Fatalf("positive guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, enabled)
+	}
+
+	not := &Value{Op: OpNot, Args: []*Value{load}}
+	guard.Controls[0] = not
+	profile, successor = llvmX86CPUFeatureGuard(guard)
+	if profile != goCPUProfileX86AVX2 || successor != disabled {
+		t.Fatalf("negated guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, disabled)
 	}
 }
 

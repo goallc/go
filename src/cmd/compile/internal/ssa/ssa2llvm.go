@@ -36,6 +36,8 @@ type LLVMFuncContext struct {
 	OpenDeferSlots      map[llvmLocalKey]int
 	RequiredCPUFeatures map[string]bool
 	CPUFeatureGuards    map[string][]llvm.Value
+	CPUFeatureFloor     string
+	WideCallCPUProfiles map[ID]string
 	F                   *Func
 	LF                  llvm.Value
 	DISubprogram        llvm.Metadata
@@ -702,6 +704,179 @@ func llvmCPUProfileCoveredByFloor(required, floor string) bool {
 	return false
 }
 
+// llvmWideVectorTypeWidth returns the widest fixed SIMD vector nested directly
+// in a Go ABI value. Pointers deliberately stop the walk: their referents do
+// not cross the call boundary in vector registers.
+func llvmWideVectorTypeWidth(t *types.Type) int64 {
+	if t == nil {
+		return 0
+	}
+	if t.IsSIMD() {
+		return t.Size()
+	}
+	switch {
+	case t.IsArray():
+		return llvmWideVectorTypeWidth(t.Elem())
+	case t.IsStruct():
+		var width int64
+		for _, field := range t.Fields() {
+			if candidate := llvmWideVectorTypeWidth(field.Type); candidate > width {
+				width = candidate
+			}
+		}
+		return width
+	}
+	return 0
+}
+
+// llvmWideVectorCallWidth reports wide vectors that the Go ABI assigns to
+// registers for this call. Stack-only byval arguments and result homes are not
+// LLVM register-ABI carriers and therefore need no caller target feature.
+func llvmWideVectorCallWidth(aux *AuxCall) int64 {
+	var width int64
+	for i := int64(0); i < aux.NArgs(); i++ {
+		if len(aux.RegsOfArg(i)) == 0 {
+			continue
+		}
+		if candidate := llvmWideVectorTypeWidth(aux.TypeOfArg(i)); candidate > width {
+			width = candidate
+		}
+	}
+	for i := int64(0); i < aux.NResults(); i++ {
+		if len(aux.RegsOfResult(i)) == 0 {
+			continue
+		}
+		if candidate := llvmWideVectorTypeWidth(aux.TypeOfResult(i)); candidate > width {
+			width = candidate
+		}
+	}
+	return width
+}
+
+func llvmWideVectorCPUProfile(width int64) string {
+	switch {
+	case width > 32:
+		return goCPUProfileX86AVX512
+	case width > 16:
+		return goCPUProfileX86AVX
+	}
+	return ""
+}
+
+func llvmCPUProfileSuppliesWideVector(profile, required string) bool {
+	if llvmCPUProfileCoveredByFloor(required, profile) {
+		return true
+	}
+	switch profile {
+	case goCPUProfileX86AVX512BITALG, goCPUProfileX86AVX512VPOPCNTDQ:
+		return required == goCPUProfileX86AVX || required == goCPUProfileX86AVX2 || required == goCPUProfileX86AVX512
+	}
+	return false
+}
+
+// llvmX86CPUFeatureGuard recognizes which successor of an ordinary
+// internal/cpu.X86 feature test has the feature enabled. This mirrors the
+// source shape accepted by the native cpufeatures pass without changing that
+// pass or making fixed-width archsimd participate in Midway rewriting.
+func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled *Block) {
+	if b.Kind != BlockIf || b.Controls[0] == nil || b.Controls[1] != nil || len(b.Succs) != 2 {
+		return "", nil
+	}
+	condition := b.Controls[0]
+	taken := 0
+	if condition.Op == OpNot {
+		if len(condition.Args) != 1 {
+			return "", nil
+		}
+		taken = 1
+		condition = condition.Args[0]
+	}
+	profile = llvmX86CPUFeatureProfile(llvmX86CPUFeatureField(condition))
+	if profile == "" {
+		return "", nil
+	}
+	return profile, b.Succs[taken].Block()
+}
+
+func llvmDominatingWideVectorGuardProfile(f *Func, call *Value, required string) string {
+	sdom := f.Sdom()
+	for b := call.Block; b != nil; b = sdom.Parent(b) {
+		profile, enabled := llvmX86CPUFeatureGuard(b)
+		if enabled != nil && sdom.IsAncestorEq(enabled, call.Block) && llvmCPUProfileSuppliesWideVector(profile, required) {
+			return profile
+		}
+	}
+	return ""
+}
+
+func llvmCallAux(v *Value) *AuxCall {
+	switch v.Op {
+	case OpStaticCall, OpStaticLECall, OpTailLECall,
+		OpClosureCall, OpClosureLECall,
+		OpInterCall, OpInterLECall, OpTailLECallInter:
+		return auxToCall(v.Aux)
+	}
+	return nil
+}
+
+type llvmWideVectorCallRequirement struct {
+	call     *Value
+	required string
+	guard    string
+}
+
+// llvmPlanWideVectorCalls applies the same boundary principle as Midway: a
+// function whose own ABI already establishes a vector-width floor keeps that
+// floor, while a clean-signature caller becomes the dispatch boundary. Calls
+// beneath a matching explicit CPU guard request early LLVM FMV; an unguarded
+// fixed-width call instead raises the function floor, matching native Go's
+// contract that executing fixed-width archsimd requires suitable hardware.
+//
+// Plan the whole function before emitting any instruction so a later
+// unguarded call cannot make earlier decisions depend on block order.
+func llvmPlanWideVectorCalls(f *Func) (floor string, profiles map[ID]string) {
+	floor = llvmSIMDFeatureFloor(f)
+	if f.Config.arch != "amd64" {
+		return floor, nil
+	}
+
+	var requirements []llvmWideVectorCallRequirement
+	for _, b := range f.Blocks {
+		for _, v := range b.Values {
+			aux := llvmCallAux(v)
+			if aux == nil {
+				continue
+			}
+			required := llvmWideVectorCPUProfile(llvmWideVectorCallWidth(aux))
+			if required == "" || llvmCPUProfileCoveredByBaseline(f.Config.arch, required) || llvmCPUProfileCoveredByFloor(required, floor) {
+				continue
+			}
+			guard := llvmDominatingWideVectorGuardProfile(f, v, required)
+			requirements = append(requirements, llvmWideVectorCallRequirement{
+				call:     v,
+				required: required,
+				guard:    guard,
+			})
+		}
+	}
+
+	for _, requirement := range requirements {
+		if requirement.guard == "" && !llvmCPUProfileCoveredByFloor(requirement.required, floor) {
+			floor = requirement.required
+		}
+	}
+	for _, requirement := range requirements {
+		if requirement.guard == "" || llvmCPUProfileCoveredByFloor(requirement.required, floor) {
+			continue
+		}
+		if profiles == nil {
+			profiles = make(map[ID]string)
+		}
+		profiles[requirement.call.ID] = requirement.guard
+	}
+	return floor, profiles
+}
+
 func llvmCPUProfileCoveredByBaseline(arch, profile string) bool {
 	switch arch {
 	case "amd64":
@@ -838,7 +1013,12 @@ func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(instruction llvm.Valu
 	if profile == "" || llvmCPUProfileCoveredByBaseline(arch, profile) {
 		return
 	}
-	floor := llvmSIMDFeatureFloor(lfc.F)
+	floor := lfc.CPUFeatureFloor
+	if floor == "" {
+		// Unit tests and a few compiler helpers build an LLVMFuncContext
+		// directly instead of going through LLVMCompile.
+		floor = llvmSIMDFeatureFloor(lfc.F)
+	}
 	if llvmCPUProfileCoveredByFloor(profile, floor) {
 		return
 	}
@@ -848,6 +1028,12 @@ func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(instruction llvm.Valu
 	// an unguarded instruction, so exceeding the floor cannot silently make the
 	// Midway variant unsafe.
 	lfc.requireCPUFeature(instruction, profile)
+}
+
+func (lfc *LLVMFuncContext) requireWideVectorCallCPUFeature(v *Value, call llvm.Value) {
+	if profile := lfc.WideCallCPUProfiles[v.ID]; profile != "" {
+		lfc.requireCPUFeature(call, profile)
+	}
 }
 
 func (lfc *LLVMFuncContext) requireARM64LSE(v *Value, instruction llvm.Value) {
@@ -3126,6 +3312,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 	call := lfc.b.CreateCall(sig.Type, fn, args, name)
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
+	lfc.requireWideVectorCallCPUFeature(v, call)
 	lfc.materializeAddressedResults(v, call, aux)
 	if llvmGCLeaf {
 		markLLVMGCLeafCall(call)
@@ -3192,6 +3379,7 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 	call := lfc.b.CreateCall(sig.Type, code, args, name)
 	call.SetInstructionCallConv(cc)
 	configureLLVMCall(call, sig)
+	lfc.requireWideVectorCallCPUFeature(v, call)
 	lfc.materializeAddressedResults(v, call, aux)
 	if closureContext {
 		call.AddCallSiteAttribute(sig.ClosureContextIndex+1, llvmNestAttribute())
@@ -4479,6 +4667,7 @@ func LLVMCompile(f *Func) {
 		sig = sig.withClosureContext()
 	}
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
+	cpuFeatureFloor, wideCallCPUProfiles := llvmPlanWideVectorCalls(f)
 	FCtxt := &LLVMFuncContext{
 		BBs:                 map[ID]llvm.BasicBlock{},
 		Vs:                  map[ID]llvm.Value{},
@@ -4493,6 +4682,8 @@ func LLVMCompile(f *Func) {
 		OpenDeferSlots:      map[llvmLocalKey]int{},
 		RequiredCPUFeatures: map[string]bool{},
 		CPUFeatureGuards:    map[string][]llvm.Value{},
+		CPUFeatureFloor:     cpuFeatureFloor,
+		WideCallCPUProfiles: wideCallCPUProfiles,
 		F:                   f,
 		b:                   GlobalCtxt.NewBuilder(),
 		ReturnType:          sig.ReturnType,
@@ -4524,7 +4715,7 @@ func LLVMCompile(f *Func) {
 		// select the single-instruction LSE forms.
 		FCtxt.LF.AddTargetDependentFunctionAttr(llvmTargetFeaturesAttr, features)
 	}
-	if floor := llvmSIMDFeatureFloor(f); floor != "" {
+	if floor := FCtxt.CPUFeatureFloor; floor != "" {
 		FCtxt.LF.AddTargetDependentFunctionAttr(goCPUFeatureFloorAttr, floor)
 	}
 	// Go has already made its source-level inlining decision before LLVM
