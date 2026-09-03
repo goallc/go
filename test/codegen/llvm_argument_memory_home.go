@@ -17,11 +17,19 @@ type llvmArgumentStringArray [2]string
 // though LocalAddr-only functions below do not need it.
 //
 // LLVM-LABEL: define goabiinternal { ptr, i64, i64 } @codegen.llvmMoveToHeapUsesStackAddress(i64 %n)
-// LLVM: [[SP:%.*]] = call ptr @llvm.stackaddress.p0()
-// LLVM-NEXT: {{%.*}} = call i64 @llvm.go.pointer.address.i64.p0(ptr [[SP]])
+// LLVM-NOT: @llvm.stackaddress.p0()
+// LLVM: call goabiinternal void @codegen.llvmStackAddressMayGrow(
+// LLVM: [[FRAME_SP:%.*]] = call ptr @llvm.stackaddress.p0()
+// LLVM-NEXT: {{%.*}} = call i64 @llvm.go.pointer.address.i64.p0(ptr [[FRAME_SP]])
+// LLVM: [[POINTER_SP:%.*]] = call ptr @llvm.stackaddress.p0()
+// LLVM-NEXT: {{%.*}} = call i64 @llvm.go.pointer.address.i64.p0(ptr [[POINTER_SP]])
 // LLVM-OPT-LABEL: define goabiinternal { ptr, i64, i64 } @codegen.llvmMoveToHeapUsesStackAddress(i64 %n)
-// LLVM-OPT: [[SP_OPT:%.*]] = {{.*}}call ptr @llvm.stackaddress.p0()
-// LLVM-OPT-NEXT: {{%.*}} = {{.*}}call i64 @llvm.go.pointer.address.i64.p0(ptr [[SP_OPT]])
+// LLVM-OPT-NOT: @llvm.stackaddress.p0()
+// LLVM-OPT: call goabiinternal void @codegen.llvmStackAddressMayGrow(
+// LLVM-OPT: [[FRAME_SP_OPT:%.*]] = {{.*}}call ptr @llvm.stackaddress.p0()
+// LLVM-OPT-NEXT: {{%.*}} = {{.*}}call i64 @llvm.go.pointer.address.i64.p0(ptr [[FRAME_SP_OPT]])
+// LLVM-OPT: [[POINTER_SP_OPT:%.*]] = {{.*}}call ptr @llvm.stackaddress.p0()
+// LLVM-OPT-NEXT: {{%.*}} = {{.*}}call i64 @llvm.go.pointer.address.i64.p0(ptr [[POINTER_SP_OPT]])
 
 // llvmArgumentStrings3 fits wholly in the ABIInternal integer-register budget
 // but is too large for Go SSA's aggregate-value limit. LLVM gives only this
@@ -109,5 +117,9 @@ func llvmMoveToHeapUsesStackAddress(n int) []int {
 	for i := 0; i < n; i++ {
 		values = append(values, i)
 	}
+	llvmStackAddressMayGrow(&n)
 	return values
 }
+
+//go:noescape
+func llvmStackAddressMayGrow(*int)

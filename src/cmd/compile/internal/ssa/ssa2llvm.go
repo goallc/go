@@ -2890,13 +2890,6 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 			incomingLVals := make([]llvm.Value, 0, len(v.Args))
 			predecessors := make([]llvm.BasicBlock, 0, len(BB.Preds))
 			for i, incoming := range v.Args {
-				incomingLVal, ok := lfc.Vs[incoming.ID]
-				if !ok {
-					v.Fatalf("phi input %s was not emitted in its defining block", incoming)
-				}
-				if incomingLVal.IsNil() {
-					v.Fatalf("phi input %s produced no LLVM value", incoming.LongString())
-				}
 				predecessor := lfc.BBs[BB.Preds[i].Block().ID]
 				terminator := predecessor.LastInstruction()
 				if terminator.IsNil() {
@@ -2904,6 +2897,21 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 				}
 				lfc.b.SetInsertPointBefore(terminator)
 				lfc.setDebugLocation(v.Pos)
+				var incomingLVal llvm.Value
+				if incoming.Op == OpSP {
+					// SP denotes the physical stack pointer at the point of use,
+					// so a phi observes it on the corresponding incoming edge.
+					incomingLVal = lfc.GenLV(incoming)
+				} else {
+					var ok bool
+					incomingLVal, ok = lfc.Vs[incoming.ID]
+					if !ok {
+						v.Fatalf("phi input %s was not emitted in its defining block", incoming)
+					}
+					if incomingLVal.IsNil() {
+						v.Fatalf("phi input %s produced no LLVM value", incoming.LongString())
+					}
+				}
 				incomingLVal = lfc.reshapeLLVMValue(v, incomingLVal, incoming.Type, v.Type, v.String()+".incoming")
 				if got, want := incomingLVal.Type(), lfc.Vs[v.ID].Type(); got != want {
 					v.Fatalf("phi input %s has LLVM kind %s, want %s", incoming.LongString(), got.TypeKind(), want.TypeKind())
@@ -3619,27 +3627,20 @@ func (lfc *LLVMFuncContext) llvmWriteBarrier(v *Value) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
+	if v.Op == OpSP {
+		// OpSP is a zero-width fixed-register value in Go SSA, not a snapshot
+		// of SP at its entry-block definition. LocalAddr consumes it only as an
+		// addressing token and never calls GenLV. For a real value consumer,
+		// observe the physical SP at the consumer's insertion point and do not
+		// cache the result across calls that may move the goroutine stack.
+		return lfc.stackAddress(v)
+	}
 	if lv, ok := lfc.Vs[v.ID]; ok {
 		return lv
 	}
 	savedBlock := lfc.b.GetInsertBlock()
 	savedLocation := lfc.b.CurrentDebugLocationMetadata()
-	if v.Op == OpSP {
-		// CompileBlock leaves SP lazy because LocalAddr uses it only as a
-		// generic-SSA addressing token. A real consumer may request SP after
-		// the entry block already has a terminator, so insert its definition at
-		// the stable beginning of the entry rather than at the block end.
-		entry := lfc.BBs[lfc.F.Entry.ID]
-		before := entry.FirstInstruction()
-		for !before.IsNil() && !before.IsAPHINode().IsNil() {
-			before = llvm.NextInstruction(before)
-		}
-		if before.IsNil() {
-			lfc.b.SetInsertPointAtEnd(entry)
-		} else {
-			lfc.b.SetInsertPointBefore(before)
-		}
-	} else if v.Block != nil {
+	if v.Block != nil {
 		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
 	lfc.setDebugLocation(v.Pos)
@@ -3662,10 +3663,6 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 		// explicit SSA memory value. SB is only an address-space token here.
 	case OpInlMark:
 		lfc.emitInlineMark(v)
-	case OpSP:
-		// Unlike SB, SP can participate in integer expressions such as the
-		// caller-frame-size calculation emitted for GetCallerSP.
-		lVal = lfc.stackAddress(v)
 	case OpUnknown:
 		// SSA construction leaves Unknown values only in dead code. Preserve
 		// their "value does not matter" semantics as LLVM undef; live Go
