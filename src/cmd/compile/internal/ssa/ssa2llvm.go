@@ -11,6 +11,7 @@ import (
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"fmt"
 	"internal/buildcfg"
@@ -101,6 +102,7 @@ const goOpenDeferSlotsMD = "goallc.open_defer_slots"
 const goObjMarkerRelocMD = "goobj.marker_reloc"
 const goObjSymbolIndexMD = "goobj.symbol.index"
 const goObjStaticRODataTypeMD = "goobj.static_rodata_type"
+const goObjContentAddressableMD = "goobj.content_addressable"
 const llvmFramePointerAttr = "frame-pointer"
 const llvmFramePointerNonLeaf = "non-leaf"
 const llvmTargetCPUAttr = "target-cpu"
@@ -5628,7 +5630,7 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 		GlobalCtxt.MDString(goarchKey),
 		GlobalCtxt.MDString(goarchValue),
 		GlobalCtxt.MDString(base.Flag.BuildID),
-		GlobalCtxt.MDString(pkg.Path),
+		GlobalCtxt.MDString(objabi.PathToPrefix(pkg.Path)),
 		GlobalCtxt.MDString(main),
 		GlobalCtxt.MDString(shared),
 		GlobalCtxt.MDString(std),

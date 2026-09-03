@@ -388,6 +388,9 @@ func FinalizeGoObjSymbolMetadata() {
 		if s.PkgIdx == goobj.PkgIdxNone {
 			setGoObjNonPackageMetadata(fn)
 		}
+		if s.ContentAddressable() {
+			setGoObjContentAddressableMetadata(fn)
+		}
 	}
 }
 
@@ -421,6 +424,16 @@ func setGoObjContentHashMetadata(g llvm.Value, s *obj.LSym) {
 	hash := obj.ContentHash(base.Ctxt, s)
 	g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.content_hash"), GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString(string(hash)),
+	}))
+}
+
+// Text hashes cover final machine code and its resolved GoObj relocations, so
+// they cannot be computed from the compiler's pre-codegen LSym. Mark the
+// function and let LLVM's GoObj writer compute the native identity after MC
+// layout and relocation lowering are complete.
+func setGoObjContentAddressableMetadata(fn llvm.Value) {
+	fn.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjContentAddressableMD), GlobalCtxt.MDNode([]llvm.Metadata{
+		llvm.ConstInt(GlobalCtxt.Int1Type(), 1, false).ConstantAsMetadata(),
 	}))
 }
 

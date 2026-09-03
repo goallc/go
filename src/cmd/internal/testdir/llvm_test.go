@@ -42,6 +42,128 @@ type llvmTestMode struct {
 	runCandidates     map[string]bool
 }
 
+// testLLVMContentAddressableClosureExternalLink verifies that two packages can
+// inline the same closure without emitting duplicate definitions into the
+// external linker's Go object. Importing plugin keeps Go text symbols global
+// on ELF, which exposes the collision before content-addressable deduplication.
+// The symbol-level asmcheck separately covers imported generic closures.
+func testLLVMContentAddressableClosureExternalLink(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	testenv.MustHaveCGO(t)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	switch platform {
+	case "darwin/arm64", "linux/amd64", "linux/arm64":
+	default:
+		t.Skipf("LLVM GoObj is not configured for %s", platform)
+	}
+
+	goTool = testenv.GoToolPath(t)
+	configureLLVMTestToolchain(t)
+	dir := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/closurelink\n\ngo 1.27\n",
+		"shared/shared.go": `package shared
+
+//go:noinline
+func add(input, value int) int { return input + value }
+
+func Apply(value int) func(int) int {
+	return func(input int) int { return add(input, value) }
+}
+`,
+		"left/left.go": `package left
+
+import "example.com/closurelink/shared"
+
+//go:noinline
+func Apply(value int) func(int) int { return shared.Apply(value) }
+`,
+		"right/right.go": `package right
+
+import "example.com/closurelink/shared"
+
+//go:noinline
+func Apply(value int) func(int) int { return shared.Apply(value) }
+`,
+		"main.go": `package main
+
+import (
+	"example.com/closurelink/left"
+	"example.com/closurelink/right"
+	_ "plugin"
+)
+
+func main() {
+	if got := left.Apply(1)(10) + right.Apply(2)(20); got != 33 {
+		panic(got)
+	}
+}
+`,
+	}
+	for name, contents := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	exe := filepath.Join(dir, "closurelink")
+	cmd := testenv.Command(t, goTool, "build", "-gcflags=all=-enablellvm", "-ldflags=-linkmode=external", "-o", exe, ".")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local", "GOCACHE="+filepath.Join(dir, "cache"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("LLVM external link failed: %v\n%s", err, out)
+	}
+	const closureName = "example.com/closurelink/shared.Apply.func1"
+	closureHash := func(pkg string) string {
+		cmd := testenv.Command(t, goTool, "list", "-export", "-gcflags=all=-enablellvm", "-f={{.Export}}", pkg)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local", "GOCACHE="+filepath.Join(dir, "cache"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("listing LLVM archive for %s: %v\n%s", pkg, err, out)
+		}
+		archive := strings.TrimSpace(string(out))
+		out, err = runLLVMCodegenTool(goTool, "tool", "objview", "-format=json", archive)
+		if err != nil {
+			t.Fatalf("inspecting LLVM archive for %s: %v\n%s", pkg, err, out)
+		}
+		var document llvmObjviewDocument
+		if err := json.Unmarshal(out, &document); err != nil {
+			t.Fatalf("decoding LLVM archive for %s: %v", pkg, err)
+		}
+		for _, member := range document.Members {
+			if member.GoObject == nil {
+				continue
+			}
+			for _, symbol := range member.GoObject.Symbols {
+				if strings.HasPrefix(symbol.Name, closureName+"#") {
+					t.Fatalf("LLVM archive for %s retained temporary closure name %q", pkg, symbol.Name)
+				}
+				if symbol.Name == closureName {
+					if symbol.Class != "hashed" || symbol.Hash == "" {
+						t.Fatalf("LLVM closure identity for %s is class=%q hash=%q, want hashed with a nonempty hash", pkg, symbol.Class, symbol.Hash)
+					}
+					return symbol.Hash
+				}
+			}
+		}
+		t.Fatalf("LLVM archive for %s has no %q symbol", pkg, closureName)
+		return ""
+	}
+	leftHash := closureHash("./left")
+	rightHash := closureHash("./right")
+	if leftHash != rightHash {
+		t.Fatalf("identical closures have different content hashes: left=%s right=%s", leftHash, rightHash)
+	}
+	if out, err := testenv.Command(t, exe).CombinedOutput(); err != nil {
+		t.Fatalf("LLVM external-link executable failed: %v\n%s", err, out)
+	}
+}
+
 func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
 	t.Helper()
 	platform := goos + "/" + goarch
@@ -522,6 +644,8 @@ type llvmObjviewObject struct {
 	} `json:"references"`
 	Symbols []struct {
 		Name      string   `json:"name"`
+		Class     string   `json:"class"`
+		Hash      string   `json:"hash"`
 		Kind      string   `json:"kind"`
 		FlagNames []string `json:"flag_names"`
 		Aux       []struct {
@@ -573,7 +697,7 @@ func llvmObjviewSummary(label string, data []byte) ([]byte, error) {
 	}
 	relocationCounts := make(map[string]int)
 	for _, symbol := range object.Symbols {
-		lines = append(lines, fmt.Sprintf("%s symbol name=%q kind=%s flags=%s", label, symbol.Name, symbol.Kind, strings.Join(symbol.FlagNames, ",")))
+		lines = append(lines, fmt.Sprintf("%s symbol name=%q kind=%s flags=%s class=%s hash=%s", label, symbol.Name, symbol.Kind, strings.Join(symbol.FlagNames, ","), symbol.Class, symbol.Hash))
 		for _, aux := range symbol.Aux {
 			lines = append(lines, fmt.Sprintf("%s aux owner=%q type=%s target_kind=%s target_package=%q target_name=%q target_index=%d",
 				label, symbol.Name, aux.Type, aux.Target.Kind, aux.Target.Package, aux.Target.Name, aux.Target.SymIndex))
