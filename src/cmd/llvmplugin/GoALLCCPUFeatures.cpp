@@ -13,6 +13,7 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
@@ -334,6 +335,24 @@ void addTargetFeatures(Function &F, ArrayRef<const Profile *> Profiles) {
     addTargetFeature(F, P->TargetFeature);
 }
 
+bool containsWideVector(Type *Ty) {
+  if (auto *VT = dyn_cast<FixedVectorType>(Ty))
+    return VT->getPrimitiveSizeInBits().getFixedValue() > 128;
+  if (auto *AT = dyn_cast<ArrayType>(Ty))
+    return containsWideVector(AT->getElementType());
+  if (auto *ST = dyn_cast<StructType>(Ty))
+    return !ST->isOpaque() && llvm::any_of(ST->elements(), containsWideVector);
+  return false;
+}
+
+bool hasWideVectorRegisterCarrier(const Function &F) {
+  if (containsWideVector(F.getReturnType()))
+    return true;
+  return llvm::any_of(F.args(), [](const Argument &Arg) {
+    return containsWideVector(Arg.getType());
+  });
+}
+
 Expected<bool> specializeGuards(Function &F, uint64_t Available) {
   SmallVector<LoadInst *, 4> Guards;
   for (BasicBlock &BB : F)
@@ -537,6 +556,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
                            GlobalVariable &RuntimeMask,
                            const FeatureFloor &Floor) {
   const bool DuplicateOK = isGoObjDuplicateOK(F);
+  const bool WideVectorABI = hasWideVectorRegisterCarrier(F);
   Expected<SmallVector<const Profile *, 4>> Requested =
       requestedProfiles(F, Config.Arch);
   if (!Requested)
@@ -599,6 +619,8 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   LLVMContext &C = F.getContext();
   Module &M = *F.getParent();
   Function *Resolver = cloneResolver(F);
+  if (WideVectorABI)
+    addTargetFeatures(*Resolver, Floor.Profiles);
   if (Error Err = registerGoObjDebugFunction(*Resolver))
     return Err;
 
@@ -614,6 +636,8 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
 
   eraseFunctionBodyPreservingMetadata(F);
   F.removeFnAttr(MultiversionAttr);
+  if (WideVectorABI)
+    addTargetFeatures(F, Floor.Profiles);
   // The public function remains the source function and retains its complete
   // FuncInfo. It has no new physical frame: when left out of line it tail
   // transfers to a variant, and when inlined its synthetic debug scope is

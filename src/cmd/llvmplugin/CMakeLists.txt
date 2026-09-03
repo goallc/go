@@ -140,6 +140,18 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.WideVectorABI
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-wide-vector-abi.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-wide-vector-abi.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.AVX2v3Baseline
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx2-v3.ll"
     CHECK
