@@ -798,14 +798,23 @@ func growstack1() {
 //go:noinline
 func growstack(n int) {
 	var buf [8 << 18]byte
-	use(buf)
 	if n > 0 {
 		growstack(n - 1)
 	}
+	// Keep buf live across the recursive call so an optimizing backend cannot
+	// turn the recursion into a loop and collapse the stack-growth workload.
+	use(buf)
 }
 
 //go:noinline
-func use(x [8 << 18]byte) {}
+func use(x [8 << 18]byte) {
+	// TestMorestack relies on this call requiring a large by-value argument
+	// frame. Keep the call observable to optimizing backends, which may
+	// otherwise delete an empty use and the frame along with it.
+	atomic.AddUint32(&morestackSink, uint32(x[0]))
+}
+
+var morestackSink uint32
 
 func TestBlockProfile(t *testing.T) {
 	type TestCase struct {
