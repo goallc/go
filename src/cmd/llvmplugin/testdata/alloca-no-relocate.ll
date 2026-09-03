@@ -88,6 +88,24 @@ target triple = "aarch64-unknown-linux-goobj"
 ; MIR: STATEPOINT{{.*}}%stack.0.slot
 ; MIR: bb.1.entry.statepoint.cont:
 
+; SLP can combine scalar field addresses from one stack object into a fixed
+; vector GEP. The vector is still only a recipe for the fixed frame address:
+; keep the scalar alloca as the sole stack-map root and rebuild the vector
+; immediately at its post-statepoint use.
+; IR-LABEL: define goabiinternal void @vector_gep_from_scalar_alloca(
+; IR: %slot = alloca [8 x ptr]
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %slot)
+; IR-NOT: = call coldcc {{.*}} @llvm.experimental.gc.relocate
+; IR: %addresses.remat = getelementptr i8, ptr %slot, <2 x i64> <i64 48, i64 56>
+; IR-NEXT: store <2 x ptr> %addresses.remat, ptr @vector_address_sink
+
+; MIR-LABEL: name: vector_gep_from_scalar_alloca
+; MIR: stack:
+; MIR: - { id: 0, name: slot,
+; MIR-NOT: %{{(fixed-)?}}stack.1
+; MIR: STATEPOINT{{.*}}%stack.0.slot
+; MIR: bb.1.entry.statepoint.cont:
+
 ; An integer offset can itself be the result of the statepointed call. Its
 ; saved recipe must follow call RAUW to gc.result instead of retaining a raw
 ; pointer to the erased ordinary call.
@@ -164,6 +182,8 @@ declare goabiinternal i64 @dynamic_offset(ptr)
 declare goabiinternal void @consume_slice({ ptr, i64, i64 })
 declare goabiinternal void @consume_pointer_aggregate({ ptr })
 declare goabiinternal void @consume_nested_aggregate({ { ptr, i64 }, i64 })
+
+@vector_address_sink = external global <2 x ptr>
 
 define goabiinternal ptr @pointer_contents(ptr %value) gc "goallc" {
 entry:
@@ -311,6 +331,17 @@ entry:
   %element = getelementptr inbounds [4 x ptr], ptr %slot, i64 0, i64 %index
   call goabiinternal void @safepoint()
   store ptr null, ptr %element, align 8
+  ret void
+}
+
+define goabiinternal void @vector_gep_from_scalar_alloca() gc "goallc" {
+entry:
+  %slot = alloca [8 x ptr], align 8
+  store [8 x ptr] zeroinitializer, ptr %slot, align 8
+  %addresses = getelementptr inbounds i8, ptr %slot,
+      <2 x i64> <i64 48, i64 56>
+  call goabiinternal void @safepoint()
+  store <2 x ptr> %addresses, ptr @vector_address_sink, align 8
   ret void
 }
 

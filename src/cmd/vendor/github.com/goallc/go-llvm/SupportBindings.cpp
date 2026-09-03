@@ -67,6 +67,10 @@ void LLVMLoadLibraryPermanently2(const char *Filename, char **ErrMsg) {
   }
 }
 
+LLVMBool LLVMGoALLCContextHasErrors(LLVMContextRef ContextRef) {
+  return unwrap(ContextRef)->getDiagHandlerPtr()->HasErrors;
+}
+
 static Expected<std::string> getGoObjConfigField(const MDNode &Node,
                                                  unsigned Index) {
   if (const auto *Value = dyn_cast<MDString>(Node.getOperand(Index)))

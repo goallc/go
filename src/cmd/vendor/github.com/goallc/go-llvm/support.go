@@ -39,6 +39,13 @@ func LoadLibraryPermanently(lib string) error {
 	return nil
 }
 
+// HasErrors reports whether an error diagnostic has been emitted in the
+// context. LLVM target passes can report an error this way without returning
+// an error from the stable target-machine C API.
+func (c Context) HasErrors() bool {
+	return C.LLVMGoALLCContextHasErrors(c.C) != 0
+}
+
 // ConfigureGoObjFromModule decodes !goobj.config metadata into the GoObj
 // writer configuration consumed by the target code-generation pipeline.
 func ConfigureGoObjFromModule(m Module) error {

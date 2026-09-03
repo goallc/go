@@ -221,6 +221,14 @@ bool isRelocatablePointerType(Type *Ty) {
   return VT && VT->getElementType()->isPointerTy();
 }
 
+PointerType *getRelocatablePointerElementType(Type *Ty) {
+  if (auto *PT = dyn_cast<PointerType>(Ty))
+    return PT;
+  if (auto *VT = dyn_cast<FixedVectorType>(Ty))
+    return dyn_cast<PointerType>(VT->getElementType());
+  return nullptr;
+}
+
 bool isFixedFrameArgument(const Value *V) {
   const auto *Arg = dyn_cast<Argument>(V);
   return Arg && (Arg->hasByValAttr() || Arg->hasGoRetAttr());
@@ -237,7 +245,9 @@ bool isFixedFrameBase(const Value *V) {
 // are normalized to integer SSA separately, so only mixed object identities
 // make the provenance ambiguous.
 const Value *fixedFrameProvenanceBase(const Value *Root) {
-  if (!Root->getType()->isPointerTy())
+  PointerType *RootPointerTy =
+      getRelocatablePointerElementType(Root->getType());
+  if (!RootPointerTy)
     return nullptr;
 
   struct IdentityQuery {
@@ -353,7 +363,12 @@ const Value *fixedFrameProvenanceBase(const Value *Root) {
 
   // Reject an unanchored forwarding cycle and address-space changes which
   // cannot be reproduced by one Base+Offset recipe.
-  return Base && Root->getType() == Base->getType() ? Base : nullptr;
+  auto *BasePointerTy =
+      Base ? getRelocatablePointerElementType(Base->getType()) : nullptr;
+  if (!BasePointerTy ||
+      RootPointerTy->getAddressSpace() != BasePointerTy->getAddressSpace())
+    return nullptr;
+  return Base;
 }
 
 Value *fixedFrameProvenanceBase(Value *V) {
@@ -362,7 +377,8 @@ Value *fixedFrameProvenanceBase(Value *V) {
 }
 
 bool isFixedFrameAddress(const Value *V) {
-  return V->getType()->isPointerTy() && fixedFrameProvenanceBase(V) != nullptr;
+  return isRelocatablePointerType(V->getType()) &&
+         fixedFrameProvenanceBase(V) != nullptr;
 }
 
 // LLVM's RewriteStatepointsForGC traces a live derived pointer to a base
@@ -990,7 +1006,7 @@ void visitFixedFrameAddressUses(Value &Base, VisitorT &&Visit) {
     for (Use &U : Address->uses()) {
       auto *I = dyn_cast<Instruction>(U.getUser());
       FrameAddressUseKind Kind = classifyFrameAddressUse(U);
-      bool IsForwarding = I && I->getType()->isPointerTy() &&
+      bool IsForwarding = I && isRelocatablePointerType(I->getType()) &&
                           (Kind == FrameAddressUseKind::Derivation ||
                            (Kind == FrameAddressUseKind::FirstClass &&
                             isa<PHINode, SelectInst, FreezeInst>(I))) &&
@@ -1083,7 +1099,9 @@ private:
     if (Value *Offset = lookup(V, Base, Indices))
       return Offset;
 
-    Type *IndexTy = DL.getIndexType(Base->getType());
+    Type *AddressTy =
+        isRelocatablePointerType(V->getType()) ? V->getType() : Base->getType();
+    Type *IndexTy = DL.getIndexType(AddressTy);
     auto Name = [&]() -> Twine {
       return V->hasName() ? V->getName() + ".offset" : "fixed.frame.offset";
     };
@@ -1183,17 +1201,37 @@ private:
       IRBuilder<> Builder(GEP);
       Value *GEPOffset = emitGEPOffset(&Builder, DL, GEP);
       if (GEPOffset->getType() != IndexTy) {
-        if (!GEPOffset->getType()->isIntegerTy() || !IndexTy->isIntegerTy())
+        Type *OffsetTy = GEPOffset->getType();
+        auto *OffsetVectorTy = dyn_cast<FixedVectorType>(OffsetTy);
+        auto *IndexVectorTy = dyn_cast<FixedVectorType>(IndexTy);
+        if (!OffsetTy->isIntOrIntVectorTy() || !IndexTy->isIntOrIntVectorTy() ||
+            static_cast<bool>(OffsetVectorTy) !=
+                static_cast<bool>(IndexVectorTy) ||
+            (OffsetVectorTy && OffsetVectorTy->getElementCount() !=
+                                   IndexVectorTy->getElementCount()))
           return createStringError(
               std::errc::not_supported,
               "GoALLC fixed-frame GEP has an incompatible offset type");
         GEPOffset = Builder.CreateSExtOrTrunc(GEPOffset, IndexTy,
                                               GEP->getName() + ".offset.cast");
       }
+      Value *ParentOffsetValue = *ParentOffset;
+      if (ParentOffsetValue->getType() != IndexTy) {
+        auto *IndexVectorTy = dyn_cast<FixedVectorType>(IndexTy);
+        if (!IndexVectorTy ||
+            ParentOffsetValue->getType() != IndexVectorTy->getElementType())
+          return createStringError(
+              std::errc::not_supported,
+              "GoALLC fixed-frame GEP parent has an incompatible offset "
+              "type");
+        ParentOffsetValue = Builder.CreateVectorSplat(
+            IndexVectorTy->getElementCount(), ParentOffsetValue,
+            GEP->getName() + ".parent.offset");
+      }
       Value *Offset = GEPOffset;
-      auto *ParentConstant = dyn_cast<ConstantInt>(*ParentOffset);
-      if (!ParentConstant || !ParentConstant->isZero())
-        Offset = Builder.CreateAdd(*ParentOffset, GEPOffset, Name());
+      auto *ParentConstant = dyn_cast<Constant>(ParentOffsetValue);
+      if (!ParentConstant || !ParentConstant->isNullValue())
+        Offset = Builder.CreateAdd(ParentOffsetValue, GEPOffset, Name());
       remember(V, Base, Indices, Offset);
       return Offset;
     }
@@ -1218,7 +1256,7 @@ prepareFixedFrameAddresses(Function &F) {
     if (isFixedFrameArgument(&Arg))
       Candidates.insert(&Arg);
   for (Instruction &I : instructions(F))
-    if (I.getType()->isPointerTy() && fixedFrameProvenanceBase(&I))
+    if (isRelocatablePointerType(I.getType()) && fixedFrameProvenanceBase(&I))
       Candidates.insert(&I);
 
   FixedFrameOffsetBuilder Builder(F);
@@ -2837,7 +2875,7 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
           return;
         }
         if (Kind == FrameAddressUseKind::Derivation) {
-          if (!I->getType()->isPointerTy())
+          if (!isRelocatablePointerType(I->getType()))
             Record.ActivityUnclear = true;
           return;
         }

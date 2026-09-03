@@ -275,6 +275,7 @@ func (tm TargetMachine) Triple() string {
 }
 
 func (tm TargetMachine) EmitToMemoryBuffer(m Module, ft CodeGenFileType) (MemoryBuffer, error) {
+	hadErrors := m.Context().HasErrors()
 	var errstr *C.char
 	var mb MemoryBuffer
 	fail := C.LLVMTargetMachineEmitToMemoryBuffer(tm.C, m.C, C.LLVMCodeGenFileType(ft), &errstr, &mb.C)
@@ -282,6 +283,10 @@ func (tm TargetMachine) EmitToMemoryBuffer(m Module, ft CodeGenFileType) (Memory
 		err := errors.New(C.GoString(errstr))
 		C.free(unsafe.Pointer(errstr))
 		return MemoryBuffer{}, err
+	}
+	if !hadErrors && m.Context().HasErrors() {
+		mb.Dispose()
+		return MemoryBuffer{}, errors.New("LLVM target code generation reported an error")
 	}
 	return mb, nil
 }
