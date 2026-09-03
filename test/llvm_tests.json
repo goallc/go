@@ -4,6 +4,7 @@
   },
   "run": {
     "blacklist": {
+      "fixedbugs/issue20014.go": "unsupported: LLVM objects do not emit field tracking metadata",
       "rangegen.go": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
     },
     "platform_blacklist": {

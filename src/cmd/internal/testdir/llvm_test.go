@@ -79,7 +79,7 @@ func (m *llvmTestMode) selectTest(t *testing.T, test test) bool {
 	case "asmcheck":
 		m.codegenCandidates[name] = true
 		return !isLLVMTestBlacklisted(t, m.effective.Codegen, name)
-	case "run", "runoutput":
+	case "run", "runoutput", "rundir", "runindir", "buildrundir", "errorcheckandrundir":
 		m.runCandidates[name] = true
 		return !isLLVMTestBlacklisted(t, m.effective.Run, name)
 	default:

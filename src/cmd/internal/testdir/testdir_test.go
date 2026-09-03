@@ -538,6 +538,15 @@ func (test) goGcflagsIsEmpty() bool {
 	return "" == os.Getenv("GO_GCFLAGS")
 }
 
+// toolCompileFlags returns compiler flags for recipes that invoke
+// "go tool compile" directly instead of going through the go command.
+func (t test) toolCompileFlags(flags []string) []string {
+	if t.llvm == nil || slices.Contains(flags, "-enablellvm") {
+		return flags
+	}
+	return append(slices.Clone(flags), "-enablellvm")
+}
+
 // appendBuildFlag adds extra flags to the effective unpatterned per-package
 // build flag. Existing unpatterned flags are updated in place. An all= rule is
 // retained for dependencies and followed by an unpatterned rule for the package
@@ -650,6 +659,24 @@ func TestGoGcflags(t *testing.T) {
 	}
 	if got, want := (test{llvm: new(llvmTestMode)}).goGcflags(), "-gcflags=all=-N -enablellvm"; got != want {
 		t.Fatalf("LLVM goGcflags() = %q, want %q", got, want)
+	}
+}
+
+func TestToolCompileFlags(t *testing.T) {
+	flags := []string{"-N"}
+	if got, want := (test{}).toolCompileFlags(flags), flags; !slices.Equal(got, want) {
+		t.Fatalf("native toolCompileFlags(%q) = %q, want %q", flags, got, want)
+	}
+
+	llvmTest := test{llvm: new(llvmTestMode)}
+	if got, want := llvmTest.toolCompileFlags(flags), []string{"-N", "-enablellvm"}; !slices.Equal(got, want) {
+		t.Fatalf("LLVM toolCompileFlags(%q) = %q, want %q", flags, got, want)
+	}
+	if got, want := llvmTest.toolCompileFlags([]string{"-enablellvm"}), []string{"-enablellvm"}; !slices.Equal(got, want) {
+		t.Fatalf("LLVM toolCompileFlags with existing flag = %q, want %q", got, want)
+	}
+	if !slices.Equal(flags, []string{"-N"}) {
+		t.Fatalf("toolCompileFlags mutated its input: %q", flags)
 	}
 }
 
@@ -1033,7 +1060,7 @@ func (t test) run() error {
 		return nil
 
 	case "errorcheckdir", "errorcheckandrundir":
-		flags = append(flags, "-d=panic")
+		flags = t.toolCompileFlags(append(flags, "-d=panic"))
 		// Compile and errorCheck all files in the directory as packages in lexicographic order.
 		// If errorcheckdir and wantError, compilation of the last package must fail.
 		// If errorcheckandrundir and wantError, compilation of the package prior the last must fail.
@@ -1087,6 +1114,7 @@ func (t test) run() error {
 				break
 			}
 		}
+		flags = t.toolCompileFlags(flags)
 
 		importcfgfile := importcfg(pkgs)
 
@@ -1196,6 +1224,7 @@ func (t test) run() error {
 		}
 		var objs []string
 		cmd := []string{goTool, "tool", "compile", "-p=main", "-e", "-D", ".", "-importcfg=" + stdlibImportcfgFile(), "-o", "go.o"}
+		cmd = append(cmd, t.toolCompileFlags(nil)...)
 		if len(asms) > 0 {
 			cmd = append(cmd, "-asmhdr", "go_asm.h", "-symabis", "symabis")
 		}
