@@ -294,6 +294,8 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"max": "goALLCSIMDLowerMax", "min": "goALLCSIMDLowerMin",
 		"greater": "goALLCSIMDLowerGreater", "greater-equal": "goALLCSIMDLowerGreaterEqual",
 		"less": "goALLCSIMDLowerLess", "less-equal": "goALLCSIMDLowerLessEqual",
+		"average": "goALLCSIMDLowerAverage", "leading-sign-bits": "goALLCSIMDLowerLeadingSignBits",
+		"mul-high": "goALLCSIMDLowerMulHigh", "mul-sign": "goALLCSIMDLowerMulSign",
 	})
 	lane := goALLCSIMDConst("lane", d.Lane, map[string]string{
 		"int": "goALLCSIMDLaneInt", "uint": "goALLCSIMDLaneUint", "float": "goALLCSIMDLaneFloat",

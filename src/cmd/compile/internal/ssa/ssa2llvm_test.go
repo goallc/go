@@ -998,8 +998,19 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		{"min-unsigned", types.Types[types.TUINT32], 4, OpMinUint32x4, []string{"call <4 x i32> @llvm.umin.v4i32"}},
 		{"max-float32", types.Types[types.TFLOAT32], 4, OpMaxFloat32x4, []string{"call <4 x float> @llvm.maximum.v4f32"}},
 		{"min-float64", types.Types[types.TFLOAT64], 2, OpMinFloat64x2, []string{"call <2 x double> @llvm.minimum.v2f64"}},
+		{"average-signed", types.Types[types.TINT8], 16, OpAverageInt8x16, []string{"xor <16 x i8>", "ashr <16 x i8>", "or <16 x i8>", "sub <16 x i8>"}},
+		{"average-unsigned", types.Types[types.TUINT16], 8, OpAverageUint16x8, []string{"xor <8 x i16>", "lshr <8 x i16>", "or <8 x i16>", "sub <8 x i16>"}},
+		{"mul-high-signed", types.Types[types.TINT16], 8, OpMulHighInt16x8, []string{"sext <8 x i16>", "mul <8 x i32>", "ashr <8 x i32>", "trunc <8 x i32>"}},
+		{"mul-high-unsigned", types.Types[types.TUINT16], 8, OpMulHighUint16x8, []string{"zext <8 x i16>", "mul <8 x i32>", "lshr <8 x i32>", "trunc <8 x i32>"}},
+		{"mul-sign", types.Types[types.TINT32], 4, OpMulSignInt32x4, []string{"call <4 x i32> @llvm.x86.ssse3.psign.d.128"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			arch := "arm64"
+			var entry *Block
+			if strings.Contains(test.name, "mul-sign") {
+				arch = "amd64"
+				entry = &Block{CPUfeatures: CPUavx}
+			}
 			typ := llvmTestSIMDType(test.name, test.elem, test.lanes)
 			vectorType := getLLVMType(typ)
 			module := GlobalCtxt.NewModule("generic_vec128_" + test.name)
@@ -1011,7 +1022,7 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 			function := llvm.AddFunction(module, test.name, llvm.FunctionType(vectorType, []llvm.Type{vectorType, vectorType}, false))
 			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
 			context := &LLVMFuncContext{
-				F:  &Func{Config: &Config{arch: "arm64"}},
+				F:  &Func{Config: &Config{arch: arch}, Entry: entry},
 				Vs: make(map[ID]llvm.Value),
 				b:  builder,
 			}
@@ -1090,6 +1101,7 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		{"trunc-float32", types.Types[types.TFLOAT32], 4, OpTruncFloat32x4, []string{"call <4 x float> @llvm.trunc.v4f32"}},
 		{"ones-count-int8", types.Types[types.TINT8], 16, OpOnesCountInt8x16, []string{"call <16 x i8> @llvm.ctpop.v16i8"}},
 		{"leading-zeros-uint32", types.Types[types.TUINT32], 4, OpLeadingZerosUint32x4, []string{"call <4 x i32> @llvm.ctlz.v4i32(<4 x i32> %0, i1 false)"}},
+		{"leading-sign-bits", types.Types[types.TINT16], 8, OpLeadingSignBitsInt16x8, []string{"ashr <8 x i16>", "xor <8 x i16>", "call <8 x i16> @llvm.ctlz.v8i16", "sub <8 x i16>"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			typ := llvmTestSIMDType(test.name, test.elem, test.lanes)
@@ -1390,6 +1402,11 @@ func TestLLVMGenericWideSIMDLowering(t *testing.T) {
 		{name: "vec256-round-float32", elem: types.Types[types.TFLOAT32], resultElem: types.Types[types.TFLOAT32], lanes: 8, op: OpRoundFloat32x8, arity: 1, wants: []string{"call <8 x float> @llvm.roundeven.v8f32"}},
 		{name: "vec512-leading-zeros-int64", elem: types.Types[types.TINT64], resultElem: types.Types[types.TINT64], lanes: 8, op: OpLeadingZerosInt64x8, arity: 1, wants: []string{"call <8 x i64> @llvm.ctlz.v8i64(<8 x i64> %0, i1 false)"}},
 		{name: "vec512-max-float64", elem: types.Types[types.TFLOAT64], resultElem: types.Types[types.TFLOAT64], lanes: 8, op: OpMaxFloat64x8, arity: 2, wants: []string{"call <8 x double> @llvm.maximum.v8f64"}},
+		{name: "vec256-average-uint8", elem: types.Types[types.TUINT8], resultElem: types.Types[types.TUINT8], lanes: 32, op: OpAverageUint8x32, arity: 2, wants: []string{"lshr <32 x i8>", "sub <32 x i8>"}},
+		{name: "vec256-mul-high-int16", elem: types.Types[types.TINT16], resultElem: types.Types[types.TINT16], lanes: 16, op: OpMulHighInt16x16, arity: 2, wants: []string{"sext <16 x i16>", "mul <16 x i32>", "trunc <16 x i32>"}},
+		{name: "vec256-mul-sign-int8", elem: types.Types[types.TINT8], resultElem: types.Types[types.TINT8], lanes: 32, op: OpMulSignInt8x32, arity: 2, wants: []string{"call <32 x i8> @llvm.x86.avx2.psign.b"}},
+		{name: "vec512-average-uint16", elem: types.Types[types.TUINT16], resultElem: types.Types[types.TUINT16], lanes: 32, op: OpAverageUint16x32, arity: 2, wants: []string{"lshr <32 x i16>", "sub <32 x i16>"}},
+		{name: "vec512-mul-high-uint16", elem: types.Types[types.TUINT16], resultElem: types.Types[types.TUINT16], lanes: 32, op: OpMulHighUint16x32, arity: 2, wants: []string{"zext <32 x i16>", "mul <32 x i32>", "trunc <32 x i32>"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inputType := llvmTestSIMDType(test.name+"-input", test.elem, test.lanes)
@@ -1563,6 +1580,28 @@ func TestGoALLCGeneratedSIMDDescriptors(t *testing.T) {
 			name: "128-bit-arm64-reduce-float-max", op: OpreduceMaxFloat32x4,
 			lowering: goALLCSIMDLowerReduceMax,
 			lane:     goALLCSIMDLaneFloat, laneBits: 32,
+		},
+		{
+			name: "128-bit-arm64-signed-average", op: OpAverageInt8x16,
+			lowering: goALLCSIMDLowerAverage,
+			lane:     goALLCSIMDLaneInt, laneBits: 8,
+		},
+		{
+			name: "256-bit-avx2-high-multiply", op: OpMulHighUint16x16,
+			lowering: goALLCSIMDLowerMulHigh,
+			lane:     goALLCSIMDLaneUint, laneBits: 16,
+			amdProfile: goCPUProfileX86AVX2,
+		},
+		{
+			name: "128-bit-arm64-leading-sign-bits", op: OpLeadingSignBitsUint32x4,
+			lowering: goALLCSIMDLowerLeadingSignBits,
+			lane:     goALLCSIMDLaneUint, laneBits: 32,
+		},
+		{
+			name: "128-bit-avx-sign-multiply", op: OpMulSignInt32x4,
+			lowering: goALLCSIMDLowerMulSign,
+			lane:     goALLCSIMDLaneInt, laneBits: 32,
+			amdProfile: goCPUProfileX86AVX,
 		},
 		{
 			name: "128-bit-round-even", op: OpRoundFloat64x2,

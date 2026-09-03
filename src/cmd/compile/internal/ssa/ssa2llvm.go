@@ -2213,6 +2213,106 @@ func (lfc *LLVMFuncContext) simdLeadingZeros(v *Value, laneType llvm.Type, lanes
 	})
 }
 
+func llvmSIMDIntegerSplat(laneType llvm.Type, lanes int, value uint64) llvm.Value {
+	elements := make([]llvm.Value, lanes)
+	for i := range elements {
+		elements[i] = llvm.ConstInt(laneType, value, false)
+	}
+	return llvm.ConstVector(elements, false)
+}
+
+// simdAverage computes ceil((x+y)/2) without overflowing the lane type. The
+// arithmetic shift in the signed case gives SRHADD's rounding toward positive
+// infinity, including for negative odd sums.
+func (lfc *LLVMFuncContext) simdAverage(v *Value, info goALLCSIMDOpInfo, laneType llvm.Type, lanes int) llvm.Value {
+	x, y := lfc.simdLaneOperands(v, laneType, lanes)
+	different := lfc.b.CreateXor(x, y, v.String()+".different")
+	one := llvmSIMDIntegerSplat(laneType, lanes, 1)
+	var half llvm.Value
+	if info.lane == goALLCSIMDLaneInt {
+		half = lfc.b.CreateAShr(different, one, v.String()+".half")
+	} else {
+		half = lfc.b.CreateLShr(different, one, v.String()+".half")
+	}
+	union := lfc.b.CreateOr(x, y, v.String()+".union")
+	return lfc.simdLaneResult(v, lfc.b.CreateSub(union, half, v.String()+".lanes"))
+}
+
+func (lfc *LLVMFuncContext) simdLeadingSignBits(v *Value, laneType llvm.Type, lanes int, laneBits int) llvm.Value {
+	operationType := llvm.VectorType(laneType, lanes)
+	x := lfc.simdValueAs(v, v.Args[0], operationType, ".x")
+	shift := llvmSIMDIntegerSplat(laneType, lanes, uint64(laneBits-1))
+	sign := lfc.b.CreateAShr(x, shift, v.String()+".sign")
+	normalized := lfc.b.CreateXor(x, sign, v.String()+".normalized")
+	i1 := GlobalCtxt.Int1Type()
+	name := fmt.Sprintf("llvm.ctlz.v%di%d", lanes, laneBits)
+	sig := llvm.FunctionType(operationType, []llvm.Type{operationType, i1}, false)
+	fn := getOrInsertLLVMIntrinsic(name, sig)
+	leading := lfc.b.CreateCall(sig, fn, []llvm.Value{normalized, llvm.ConstInt(i1, 0, false)}, v.String()+".leading")
+	one := llvmSIMDIntegerSplat(laneType, lanes, 1)
+	return lfc.simdLaneResult(v, lfc.b.CreateSub(leading, one, v.String()+".lanes"))
+}
+
+func (lfc *LLVMFuncContext) simdMulHigh(v *Value, info goALLCSIMDOpInfo, laneType llvm.Type, lanes int, laneBits int) llvm.Value {
+	x, y := lfc.simdLaneOperands(v, laneType, lanes)
+	wideLaneType := GlobalCtxt.IntType(laneBits * 2)
+	wideType := llvm.VectorType(wideLaneType, lanes)
+	if info.lane == goALLCSIMDLaneInt {
+		x = lfc.b.CreateSExt(x, wideType, v.String()+".x.wide")
+		y = lfc.b.CreateSExt(y, wideType, v.String()+".y.wide")
+	} else {
+		x = lfc.b.CreateZExt(x, wideType, v.String()+".x.wide")
+		y = lfc.b.CreateZExt(y, wideType, v.String()+".y.wide")
+	}
+	product := lfc.b.CreateMul(x, y, v.String()+".product")
+	shift := llvmSIMDIntegerSplat(wideLaneType, lanes, uint64(laneBits))
+	var high llvm.Value
+	if info.lane == goALLCSIMDLaneInt {
+		high = lfc.b.CreateAShr(product, shift, v.String()+".high")
+	} else {
+		high = lfc.b.CreateLShr(product, shift, v.String()+".high")
+	}
+	operationType := llvm.VectorType(laneType, lanes)
+	return lfc.simdLaneResult(v, lfc.b.CreateTrunc(high, operationType, v.String()+".lanes"))
+}
+
+func (lfc *LLVMFuncContext) simdMulSign(v *Value, laneType llvm.Type, lanes int, laneBits int) llvm.Value {
+	if lfc.F.Config.arch != "amd64" {
+		v.Fatalf("%s generated SIMD sign multiply is only available on amd64", v.Op)
+	}
+	x, y := lfc.simdLaneOperands(v, laneType, lanes)
+	var suffix string
+	switch laneBits {
+	case 8:
+		suffix = "b"
+	case 16:
+		suffix = "w"
+	case 32:
+		suffix = "d"
+	default:
+		v.Fatalf("%s generated SIMD sign multiply does not support %d-bit lanes", v.Op, laneBits)
+	}
+	var name string
+	switch lanes * laneBits {
+	case 128:
+		name = fmt.Sprintf("llvm.x86.ssse3.psign.%s.128", suffix)
+	case 256:
+		name = fmt.Sprintf("llvm.x86.avx2.psign.%s", suffix)
+	default:
+		v.Fatalf("%s generated SIMD sign multiply does not support %d-bit vectors", v.Op, lanes*laneBits)
+	}
+	// LLVM does not currently fold the target-independent compare/select form
+	// to PSIGN. This generated family is amd64-only, so use LLVM's existing x86
+	// intrinsic rather than adding a Go intrinsic or an X86 target node.
+	operationType := llvm.VectorType(laneType, lanes)
+	sig := llvm.FunctionType(operationType, []llvm.Type{operationType, operationType}, false)
+	fn := getLLVMIntrinsicDeclaration(name)
+	if got := fn.GlobalValueType(); got != sig {
+		v.Fatalf("%s intrinsic has unexpected LLVM type %v", v.Op, got)
+	}
+	return lfc.simdLaneResult(v, lfc.b.CreateCall(sig, fn, []llvm.Value{x, y}, v.String()+".lanes"))
+}
+
 // simdReduction preserves the generic SSA contract used by Go's ARM64 SIMD
 // operations: the scalar reduction result is in lane zero and every other lane
 // is zero. The public API's following GetElem(0) lets LLVM eliminate this
@@ -2455,6 +2555,26 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 			return finish(lfc.simdLeadingZeros(v, laneType, lanes, name))
 		}
 		return finish(lfc.simdUnaryIntrinsic(v, laneType, lanes, name))
+	case goALLCSIMDLowerAverage:
+		if isFloat || len(v.Args) != 2 {
+			v.Fatalf("%s generated SIMD average requires two integer operands", v.Op)
+		}
+		return finish(lfc.simdAverage(v, info, laneType, lanes))
+	case goALLCSIMDLowerLeadingSignBits:
+		if isFloat || len(v.Args) != 1 {
+			v.Fatalf("%s generated SIMD leading-sign-bits requires one integer operand", v.Op)
+		}
+		return finish(lfc.simdLeadingSignBits(v, laneType, lanes, laneBits))
+	case goALLCSIMDLowerMulHigh:
+		if isFloat || len(v.Args) != 2 {
+			v.Fatalf("%s generated SIMD high multiply requires two integer operands", v.Op)
+		}
+		return finish(lfc.simdMulHigh(v, info, laneType, lanes, laneBits))
+	case goALLCSIMDLowerMulSign:
+		if info.lane != goALLCSIMDLaneInt || len(v.Args) != 2 {
+			v.Fatalf("%s generated SIMD sign multiply requires two signed integer operands", v.Op)
+		}
+		return finish(lfc.simdMulSign(v, laneType, lanes, laneBits))
 	case goALLCSIMDLowerMax, goALLCSIMDLowerMin:
 		operation := ""
 		switch info.lane {

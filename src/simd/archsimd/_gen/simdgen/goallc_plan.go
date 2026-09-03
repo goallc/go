@@ -65,14 +65,14 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	// Operations built from multiple target-independent LLVM instructions or
 	// generic intrinsics.
 	goALLCSIMDPlanCompose: {
-		"AddOddSubEven", "Average",
+		"AddOddSubEven",
 		"ConcatAddPairs", "ConcatAddPairsGrouped",
 		"ConcatAddPairsSaturated", "ConcatAddPairsSaturatedGrouped",
 		"ConcatSubPairs", "ConcatSubPairsGrouped",
 		"ConcatSubPairsSaturated", "ConcatSubPairsSaturatedGrouped",
-		"DotProductPairs", "DotProductPairsSaturated", "LeadingSignBits",
-		"MulAdd", "MulAddEvenSubOdd", "MulAddOddSubEven", "MulHigh",
-		"MulSign", "MulWidenEven", "MulWidenLo", "SumOf8AbsDiff",
+		"DotProductPairs", "DotProductPairsSaturated",
+		"MulAdd", "MulAddEvenSubOdd", "MulAddOddSubEven",
+		"MulWidenEven", "MulWidenLo", "SumOf8AbsDiff",
 		"blend", "tern",
 	},
 

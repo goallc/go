@@ -140,6 +140,8 @@ var goALLCLoweringArity = map[string]int{
 	"not": 1, "neg": 1, "abs": 1,
 	"sqrt": 1, "round-even": 1, "floor": 1, "ceil": 1, "trunc": 1,
 	"ones-count": 1, "leading-zeros": 1,
+	"average": 2, "leading-sign-bits": 1,
+	"mul-high": 2, "mul-sign": 2,
 	"max": 2, "min": 2,
 	"equal": 2, "not-equal": 2, "greater": 2,
 	"greater-equal": 2, "less": 2, "less-equal": 2,
@@ -184,8 +186,11 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	if (lowering == "sqrt" || lowering == "round-even" || lowering == "floor" || lowering == "ceil" || lowering == "trunc") && wantBase != "float" {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires floating-point lanes for %s", lowering, op.GenericName()))
 	}
-	if (lowering == "ones-count" || lowering == "leading-zeros") && wantBase != "int" && wantBase != "uint" {
+	if (lowering == "ones-count" || lowering == "leading-zeros" || lowering == "average" || lowering == "leading-sign-bits" || lowering == "mul-high" || lowering == "mul-sign") && wantBase != "int" && wantBase != "uint" {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires integer lanes for %s", lowering, op.GenericName()))
+	}
+	if lowering == "mul-sign" && wantBase != "int" {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q requires signed integer lanes for %s", lowering, op.GenericName()))
 	}
 	scalarInputs := 0
 	for _, in := range genericOp.In {

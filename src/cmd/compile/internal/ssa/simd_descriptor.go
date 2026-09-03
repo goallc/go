@@ -42,6 +42,10 @@ const (
 	goALLCSIMDLowerGreaterEqual
 	goALLCSIMDLowerLess
 	goALLCSIMDLowerLessEqual
+	goALLCSIMDLowerAverage
+	goALLCSIMDLowerLeadingSignBits
+	goALLCSIMDLowerMulHigh
+	goALLCSIMDLowerMulSign
 )
 
 type goALLCSIMDLane uint8
