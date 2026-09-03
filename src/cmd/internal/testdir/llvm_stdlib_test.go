@@ -32,7 +32,7 @@ const llvmRuntimeAMD64Skip = `|^TestFunctionAlignmentTraceback$`
 // These tests assert native pcln and inline-stack shapes that LLVM GoObj does
 // not fully reproduce yet. Keep the heap-profile stack-growth coverage in
 // TestMemoryProfiler and TestGenericsHashKeyInPprofBuilder enabled.
-const llvmPprofSkip = `^(TestCPUProfileRecursion|TestGenericsInlineLocations|TestProfilerStackDepth)$|^TestTryAdd$/^recursion_chain_inline$`
+const llvmPprofSkip = `^(TestCPUProfileRecursion|TestGenericsInlineLocations)$|^TestTryAdd$/^recursion_chain_inline$`
 
 // LLVM currently reports the inlined TestAll call sites rather than the
 // original testPrint call sites expected by the file-line assertions.

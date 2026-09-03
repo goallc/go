@@ -2843,10 +2843,16 @@ func hasPrefix(stk []string, prefix []string) bool {
 var _ = map[runtime.MemProfileRecord]struct{}{}
 var _ = map[runtime.StackRecord]struct{}{}
 
+// profilerStackDepthSink makes work after the recursive calls observable.
+var profilerStackDepthSink uint32
+
 // allocDeep calls itself n times before calling fn.
 func allocDeep(n int) {
 	if n > 1 {
 		allocDeep(n - 1)
+		// Keep the recursive call from becoming a tail call. This test needs a
+		// real deep stack to exercise the profiler's stack-depth limit.
+		atomic.AddUint32(&profilerStackDepthSink, uint32(n))
 		return
 	}
 	memSink = make([]byte, 1<<20)
@@ -2857,6 +2863,7 @@ func allocDeep(n int) {
 func blockChanDeep(t *testing.T, n int) {
 	if n > 1 {
 		blockChanDeep(t, n-1)
+		atomic.AddUint32(&profilerStackDepthSink, uint32(n))
 		return
 	}
 	ch := make(chan struct{})
@@ -2872,6 +2879,7 @@ func blockChanDeep(t *testing.T, n int) {
 func blockMutexDeep(t *testing.T, n int) {
 	if n > 1 {
 		blockMutexDeep(t, n-1)
+		atomic.AddUint32(&profilerStackDepthSink, uint32(n))
 		return
 	}
 	var mu sync.Mutex
@@ -2888,6 +2896,7 @@ func blockMutexDeep(t *testing.T, n int) {
 func goroutineDeep(t *testing.T, n int) {
 	if n > 1 {
 		goroutineDeep(t, n-1)
+		atomic.AddUint32(&profilerStackDepthSink, uint32(n))
 		return
 	}
 	wait := make(chan struct{}, 1)
