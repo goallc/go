@@ -159,7 +159,7 @@ func testLLVMStdlib(t *testing.T) {
 	for name := range packages {
 		if _, ok := blacklist[name]; ok {
 			blacklisted = append(blacklisted, name)
-		} else {
+		} else if shardMatch(name) {
 			candidates = append(candidates, name)
 		}
 	}
@@ -169,7 +169,7 @@ func testLLVMStdlib(t *testing.T) {
 	if testing.Short() {
 		mode = "short"
 	}
-	t.Logf("LLVM standard library default-test policy: mode=%s, %d tested, %d blacklisted (%d packages)", mode, len(candidates), len(blacklisted), len(packages))
+	t.Logf("LLVM standard library default-test policy: mode=%s, %d selected, %d blacklisted (%d packages)", mode, len(candidates), len(blacklisted), len(packages))
 	for _, name := range blacklisted {
 		t.Logf("LLVM stdlib blacklist result: NOT RUN package=%q reason=%q", name, blacklist[name])
 	}

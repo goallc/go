@@ -68,7 +68,7 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
 
   linux:
-    name: linux-${{ matrix.arch }}
+    name: ${{ matrix.name }}
     needs: llvm-payload
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
@@ -78,8 +78,40 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-22.04
+            name: linux-amd64
+            task: testdir
+            shard: 0
+            shards: 1
+          - arch: amd64
+            runner: ubuntu-22.04
+            name: linux-amd64-stdlib-1-of-2
+            task: stdlib
+            shard: 0
+            shards: 2
+          - arch: amd64
+            runner: ubuntu-22.04
+            name: linux-amd64-stdlib-2-of-2
+            task: stdlib
+            shard: 1
+            shards: 2
           - arch: arm64
             runner: ubuntu-22.04-arm
+            name: linux-arm64
+            task: testdir
+            shard: 0
+            shards: 1
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            name: linux-arm64-stdlib-1-of-2
+            task: stdlib
+            shard: 0
+            shards: 2
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            name: linux-arm64-stdlib-2-of-2
+            task: stdlib
+            shard: 1
+            shards: 2
     env:
       LLVM_RELEASE: ${{ needs.llvm-payload.outputs.release_tag }}
       LLVM_REVISION: ${{ needs.llvm-payload.outputs.revision }}
@@ -188,6 +220,7 @@ jobs:
             -llvm-link=dynamic
 
       - name: Test pass plugin
+        if: matrix.task == 'testdir'
         shell: bash
         run: |
           set -euo pipefail
@@ -212,12 +245,14 @@ jobs:
             --output-on-failure -j "$(nproc)"
 
       - name: Test GoALLC infrastructure
+        if: matrix.task == 'testdir'
         shell: bash
         run: |
           set -euo pipefail
           ./bin/go test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
 
       - name: Test linker DWARF with LLVM fixtures
+        if: matrix.task == 'testdir'
         shell: bash
         env:
           GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
@@ -241,6 +276,7 @@ jobs:
           df -h "$RUNNER_TEMP"
 
       - name: Test LLVM standard library package policy
+        if: matrix.task == 'stdlib'
         shell: bash
         env:
           GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
@@ -258,9 +294,12 @@ jobs:
             -run '^TestLLVM$/^stdlib$' \
             -count=1 \
             -timeout=100m \
+            -shard=${{ matrix.shard }} \
+            -shards=${{ matrix.shards }} \
             -v
 
       - name: Test LLVM testdir
+        if: matrix.task == 'testdir'
         shell: bash
         env:
           GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
@@ -276,7 +315,7 @@ jobs:
               | jq --unbuffered -rj 'select(.Output != null) | .Output'
 
       - name: Publish LLVM test summary
-        if: always()
+        if: always() && matrix.task == 'testdir'
         env:
           GOALLC_CI_ARCH: ${{ matrix.arch }}
         run: |
