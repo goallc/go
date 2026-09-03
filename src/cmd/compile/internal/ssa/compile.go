@@ -171,6 +171,15 @@ func llvmWritebarrierPass(f *Func) {
 	}
 }
 
+func llvmPreWritebarrierDeadcodePass(f *Func) {
+	if base.Flag.EnableLLVM {
+		// Optimizations can leave unused memory values. The native path removes
+		// them before writebarrier, whose store ordering requires a single live
+		// memory chain, so preserve that invariant for the earlier LLVM path.
+		deadcode(f)
+	}
+}
+
 func llvmCPUFeaturesPass(f *Func) {
 	if base.Flag.EnableLLVM && buildcfg.Experiment.SIMD {
 		// LLVM emission precedes the native cpufeatures phase because it needs
@@ -506,8 +515,10 @@ var passes = [...]pass{
 	// LLVM consumes the optimized generic SSA while calls and logical aggregate
 	// values still retain their frontend ABI shape. Keep its normalization and
 	// emission immediately before expandCalls dismantles logical arguments and
-	// results into physical ABI pieces. The single deadcode pass cleans the
-	// CFG/value debris left by writebarrier and direct-interface normalization.
+	// results into physical ABI pieces. Clean unused memory before writebarrier;
+	// the later deadcode pass cleans the CFG/value debris left by writebarrier
+	// and direct-interface normalization.
+	{name: "llvm pre-writebarrier deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
 	{name: "llvm deadcode", fn: deadcode, required: true},
