@@ -107,6 +107,24 @@ func TestHelperRange(t *testing.T) {
 	}
 }
 
+func TestTBHelperPromotedMethod(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		testPromotedMethodHelper(t)
+		return
+	}
+
+	cmd := testenv.Command(t, testenv.Executable(t), "-test.run=^TestTBHelperPromotedMethod$")
+	cmd = testenv.CleanCmdEnv(cmd)
+	cmd.Env = append(cmd.Env, "GO_WANT_HELPER_PROCESS=1")
+	out, _ := cmd.CombinedOutput()
+	want := `--- FAIL: TestTBHelperPromotedMethod \([^)]+\)
+    helperfuncs_test.go:159: promoted method helper
+`
+	if !regexp.MustCompile(want).Match(out) {
+		t.Errorf("got output:\n\n%s\nwant matching:\n\n%s", out, want)
+	}
+}
+
 func BenchmarkTBHelper(b *testing.B) {
 	f1 := func() {
 		b.Helper()

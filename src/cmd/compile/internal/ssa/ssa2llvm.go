@@ -15,6 +15,7 @@ import (
 	"cmd/internal/src"
 	"fmt"
 	"internal/buildcfg"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -3006,7 +3007,9 @@ func (lfc *LLVMFuncContext) llvmMemoryResultCallArguments(v *Value, sig llvmFunc
 		// The call writes this object. Start its source lifetime before the
 		// statepoint; the statepoint pass zero-initializes pointer words that are
 		// visible to the caller stack map before the callee has produced them.
-		if slot.Type.HasPointers() {
+		// A musttail call reuses the caller's goret home, whose lifetime is
+		// already active. Ordinary calls own a distinct result slot.
+		if slot.Type.HasPointers() && !lfc.llvmCanEmitMustTail(v, aux) {
 			lfc.llvmLifetimeStart(slot)
 		}
 		args = append(args, slot.Value)
@@ -4633,32 +4636,60 @@ func (lfc *LLVMFuncContext) emitOpenDeferRecovery() {
 	}
 }
 
-// llvmCanEmitMustTail reports the first Go tail-call shape whose ABI frame
-// contract LLVM can currently guarantee. Keep this decision in the Go
-// compiler: LLVM implements the mechanical transfer between its Go calling
-// conventions, while the frontend decides which Go wrappers may reuse their
-// caller's frame. This intentionally starts with direct void(void) transfers;
-// later revisions can widen the predicate as argument/result frame reuse is
-// proven.
+// llvmMustTailSignaturesCompatible mirrors the exact-signature contract
+// enforced by LLVM's Go calling-convention lowering. Function types cover the
+// value carriers; the remaining fields cover ABI-impacting parameter and
+// result attributes that are not part of an LLVM function type.
+func llvmMustTailSignaturesCompatible(caller, callee llvmFuncSignature) bool {
+	return caller.Type == callee.Type &&
+		caller.HasClosureContext == callee.HasClosureContext &&
+		(caller.ReturnCount > 1) == (callee.ReturnCount > 1) &&
+		slices.Equal(caller.Params, callee.Params) &&
+		slices.Equal(caller.Results, callee.Results)
+}
+
+// llvmCanEmitMustTail accepts exact-signature transfers within one Go ABI,
+// including indirect calls. The pinned LLVM target lowering independently
+// validates the same contract before reusing the caller's register and stack
+// argument/result layout. The ABI0-to-ABIInternal transition remains limited
+// to the direct void(void) shape because those two frame layouts otherwise
+// differ.
 func (lfc *LLVMFuncContext) llvmCanEmitMustTail(call *Value, aux *AuxCall) bool {
-	if call.Op != OpTailLECall || aux == nil || aux.Fn == nil ||
-		lfc.F.OwnAux == nil {
+	if aux == nil || lfc.F == nil || lfc.F.OwnAux == nil {
+		return false
+	}
+	switch call.Op {
+	case OpTailLECall:
+		if aux.Fn == nil {
+			return false
+		}
+	case OpTailLECallInter:
+	default:
 		return false
 	}
 	callerABI := lfc.F.OwnAux.ABI().Which()
 	calleeABI := aux.ABI().Which()
-	compatibleABI := callerABI == calleeABI ||
-		callerABI == obj.ABI0 && calleeABI == obj.ABIInternal
-	return compatibleABI &&
+	if callerABI == calleeABI {
+		callerSig := llvmSignature(lfc.F.OwnAux)
+		if llvmFunctionUsesClosureContext(lfc.F) {
+			callerSig = callerSig.withClosureContext()
+		}
+		calleeSig := llvmSignature(aux)
+		if call.Op == OpTailLECall {
+			calleeSig = llvmStaticCallSignature(aux, calleeSig)
+		}
+		return llvmMustTailSignaturesCompatible(callerSig, calleeSig)
+	}
+	return call.Op == OpTailLECall &&
+		callerABI == obj.ABI0 && calleeABI == obj.ABIInternal &&
 		aux.NArgs() == 0 && aux.NResults() == 0 &&
 		lfc.F.OwnAux.NArgs() == 0 && lfc.F.OwnAux.NResults() == 0
 }
 
-// emitTailCallReturn lowers the compiler's RetJmp terminator. Proven
-// void(void) direct transfers are emitted as musttail so neither LLVM
-// optimization nor statepoint rewriting may reintroduce a frame. Other
-// compiler-generated tail calls retain the existing call-and-return fallback
-// until their ABI frame shapes are supported.
+// emitTailCallReturn lowers the compiler's RetJmp terminator. Compatible
+// transfers are emitted as musttail so neither LLVM optimization nor
+// statepoint rewriting may reintroduce a frame. Other compiler-generated tail
+// calls retain the call-and-return fallback.
 func (lfc *LLVMFuncContext) emitTailCallReturn(b *Block) {
 	mem := b.Controls[0]
 	if mem == nil || mem.Op != OpSelectN || len(mem.Args) != 1 || !mem.Type.IsMemory() {
@@ -4676,7 +4707,14 @@ func (lfc *LLVMFuncContext) emitTailCallReturn(b *Block) {
 	result := lfc.GenLV(call)
 	if lfc.llvmCanEmitMustTail(call, aux) {
 		result.SetTailCallKind(llvm.TailCallKindMustTail)
-		lfc.b.CreateRetVoid()
+		if lfc.ReturnCount == 0 {
+			lfc.b.CreateRetVoid()
+		} else {
+			if result.Type() != lfc.ReturnType {
+				call.Fatalf("musttail result has incompatible LLVM type")
+			}
+			lfc.b.CreateRet(result)
+		}
 		return
 	}
 	calleeSig := llvmSignature(aux)
@@ -5244,11 +5282,23 @@ func LLVMCompile(f *Func) {
 					continue
 				}
 				resultType := aux.TypeOfResult(int64(index))
-				slot := llvmStackSlot{
-					Value: FCtxt.b.CreateAlloca(result.ValueType, fmt.Sprintf("%s.result%d.home", call, index)),
-					Type:  resultType,
+				var slot llvmStackSlot
+				if FCtxt.llvmCanEmitMustTail(call, aux) {
+					callerResult := FCtxt.Results[index]
+					if !callerResult.InMemory {
+						call.Fatalf("musttail memory result %d does not match caller", index)
+					}
+					slot = llvmStackSlot{
+						Value: FCtxt.LF.Param(callerResult.ParamIndex),
+						Type:  resultType,
+					}
+				} else {
+					slot = llvmStackSlot{
+						Value: FCtxt.b.CreateAlloca(result.ValueType, fmt.Sprintf("%s.result%d.home", call, index)),
+						Type:  resultType,
+					}
+					slot.Value.SetAlignment(result.Alignment)
 				}
-				slot.Value.SetAlignment(result.Alignment)
 				FCtxt.CallResultSlots[llvmCallResultKey{Call: call.ID, Index: int64(index)}] = slot
 			}
 		}

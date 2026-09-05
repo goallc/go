@@ -4223,6 +4223,7 @@ func addTailCall(pos src.XPos, fn *ir.Func, recv ir.Node, method *types.Field) {
 
 	dot := typecheck.XDotMethod(pos, recv, method.Sym, true)
 	call := typecheck.Call(pos, dot, args, method.Type.IsVariadic()).(*ir.CallExpr)
+	fn.SetWrapper(true)
 
 	if recv.Type() != nil && recv.Type().IsPtr() && method.Type.Recv().Type.IsPtr() &&
 		method.Embedded != 0 &&
@@ -4238,8 +4239,6 @@ func addTailCall(pos src.XPos, fn *ir.Func, recv ir.Node, method *types.Field) {
 		fn.Body.Append(ir.NewTailCallStmt(pos, call))
 		return
 	}
-
-	fn.SetWrapper(true)
 
 	if method.Type.NumResults() == 0 {
 		fn.Body.Append(call)

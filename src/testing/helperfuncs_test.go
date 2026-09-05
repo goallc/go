@@ -138,3 +138,23 @@ func rangeHelper(t *testing.T, msg string) {
 func rangeHelperHelper(t *testing.T) {
 	rangeHelper(t, "range")
 }
+
+type helperTB interface {
+	Helper()
+	Log(args ...any)
+	Fail()
+}
+
+type embeddedHelperTB struct {
+	helperTB
+}
+
+func promotedMethodHelper(tb helperTB) {
+	tb.Helper()
+	tb.Log("promoted method helper")
+	tb.Fail()
+}
+
+func testPromotedMethodHelper(t *testing.T) {
+	promotedMethodHelper(&embeddedHelperTB{helperTB: t})
+}
