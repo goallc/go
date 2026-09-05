@@ -1204,6 +1204,18 @@ if(BUILD_TESTING)
     IR
   )
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.AllocaContentLiveness
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-content-liveness.ll"
+    IR
+  )
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.AllocaContentLivenessAArch64
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-content-liveness.ll"
+    IR
+    -mtriple=aarch64-unknown-linux-goobj
+    -frame-pointer=all
+  )
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.AllocaPointerRootsAArch64
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-pointer-roots.ll"
     IR

@@ -77,7 +77,7 @@ The current SSA value and CFG rewrite support matrix is:
 | Fixed-width pointer-vector SSA values | Supported | The vector remains one `gc-live` operand and one same-typed `gc.relocate`; it is not split into lanes. Pointer vectors in allocas remain unsupported. |
 | Aggregate arguments and call results | Supported for IR rewriting | The wrapped call keeps its real aggregate ABI type. Only leaves live after the call enter caller `gc-live`; supported fixed formal layouts also contribute pointer words to AArch64 entry maps. |
 | Aggregate load results and store operands | Supported | First-class SSA values use aggregate normalization. Pointer leaves in surviving fixed allocas remain memory roots described by the alloca deopt layout protocol. |
-| Pointer-containing `alloca` storage | GoObj qualified for fixed layouts | Go `VarDef` emits `llvm.lifetime.start`; parameter homes and addressed result homes have explicit starts at their initialization sites. The statepoint pass uses starts as backward liveness kills and real address uses as gens, so the last use supplies the implicit end. Active contents contribute callsite `LocalsPointerMaps`; address-observable objects additionally get function-wide `FUNCDATA_StackObjects`. If the optimized producer does not definitely initialize every pointer slot before the next safepoint, the plugin inserts an inline zero initialization at that lifetime start. It preserves existing lifetime markers and emits no new lifetime ends. |
+| Pointer-containing `alloca` storage | GoObj qualified for fixed layouts | Fixed allocas stay in entry, but local `llvm.lifetime.start` placement follows grouped Go SSA `LocalAddr` definitions, memory order, and dominance; `VarDef` emits no LLVM operation. Parameter and result homes start at their initialization sites. Backward content liveness uses reads and conservative first-class address uses as gens; lifetime markers and definite pointer-slot overwrites kill old contents. Active contents contribute callsite `LocalsPointerMaps`; address-observable objects additionally get function-wide `FUNCDATA_StackObjects`. If an active interval's optimized producer does not definitely initialize every pointer slot before a safepoint, the plugin inserts an inline zero initialization at its start. Dead StackObjects need not contain valid pointers. Existing lifetime markers are preserved; no new lifetime ends are emitted. |
 | Scalable vectors | Unsupported | The generic LLVM statepoint rewrite assumes a fixed vector width when constructing relocates; fails closed. |
 | General moving-GC base/derived analysis | Unsupported | Base and derived indexes are identical in the current non-moving-heap phase. |
 | `invoke`, `callbr`, non-deopt operand bundles, and unsupported parameter attributes | Unsupported | One ordinary deopt bundle is preserved before the alloca suffix. `nest`, `captures`, and `readonly` parameter attributes are preserved; other shapes fail closed. |
@@ -136,19 +136,38 @@ constant address derivation, and local PHI/select uses remain compiler
 controlled. The frontend Addrtaken metadata is provenance only and never keeps
 an alloca alive or overrides this final structural classification.
 
-The Go frontend emits `llvm.lifetime.start` at each pointer-containing
-`OpVarDef`. Repeated starts are intentional: `VarDef` denotes complete
-reinitialization, including in branches and loops. Parameter homes start before
-their synthetic incoming-value store, and addressed result homes start after
-the producing call and before their result store. `OpVarLive` remains an
-`llvm.fake.use` of the home. The producer's existing Zero, Store, or Move owns
-source-lifetime initialization; the frontend marker helper adds no pointer
-clears, and neither side emits `llvm.lifetime.end`.
+The Go frontend emits no LLVM operation for `OpVarDef`: Go SSA can eliminate a
+redundant Zero after VarDef and reuse fields initialized by an earlier
+definition, whereas a new LLVM lifetime would invalidate those contents.
+Fixed allocas remain in entry. For ordinary locals, the frontend groups used
+`OpLocalAddr` values by variable identity and chooses their nearest common
+dominator. A defining address in that block starts the lifetime after its
+memory input; otherwise the start is at the common dominator's beginning.
+A start inside a cycle is allowed only for a single address definition with a
+proven complete Zero or Store before any intervening memory observation.
+Other cyclic cases start in the nearest non-cyclic dominator, preserving
+contents across iterations. This is a conservative storage model, not an
+attempt to reconstruct each source-level declaration or reassignment.
+Parameter homes, by-value copies, and addressed result homes have real starts
+at their physical initialization sites; caller-owned ABI storage is excluded.
+`OpVarLive` uses a `go.keepalive`
+operand bundle on `llvm.donothing`. The producer's existing Zero, Store, or Move
+owns source initialization; the frontend marker helper adds no pointer clears,
+and neither side emits `llvm.lifetime.end`.
 
 For every surviving fixed alloca, statepoint rewriting enumerates pointer
 offsets and performs a backward, path-sensitive live-out dataflow over its
-optimized address-use graph. A lifetime start is a kill and a real load, store,
-call use, comparison, `llvm.fake.use`, or other terminal address use is a gen.
+optimized use graph, tracking individual pointer slots internally. A lifetime
+marker kills all old contents. Loads generate liveness for the pointer slots
+they may read; definite stores and constant-size memory writes kill only the
+slots they overwrite. Memory transfers also generate liveness for their source,
+including overlapping and self copies. Unknown-offset writes cannot kill any
+slot, and writes that split a pointer word fail closed. Calls and other
+first-class address uses conservatively generate content liveness. CFG joins
+take the union of successor liveness, including loop backedges. This prevents
+a future overwrite from retaining an unrelated old pointer across an earlier
+GC without restarting the LLVM storage lifetime. The GoObj protocol remains
+whole-object: any live pointer slot activates the complete typed object bitmap.
 The callsite is sampled before applying that call's use transfer, so an address
 used only as a current call argument is live-in but not caller `gc-live`.
 Direct GEP/cast chains retain the alloca base. Same-allocation
@@ -161,13 +180,19 @@ without modifying IR. Unclassifiable objects fail closed. The original
 lifetime starts remain in IR for the normal code-generation pipeline.
 Address-observable objects are different: Go's runtime adjusts every pointer
 word in every `StackObjects` record during stack growth, whether the object is
-source-live or not. The plugin preserves their function-wide frame identity
+source-live or not. That adjustment only range-checks raw words against the
+old stack; it does not require dead objects to hold meaningful pointers or
+dereference their contents. The plugin preserves their function-wide frame identity
 with `llvm.stackcoloring.no_merge`, while the existing lifetime interval still
-controls when their contents are roots. Any interval whose optimized producer
+controls when their contents are roots. This prevents a dead object's pointer
+mask from adjusting another live object's overlapping non-pointer data; it
+does not make all StackObjects live. Any active interval whose optimized producer
 does not initialize all pointer slots before a safepoint receives an inline
 zero initialization immediately after its start. LLVM may hoist a pure
-first-class address use before its source `lifetime.start`; content liveness can
-then name that storage at an earlier safepoint. For this case, the original
+first-class address use before its lifetime start; the plugin's precise
+content-root bitmap can then name that storage at an earlier safepoint.
+This precise-root case, not dead StackObject adjustment, requires valid
+contents. For this case, the original
 starts first remain liveness kills, then the physical alloca is widened to one
 entry lifetime and zeroed there. Address recipes still use the ordinary
 per-block `Base + Offset` rematerialization. The record carries one generic

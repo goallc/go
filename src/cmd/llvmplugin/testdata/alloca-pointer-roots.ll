@@ -15,9 +15,9 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-NOT: store ptr null
 
 ; IR-LABEL: define goabiinternal ptr @alloca_partial_initialization()
-; IR: call void @llvm.lifetime.start
-; IR-NEXT: call void @llvm.memset.inline
-; IR: @llvm.experimental.gc.statepoint{{.*}}"deopt"({{.*}}ptr %slot
+; IR-NOT: !goallc.vardef
+; IR: call void @llvm.memset.inline
+; IR: @llvm.experimental.gc.statepoint{{.*}}@make_pointer{{.*}}[ "gc-live"(ptr %slot) ]
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"deopt"({{.*}}ptr %slot
 
 ; IR-LABEL: define goabiinternal ptr @alloca_loop(
@@ -63,7 +63,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-NOT: store ptr {{.*}}, ptr %slot
 
 ; IR-LABEL: define goabiinternal void @alloca_marker_free_at_safepoint(
-; IR: i64 1095519299, i64 16), "gc-live"(ptr %pointer{{[,)]}}
+; IR-NOT: "deopt"
+; IR: "gc-live"(ptr %pointer, ptr %slot)
 ; IR: %pointer.relocated
 
 ; IR-LABEL: define goabiinternal ptr @alloca_high_bitmap_word(
@@ -77,13 +78,25 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-NOT: %selected.relocated
 ; IR: %result = load ptr, ptr %slot{{.*}}
 
-; MIR-COUNT-31: STATEPOINT{{.*}}1195461697{{.*}}1095520067{{.*}}%{{(fixed-)?}}stack.{{[0-9]+}}
+; IR-LABEL: define goabiinternal void @vardef_zero(
+; IR-NOT: !goallc.vardef
+; IR: ret void
+
+; Two write-only intervals need address rematerialization but no content map.
+; MIR-COUNT-29: STATEPOINT{{.*}}1195461697{{.*}}1095520067{{.*}}%{{(fixed-)?}}stack.{{[0-9]+}}
 ; MIR-ALL-COUNT-34: STATEPOINT
 
 ; O2-LABEL: define goabiinternal ptr @nested_whole_aggregate(
 ; O2-NOT: alloca %nested
 ; O2-LABEL: define goabiinternal ptr @alloca_call_skip(
 ; O2: "deopt"({{.*}}i64 1095520067
+; O2-LABEL: define goabiinternal void @vardef_zero(
+; O2-NOT: undef
+; O2: %[[OFFSET:.*]] = select i1 %nilmap, i64 0, i64 1
+; O2: %[[POINTER:.*]] = getelementptr i8, ptr null, i64 %[[OFFSET]]
+; O2: store ptr %[[POINTER]], ptr %out
+; O2-NOT: !goallc.vardef
+; O2: ret void
 
 ; OBJVIEW-LABEL: "name": "alloca_multiple_calls"
 ; OBJVIEW-NOT: "kind": "stack_objects"
@@ -130,6 +143,7 @@ target triple = "x86_64-unknown-linux-goobj"
 %pointer_field = type { i64, ptr }
 %two_pointers = type { ptr, ptr }
 %high_bitmap = type { [63 x i64], ptr }
+%vardef_result = type { ptr, [2 x ptr], { ptr, i64, i64 }, { ptr, i64, i64 }, ptr, { ptr, i64, i64 } }
 
 declare goabiinternal void @safepoint()
 declare goabiinternal void @mutate_pointer_slot(ptr)
@@ -141,6 +155,7 @@ declare goabiinternal void @observe_stack_address(ptr)
 declare goabiinternal i64 @readonly_pointer_slot(ptr readonly) memory(read)
 declare goabiinternal i64 @readnone_callee() memory(none)
 declare void @llvm.lifetime.start.p0(i64 immarg, ptr captures(none))
+declare void @llvm.memset.inline.p0.i64(ptr, i8, i64, i1 immarg)
 
 define goabiinternal ptr @pointer_slot(ptr %pointer) gc "goallc" {
 entry:
@@ -199,8 +214,8 @@ define goabiinternal ptr @alloca_partial_initialization()
     gc "goallc" {
 entry:
   ; Each field is initialized from a different safepointing call. The plugin
-  ; must zero the whole object before the first call so the complete bitmap is
-  ; safe both before initialization and while only the first field is set.
+  ; must zero the whole object so the complete bitmap is safe at the second
+  ; call while only the first field is set. The first call has no live contents.
   %slot = alloca %two_pointers, align 8
   call void @llvm.lifetime.start.p0(i64 16, ptr %slot)
   %first = call goabiinternal ptr @make_pointer()
@@ -392,7 +407,29 @@ entry:
   ret i64 %sum.1
 }
 
-@llvm.used = appending global [19 x ptr] [
+define goabiinternal void @vardef_zero(
+    i1 %nilmap,
+    ptr goret(%vardef_result) align 8 "goretindex"="0" %out) gc "goallc" {
+entry:
+  ; Model a large zero result whose return-block Zero was removed after
+  ; VarDef. Only the initial LocalAddr starts the object's lifetime; the
+  ; later Go bookkeeping annotation emits no LLVM instruction.
+  %slot = alloca %vardef_result, align 8
+  call void @llvm.lifetime.start.p0(i64 104, ptr %slot)
+  call void @llvm.memset.inline.p0.i64(ptr %slot, i8 0, i64 104, i1 false)
+  br i1 %nilmap, label %nil, label %some
+
+nil:
+  %zero = load %vardef_result, ptr %slot, align 8
+  store %vardef_result %zero, ptr %out, align 8
+  ret void
+
+some:
+  store %vardef_result { ptr inttoptr (i64 1 to ptr), [2 x ptr] zeroinitializer, { ptr, i64, i64 } zeroinitializer, { ptr, i64, i64 } zeroinitializer, ptr null, { ptr, i64, i64 } zeroinitializer }, ptr %out, align 8
+  ret void
+}
+
+@llvm.used = appending global [20 x ptr] [
   ptr @pointer_slot,
   ptr @nested_whole_aggregate,
   ptr @alloca_call_skip,
@@ -411,7 +448,8 @@ entry:
   ptr @alloca_select_same_base,
   ptr @alloca_nocapture_writable,
   ptr @alloca_escaped_before_unknown_write,
-  ptr @alloca_readonly_and_readnone
+  ptr @alloca_readonly_and_readnone,
+  ptr @vardef_zero
 ], section "llvm.metadata"
 
 !0 = !{}

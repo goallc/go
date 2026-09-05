@@ -141,7 +141,8 @@ struct PointerAllocaRecord {
   bool OpenDeferSlot;
   PointerFrameLayout Layout;
   SmallVector<IntrinsicInst *, 4> LifetimeMarkers;
-  SmallVector<Instruction *, 16> AddressUses;
+  DenseMap<const Instruction *, SmallBitVector> ContentUses;
+  DenseMap<const Instruction *, SmallBitVector> ContentDefs;
   SmallVector<CallInst *, 4> GoRetDefs;
   SmallVector<CallInst *, 8> ActiveCalls;
   bool WholeLifetime = false;
@@ -2858,13 +2859,151 @@ Error collectPointerAllocaLifetimeMarkers(
   return Error::success();
 }
 
+Value *frameContentBase(const PointerAllocaRecord &Record) {
+  return Record.Alloca;
+}
+
+Value *frameContentBase(const PointerFixedArgRecord &Record) {
+  return Record.Base;
+}
+
+SmallBitVector &
+frameAccessMask(DenseMap<const Instruction *, SmallBitVector> &Masks,
+                Instruction &I, size_t BitCount) {
+  SmallBitVector &Mask = Masks[&I];
+  if (Mask.empty())
+    Mask.resize(BitCount);
+  return Mask;
+}
+
+template <typename RecordT>
+void addAllFrameSlots(DenseMap<const Instruction *, SmallBitVector> &Masks,
+                      Instruction &I, const RecordT &Record) {
+  frameAccessMask(Masks, I, Record.Layout.Leaves.size()).set();
+}
+
+template <typename RecordT>
+void addFrameMemorySlots(DenseMap<const Instruction *, SmallBitVector> &Masks,
+                         Instruction &I, Value *Address, uint64_t AccessSize,
+                         bool IsDefinition, RecordT &Record) {
+  const DataLayout &DL = I.getDataLayout();
+  std::optional<int64_t> Offset =
+      Address->getPointerOffsetFrom(frameContentBase(Record), DL);
+  if (!Offset || *Offset < 0) {
+    // Unknown reads may observe any pointer slot. Unknown writes cannot kill
+    // any slot because no single slot is known to be overwritten. This is the
+    // variable-level may-use/must-def conservative transfer.
+    if (!IsDefinition)
+      addAllFrameSlots(Masks, I, Record);
+    return;
+  }
+
+  uint64_t AccessBegin = static_cast<uint64_t>(*Offset);
+  std::optional<uint64_t> AccessEnd =
+      checkedAddUnsigned(AccessBegin, AccessSize);
+  if (!AccessEnd) {
+    if (!IsDefinition)
+      addAllFrameSlots(Masks, I, Record);
+    return;
+  }
+
+  uint64_t PointerSize = DL.getPointerSize(0);
+  SmallBitVector Mask(Record.Layout.Leaves.size());
+  for (auto [Index, Leaf] : llvm::enumerate(Record.Layout.Leaves)) {
+    uint64_t SlotBegin = Leaf.Offset;
+    uint64_t SlotEnd = SlotBegin + PointerSize;
+    if (*AccessEnd <= SlotBegin || AccessBegin >= SlotEnd)
+      continue;
+    if (IsDefinition && (AccessBegin > SlotBegin || *AccessEnd < SlotEnd)) {
+      // A safepoint must not scan a partially overwritten pointer word.
+      Record.ActivityUnclear = true;
+      return;
+    }
+    Mask.set(Index);
+  }
+  if (Mask.any())
+    frameAccessMask(Masks, I, Record.Layout.Leaves.size()) |= Mask;
+}
+
+std::optional<uint64_t> fixedAccessSize(Type *Ty, const DataLayout &DL) {
+  TypeSize Size = DL.getTypeStoreSize(Ty);
+  if (Size.isScalable())
+    return std::nullopt;
+  return Size.getFixedValue();
+}
+
+// Direct memory accesses describe content reads and definite overwrites, not
+// merely uses of the storage address. Share the pointer-slot transfer with
+// fixed ABI homes so partial object stores kill only the slots they cover.
+template <typename RecordT>
+void collectFrameMemoryAccesses(RecordT &Record, Value *Address, Use &U,
+                                Instruction *I) {
+  const DataLayout &DL = I->getDataLayout();
+  if (auto *Load = dyn_cast<LoadInst>(I)) {
+    std::optional<uint64_t> Size = fixedAccessSize(Load->getType(), DL);
+    if (!Size)
+      addAllFrameSlots(Record.ContentUses, *I, Record);
+    else
+      addFrameMemorySlots(Record.ContentUses, *I, Address, *Size, false,
+                          Record);
+    return;
+  }
+  if (auto *Store = dyn_cast<StoreInst>(I)) {
+    std::optional<uint64_t> Size =
+        fixedAccessSize(Store->getValueOperand()->getType(), DL);
+    if (Size)
+      addFrameMemorySlots(Record.ContentDefs, *I, Address, *Size, true, Record);
+    return;
+  }
+
+  Type *ReadWriteType = nullptr;
+  if (auto *RMW = dyn_cast<AtomicRMWInst>(I))
+    ReadWriteType = RMW->getValOperand()->getType();
+  else if (auto *CmpXchg = dyn_cast<AtomicCmpXchgInst>(I))
+    ReadWriteType = CmpXchg->getCompareOperand()->getType();
+  if (ReadWriteType) {
+    std::optional<uint64_t> Size = fixedAccessSize(ReadWriteType, DL);
+    if (!Size) {
+      addAllFrameSlots(Record.ContentUses, *I, Record);
+    } else {
+      addFrameMemorySlots(Record.ContentDefs, *I, Address, *Size, true, Record);
+      addFrameMemorySlots(Record.ContentUses, *I, Address, *Size, false,
+                          Record);
+    }
+    return;
+  }
+
+  auto *Mem = dyn_cast<MemIntrinsic>(I);
+  if (!Mem) {
+    Record.ActivityUnclear = true;
+    return;
+  }
+  bool IsDest = U.get() == Mem->getRawDest();
+  auto *Transfer = dyn_cast<MemTransferInst>(Mem);
+  bool IsSource = Transfer && U.get() == Transfer->getRawSource();
+  if (!IsDest && !IsSource) {
+    Record.ActivityUnclear = true;
+    return;
+  }
+  auto *Length = dyn_cast<ConstantInt>(Mem->getLength());
+  if (!Length || Length->getValue().getActiveBits() > 64) {
+    if (IsSource)
+      addAllFrameSlots(Record.ContentUses, *I, Record);
+    return;
+  }
+  uint64_t Size = Length->getZExtValue();
+  if (IsDest)
+    addFrameMemorySlots(Record.ContentDefs, *I, Address, Size, true, Record);
+  if (IsSource)
+    addFrameMemorySlots(Record.ContentUses, *I, Address, Size, false, Record);
+}
+
 void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
                                      const DominatorTree &DT) {
   bool HasLifetimeStart =
       llvm::any_of(Record.LifetimeMarkers, [](IntrinsicInst *Marker) {
         return Marker->getIntrinsicID() == Intrinsic::lifetime_start;
       });
-  SmallPtrSet<Instruction *, 16> SeenUses;
   SmallPtrSet<CallInst *, 4> CandidateGoRetDefs;
   SmallPtrSet<CallInst *, 4> NonGoRetCallUses;
   visitFixedFrameAddressUses(
@@ -2883,6 +3022,10 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
             (Kind == FrameAddressUseKind::FirstClass &&
              isa<PHINode, SelectInst, FreezeInst>(I)))
           return;
+        if (Kind == FrameAddressUseKind::TerminalMemory) {
+          collectFrameMemoryAccesses(Record, Address, U, I);
+          return;
+        }
         if (auto *Call = dyn_cast<CallInst>(I)) {
           if (isWholeAllocaGoRetUse(*Record.Alloca, Address, U))
             CandidateGoRetDefs.insert(Call);
@@ -2894,15 +3037,14 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
               return Marker->getIntrinsicID() == Intrinsic::lifetime_start &&
                      DT.dominates(Marker, U);
             })) {
-          // LLVM may hoist a pure address operation outside the source VarDef
+          // LLVM may hoist a pure address operation outside the storage
           // interval. The same operation generates content liveness, so retain
           // the old whole-lifetime fallback for the physical storage. The
           // original markers remain liveness kills until activity has been
           // computed.
           Record.WholeLifetime = true;
         }
-        if (SeenUses.insert(I).second)
-          Record.AddressUses.push_back(I);
+        addAllFrameSlots(Record.ContentUses, *I, Record);
       });
   for (CallInst *Call : CandidateGoRetDefs)
     if (!NonGoRetCallUses.contains(Call))
@@ -2910,26 +3052,31 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
 }
 
 void transferPointerAllocaLiveness(const PointerAllocaRecord &Record,
-                                   const Instruction &I, bool &Live) {
+                                   const Instruction &I, SmallBitVector &Live) {
   if (llvm::is_contained(Record.LifetimeMarkers, &I) ||
       llvm::is_contained(Record.GoRetDefs, &I))
-    Live = false;
-  else if (llvm::is_contained(Record.AddressUses, &I))
-    Live = true;
+    Live.reset();
+  else {
+    if (auto It = Record.ContentDefs.find(&I); It != Record.ContentDefs.end())
+      Live.reset(It->second);
+    if (auto It = Record.ContentUses.find(&I); It != Record.ContentUses.end())
+      Live |= It->second;
+  }
 }
 
-bool pointerAllocaLiveInBlock(const PointerAllocaRecord &Record,
-                              const BasicBlock &BB, bool LiveOut) {
-  bool Live = LiveOut;
+SmallBitVector pointerAllocaLiveInBlock(const PointerAllocaRecord &Record,
+                                        const BasicBlock &BB,
+                                        SmallBitVector Live) {
   for (const Instruction &I : llvm::reverse(BB))
     transferPointerAllocaLiveness(Record, I, Live);
   return Live;
 }
 
-// Go VarDef is a complete initialization boundary. Treat its lifetime.start
-// as a backward kill and terminal address operations as uses. This gives each
-// start a path-sensitive interval whose end is the final real use, without
-// inserting lifetime.end or changing the producer's initialization sequence.
+// Storage lifetime and the liveness of its current contents are independent.
+// Reads generate pointer-slot liveness; definite overwrites kill the covered
+// slots, without requiring another lifetime.start or a Go VarDef marker.
+// Joins take may-live unions. The GoObj contract remains whole-object: any
+// live slot activates the object's complete bitmap at that safepoint.
 Error computePointerAllocaActivity(
     Function &F, SmallVectorImpl<PointerAllocaRecord> &PointerAllocas,
     const SmallPtrSetImpl<const CallInst *> &SafepointCalls,
@@ -2941,16 +3088,19 @@ Error computePointerAllocaActivity(
           std::errc::not_supported,
           "GoALLC cannot determine pointer alloca live-out activity");
 
-    DenseMap<const BasicBlock *, bool> LiveIn;
+    DenseMap<const BasicBlock *, SmallBitVector> LiveIn;
     bool Changed;
     do {
       Changed = false;
       for (BasicBlock &BB : llvm::reverse(F)) {
-        bool LiveOut = llvm::any_of(successors(&BB), [&](BasicBlock *Succ) {
-          return LiveIn.lookup(Succ);
-        });
-        bool NewLiveIn = pointerAllocaLiveInBlock(Record, BB, LiveOut);
-        if (NewLiveIn != LiveIn.lookup(&BB)) {
+        SmallBitVector LiveOut(Record.Layout.Leaves.size());
+        for (BasicBlock *Succ : successors(&BB))
+          if (auto It = LiveIn.find(Succ); It != LiveIn.end())
+            LiveOut |= It->second;
+        SmallBitVector NewLiveIn =
+            pointerAllocaLiveInBlock(Record, BB, std::move(LiveOut));
+        auto It = LiveIn.find(&BB);
+        if (It == LiveIn.end() || NewLiveIn != It->second) {
           LiveIn[&BB] = NewLiveIn;
           Changed = true;
         }
@@ -2958,9 +3108,10 @@ Error computePointerAllocaActivity(
     } while (Changed);
 
     for (BasicBlock &BB : F) {
-      bool Live = llvm::any_of(successors(&BB), [&](BasicBlock *Succ) {
-        return LiveIn.lookup(Succ);
-      });
+      SmallBitVector Live(Record.Layout.Leaves.size());
+      for (BasicBlock *Succ : successors(&BB))
+        if (auto It = LiveIn.find(Succ); It != LiveIn.end())
+          Live |= It->second;
       for (Instruction &I : llvm::reverse(BB)) {
         // A caller stack map describes values live after the call. Apply the
         // current instruction's use transfer only after recording the
@@ -2969,7 +3120,7 @@ Error computePointerAllocaActivity(
         auto *Call = dyn_cast<CallInst>(&I);
         bool IsGoRetDef = llvm::is_contained(Record.GoRetDefs, Call);
         if (Call && SafepointCalls.contains(Call) && !IsGoRetDef &&
-            (Live || !DT.isReachableFromEntry(Call->getParent())))
+            (Live.any() || !DT.isReachableFromEntry(Call->getParent())))
           Record.ActiveCalls.push_back(Call);
         transferPointerAllocaLiveness(Record, I, Live);
       }
@@ -3138,7 +3289,7 @@ void preparePointerAllocaStorageForGC(
       for (IntrinsicInst *Marker : Record.LifetimeMarkers)
         Marker->eraseFromParent();
 
-      // Content activity above used the original VarDef intervals. Only now
+      // Content activity above used the original lifetime intervals. Only now
       // widen and initialize the physical storage so every earlier bitmap that
       // can name it remains safe to scan.
       IRBuilder<> Builder(Record.Alloca->getNextNode());
@@ -3221,8 +3372,13 @@ Error collectPointerAllocas(
     // expand this layout into LocalsPointerMaps; an inactive callsite follows
     // the same StackObject rule as every other address-observable alloca.
     bool NeedsStackObject = addressNeedsStackObject(*Alloca);
-    PointerAllocas.push_back({Alloca, NeedsStackObject, *DeferResult,
-                              IsOpenDeferSlot, std::move(*Layout)});
+    PointerAllocaRecord Record;
+    Record.Alloca = Alloca;
+    Record.NeedsStackObject = NeedsStackObject;
+    Record.DeferResult = *DeferResult;
+    Record.OpenDeferSlot = IsOpenDeferSlot;
+    Record.Layout = std::move(*Layout);
+    PointerAllocas.push_back(std::move(Record));
   }
 
   if (Error Err = collectPointerAllocaLifetimeMarkers(F, PointerAllocas))
@@ -3264,70 +3420,6 @@ Error collectPointerFixedArgs(Function &F,
   return Error::success();
 }
 
-SmallBitVector &
-fixedArgAccessMask(DenseMap<const Instruction *, SmallBitVector> &Masks,
-                   Instruction &I, size_t BitCount) {
-  SmallBitVector &Mask = Masks[&I];
-  if (Mask.empty())
-    Mask.resize(BitCount);
-  return Mask;
-}
-
-void addAllFixedArgSlots(DenseMap<const Instruction *, SmallBitVector> &Masks,
-                         Instruction &I, const PointerFixedArgRecord &Record) {
-  fixedArgAccessMask(Masks, I, Record.Layout.Leaves.size()).set();
-}
-
-void addFixedArgMemorySlots(
-    DenseMap<const Instruction *, SmallBitVector> &Masks, Instruction &I,
-    Value *Address, uint64_t AccessSize, bool IsDefinition,
-    PointerFixedArgRecord &Record) {
-  const DataLayout &DL = I.getDataLayout();
-  std::optional<int64_t> Offset =
-      Address->getPointerOffsetFrom(Record.Base, DL);
-  if (!Offset || *Offset < 0) {
-    // Unknown reads may observe any pointer slot. Unknown writes cannot kill
-    // any slot because no single slot is known to be overwritten. This is the
-    // variable-level may-use/must-def conservative transfer.
-    if (!IsDefinition)
-      addAllFixedArgSlots(Masks, I, Record);
-    return;
-  }
-
-  uint64_t AccessBegin = static_cast<uint64_t>(*Offset);
-  std::optional<uint64_t> AccessEnd =
-      checkedAddUnsigned(AccessBegin, AccessSize);
-  if (!AccessEnd) {
-    if (!IsDefinition)
-      addAllFixedArgSlots(Masks, I, Record);
-    return;
-  }
-
-  uint64_t PointerSize = DL.getPointerSize(0);
-  SmallBitVector Mask(Record.Layout.Leaves.size());
-  for (auto [Index, Leaf] : llvm::enumerate(Record.Layout.Leaves)) {
-    uint64_t SlotBegin = Leaf.Offset;
-    uint64_t SlotEnd = SlotBegin + PointerSize;
-    if (*AccessEnd <= SlotBegin || AccessBegin >= SlotEnd)
-      continue;
-    if (IsDefinition && (AccessBegin > SlotBegin || *AccessEnd < SlotEnd)) {
-      // A safepoint must not scan a partially overwritten pointer word.
-      Record.ActivityUnclear = true;
-      return;
-    }
-    Mask.set(Index);
-  }
-  if (Mask.any())
-    fixedArgAccessMask(Masks, I, Record.Layout.Leaves.size()) |= Mask;
-}
-
-std::optional<uint64_t> fixedAccessSize(Type *Ty, const DataLayout &DL) {
-  TypeSize Size = DL.getTypeStoreSize(Ty);
-  if (Size.isScalable())
-    return std::nullopt;
-  return Size.getFixedValue();
-}
-
 void collectFixedArgContentAccesses(PointerFixedArgRecord &Record) {
   visitFixedFrameAddressUses(
       *Record.Base,
@@ -3343,77 +3435,16 @@ void collectFixedArgContentAccesses(PointerFixedArgRecord &Record) {
         if (Kind == FrameAddressUseKind::LifetimeOrDebug)
           return;
         if (Kind == FrameAddressUseKind::FakeUse) {
-          addAllFixedArgSlots(Record.ContentUses, *I, Record);
+          addAllFrameSlots(Record.ContentUses, *I, Record);
           return;
         }
         if (Kind == FrameAddressUseKind::FirstClass) {
           if (!isa<PHINode, SelectInst, FreezeInst, ICmpInst>(I))
-            addAllFixedArgSlots(Record.ContentUses, *I, Record);
+            addAllFrameSlots(Record.ContentUses, *I, Record);
           return;
         }
 
-        const DataLayout &DL = I->getDataLayout();
-        if (auto *Load = dyn_cast<LoadInst>(I)) {
-          std::optional<uint64_t> Size = fixedAccessSize(Load->getType(), DL);
-          if (!Size)
-            addAllFixedArgSlots(Record.ContentUses, *I, Record);
-          else
-            addFixedArgMemorySlots(Record.ContentUses, *I, Address, *Size,
-                                   false, Record);
-          return;
-        }
-        if (auto *Store = dyn_cast<StoreInst>(I)) {
-          std::optional<uint64_t> Size =
-              fixedAccessSize(Store->getValueOperand()->getType(), DL);
-          if (Size)
-            addFixedArgMemorySlots(Record.ContentDefs, *I, Address, *Size, true,
-                                   Record);
-          return;
-        }
-
-        Type *ReadWriteType = nullptr;
-        if (auto *RMW = dyn_cast<AtomicRMWInst>(I))
-          ReadWriteType = RMW->getValOperand()->getType();
-        else if (auto *CmpXchg = dyn_cast<AtomicCmpXchgInst>(I))
-          ReadWriteType = CmpXchg->getCompareOperand()->getType();
-        if (ReadWriteType) {
-          std::optional<uint64_t> Size = fixedAccessSize(ReadWriteType, DL);
-          if (!Size) {
-            addAllFixedArgSlots(Record.ContentUses, *I, Record);
-          } else {
-            addFixedArgMemorySlots(Record.ContentDefs, *I, Address, *Size, true,
-                                   Record);
-            addFixedArgMemorySlots(Record.ContentUses, *I, Address, *Size,
-                                   false, Record);
-          }
-          return;
-        }
-
-        auto *Mem = dyn_cast<MemIntrinsic>(I);
-        if (!Mem) {
-          Record.ActivityUnclear = true;
-          return;
-        }
-        bool IsDest = U.get() == Mem->getRawDest();
-        auto *Transfer = dyn_cast<MemTransferInst>(Mem);
-        bool IsSource = Transfer && U.get() == Transfer->getRawSource();
-        if (!IsDest && !IsSource) {
-          Record.ActivityUnclear = true;
-          return;
-        }
-        auto *Length = dyn_cast<ConstantInt>(Mem->getLength());
-        if (!Length || Length->getValue().getActiveBits() > 64) {
-          if (IsSource)
-            addAllFixedArgSlots(Record.ContentUses, *I, Record);
-          return;
-        }
-        uint64_t Size = Length->getZExtValue();
-        if (IsDest)
-          addFixedArgMemorySlots(Record.ContentDefs, *I, Address, Size, true,
-                                 Record);
-        else
-          addFixedArgMemorySlots(Record.ContentUses, *I, Address, Size, false,
-                                 Record);
+        collectFrameMemoryAccesses(Record, Address, U, I);
       });
 }
 
