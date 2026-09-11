@@ -12,13 +12,15 @@ import "simd/archsimd"
 
 // A wide-vector callee establishes its own ABI floor. A scalar-signature
 // caller under an explicit guard is the LLVM FMV boundary: the call, rather
-// than every caller above it, carries the profile requirement.
+// than every caller above it, carries the profile requirement. The 256-bit
+// carrier requires AVX while its effective source guard remains AVX2.
 
 // LLVM-AMD64-DAG: define goabiinternal <32 x i8> @codegen.llvmSIMDWideIdentity256(<32 x i8> %x) #[[IDENTITY256:[0-9]+]]
 // LLVM-AMD64-DAG: define goabiinternal void @codegen.llvmSIMDGuardedWideCall256({{.*}}) #[[GUARDED256:[0-9]+]]
-// LLVM-AMD64-DAG: call goabiinternal <32 x i8> @codegen.llvmSIMDWideIdentity256(<32 x i8> {{.*}}){{.*}}!goallc.cpu.requires ![[CALL_AVX2:[0-9]+]]
-// LLVM-AMD64-DAG: load i8, ptr getelementptr {{.*}}!goallc.cpu.guard ![[CALL_AVX2]]
-// LLVM-AMD64-DAG: ![[CALL_AVX2]] = !{!"x86.avx2"}
+// LLVM-AMD64-DAG: call goabiinternal <32 x i8> @codegen.llvmSIMDWideIdentity256(<32 x i8> {{.*}}){{.*}}!goallc.cpu.requires ![[CALL_AVX:[0-9]+]]
+// LLVM-AMD64-DAG: ![[GUARD_AVX2:[0-9]+]] = !{!"x86.avx2"}
+// LLVM-AMD64-DAG: load i8, ptr getelementptr {{.*}}!goallc.cpu.guard ![[GUARD_AVX2]]
+// LLVM-AMD64-DAG: ![[CALL_AVX]] = !{!"x86.avx"}
 // LLVM-AMD64-DAG: attributes #[[IDENTITY256]] = { {{.*}}"goallc.cpu.feature-floor"="x86.avx"
 // LLVM-AMD64-DAG: attributes #[[GUARDED256]] = { {{.*}}"goallc.cpu.multiversion"="x86.avx2"
 // LLVM-NM-AMD64: codegen.llvmSIMDGuardedWideCall256.goallc.fmv.slot
