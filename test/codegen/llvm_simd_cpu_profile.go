@@ -36,8 +36,9 @@ import (
 // LLVM-NM-AMD64: codegen.llvmSIMDGeneratedAVX2.goallc.fmv.slot
 // LLVM-NM-AMD64-COUNT-3: codegen.llvmSIMDGeneratedAVX2<1>
 // LLVM-NM-AMD64-NOT: codegen.llvmSIMDGeneratedAVX2<1>
-// LLVM-NM-AMD64-COUNT-5: codegen.llvmSIMDMidwayAdd
-// LLVM-NM-AMD64-NOT: codegen.llvmSIMDMidwayAdd
+// Count code symbols, excluding the similarly named arginfo data symbols.
+// LLVM-NM-AMD64-COUNT-5: {{[Tt]}} codegen.llvmSIMDMidwayAdd
+// LLVM-NM-AMD64-NOT: {{[Tt]}} codegen.llvmSIMDMidwayAdd
 // LLVM-NM-AMD64: codegen.llvmSIMDMidwayGuardedAVX2@simd0.goallc.fmv.slot
 // LLVM-NM-AMD64: codegen.llvmSIMDMidwayGuardedAVX2@simd128.goallc.fmv.slot
 // LLVM-NM-AMD64-NOT: codegen.llvmSIMDMidwayGuardedAVX2@simd256.goallc.fmv.slot

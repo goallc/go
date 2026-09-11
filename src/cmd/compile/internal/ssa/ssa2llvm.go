@@ -38,7 +38,7 @@ type LLVMFuncContext struct {
 	OpenDeferBits       llvmLocalKey
 	HasOpenDeferBits    bool
 	OpenDeferSlots      map[llvmLocalKey]int
-	RequiredCPUFeatures map[string]bool
+	CPUFeatureProfiles  map[string]bool
 	CPUFeatureGuards    map[string][]llvm.Value
 	CPUFeatureFloor     string
 	WideCallCPUProfiles map[ID]string
@@ -768,7 +768,7 @@ func llvmWideVectorCPUProfile(width int64) string {
 	return ""
 }
 
-func llvmCPUProfileSuppliesWideVector(profile, required string) bool {
+func llvmCPUProfileSupplies(profile, required string) bool {
 	if llvmCPUProfileCoveredByFloor(required, profile) {
 		return true
 	}
@@ -803,11 +803,11 @@ func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled *Block) {
 	return profile, b.Succs[taken].Block()
 }
 
-func llvmDominatingWideVectorGuardProfile(f *Func, call *Value, required string) string {
+func llvmDominatingCPUFeatureGuardProfile(f *Func, v *Value, required string) string {
 	sdom := f.Sdom()
-	for b := call.Block; b != nil; b = sdom.Parent(b) {
+	for b := v.Block; b != nil; b = sdom.Parent(b) {
 		profile, enabled := llvmX86CPUFeatureGuard(b)
-		if enabled != nil && sdom.IsAncestorEq(enabled, call.Block) && llvmCPUProfileSuppliesWideVector(profile, required) {
+		if enabled != nil && sdom.IsAncestorEq(enabled, v.Block) && llvmCPUProfileSupplies(profile, required) {
 			return profile
 		}
 	}
@@ -856,7 +856,7 @@ func llvmPlanWideVectorCalls(f *Func) (floor string, profiles map[ID]string) {
 			if required == "" || llvmCPUProfileCoveredByBaseline(f.Config.arch, required) || llvmCPUProfileCoveredByFloor(required, floor) {
 				continue
 			}
-			guard := llvmDominatingWideVectorGuardProfile(f, v, required)
+			guard := llvmDominatingCPUFeatureGuardProfile(f, v, required)
 			requirements = append(requirements, llvmWideVectorCallRequirement{
 				call:     v,
 				required: required,
@@ -902,6 +902,13 @@ func llvmCPUProfileCoveredByBaseline(arch, profile string) bool {
 }
 
 func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile string) {
+	lfc.requireCPUFeatureWithGuard(instruction, profile, profile)
+}
+
+// Keep the instruction requirement distinct from the effective runtime guard.
+// A stronger guard can supply the required instructions without making the
+// lower feature's independently controllable Go boolean true.
+func (lfc *LLVMFuncContext) requireCPUFeatureWithGuard(instruction llvm.Value, profile, guard string) {
 	instruction.SetMetadata(GlobalCtxt.MDKindID(goCPURequiresMD), GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString(profile),
 	}))
@@ -909,10 +916,10 @@ func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile st
 	// the imported LSym identity. The early C++ pass turns it into a real load
 	// before normal LLVM optimization can discard the unused declaration.
 	llvmGoDataRef(ir.Syms.GoALLCCPUFeatures)
-	if lfc.RequiredCPUFeatures == nil {
-		lfc.RequiredCPUFeatures = make(map[string]bool)
+	if lfc.CPUFeatureProfiles == nil {
+		lfc.CPUFeatureProfiles = make(map[string]bool)
 	}
-	lfc.RequiredCPUFeatures[profile] = true
+	lfc.CPUFeatureProfiles[guard] = true
 	profiles := make([]string, 0, 9)
 	for _, candidate := range []string{
 		goCPUProfileX86FMA,
@@ -925,7 +932,7 @@ func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile st
 		goCPUProfileX86AVX512VPOPCNTDQ,
 		goCPUProfileARM64LSE,
 	} {
-		if lfc.RequiredCPUFeatures[candidate] {
+		if lfc.CPUFeatureProfiles[candidate] {
 			profiles = append(profiles, candidate)
 		}
 	}
@@ -1002,9 +1009,9 @@ func (lfc *LLVMFuncContext) recordCPUFeatureGuard(v *Value, load llvm.Value) {
 	}
 }
 
-func (lfc *LLVMFuncContext) markRequiredCPUFeatureGuards() {
+func (lfc *LLVMFuncContext) markCPUFeatureGuards() {
 	kind := GlobalCtxt.MDKindID(goCPUGuardMD)
-	for profile := range lfc.RequiredCPUFeatures {
+	for profile := range lfc.CPUFeatureProfiles {
 		metadata := GlobalCtxt.MDNode([]llvm.Metadata{GlobalCtxt.MDString(profile)})
 		for _, load := range lfc.CPUFeatureGuards[profile] {
 			load.SetMetadata(kind, metadata)
@@ -1012,7 +1019,7 @@ func (lfc *LLVMFuncContext) markRequiredCPUFeatureGuards() {
 	}
 }
 
-func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(instruction llvm.Value, info goALLCSIMDOpInfo) {
+func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(v *Value, instruction llvm.Value, info goALLCSIMDOpInfo) {
 	arch := lfc.F.Config.arch
 	profile := info.archInfo(arch).cpuProfile
 	if profile == "" || llvmCPUProfileCoveredByBaseline(arch, profile) {
@@ -1032,7 +1039,12 @@ func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(instruction llvm.Valu
 	// inside the selected width. Its baseline-clone requirement verifier rejects
 	// an unguarded instruction, so exceeding the floor cannot silently make the
 	// Midway variant unsafe.
-	lfc.requireCPUFeature(instruction, profile)
+	guard := llvmDominatingCPUFeatureGuardProfile(lfc.F, v, profile)
+	if guard == "" {
+		// Preserve fail-closed validation for an unguarded operation.
+		guard = profile
+	}
+	lfc.requireCPUFeatureWithGuard(instruction, profile, guard)
 }
 
 func (lfc *LLVMFuncContext) requireWideVectorCallCPUFeature(v *Value, call llvm.Value) {
@@ -2402,7 +2414,7 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	laneBits := int(info.laneBits)
 	isFloat := info.lane == goALLCSIMDLaneFloat
 	finish := func(result llvm.Value) (llvm.Value, bool) {
-		lfc.requireGeneratedSIMDCPUFeature(result, info)
+		lfc.requireGeneratedSIMDCPUFeature(v, result, info)
 		return result, true
 	}
 
@@ -4977,7 +4989,7 @@ func LLVMCompile(f *Func) {
 		DeferResults:        map[llvmLocalKey]bool{},
 		DeferResultKeys:     map[ID]llvmLocalKey{},
 		OpenDeferSlots:      map[llvmLocalKey]int{},
-		RequiredCPUFeatures: map[string]bool{},
+		CPUFeatureProfiles:  map[string]bool{},
 		CPUFeatureGuards:    map[string][]llvm.Value{},
 		CPUFeatureFloor:     cpuFeatureFloor,
 		WideCallCPUProfiles: wideCallCPUProfiles,
@@ -5586,7 +5598,7 @@ func LLVMCompile(f *Func) {
 	}
 	FCtxt.FinishPhi()
 	FCtxt.expandNilCheckIntrinsics()
-	FCtxt.markRequiredCPUFeatureGuards()
+	FCtxt.markCPUFeatureGuards()
 	FCtxt.MappingName()
 
 	err := llvm.VerifyFunction(FCtxt.LF, llvm.PrintMessageAction)

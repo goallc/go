@@ -116,6 +116,18 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.StrongerGuards
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-stronger-guards.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-stronger-guards.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.FeatureFloorAVX
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-feature-floor-avx.ll"
     CHECK
@@ -307,6 +319,18 @@ if(BUILD_TESTING)
     -passes=goallc-cpu-features
     -disable-output
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-invalid.ll"
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.StrongerUnguarded
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-stronger-unguarded.ll"
+    CHECK
+    "${GOALLC_NOT_EXECUTABLE}"
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -disable-output
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-stronger-unguarded.ll"
   )
 
   goallc_add_ir_filecheck_test(

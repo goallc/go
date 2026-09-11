@@ -1781,7 +1781,7 @@ func TestLLVMWideVectorTypeWidth(t *testing.T) {
 	}
 }
 
-func TestLLVMCPUProfileSuppliesWideVector(t *testing.T) {
+func TestLLVMCPUProfileSupplies(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		profile  string
@@ -1791,16 +1791,59 @@ func TestLLVMCPUProfileSuppliesWideVector(t *testing.T) {
 		{name: "avx", profile: goCPUProfileX86AVX, required: goCPUProfileX86AVX, want: true},
 		{name: "avx2-supplies-avx", profile: goCPUProfileX86AVX2, required: goCPUProfileX86AVX, want: true},
 		{name: "avx512-supplies-avx", profile: goCPUProfileX86AVX512, required: goCPUProfileX86AVX, want: true},
+		{name: "avx512-supplies-avx2", profile: goCPUProfileX86AVX512, required: goCPUProfileX86AVX2, want: true},
 		{name: "bitalg-supplies-avx512", profile: goCPUProfileX86AVX512BITALG, required: goCPUProfileX86AVX512, want: true},
 		{name: "vpopcntdq-supplies-avx512", profile: goCPUProfileX86AVX512VPOPCNTDQ, required: goCPUProfileX86AVX512, want: true},
 		{name: "fma-does-not-supply-avx", profile: goCPUProfileX86FMA, required: goCPUProfileX86AVX},
 		{name: "avx2-does-not-supply-avx512", profile: goCPUProfileX86AVX2, required: goCPUProfileX86AVX512},
+		{name: "avx512-does-not-supply-fma", profile: goCPUProfileX86AVX512, required: goCPUProfileX86FMA},
+		{name: "bitalg-does-not-supply-vpopcntdq", profile: goCPUProfileX86AVX512BITALG, required: goCPUProfileX86AVX512VPOPCNTDQ},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := llvmCPUProfileSuppliesWideVector(test.profile, test.required); got != test.want {
-				t.Fatalf("llvmCPUProfileSuppliesWideVector(%q, %q) = %v, want %v", test.profile, test.required, got, test.want)
+			if got := llvmCPUProfileSupplies(test.profile, test.required); got != test.want {
+				t.Fatalf("llvmCPUProfileSupplies(%q, %q) = %v, want %v", test.profile, test.required, got, test.want)
 			}
 		})
+	}
+}
+
+func TestLLVMDominatingCPUFeatureGuardProfile(t *testing.T) {
+	c := testConfig(t)
+	pkg := types.NewPkg("internal/cpu", "cpu")
+	x86Type := types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("HasAVX512"), types.Types[types.TBOOL]),
+		types.NewField(src.NoXPos, pkg.Lookup("HasAVX2"), types.Types[types.TBOOL]),
+	})
+	types.CalcStructSize(x86Type)
+	fun := c.Fun("entry",
+		Bloc("entry",
+			Valu("mem", OpInitMem, types.TypeMem, 0, nil),
+			Valu("sb", OpSB, types.Types[types.TUINTPTR], 0, nil),
+			Valu("addr", OpAddr, types.NewPtr(x86Type), 0, &obj.LSym{Name: "internal/cpu.X86"}, "sb"),
+			Valu("highptr", OpOffPtr, types.NewPtr(types.Types[types.TBOOL]), x86Type.Field(0).Offset, nil, "addr"),
+			Valu("high", OpLoad, types.Types[types.TBOOL], 0, nil, "highptr", "mem"),
+			If("high", "nested", "fallback")),
+		Bloc("nested",
+			Valu("lowptr", OpOffPtr, types.NewPtr(types.Types[types.TBOOL]), x86Type.Field(1).Offset, nil, "addr"),
+			Valu("low", OpLoad, types.Types[types.TBOOL], 0, nil, "lowptr", "mem"),
+			If("low", "both", "highonly")),
+		Bloc("both", Goto("exit")),
+		Bloc("highonly", Goto("exit")),
+		Bloc("fallback", Goto("exit")),
+		Bloc("exit", Exit("mem")),
+	)
+	for _, test := range []struct{ block, required, want string }{
+		{"both", goCPUProfileX86AVX2, goCPUProfileX86AVX2},
+		{"highonly", goCPUProfileX86AVX2, goCPUProfileX86AVX512},
+		{"both", goCPUProfileX86AVX512, goCPUProfileX86AVX512},
+		{"highonly", goCPUProfileX86FMA, ""},
+		{"fallback", goCPUProfileX86AVX2, ""},
+		{"exit", goCPUProfileX86AVX2, ""},
+	} {
+		v := &Value{Block: fun.blocks[test.block]}
+		if got := llvmDominatingCPUFeatureGuardProfile(fun.f, v, test.required); got != test.want {
+			t.Errorf("%s requiring %s: guard = %q, want %q", test.block, test.required, got, test.want)
+		}
 	}
 }
 

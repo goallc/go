@@ -63,7 +63,8 @@ struct Profile {
   StringLiteral Suffix;
   StringLiteral TargetFeature;
   StringLiteral Arch;
-  uint64_t Closure;
+  uint64_t Predicate;
+  uint64_t Capabilities;
 };
 
 struct CPUConfig {
@@ -72,19 +73,16 @@ struct CPUConfig {
 };
 
 struct FeatureFloor {
-  uint64_t Available = 0;
+  uint64_t Capabilities = 0;
   SmallVector<const Profile *, 4> Profiles;
 };
 
-// Profiles describe Go's effective feature booleans, not a CPUID implication
-// graph. internal/cpu already folds the hardware and OS requirements into
-// HasFMA and the virtual HasAVX512, while GODEBUG may independently disable
-// individual features. Treating one enabled boolean as another would therefore
-// change Go program semantics.
-constexpr uint64_t SSE41Closure = FeatureSSE41;
-constexpr uint64_t FMAClosure = FeatureFMA;
-constexpr uint64_t POPCNTClosure = FeaturePOPCNT;
-constexpr uint64_t ARM64LSEClosure = FeatureARM64LSE;
+// Predicate is an effective Go runtime boolean, independently disableable by
+// GODEBUG. Capabilities describes the instructions that a true predicate (or
+// an ABI feature floor) permits. Never use capabilities to fold source tests
+// or to select a variant: AVX512 may remain true with HasAVX2 disabled.
+constexpr uint64_t AVX2Capabilities = FeatureAVX | FeatureAVX2;
+constexpr uint64_t AVX512Capabilities = AVX2Capabilities | FeatureAVX512;
 
 constexpr uint64_t V2Baseline =
     FeatureSSE3 | FeatureSSSE3 | FeatureSSE41 | FeatureSSE42 | FeaturePOPCNT;
@@ -92,29 +90,40 @@ constexpr uint64_t V3Baseline =
     V2Baseline | FeatureAVX | FeatureAVX2 | FeatureFMA;
 constexpr uint64_t V4Baseline = V3Baseline | FeatureAVX512;
 
-constexpr Profile SSE41Profile = {"x86.sse41", "sse41", "+sse4.1", "amd64",
-                                  SSE41Closure};
-constexpr Profile AVXProfile = {"x86.avx", "avx", "+avx", "amd64", FeatureAVX};
-constexpr Profile AVX2Profile = {"x86.avx2", "avx2", "+avx,+avx2", "amd64",
-                                 FeatureAVX2};
+constexpr Profile SSE41Profile = {"x86.sse41", "sse41",      "+sse4.1",
+                                  "amd64",     FeatureSSE41, FeatureSSE41};
+constexpr Profile AVXProfile = {"x86.avx", "avx",      "+avx",
+                                "amd64",   FeatureAVX, FeatureAVX};
+constexpr Profile AVX2Profile = {"x86.avx2", "avx2",      "+avx,+avx2",
+                                 "amd64",    FeatureAVX2, AVX2Capabilities};
 constexpr Profile AVX512Profile = {
-    "x86.avx512", "avx512",
-    "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl", "amd64",
-    FeatureAVX512};
+    "x86.avx512",
+    "avx512",
+    "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl",
+    "amd64",
+    FeatureAVX512,
+    AVX512Capabilities};
 constexpr Profile AVX512BITALGProfile = {
-    "x86.avx512bitalg", "avx512bitalg",
+    "x86.avx512bitalg",
+    "avx512bitalg",
     "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512bitalg",
-    "amd64", FeatureAVX512BITALG};
+    "amd64",
+    FeatureAVX512BITALG,
+    AVX512Capabilities | FeatureAVX512BITALG};
 constexpr Profile AVX512VPOPCNTDQProfile = {
-    "x86.avx512vpopcntdq", "avx512vpopcntdq",
+    "x86.avx512vpopcntdq",
+    "avx512vpopcntdq",
     "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+"
     "avx512vpopcntdq",
-    "amd64", FeatureAVX512VPOPCNTDQ};
-constexpr Profile FMAProfile = {"x86.fma", "fma", "+fma", "amd64", FMAClosure};
-constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt", "+popcnt", "amd64",
-                                   POPCNTClosure};
-constexpr Profile ARM64LSEProfile = {"arm64.lse", "lse", "+lse", "arm64",
-                                     ARM64LSEClosure};
+    "amd64",
+    FeatureAVX512VPOPCNTDQ,
+    AVX512Capabilities | FeatureAVX512VPOPCNTDQ};
+constexpr Profile FMAProfile = {"x86.fma", "fma",      "+fma",
+                                "amd64",   FeatureFMA, FeatureFMA};
+constexpr Profile POPCNTProfile = {"x86.popcnt", "popcnt",      "+popcnt",
+                                   "amd64",      FeaturePOPCNT, FeaturePOPCNT};
+constexpr Profile ARM64LSEProfile = {
+    "arm64.lse", "lse", "+lse", "arm64", FeatureARM64LSE, FeatureARM64LSE};
 
 const Profile *findProfile(StringRef Name) {
   if (Name == AVXProfile.Name)
@@ -324,7 +333,7 @@ Expected<FeatureFloor> takeFeatureFloor(Function &F, const CPUConfig &Config) {
       return createStringError(inconvertibleErrorCode(),
                                "duplicate GoALLC CPU feature floor " + Name);
     Floor.Profiles.push_back(P);
-    Floor.Available |= P->Closure;
+    Floor.Capabilities |= P->Capabilities;
   }
   F.removeFnAttr(FeatureFloorAttr);
   return Floor;
@@ -353,7 +362,7 @@ bool hasWideVectorRegisterCarrier(const Function &F) {
   });
 }
 
-Expected<bool> specializeGuards(Function &F, uint64_t Available) {
+Expected<bool> specializeGuards(Function &F, uint64_t Predicates) {
   SmallVector<LoadInst *, 4> Guards;
   for (BasicBlock &BB : F)
     for (Instruction &I : BB)
@@ -369,7 +378,7 @@ Expected<bool> specializeGuards(Function &F, uint64_t Available) {
     if (!P)
       return createStringError(inconvertibleErrorCode(),
                                "unknown GoALLC CPU guard profile " + *Name);
-    bool Enabled = (Available & P->Closure) == P->Closure;
+    bool Enabled = (Predicates & P->Predicate) == P->Predicate;
     Load->replaceAllUsesWith(ConstantInt::get(Load->getType(), Enabled));
     Load->eraseFromParent();
   }
@@ -387,7 +396,7 @@ Expected<bool> specializeGuards(Function &F, uint64_t Available) {
   return !Guards.empty();
 }
 
-Error verifyRequirements(Function &F, uint64_t Available) {
+Error verifyRequirements(Function &F, uint64_t Capabilities) {
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (!I.getMetadata(RequiresMD))
@@ -400,7 +409,7 @@ Error verifyRequirements(Function &F, uint64_t Available) {
         return createStringError(inconvertibleErrorCode(),
                                  "unknown GoALLC CPU requirement profile " +
                                      *Name);
-      if ((Available & P->Closure) != P->Closure)
+      if ((Capabilities & P->Capabilities) != P->Capabilities)
         return createStringError(inconvertibleErrorCode(),
                                  "GoALLC CPU requirement " + *Name +
                                      " survives in function " + F.getName() +
@@ -494,7 +503,7 @@ Expected<SmallVector<const Profile *, 4>> requestedProfiles(Function &F,
 }
 
 Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
-                                  uint64_t Available,
+                                  uint64_t Predicates,
                                   ArrayRef<const Profile *> FloorProfiles,
                                   ArrayRef<const Profile *> EnabledProfiles) {
   const bool DuplicateOK = isGoObjDuplicateOK(Source);
@@ -512,7 +521,7 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
     markGoObjDuplicateOK(*Clone);
   addTargetFeatures(*Clone, FloorProfiles);
   addTargetFeatures(*Clone, EnabledProfiles);
-  Expected<bool> Specialized = specializeGuards(*Clone, Available);
+  Expected<bool> Specialized = specializeGuards(*Clone, Predicates);
   if (!Specialized)
     return Specialized.takeError();
   return Clone;
@@ -563,12 +572,12 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     return Requested.takeError();
 
   Expected<Function *> BaselineOrErr = cloneVariant(
-      F, "baseline", Config.Baseline | Floor.Available, Floor.Profiles, {});
+      F, "baseline", Config.Baseline, Floor.Profiles, {});
   if (!BaselineOrErr)
     return BaselineOrErr.takeError();
   Function *BaselineImpl = *BaselineOrErr;
   if (Error Err =
-          verifyRequirements(*BaselineImpl, Config.Baseline | Floor.Available))
+          verifyRequirements(*BaselineImpl, Config.Baseline | Floor.Capabilities))
     return Err;
   if (Error Err = registerGoObjDebugFunction(*BaselineImpl))
     return Err;
@@ -592,6 +601,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     SmallVector<const Profile *, 2> EnabledProfiles;
     std::string Suffix;
     uint64_t Required = 0;
+    uint64_t Capabilities = Config.Baseline | Floor.Capabilities;
     for (unsigned I = 0; I < OrderedProfiles.size(); ++I) {
       if (!(Subset & (1U << I)))
         continue;
@@ -600,20 +610,20 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
       if (!Suffix.empty())
         Suffix += '-';
       Suffix += P->Suffix;
-      Required |= P->Closure;
+      Required |= P->Predicate;
+      Capabilities |= P->Capabilities;
     }
-    uint64_t Available = Config.Baseline | Floor.Available | Required;
+    uint64_t Predicates = Config.Baseline | Required;
     Expected<Function *> CloneOrErr =
-        cloneVariant(F, Suffix, Available, Floor.Profiles, EnabledProfiles);
+        cloneVariant(F, Suffix, Predicates, Floor.Profiles, EnabledProfiles);
     if (!CloneOrErr)
       return CloneOrErr.takeError();
     Function *Clone = *CloneOrErr;
-    if (Error Err = verifyRequirements(*Clone, Available))
+    if (Error Err = verifyRequirements(*Clone, Capabilities))
       return Err;
     if (Error Err = registerGoObjDebugFunction(*Clone))
       return Err;
-    Variants.push_back(
-        {Clone, Required & ~(Config.Baseline | Floor.Available)});
+    Variants.push_back({Clone, Required & ~Config.Baseline});
   }
 
   LLVMContext &C = F.getContext();
