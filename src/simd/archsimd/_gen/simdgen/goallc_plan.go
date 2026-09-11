@@ -83,10 +83,6 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 		"ConvertLo2ToFloat64", "ConvertToFloat32", "ConvertToFloat64",
 		"ConvertToInt32", "ConvertToInt64", "ConvertToUint32",
 		"ConvertToUint64",
-		"SaturateToInt8", "SaturateToInt16", "SaturateToInt16Concat",
-		"SaturateToInt16ConcatGrouped", "SaturateToInt32",
-		"SaturateToUint8", "SaturateToUint16", "SaturateToUint16Concat",
-		"SaturateToUint16ConcatGrouped", "SaturateToUint32",
 	},
 
 	// Pure data rearrangement. Constant and dynamic forms share this plan but

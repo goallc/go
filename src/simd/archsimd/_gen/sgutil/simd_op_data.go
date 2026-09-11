@@ -30,7 +30,10 @@ type SIMDOpData struct {
 	// ResultLaneBits is set only for shape-changing conversions. The internal
 	// SSA result type preserves total width, but not the destination lane width.
 	ResultLaneBits int
-	Arch           map[string]SIMDArchData
+	// ResultLane is set only when a conversion changes the lane kind.
+	// An empty value means the destination has the same kind as Lane.
+	ResultLane string
+	Arch       map[string]SIMDArchData
 }
 
 func (d SIMDOpData) IsZero() bool {
@@ -44,7 +47,8 @@ func (d SIMDOpData) EqualGeneric(other SIMDOpData) bool {
 	return d.Lowering == other.Lowering &&
 		d.Lane == other.Lane &&
 		d.LaneBits == other.LaneBits &&
-		d.ResultLaneBits == other.ResultLaneBits
+		d.ResultLaneBits == other.ResultLaneBits &&
+		d.ResultLane == other.ResultLane
 }
 
 // MergeSIMDOpData combines architecture implementations of one generic op.
@@ -108,6 +112,9 @@ func EncodeSIMDOpData(d SIMDOpData) string {
 	if d.ResultLaneBits != 0 {
 		v.Set("resultLaneBits", strconv.Itoa(d.ResultLaneBits))
 	}
+	if d.ResultLane != "" {
+		v.Set("resultLane", d.ResultLane)
+	}
 	for arch, data := range d.Arch {
 		if data == (SIMDArchData{}) {
 			continue
@@ -134,9 +141,10 @@ func DecodeSIMDOpData(encoded string) (SIMDOpData, error) {
 		return SIMDOpData{}, err
 	}
 	d := SIMDOpData{
-		Lowering: v.Get("lower"),
-		Lane:     v.Get("lane"),
-		Arch:     make(map[string]SIMDArchData),
+		Lowering:   v.Get("lower"),
+		Lane:       v.Get("lane"),
+		ResultLane: v.Get("resultLane"),
+		Arch:       make(map[string]SIMDArchData),
 	}
 	d.LaneBits, err = strconv.Atoi(v.Get("laneBits"))
 	if err != nil {

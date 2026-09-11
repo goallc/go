@@ -48,6 +48,8 @@ const (
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerExtendInteger
 	goALLCSIMDLowerTruncateInteger
+	goALLCSIMDLowerSaturateInteger
+	goALLCSIMDLowerSaturateIntegerPack128
 )
 
 type goALLCSIMDLane uint8
@@ -71,7 +73,8 @@ type goALLCSIMDOpInfo struct {
 	lowering       goALLCSIMDLowering
 	lane           goALLCSIMDLane
 	laneBits       uint8
-	resultLaneBits uint8 // conversions only; TypeVec retains width, not lane shape
+	resultLaneBits uint8          // conversions only; TypeVec retains width, not lane shape
+	resultLane     goALLCSIMDLane // invalid means the same kind as lane
 	amd64          goALLCSIMDArchInfo
 	arm64          goALLCSIMDArchInfo
 }

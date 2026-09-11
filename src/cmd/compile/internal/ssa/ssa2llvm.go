@@ -2409,6 +2409,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	switch info.lowering {
 	case goALLCSIMDLowerExtendInteger, goALLCSIMDLowerTruncateInteger:
 		return finish(lfc.simdIntegerConversion(v, info, laneType, lanes))
+	case goALLCSIMDLowerSaturateInteger, goALLCSIMDLowerSaturateIntegerPack128:
+		return finish(lfc.simdSaturatingIntegerConversion(v, info, laneType, lanes))
 	case goALLCSIMDLowerExtractElement:
 		if len(v.Args) != 1 || v.AuxInt < 0 || int(v.AuxInt) >= lanes {
 			v.Fatalf("%s has invalid generated SIMD extract index %d", v.Op, v.AuxInt)
@@ -2745,15 +2747,96 @@ func (lfc *LLVMFuncContext) simdIntegerConversion(v *Value, info goALLCSIMDOpInf
 			v.Fatalf("%s has invalid integer truncation shape", v.Op)
 		}
 		result = lfc.b.CreateTrunc(x, llvm.VectorType(resultLane, lanes), v.String()+".truncated")
-		if resultLanes != lanes {
-			indices := make([]uint64, resultLanes)
-			for i := range indices {
-				indices[i] = uint64(min(i, lanes))
-			}
-			result = lfc.b.CreateShuffleVector(result, llvm.ConstNull(result.Type()), llvmVectorShuffleMask(indices...), v.String()+".zeroed")
+	}
+	return lfc.simdPaddedConversionResult(v, result, resultLanes)
+}
+
+func (lfc *LLVMFuncContext) simdPaddedConversionResult(v *Value, result llvm.Value, resultLanes int) llvm.Value {
+	lanes := result.Type().VectorSize()
+	if resultLanes < lanes {
+		v.Fatalf("%s cannot pad %d conversion lanes to %d", v.Op, lanes, resultLanes)
+	}
+	if resultLanes != lanes {
+		indices := make([]uint64, resultLanes)
+		for i := range indices {
+			indices[i] = uint64(min(i, lanes))
 		}
+		result = lfc.b.CreateShuffleVector(result, llvm.ConstNull(result.Type()), llvmVectorShuffleMask(indices...), v.String()+".zeroed")
 	}
 	return lfc.simdLaneResult(v, result)
+}
+
+// Saturation is a clamp in the source lane type followed by truncation.
+// Signed-to-unsigned conversion clamps negative inputs to zero; unsigned
+// inputs use unsigned comparisons even when their high bit is set.
+func (lfc *LLVMFuncContext) simdSaturatingIntegerConversion(v *Value, info goALLCSIMDOpInfo, laneType llvm.Type, lanes int) llvm.Value {
+	bits, sourceBits := int(info.resultLaneBits), int(info.laneBits)
+	resultKind := info.resultLane
+	if resultKind == goALLCSIMDLaneInvalid {
+		resultKind = info.lane
+	}
+	packed := info.lowering == goALLCSIMDLowerSaturateIntegerPack128
+	arity := 1
+	if packed {
+		arity = 2
+	}
+	if len(v.Args) != arity || !v.Type.IsSIMD() ||
+		(info.lane != goALLCSIMDLaneInt && info.lane != goALLCSIMDLaneUint) ||
+		(resultKind != goALLCSIMDLaneInt && resultKind != goALLCSIMDLaneUint) ||
+		(bits != 8 && bits != 16 && bits != 32) || bits >= sourceBits {
+		v.Fatalf("%s has invalid saturating integer conversion shape", v.Op)
+	}
+	width := int(v.Type.Size()) * 8
+	if width == 0 || width%bits != 0 {
+		v.Fatalf("%s has invalid saturating conversion result width %d", v.Op, width)
+	}
+	resultLanes := width / bits
+	if packed && (sourceBits != 2*bits || resultLanes != 2*lanes || lanes*sourceBits%128 != 0) {
+		v.Fatalf("%s has invalid saturating pack group shape", v.Op)
+	}
+	operationType := llvm.VectorType(laneType, lanes)
+	resultType := llvm.VectorType(GlobalCtxt.IntType(bits), lanes)
+	var low int64
+	high := uint64(1)<<bits - 1
+	if resultKind == goALLCSIMDLaneInt {
+		high >>= 1
+		low = -int64(high) - 1
+	}
+	bound := func(x llvm.Value, operation string, value uint64, name string) llvm.Value {
+		sig := llvm.FunctionType(operationType, []llvm.Type{operationType, operationType}, false)
+		fn := getOrInsertLLVMIntrinsic(fmt.Sprintf("llvm.%s.v%di%d", operation, lanes, sourceBits), sig)
+		// ConstInt's unsigned constructor requires the bit pattern to fit
+		// the source lane, including for a negative lower bound.
+		value &= ^uint64(0) >> (64 - sourceBits)
+		return lfc.b.CreateCall(sig, fn, []llvm.Value{x, llvmSIMDIntegerSplat(laneType, lanes, value)}, name)
+	}
+	narrow := func(arg *Value, suffix string) llvm.Value {
+		x := lfc.simdValueAs(v, arg, operationType, suffix)
+		if info.lane == goALLCSIMDLaneInt {
+			x = bound(x, "smax", uint64(low), v.String()+suffix+".low")
+			x = bound(x, "smin", high, v.String()+suffix+".high")
+		} else {
+			x = bound(x, "umin", high, v.String()+suffix+".high")
+		}
+		return lfc.b.CreateTrunc(x, resultType, v.String()+suffix+".narrow")
+	}
+	result := narrow(v.Args[0], ".x")
+	if packed {
+		y := narrow(v.Args[1], ".y")
+		// Each source 128-bit group contributes its narrowed low half to
+		// the corresponding result group, x first and then y.
+		group := 128 / sourceBits
+		indices := make([]uint64, 0, resultLanes)
+		for start := 0; start < lanes; start += group {
+			for _, base := range []int{start, start + lanes} {
+				for i := 0; i < group; i++ {
+					indices = append(indices, uint64(base+i))
+				}
+			}
+		}
+		result = lfc.b.CreateShuffleVector(result, y, llvmVectorShuffleMask(indices...), v.String()+".packed")
+	}
+	return lfc.simdPaddedConversionResult(v, result, resultLanes)
 }
 
 func llvmVectorShuffleMask(indices ...uint64) llvm.Value {

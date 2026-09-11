@@ -73,6 +73,21 @@ func TestMergeSIMDOpData(t *testing.T) {
 	}
 }
 
+func TestSIMDMixedLaneConversionDescriptor(t *testing.T) {
+	want := testSIMDOpData()
+	want.Lowering, want.LaneBits = "saturate-integer", 32
+	want.ResultLane, want.ResultLaneBits = "uint", 16
+	got, err := DecodeSIMDOpData(EncodeSIMDOpData(want))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("mixed-lane conversion round trip: %#v, %v", got, err)
+	}
+	mismatch := want
+	mismatch.ResultLane = ""
+	if _, err := MergeSIMDOpData("conversion", want, mismatch); err == nil {
+		t.Fatal("accepted mismatched destination lane kind")
+	}
+}
+
 func TestMergeSIMDOpDataWithUnsupportedArchitecture(t *testing.T) {
 	want := testSIMDOpData()
 	merged, err := MergeSIMDOpData("AddInt8x32", SIMDOpData{}, want)

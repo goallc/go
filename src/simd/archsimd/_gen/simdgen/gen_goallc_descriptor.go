@@ -143,6 +143,7 @@ var goALLCLoweringArity = map[string]int{
 	"average": 2, "leading-sign-bits": 1,
 	"mul-high": 2, "mul-sign": 2,
 	"extend-integer": 1, "truncate-integer": 1,
+	"saturate-integer": 1, "saturate-integer-pack128": 2,
 	"max": 2, "min": 2,
 	"equal": 2, "not-equal": 2, "greater": 2,
 	"greater-equal": 2, "less": 2, "less-equal": 2,
@@ -173,7 +174,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		(genericOp.In[0].Class != "vreg" || genericOp.In[0].TreatLikeAScalarOfSize != nil) {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires the vector as the first input for %s", lowering, op.GenericName()))
 	}
-	if lowering == "extend-integer" || lowering == "truncate-integer" {
+	if goALLCIntegerConversionLowering(lowering) {
 		validateGoALLCIntegerConversion(op, genericOp, lowering)
 		return
 	}
@@ -247,21 +248,42 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 
 // Conversion shape comes from the public Go operand types, not the native
 // instruction's register arrangement or the maximum vector width.
+func goALLCIntegerConversionLowering(lowering string) bool {
+	switch lowering {
+	case "extend-integer", "truncate-integer", "saturate-integer", "saturate-integer-pack128":
+		return true
+	}
+	return false
+}
+
 func validateGoALLCIntegerConversion(op, genericOp Operation, lowering string) {
 	in, out := genericOp.In[0], genericOp.Out[0]
 	base, bits, lanes, ok := goALLCLaneFromGoType(in.Go)
 	outBase, outBits, outLanes, outOK := goALLCLaneFromGoType(out.Go)
-	if !ok || !outOK || (base != "int" && base != "uint") || base != outBase ||
+	saturating := lowering == "saturate-integer" || lowering == "saturate-integer-pack128"
+	if !ok || !outOK || (base != "int" && base != "uint") || (outBase != "int" && outBase != "uint") ||
+		(!saturating && base != outBase) ||
 		in.Class != "vreg" || out.Class != "vreg" || in.TreatLikeAScalarOfSize != nil ||
 		in.Bits == nil || out.Bits == nil || *in.Bits != bits*lanes || *out.Bits != outBits*outLanes {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q has incompatible integer conversion shape for %s", lowering, op.GenericName()))
+	}
+	for _, other := range genericOp.In[1:] {
+		otherBase, otherBits, otherLanes, ok := goALLCLaneFromGoType(other.Go)
+		if !ok || other.Class != "vreg" || other.TreatLikeAScalarOfSize != nil || other.Bits == nil ||
+			*other.Bits != bits*lanes || otherBase != base || otherBits != bits || otherLanes != lanes {
+			panic(fmt.Errorf("simdgen: LLVM lowering %q has heterogeneous conversion inputs for %s", lowering, op.GenericName()))
+		}
 	}
 	if lowering == "extend-integer" {
 		if outBits <= bits || outLanes > lanes {
 			panic(fmt.Errorf("simdgen: LLVM integer extension has invalid lane shape for %s", op.GenericName()))
 		}
+	} else if lowering == "saturate-integer-pack128" {
+		if bits != 2*outBits || outLanes != 2*lanes || bits*lanes < 128 || bits*lanes%128 != 0 {
+			panic(fmt.Errorf("simdgen: LLVM saturating pack has invalid 128-bit group shape for %s", op.GenericName()))
+		}
 	} else if outBits >= bits || outLanes < lanes {
-		panic(fmt.Errorf("simdgen: LLVM integer truncation has invalid lane shape for %s", op.GenericName()))
+		panic(fmt.Errorf("simdgen: LLVM integer narrowing has invalid lane shape for %s", op.GenericName()))
 	}
 }
 
@@ -287,8 +309,12 @@ func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut
 		},
 	}
 	validateGoALLCLowering(op, genericOp, d.Lowering, genericIn, genericOut, genericMask, genericImm)
-	if d.Lowering == "extend-integer" || d.Lowering == "truncate-integer" {
-		_, d.ResultLaneBits, _, _ = goALLCLaneFromGoType(genericOp.Out[0].Go)
+	if goALLCIntegerConversionLowering(d.Lowering) {
+		var resultLane string
+		resultLane, d.ResultLaneBits, _, _ = goALLCLaneFromGoType(genericOp.Out[0].Go)
+		if resultLane != d.Lane {
+			d.ResultLane = resultLane
+		}
 	}
 	return d
 }

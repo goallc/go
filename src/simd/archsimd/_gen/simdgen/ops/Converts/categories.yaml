@@ -56,6 +56,7 @@
   documentation: !string |-
     // NAME truncates element values to int8.
 - go: "SaturateToInt8"
+  llvmLowering: saturate-integer
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -72,7 +73,14 @@
   regexpTag: "convert"
   documentation: !string |-
     // NAME truncates element values to int16.
-- go: "SaturateToInt16(Concat(Grouped)?)?"
+- go: "SaturateToInt16"
+  llvmLowering: saturate-integer
+  commutative: false
+  regexpTag: "convert"
+  documentation: !string |-
+    // NAME converts element values to int16 with signed saturation.
+- go: "SaturateToInt16Concat(Grouped)?"
+  llvmLowering: saturate-integer-pack128
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -90,6 +98,7 @@
   documentation: !string |-
     // NAME truncates element values to int32.
 - go: "SaturateToInt32"
+  llvmLowering: saturate-integer
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -107,6 +116,7 @@
   documentation: !string |-
     // NAME truncates element values to uint8.
 - go: "SaturateToUint8"
+  llvmLowering: saturate-integer
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -123,7 +133,14 @@
   regexpTag: "convert"
   documentation: !string |-
     // NAME truncates element values to uint16.
-- go: "SaturateToUint16(Concat(Grouped)?)?"
+- go: "SaturateToUint16"
+  llvmLowering: saturate-integer
+  commutative: false
+  regexpTag: "convert"
+  documentation: !string |-
+    // NAME converts element values to uint16 with unsigned saturation.
+- go: "SaturateToUint16Concat(Grouped)?"
+  llvmLowering: saturate-integer-pack128
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -141,6 +158,7 @@
   documentation: !string |-
     // NAME truncates element values to uint32.
 - go: "SaturateToUint32"
+  llvmLowering: saturate-integer
   regexpTag: "convert"
   commutative: false
   documentation: !string |-

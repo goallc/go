@@ -297,6 +297,7 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"average": "goALLCSIMDLowerAverage", "leading-sign-bits": "goALLCSIMDLowerLeadingSignBits",
 		"mul-high": "goALLCSIMDLowerMulHigh", "mul-sign": "goALLCSIMDLowerMulSign",
 		"extend-integer": "goALLCSIMDLowerExtendInteger", "truncate-integer": "goALLCSIMDLowerTruncateInteger",
+		"saturate-integer": "goALLCSIMDLowerSaturateInteger", "saturate-integer-pack128": "goALLCSIMDLowerSaturateIntegerPack128",
 	})
 	lane := goALLCSIMDConst("lane", d.Lane, map[string]string{
 		"int": "goALLCSIMDLaneInt", "uint": "goALLCSIMDLaneUint", "float": "goALLCSIMDLaneFloat",
@@ -321,6 +322,12 @@ func goALLCSIMDOpLiteral(encoded string) string {
 	}
 	if d.ResultLaneBits != 0 {
 		archFields = fmt.Sprintf(", resultLaneBits:%d", d.ResultLaneBits) + archFields
+	}
+	if d.ResultLane != "" {
+		resultLane := goALLCSIMDConst("result lane", d.ResultLane, map[string]string{
+			"int": "goALLCSIMDLaneInt", "uint": "goALLCSIMDLaneUint", "float": "goALLCSIMDLaneFloat",
+		})
+		archFields = fmt.Sprintf(", resultLane:%s", resultLane) + archFields
 	}
 	return fmt.Sprintf("goALLCSIMDOpInfo{lowering:%s, lane:%s, laneBits:%d%s}", lowering, lane, d.LaneBits, archFields)
 }
