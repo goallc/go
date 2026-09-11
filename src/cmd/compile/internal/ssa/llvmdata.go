@@ -61,7 +61,19 @@ func initLLVMGoObjLocalDefinitions() {
 
 func llvmGoObjLinknameReference(s *obj.LSym) bool {
 	return s != nil && (s.IsLinkname() || s.IsLinknameStd()) &&
+		!llvmGoObjImportedReference(s) &&
 		!llvmGoObjLocalDefinitions[llvmGoObjSymbolKeyFor(s)]
+}
+
+// llvmGoObjImportedReference follows the native writer's indexed-reference
+// classification. A linkname can share an LSym with an imported method whose
+// package and symbol index are already known. The linkname attribute does not
+// override that identity. Pulls without an imported package identity still
+// belong in the name namespace.
+func llvmGoObjImportedReference(s *obj.LSym) bool {
+	localPkg := objabi.PathToPrefix(base.Ctxt.Pkgpath)
+	return s.PkgIdx != goobj.PkgIdxNone && s.Indexed() &&
+		s.Pkg != "" && s.Pkg != `""` && s.Pkg != "_" && s.Pkg != localPkg
 }
 
 // llvmGoObjReferenceName is the single naming boundary for undefined Go
@@ -150,15 +162,7 @@ func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 		strings.Contains(value.Name(), goobj.LinknameSymbolSuffix) {
 		return
 	}
-	// Linknamed symbols live in GoObj's non-package namespace even when the
-	// compiler learned about them through an imported package. Their export
-	// symbol index addresses that package's ordinary symbol block and must not
-	// be attached to the LLVM declaration as an imported reference.
-	if s.PkgIdx == goobj.PkgIdxNone || s.IsLinkname() || s.IsLinknameStd() {
-		return
-	}
-	localPkg := objabi.PathToPrefix(base.Ctxt.Pkgpath)
-	if s.Pkg == "" || s.Pkg == `""` || s.Pkg == "_" || s.Pkg == localPkg || !s.Indexed() {
+	if !llvmGoObjImportedReference(s) {
 		return
 	}
 	if s.SymIdx < 0 {

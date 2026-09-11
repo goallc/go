@@ -807,6 +807,26 @@ func TestLLVMGoObjReferenceNames(t *testing.T) {
 		t.Fatalf("linknamestd pull name = %q, want %q", got, want)
 	}
 
+	for _, attr := range []obj.Attribute{obj.AttrLinkname, obj.AttrLinknameStd} {
+		indexed := &obj.LSym{Name: "imported.(*T).method", Pkg: "imported", SymIdx: 42}
+		indexed.SetABI(obj.ABIInternal)
+		indexed.Set(obj.AttrIndexed|attr, true)
+		if got := llvmGoObjReferenceName(indexed); got != indexed.Name {
+			t.Fatalf("indexed linkname reference = %q, want %q", got, indexed.Name)
+		}
+		// An index alone is insufficient: non-package symbols can also be
+		// numbered, but their indices do not address the package symbol block.
+		indexed.PkgIdx = goobj.PkgIdxNone
+		if got, want := llvmGoObjReferenceName(indexed), indexed.Name+goobj.LinknameSymbolSuffix; got != want {
+			t.Fatalf("non-package linkname reference = %q, want %q", got, want)
+		}
+		indexed.PkgIdx = goobj.PkgIdxInvalid
+		indexed.Pkg = "_"
+		if got, want := llvmGoObjReferenceName(indexed), indexed.Name+goobj.LinknameSymbolSuffix; got != want {
+			t.Fatalf("renamed linkname reference = %q, want %q", got, want)
+		}
+	}
+
 	builtin.Set(obj.AttrLinkname, oldBuiltinLinkname)
 	base.Ctxt.Flag_linkshared = true
 	for _, s := range []*obj.LSym{builtin, linkname, linknameStd} {
