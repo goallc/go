@@ -50,6 +50,7 @@ const (
 	goALLCSIMDLowerTruncateInteger
 	goALLCSIMDLowerSaturateInteger
 	goALLCSIMDLowerSaturateIntegerPack128
+	goALLCSIMDLowerConvertFloat
 )
 
 type goALLCSIMDLane uint8

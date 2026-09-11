@@ -2478,6 +2478,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		return finish(lfc.simdIntegerConversion(v, info, laneType, lanes))
 	case goALLCSIMDLowerSaturateInteger, goALLCSIMDLowerSaturateIntegerPack128:
 		return finish(lfc.simdSaturatingIntegerConversion(v, info, laneType, lanes))
+	case goALLCSIMDLowerConvertFloat:
+		return finish(lfc.simdFloatConversion(v, info, laneType, lanes))
 	case goALLCSIMDLowerExtractElement:
 		if len(v.Args) != 1 || v.AuxInt < 0 || int(v.AuxInt) >= lanes {
 			v.Fatalf("%s has invalid generated SIMD extract index %d", v.Op, v.AuxInt)
@@ -2904,6 +2906,127 @@ func (lfc *LLVMFuncContext) simdSaturatingIntegerConversion(v *Value, info goALL
 		result = lfc.b.CreateShuffleVector(result, y, llvmVectorShuffleMask(indices...), v.String()+".packed")
 	}
 	return lfc.simdPaddedConversionResult(v, result, resultLanes)
+}
+
+// simdFloatConversion preserves the native architecture's out-of-range
+// float-to-integer behavior. Plain fptosi/fptoui would produce poison for
+// NaNs and overflow, whereas ARM64 saturates (NaN to zero) and AMD64 returns
+// its integer indefinite value. Other conversions use standard vector casts.
+func (lfc *LLVMFuncContext) simdFloatConversion(v *Value, info goALLCSIMDOpInfo, laneType llvm.Type, lanes int) llvm.Value {
+	bits, sourceBits := int(info.resultLaneBits), int(info.laneBits)
+	resultKind := info.resultLane
+	if resultKind == goALLCSIMDLaneInvalid {
+		resultKind = info.lane
+	}
+	if len(v.Args) != 1 || !v.Type.IsSIMD() || (bits != 32 && bits != 64) ||
+		(sourceBits != 32 && sourceBits != 64) || (info.lane != goALLCSIMDLaneFloat && resultKind != goALLCSIMDLaneFloat) {
+		v.Fatalf("%s has invalid floating conversion shape", v.Op)
+	}
+	resultInfo := info
+	resultInfo.lane, resultInfo.laneBits = resultKind, uint8(bits)
+	resultLane := llvmGeneratedSIMDLaneType(resultInfo)
+	resultLanes := int(v.Type.Size()) * 8 / bits
+	x := lfc.simdValueAs(v, v.Args[0], llvm.VectorType(laneType, lanes), ".x")
+	if resultLanes < lanes {
+		if info.lane != goALLCSIMDLaneFloat || resultKind != goALLCSIMDLaneFloat || sourceBits != 32 || bits != 64 || resultLanes*2 != lanes {
+			v.Fatalf("%s has invalid low-lane floating conversion", v.Op)
+		}
+		indices := make([]uint64, resultLanes)
+		for i := range indices {
+			indices[i] = uint64(i)
+		}
+		x = lfc.b.CreateShuffleVector(x, llvm.ConstNull(x.Type()), llvmVectorShuffleMask(indices...), v.String()+".low")
+		lanes = resultLanes
+	}
+	resultType := llvm.VectorType(resultLane, lanes)
+	var result llvm.Value
+	if info.lane == goALLCSIMDLaneFloat && resultKind != goALLCSIMDLaneFloat {
+		switch lfc.F.Config.arch {
+		case "amd64":
+			result = lfc.simdAMD64FloatToInteger(v, x, resultKind, bits, resultLanes)
+		case "arm64":
+			cast := "fptosi"
+			if resultKind == goALLCSIMDLaneUint {
+				cast = "fptoui"
+			}
+			name := fmt.Sprintf("llvm.%s.sat.v%di%d.v%df%d", cast, lanes, bits, lanes, sourceBits)
+			sig := llvm.FunctionType(resultType, []llvm.Type{x.Type()}, false)
+			fn := getOrInsertLLVMIntrinsic(name, sig)
+			result = lfc.b.CreateCall(sig, fn, []llvm.Value{x}, v.String()+".converted")
+		default:
+			v.Fatalf("%s has unsupported floating conversion architecture", v.Op)
+		}
+	} else if resultKind == goALLCSIMDLaneFloat {
+		switch info.lane {
+		case goALLCSIMDLaneInt:
+			result = lfc.b.CreateSIToFP(x, resultType, v.String()+".converted")
+		case goALLCSIMDLaneUint:
+			result = lfc.b.CreateUIToFP(x, resultType, v.String()+".converted")
+		case goALLCSIMDLaneFloat:
+			if bits > sourceBits {
+				result = lfc.b.CreateFPExt(x, resultType, v.String()+".converted")
+			} else if bits < sourceBits {
+				result = lfc.b.CreateFPTrunc(x, resultType, v.String()+".converted")
+			} else {
+				v.Fatalf("%s has redundant floating conversion", v.Op)
+			}
+		default:
+			v.Fatalf("%s has invalid floating conversion source kind", v.Op)
+		}
+	} else {
+		v.Fatalf("%s has invalid floating conversion result kind", v.Op)
+	}
+	return lfc.simdPaddedConversionResult(v, result, resultLanes)
+}
+
+// Reuse LLVM's CVTT intrinsics to preserve x86 integer indefinite results
+// without range checks around a poison-producing cast. Names and signatures
+// depend on lane/register shape, not the public operation's generated name.
+func (lfc *LLVMFuncContext) simdAMD64FloatToInteger(v *Value, x llvm.Value, resultKind goALLCSIMDLane, bits, resultLanes int) llvm.Value {
+	sourceBits := llvmSIMDLaneWidth(x.Type().ElementType())
+	width := x.Type().VectorSize() * sourceBits
+	resultType := llvm.VectorType(GlobalCtxt.IntType(bits), resultLanes)
+	ps, dq := "ps", "dq"
+	if sourceBits == 64 {
+		ps = "pd"
+	}
+	if bits == 64 {
+		dq = "qq"
+	}
+	if resultKind == goALLCSIMDLaneUint {
+		dq = "u" + dq
+	}
+	var name string
+	args := []llvm.Value{x}
+	if resultKind == goALLCSIMDLaneInt && bits == 32 && width <= 256 {
+		if width == 128 {
+			name = fmt.Sprintf("llvm.x86.sse2.cvtt%s2dq", ps)
+		} else {
+			name = fmt.Sprintf("llvm.x86.avx.cvtt.%s2dq.256", ps)
+		}
+	} else {
+		width = max(width, bits*resultLanes)
+		name = fmt.Sprintf("llvm.x86.avx512.mask.cvtt%s2%s.%d", ps, dq, width)
+		maskBits := 8
+		if resultLanes == 16 {
+			maskBits = 16
+		}
+		args = append(args, llvm.ConstNull(resultType), llvm.ConstAllOnes(GlobalCtxt.IntType(maskBits)))
+		if width == 512 {
+			// _MM_FROUND_CUR_DIRECTION: normal exception behavior, not SAE.
+			args = append(args, llvm.ConstInt(GlobalCtxt.Int32Type(), 4, false))
+		}
+	}
+	params := make([]llvm.Type, len(args))
+	for i, arg := range args {
+		params[i] = arg.Type()
+	}
+	sig := llvm.FunctionType(resultType, params, false)
+	fn := getLLVMIntrinsicDeclaration(name)
+	if got := fn.GlobalValueType(); got != sig {
+		v.Fatalf("%s intrinsic has unexpected LLVM type %v", v.Op, got)
+	}
+	return lfc.b.CreateCall(sig, fn, args, v.String()+".converted")
 }
 
 func llvmVectorShuffleMask(indices ...uint64) llvm.Value {

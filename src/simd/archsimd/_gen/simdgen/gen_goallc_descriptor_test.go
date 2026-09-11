@@ -6,7 +6,7 @@ package main
 
 import "testing"
 
-func TestGoALLCIntegerConversionShape(t *testing.T) {
+func TestGoALLCConversionShape(t *testing.T) {
 	operand := func(name string) Operand {
 		_, bits, lanes, _ := goALLCLaneFromGoType(&name)
 		width := bits * lanes
@@ -33,6 +33,25 @@ func TestGoALLCIntegerConversionShape(t *testing.T) {
 		{"Int32x4", "Float32x4", "saturate-integer", false},
 		{"Int16x8", "Int32x4", "saturate-integer", false},
 		{"Int32x16", "Int16x8", "saturate-integer", false},
+		{"Float32x4", "Int32x4", "convert-float", true},
+		{"Float32x4", "Uint64x4", "convert-float", true},
+		{"Float64x2", "Int32x4", "convert-float", true},
+		{"Int64x2", "Float32x4", "convert-float", true},
+		{"Uint64x8", "Float32x8", "convert-float", true},
+		{"Uint32x8", "Float64x8", "convert-float", true},
+		{"Float32x4", "Float64x2", "convert-float", true},
+		{"Float32x8", "Float64x8", "convert-float", true},
+		{"Float64x2", "Float32x4", "convert-float", true},
+		{"Float64x8", "Float32x8", "convert-float", true},
+		{"Int32x4", "Int64x4", "convert-float", false},
+		{"Int16x8", "Float32x8", "convert-float", false},
+		{"Float32x4", "Int16x8", "convert-float", false},
+		{"Float32x4", "Float32x4", "convert-float", false},
+		{"Int32x4", "Float64x2", "convert-float", false},
+		{"Float32x4", "Int64x2", "convert-float", false},
+		{"Float64x2", "Int32x8", "convert-float", false},
+		{"Float32x4", "Int32x8", "convert-float", false},
+		{"Float64x4", "Float32x8", "convert-float", false},
 	} {
 		t.Run(test.in+"-"+test.out+"-"+test.lowering, func(t *testing.T) {
 			op := Operation{Go: "Conversion", In: []Operand{operand(test.in)}}

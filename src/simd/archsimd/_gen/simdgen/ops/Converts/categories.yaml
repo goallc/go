@@ -1,6 +1,7 @@
 !sum
 # Float <-> Int conversions
 - go: "ConvertToInt32"
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -9,6 +10,7 @@
     // If a converted result cannot be represented in int32, an implementation-defined
     // architecture-specific value is returned.
 - go: "ConvertToUint32"
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -17,6 +19,7 @@
     // If a converted result cannot be represented in uint32, an implementation-defined
     // architecture-specific value is returned.
 - go: "ConvertToInt64"
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -25,6 +28,7 @@
     // If a converted result cannot be represented in int64, an implementation-defined
     // architecture-specific value is returned.
 - go: "ConvertToUint64"
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
@@ -33,16 +37,19 @@
     // If a converted result cannot be represented in uint64, an implementation-defined
     // architecture-specific value is returned.
 - go: "ConvertToFloat32" # Also float64 -> float32
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
     // NAME converts element values to float32.
 - go: "ConvertToFloat64" # Also float32 -> float64
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-
     // NAME converts element values to float64.
 - go: "ConvertLo2ToFloat64"
+  llvmLowering: convert-float
   commutative: false
   regexpTag: "convert"
   documentation: !string |-

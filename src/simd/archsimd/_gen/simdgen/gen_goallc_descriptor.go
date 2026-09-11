@@ -144,7 +144,8 @@ var goALLCLoweringArity = map[string]int{
 	"mul-high": 2, "mul-sign": 2,
 	"extend-integer": 1, "truncate-integer": 1,
 	"saturate-integer": 1, "saturate-integer-pack128": 2,
-	"max": 2, "min": 2,
+	"convert-float": 1,
+	"max":           2, "min": 2,
 	"equal": 2, "not-equal": 2, "greater": 2,
 	"greater-equal": 2, "less": 2, "less-equal": 2,
 }
@@ -174,8 +175,12 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		(genericOp.In[0].Class != "vreg" || genericOp.In[0].TreatLikeAScalarOfSize != nil) {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires the vector as the first input for %s", lowering, op.GenericName()))
 	}
-	if goALLCIntegerConversionLowering(lowering) {
-		validateGoALLCIntegerConversion(op, genericOp, lowering)
+	if goALLCConversionLowering(lowering) {
+		if lowering == "convert-float" {
+			validateGoALLCFloatConversion(op, genericOp)
+		} else {
+			validateGoALLCIntegerConversion(op, genericOp, lowering)
+		}
 		return
 	}
 	wantBase, wantElemBits, wantLanes := goALLCPrimaryLane(genericOp)
@@ -248,12 +253,34 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 
 // Conversion shape comes from the public Go operand types, not the native
 // instruction's register arrangement or the maximum vector width.
-func goALLCIntegerConversionLowering(lowering string) bool {
+func goALLCConversionLowering(lowering string) bool {
 	switch lowering {
-	case "extend-integer", "truncate-integer", "saturate-integer", "saturate-integer-pack128":
+	case "extend-integer", "truncate-integer", "saturate-integer", "saturate-integer-pack128", "convert-float":
 		return true
 	}
 	return false
+}
+
+func validateGoALLCFloatConversion(op, genericOp Operation) {
+	in, out := genericOp.In[0], genericOp.Out[0]
+	base, bits, lanes, ok := goALLCLaneFromGoType(in.Go)
+	outBase, outBits, outLanes, outOK := goALLCLaneFromGoType(out.Go)
+	if !ok || !outOK || (base != "float" && outBase != "float") ||
+		(bits != 32 && bits != 64) || (outBits != 32 && outBits != 64) ||
+		(base == outBase && bits == outBits) ||
+		in.Class != "vreg" || out.Class != "vreg" || in.TreatLikeAScalarOfSize != nil ||
+		in.Bits == nil || out.Bits == nil || *in.Bits != bits*lanes || *out.Bits != outBits*outLanes {
+		panic(fmt.Errorf("simdgen: LLVM floating conversion has incompatible lane shape for %s", op.GenericName()))
+	}
+	if outLanes < lanes {
+		// ARM64 FCVTL converts only the low half of a Float32x4.
+		if base != "float" || outBase != "float" || bits != 32 || outBits != 64 || outLanes*2 != lanes {
+			panic(fmt.Errorf("simdgen: LLVM floating conversion has invalid low-lane shape for %s", op.GenericName()))
+		}
+	} else if outLanes > lanes && (outBits >= bits || outBits*outLanes != 128) {
+		// Narrow conversions have a minimum 128-bit result, with zero high lanes.
+		panic(fmt.Errorf("simdgen: LLVM floating conversion has invalid padded shape for %s", op.GenericName()))
+	}
 }
 
 func validateGoALLCIntegerConversion(op, genericOp Operation, lowering string) {
@@ -309,7 +336,7 @@ func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut
 		},
 	}
 	validateGoALLCLowering(op, genericOp, d.Lowering, genericIn, genericOut, genericMask, genericImm)
-	if goALLCIntegerConversionLowering(d.Lowering) {
+	if goALLCConversionLowering(d.Lowering) {
 		var resultLane string
 		resultLane, d.ResultLaneBits, _, _ = goALLCLaneFromGoType(genericOp.Out[0].Go)
 		if resultLane != d.Lane {

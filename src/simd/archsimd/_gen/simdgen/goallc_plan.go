@@ -76,14 +76,8 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 		"blend", "tern",
 	},
 
-	// Lane conversions require a shared cast/widen/narrow recipe. This group
-	// keeps Go's implementation-defined float-to-int overflow behavior and
-	// saturation semantics visible rather than treating every cast alike.
-	goALLCSIMDPlanConvert: {
-		"ConvertLo2ToFloat64", "ConvertToFloat32", "ConvertToFloat64",
-		"ConvertToInt32", "ConvertToInt64", "ConvertToUint32",
-		"ConvertToUint64",
-	},
+	// Lane conversion families now carry generated lowering descriptors.
+	goALLCSIMDPlanConvert: {},
 
 	// Pure data rearrangement. Constant and dynamic forms share this plan but
 	// may select different standard shufflevector or IR expansion recipes.
