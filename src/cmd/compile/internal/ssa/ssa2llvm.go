@@ -41,7 +41,7 @@ type LLVMFuncContext struct {
 	CPUFeatureProfiles  map[string]bool
 	CPUFeatureGuards    map[string][]llvm.Value
 	CPUFeatureFloor     string
-	WideCallCPUProfiles map[ID]string
+	WideCallCPUFeatures map[ID]llvmWideVectorCallRequirement
 	F                   *Func
 	LF                  llvm.Value
 	DISubprogram        llvm.Metadata
@@ -783,35 +783,88 @@ func llvmCPUProfileSupplies(profile, required string) bool {
 // internal/cpu.X86 feature test has the feature enabled. This mirrors the
 // source shape accepted by the native cpufeatures pass without changing that
 // pass or making fixed-width archsimd participate in Midway rewriting.
-func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled *Block) {
+func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled int) {
 	if b.Kind != BlockIf || b.Controls[0] == nil || b.Controls[1] != nil || len(b.Succs) != 2 {
-		return "", nil
+		return "", -1
 	}
 	condition := b.Controls[0]
 	taken := 0
 	if condition.Op == OpNot {
 		if len(condition.Args) != 1 {
-			return "", nil
+			return "", -1
 		}
 		taken = 1
 		condition = condition.Args[0]
 	}
 	profile = llvmX86CPUFeatureProfile(llvmX86CPUFeatureField(condition))
 	if profile == "" {
-		return "", nil
+		return "", -1
 	}
-	return profile, b.Succs[taken].Block()
+	return profile, taken
 }
 
-func llvmDominatingCPUFeatureGuardProfile(f *Func, v *Value, required string) string {
+// llvmCPUFeatureGuardProfiles finds effective predicates that protect every
+// path to v. Keep the nearest single dominating guard when possible, avoiding
+// extra clones for redundant outer conditions. A successor block alone is not
+// enough: another incoming edge could bypass the enabled guard edge.
+func llvmCPUFeatureGuardProfiles(f *Func, v *Value, required string) []string {
 	sdom := f.Sdom()
-	for b := v.Block; b != nil; b = sdom.Parent(b) {
-		profile, enabled := llvmX86CPUFeatureGuard(b)
-		if enabled != nil && sdom.IsAncestorEq(enabled, v.Block) && llvmCPUProfileSupplies(profile, required) {
-			return profile
+	for b := sdom.Parent(v.Block); b != nil; b = sdom.Parent(b) {
+		profile, taken := llvmX86CPUFeatureGuard(b)
+		if taken < 0 || !llvmCPUProfileSupplies(profile, required) {
+			continue
+		}
+		enabled := b.Succs[taken].Block()
+		if enabled == f.Entry || !sdom.IsAncestorEq(enabled, v.Block) {
+			continue
+		}
+		dominates := true
+		for _, pred := range enabled.Preds {
+			if pred.Block() == b && pred.Index() == taken {
+				continue
+			}
+			// Backedges do not provide a new entry to the guarded region.
+			if !sdom.IsAncestorEq(enabled, pred.Block()) {
+				dominates = false
+				break
+			}
+		}
+		if dominates {
+			return []string{profile}
 		}
 	}
-	return ""
+
+	// Cut each backwards path at an enabled edge supplying the requirement.
+	// Reaching entry means some path is unguarded. Visited blocks also bound
+	// traversal through loops, whose first entry must still cross the cut.
+	seen := make(map[*Block]bool)
+	profiles := make(map[string]bool)
+	work := []*Block{v.Block}
+	for len(work) != 0 {
+		b := work[len(work)-1]
+		work = work[:len(work)-1]
+		if b == f.Entry {
+			return nil
+		}
+		if seen[b] {
+			continue
+		}
+		seen[b] = true
+		for _, pred := range b.Preds {
+			profile, taken := llvmX86CPUFeatureGuard(pred.Block())
+			if taken == pred.Index() && llvmCPUProfileSupplies(profile, required) {
+				profiles[profile] = true
+				continue
+			}
+			work = append(work, pred.Block())
+		}
+	}
+	var guards []string
+	for profile := range profiles {
+		guards = append(guards, profile)
+	}
+	slices.Sort(guards)
+	return guards
 }
 
 func llvmCallAux(v *Value) *AuxCall {
@@ -827,7 +880,7 @@ func llvmCallAux(v *Value) *AuxCall {
 type llvmWideVectorCallRequirement struct {
 	call     *Value
 	required string
-	guard    string
+	guards   []string
 }
 
 // llvmPlanWideVectorCalls applies the same boundary principle as Midway: a
@@ -839,7 +892,7 @@ type llvmWideVectorCallRequirement struct {
 //
 // Plan the whole function before emitting any instruction so a later
 // unguarded call cannot make earlier decisions depend on block order.
-func llvmPlanWideVectorCalls(f *Func) (floor string, profiles map[ID]string) {
+func llvmPlanWideVectorCalls(f *Func) (floor string, profiles map[ID]llvmWideVectorCallRequirement) {
 	floor = llvmSIMDFeatureFloor(f)
 	if f.Config.arch != "amd64" {
 		return floor, nil
@@ -856,28 +909,28 @@ func llvmPlanWideVectorCalls(f *Func) (floor string, profiles map[ID]string) {
 			if required == "" || llvmCPUProfileCoveredByBaseline(f.Config.arch, required) || llvmCPUProfileCoveredByFloor(required, floor) {
 				continue
 			}
-			guard := llvmDominatingCPUFeatureGuardProfile(f, v, required)
+			guards := llvmCPUFeatureGuardProfiles(f, v, required)
 			requirements = append(requirements, llvmWideVectorCallRequirement{
 				call:     v,
 				required: required,
-				guard:    guard,
+				guards:   guards,
 			})
 		}
 	}
 
 	for _, requirement := range requirements {
-		if requirement.guard == "" && !llvmCPUProfileCoveredByFloor(requirement.required, floor) {
+		if len(requirement.guards) == 0 && !llvmCPUProfileCoveredByFloor(requirement.required, floor) {
 			floor = requirement.required
 		}
 	}
 	for _, requirement := range requirements {
-		if requirement.guard == "" || llvmCPUProfileCoveredByFloor(requirement.required, floor) {
+		if len(requirement.guards) == 0 || llvmCPUProfileCoveredByFloor(requirement.required, floor) {
 			continue
 		}
 		if profiles == nil {
-			profiles = make(map[ID]string)
+			profiles = make(map[ID]llvmWideVectorCallRequirement)
 		}
-		profiles[requirement.call.ID] = requirement.guard
+		profiles[requirement.call.ID] = requirement
 	}
 	return floor, profiles
 }
@@ -902,13 +955,13 @@ func llvmCPUProfileCoveredByBaseline(arch, profile string) bool {
 }
 
 func (lfc *LLVMFuncContext) requireCPUFeature(instruction llvm.Value, profile string) {
-	lfc.requireCPUFeatureWithGuard(instruction, profile, profile)
+	lfc.requireCPUFeatureWithGuards(instruction, profile, profile)
 }
 
 // Keep the instruction requirement distinct from the effective runtime guard.
 // A stronger guard can supply the required instructions without making the
 // lower feature's independently controllable Go boolean true.
-func (lfc *LLVMFuncContext) requireCPUFeatureWithGuard(instruction llvm.Value, profile, guard string) {
+func (lfc *LLVMFuncContext) requireCPUFeatureWithGuards(instruction llvm.Value, profile string, guards ...string) {
 	instruction.SetMetadata(GlobalCtxt.MDKindID(goCPURequiresMD), GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString(profile),
 	}))
@@ -919,7 +972,9 @@ func (lfc *LLVMFuncContext) requireCPUFeatureWithGuard(instruction llvm.Value, p
 	if lfc.CPUFeatureProfiles == nil {
 		lfc.CPUFeatureProfiles = make(map[string]bool)
 	}
-	lfc.CPUFeatureProfiles[guard] = true
+	for _, guard := range guards {
+		lfc.CPUFeatureProfiles[guard] = true
+	}
 	profiles := make([]string, 0, 9)
 	for _, candidate := range []string{
 		goCPUProfileX86FMA,
@@ -1039,17 +1094,17 @@ func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(v *Value, instruction
 	// inside the selected width. Its baseline-clone requirement verifier rejects
 	// an unguarded instruction, so exceeding the floor cannot silently make the
 	// Midway variant unsafe.
-	guard := llvmDominatingCPUFeatureGuardProfile(lfc.F, v, profile)
-	if guard == "" {
+	guards := llvmCPUFeatureGuardProfiles(lfc.F, v, profile)
+	if len(guards) == 0 {
 		// Preserve fail-closed validation for an unguarded operation.
-		guard = profile
+		guards = []string{profile}
 	}
-	lfc.requireCPUFeatureWithGuard(instruction, profile, guard)
+	lfc.requireCPUFeatureWithGuards(instruction, profile, guards...)
 }
 
 func (lfc *LLVMFuncContext) requireWideVectorCallCPUFeature(v *Value, call llvm.Value) {
-	if profile := lfc.WideCallCPUProfiles[v.ID]; profile != "" {
-		lfc.requireCPUFeature(call, profile)
+	if requirement, ok := lfc.WideCallCPUFeatures[v.ID]; ok {
+		lfc.requireCPUFeatureWithGuards(call, requirement.required, requirement.guards...)
 	}
 }
 
@@ -4976,7 +5031,7 @@ func LLVMCompile(f *Func) {
 		sig = sig.withClosureContext()
 	}
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
-	cpuFeatureFloor, wideCallCPUProfiles := llvmPlanWideVectorCalls(f)
+	cpuFeatureFloor, wideCallCPUFeatures := llvmPlanWideVectorCalls(f)
 	FCtxt := &LLVMFuncContext{
 		BBs:                 map[ID]llvm.BasicBlock{},
 		Vs:                  map[ID]llvm.Value{},
@@ -4992,7 +5047,7 @@ func LLVMCompile(f *Func) {
 		CPUFeatureProfiles:  map[string]bool{},
 		CPUFeatureGuards:    map[string][]llvm.Value{},
 		CPUFeatureFloor:     cpuFeatureFloor,
-		WideCallCPUProfiles: wideCallCPUProfiles,
+		WideCallCPUFeatures: wideCallCPUFeatures,
 		F:                   f,
 		b:                   GlobalCtxt.NewBuilder(),
 		ReturnType:          sig.ReturnType,

@@ -23,6 +23,27 @@ func guardedAdd(x, y archsimd.Int8x32) archsimd.Int8x32 {
 }
 
 //go:noinline
+func eitherGuardAdd(x, y archsimd.Int8x32) archsimd.Int8x32 {
+	if archsimd.X86.AVX512() || archsimd.X86.AVX2() {
+		return x.Add(y)
+	}
+	return x
+}
+
+// A guarded wide call must not raise this scalar caller's feature floor.
+//
+//go:noinline
+func eitherGuardCall(x, y, out *[32]int8) {
+	if archsimd.X86.AVX512() || archsimd.X86.AVX2() {
+		a := archsimd.LoadInt8x32Array(x)
+		b := archsimd.LoadInt8x32Array(y)
+		eitherGuardAdd(a, b).StoreArray(out)
+		return
+	}
+	*out = *x
+}
+
+//go:noinline
 func nestedAdd(x, y archsimd.Int8x32) (archsimd.Int8x32, bool) {
 	if archsimd.X86.AVX512() {
 		if archsimd.X86.AVX2() {
@@ -99,6 +120,20 @@ func main() {
 		}
 		if got != want {
 			panic("AVX2 guarding AVX")
+		}
+	}
+	var callX, callY, callOut [32]int8
+	for i := range callX {
+		callX[i], callY[i] = int8(i), 3
+	}
+	eitherGuardCall(&callX, &callY, &callOut)
+	for i, got := range callOut {
+		want := callX[i]
+		if avx512 || avx2 {
+			want += callY[i]
+		}
+		if got != want {
+			panic("OR guards and wide call")
 		}
 	}
 	// Enter the wide ABI only when a real feature establishes its hardware

@@ -1807,7 +1807,7 @@ func TestLLVMCPUProfileSupplies(t *testing.T) {
 	}
 }
 
-func TestLLVMDominatingCPUFeatureGuardProfile(t *testing.T) {
+func TestLLVMCPUFeatureGuardProfiles(t *testing.T) {
 	c := testConfig(t)
 	pkg := types.NewPkg("internal/cpu", "cpu")
 	x86Type := types.NewStruct([]*types.Field{
@@ -1841,9 +1841,59 @@ func TestLLVMDominatingCPUFeatureGuardProfile(t *testing.T) {
 		{"exit", goCPUProfileX86AVX2, ""},
 	} {
 		v := &Value{Block: fun.blocks[test.block]}
-		if got := llvmDominatingCPUFeatureGuardProfile(fun.f, v, test.required); got != test.want {
+		if got := strings.Join(llvmCPUFeatureGuardProfiles(fun.f, v, test.required), ","); got != test.want {
 			t.Errorf("%s requiring %s: guard = %q, want %q", test.block, test.required, got, test.want)
 		}
+	}
+}
+
+func TestLLVMCPUFeatureGuardPaths(t *testing.T) {
+	pkg := types.NewPkg("internal/cpu", "cpu")
+	x86Type := types.NewStruct([]*types.Field{
+		types.NewField(src.NoXPos, pkg.Lookup("HasAVX512"), types.Types[types.TBOOL]),
+		types.NewField(src.NoXPos, pkg.Lookup("HasAVX2"), types.Types[types.TBOOL]),
+	})
+	types.CalcStructSize(x86Type)
+	for _, test := range []struct {
+		name                                   string
+		highTrue, highFalse, lowTrue, lowFalse string
+		loop                                   bool
+		want                                   string
+	}{
+		{"or", "body", "low", "body", "exit", false, "x86.avx2,x86.avx512"},
+		{"and", "low", "exit", "body", "exit", false, "x86.avx2"},
+		{"unguarded-bypass", "low", "body", "body", "exit", false, ""},
+		{"duplicate-edges", "low", "low", "body", "body", false, ""},
+		{"guarded-loop", "body", "low", "body", "exit", true, "x86.avx2,x86.avx512"},
+		{"unguarded-loop", "low", "body", "body", "exit", true, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := testConfig(t)
+			target := "exit"
+			if test.loop {
+				target = "body"
+			}
+			fun := c.Fun("entry",
+				Bloc("entry",
+					Valu("mem", OpInitMem, types.TypeMem, 0, nil),
+					Valu("sb", OpSB, types.Types[types.TUINTPTR], 0, nil),
+					Valu("addr", OpAddr, types.NewPtr(x86Type), 0, &obj.LSym{Name: "internal/cpu.X86"}, "sb"),
+					Valu("highptr", OpOffPtr, types.NewPtr(types.Types[types.TBOOL]), x86Type.Field(0).Offset, nil, "addr"),
+					Valu("high", OpLoad, types.Types[types.TBOOL], 0, nil, "highptr", "mem"),
+					If("high", test.highTrue, test.highFalse)),
+				Bloc("low",
+					Valu("lowptr", OpOffPtr, types.NewPtr(types.Types[types.TBOOL]), x86Type.Field(1).Offset, nil, "addr"),
+					Valu("lowflag", OpLoad, types.Types[types.TBOOL], 0, nil, "lowptr", "mem"),
+					If("lowflag", test.lowTrue, test.lowFalse)),
+				Bloc("body", Goto(target)),
+				Bloc("exit", Exit("mem")),
+			)
+			v := &Value{Block: fun.blocks["body"]}
+			got := strings.Join(llvmCPUFeatureGuardProfiles(fun.f, v, goCPUProfileX86AVX2), ",")
+			if got != test.want {
+				t.Fatalf("guards = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -1890,15 +1940,15 @@ func TestLLVMX86CPUFeatureGuard(t *testing.T) {
 		Succs:    []Edge{{b: enabled}, {b: disabled}},
 	}
 	profile, successor := llvmX86CPUFeatureGuard(guard)
-	if profile != goCPUProfileX86AVX2 || successor != enabled {
-		t.Fatalf("positive guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, enabled)
+	if profile != goCPUProfileX86AVX2 || successor != 0 {
+		t.Fatalf("positive guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, 0)
 	}
 
 	not := &Value{Op: OpNot, Args: []*Value{load}}
 	guard.Controls[0] = not
 	profile, successor = llvmX86CPUFeatureGuard(guard)
-	if profile != goCPUProfileX86AVX2 || successor != disabled {
-		t.Fatalf("negated guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, disabled)
+	if profile != goCPUProfileX86AVX2 || successor != 1 {
+		t.Fatalf("negated guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, 1)
 	}
 }
 
