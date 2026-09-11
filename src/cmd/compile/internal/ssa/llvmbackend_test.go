@@ -63,7 +63,9 @@ func TestLLVMEmissionReportsLateStatepointDiagnostic(t *testing.T) {
 	function.SetFunctionCallConv(goABIInternalCallConv)
 	function.SetGC("goallc")
 	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
-	builder.CreateAlloca(llvm.VectorType(context.PointerType(0), 2), "unsupported")
+	// Fixed vectors of default-address-space pointers are supported. Use
+	// non-default-address-space pointers to retain an actual late error.
+	builder.CreateAlloca(llvm.VectorType(context.PointerType(1), 2), "unsupported")
 	call := builder.CreateCall(voidFunctionType, safepoint, nil, "")
 	call.SetInstructionCallConv(goABIInternalCallConv)
 	builder.CreateRetVoid()
