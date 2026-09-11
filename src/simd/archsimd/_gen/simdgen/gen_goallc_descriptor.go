@@ -142,6 +142,7 @@ var goALLCLoweringArity = map[string]int{
 	"ones-count": 1, "leading-zeros": 1,
 	"average": 2, "leading-sign-bits": 1,
 	"mul-high": 2, "mul-sign": 2,
+	"extend-integer": 1, "truncate-integer": 1,
 	"max": 2, "min": 2,
 	"equal": 2, "not-equal": 2, "greater": 2,
 	"greater-equal": 2, "less": 2, "less-equal": 2,
@@ -171,6 +172,10 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	if (lowering == "extract-element" || lowering == "insert-element") &&
 		(genericOp.In[0].Class != "vreg" || genericOp.In[0].TreatLikeAScalarOfSize != nil) {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires the vector as the first input for %s", lowering, op.GenericName()))
+	}
+	if lowering == "extend-integer" || lowering == "truncate-integer" {
+		validateGoALLCIntegerConversion(op, genericOp, lowering)
+		return
 	}
 	wantBase, wantElemBits, wantLanes := goALLCPrimaryLane(genericOp)
 	width := genericOp.VectorWidth()
@@ -240,6 +245,26 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	}
 }
 
+// Conversion shape comes from the public Go operand types, not the native
+// instruction's register arrangement or the maximum vector width.
+func validateGoALLCIntegerConversion(op, genericOp Operation, lowering string) {
+	in, out := genericOp.In[0], genericOp.Out[0]
+	base, bits, lanes, ok := goALLCLaneFromGoType(in.Go)
+	outBase, outBits, outLanes, outOK := goALLCLaneFromGoType(out.Go)
+	if !ok || !outOK || (base != "int" && base != "uint") || base != outBase ||
+		in.Class != "vreg" || out.Class != "vreg" || in.TreatLikeAScalarOfSize != nil ||
+		in.Bits == nil || out.Bits == nil || *in.Bits != bits*lanes || *out.Bits != outBits*outLanes {
+		panic(fmt.Errorf("simdgen: LLVM lowering %q has incompatible integer conversion shape for %s", lowering, op.GenericName()))
+	}
+	if lowering == "extend-integer" {
+		if outBits <= bits || outLanes > lanes {
+			panic(fmt.Errorf("simdgen: LLVM integer extension has invalid lane shape for %s", op.GenericName()))
+		}
+	} else if outBits >= bits || outLanes < lanes {
+		panic(fmt.Errorf("simdgen: LLVM integer truncation has invalid lane shape for %s", op.GenericName()))
+	}
+}
+
 func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut outShape, genericMask maskShape, genericImm immShape) sgutil.SIMDOpData {
 	if op.LLVMLowering == nil {
 		return sgutil.SIMDOpData{}
@@ -262,5 +287,8 @@ func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut
 		},
 	}
 	validateGoALLCLowering(op, genericOp, d.Lowering, genericIn, genericOut, genericMask, genericImm)
+	if d.Lowering == "extend-integer" || d.Lowering == "truncate-integer" {
+		_, d.ResultLaneBits, _, _ = goALLCLaneFromGoType(genericOp.Out[0].Go)
+	}
 	return d
 }

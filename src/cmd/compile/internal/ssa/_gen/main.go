@@ -296,6 +296,7 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"less": "goALLCSIMDLowerLess", "less-equal": "goALLCSIMDLowerLessEqual",
 		"average": "goALLCSIMDLowerAverage", "leading-sign-bits": "goALLCSIMDLowerLeadingSignBits",
 		"mul-high": "goALLCSIMDLowerMulHigh", "mul-sign": "goALLCSIMDLowerMulSign",
+		"extend-integer": "goALLCSIMDLowerExtendInteger", "truncate-integer": "goALLCSIMDLowerTruncateInteger",
 	})
 	lane := goALLCSIMDConst("lane", d.Lane, map[string]string{
 		"int": "goALLCSIMDLaneInt", "uint": "goALLCSIMDLaneUint", "float": "goALLCSIMDLaneFloat",
@@ -314,6 +315,12 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		if arch != "amd64" && arch != "arm64" {
 			log.Fatalf("unknown GoALLC SIMD architecture %q", arch)
 		}
+	}
+	if d.ResultLaneBits < 0 || d.ResultLaneBits > 255 {
+		log.Fatalf("GoALLC SIMD descriptor result lane width does not fit: %d", d.ResultLaneBits)
+	}
+	if d.ResultLaneBits != 0 {
+		archFields = fmt.Sprintf(", resultLaneBits:%d", d.ResultLaneBits) + archFields
 	}
 	return fmt.Sprintf("goALLCSIMDOpInfo{lowering:%s, lane:%s, laneBits:%d%s}", lowering, lane, d.LaneBits, archFields)
 }

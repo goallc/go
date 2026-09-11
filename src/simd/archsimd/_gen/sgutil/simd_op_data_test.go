@@ -35,6 +35,23 @@ func TestSIMDOpDataRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSIMDConversionDescriptor(t *testing.T) {
+	want := testSIMDOpData()
+	want.Lowering, want.ResultLaneBits = "extend-integer", 16
+	got, err := DecodeSIMDOpData(EncodeSIMDOpData(want))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("conversion round trip: %#v, %v", got, err)
+	}
+	mismatch := want
+	mismatch.ResultLaneBits = 32
+	if _, err := MergeSIMDOpData("conversion", want, mismatch); err == nil {
+		t.Fatal("accepted mismatched destination lane width")
+	}
+	if _, err := DecodeSIMDOpData("lower=extend-integer&lane=int&laneBits=8&resultLaneBits=bad"); err == nil {
+		t.Fatal("accepted invalid destination lane width")
+	}
+}
+
 func TestMergeSIMDOpData(t *testing.T) {
 	amd64 := testSIMDOpData()
 	arm64 := testSIMDOpData()

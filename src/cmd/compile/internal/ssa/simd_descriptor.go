@@ -46,6 +46,8 @@ const (
 	goALLCSIMDLowerLeadingSignBits
 	goALLCSIMDLowerMulHigh
 	goALLCSIMDLowerMulSign
+	goALLCSIMDLowerExtendInteger
+	goALLCSIMDLowerTruncateInteger
 )
 
 type goALLCSIMDLane uint8
@@ -66,11 +68,12 @@ type goALLCSIMDArchInfo struct {
 }
 
 type goALLCSIMDOpInfo struct {
-	lowering goALLCSIMDLowering
-	lane     goALLCSIMDLane
-	laneBits uint8
-	amd64    goALLCSIMDArchInfo
-	arm64    goALLCSIMDArchInfo
+	lowering       goALLCSIMDLowering
+	lane           goALLCSIMDLane
+	laneBits       uint8
+	resultLaneBits uint8 // conversions only; TypeVec retains width, not lane shape
+	amd64          goALLCSIMDArchInfo
+	arm64          goALLCSIMDArchInfo
 }
 
 func goALLCSIMDInfo(op Op) (goALLCSIMDOpInfo, bool) {

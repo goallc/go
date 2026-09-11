@@ -2407,6 +2407,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	}
 
 	switch info.lowering {
+	case goALLCSIMDLowerExtendInteger, goALLCSIMDLowerTruncateInteger:
+		return finish(lfc.simdIntegerConversion(v, info, laneType, lanes))
 	case goALLCSIMDLowerExtractElement:
 		if len(v.Args) != 1 || v.AuxInt < 0 || int(v.AuxInt) >= lanes {
 			v.Fatalf("%s has invalid generated SIMD extract index %d", v.Op, v.AuxInt)
@@ -2701,6 +2703,57 @@ func (lfc *LLVMFuncContext) simdBlendBytes(v *Value) llvm.Value {
 	// sign-bit rule here also preserves the exact private intrinsic semantics.
 	condition := lfc.b.CreateICmp(llvm.IntSLT, mask, llvm.ConstNull(carrier), v.String()+".condition")
 	return lfc.b.CreateSelect(condition, y, x, v.String())
+}
+
+// simdIntegerConversion selects low lanes before widening, or clears unused
+// high lanes after narrowing. Neither native register carriers nor LLVM poison
+// lanes define the public conversion result.
+func (lfc *LLVMFuncContext) simdIntegerConversion(v *Value, info goALLCSIMDOpInfo, laneType llvm.Type, lanes int) llvm.Value {
+	bits := int(info.resultLaneBits)
+	if len(v.Args) != 1 || !v.Type.IsSIMD() ||
+		(info.lane != goALLCSIMDLaneInt && info.lane != goALLCSIMDLaneUint) ||
+		(bits != 8 && bits != 16 && bits != 32 && bits != 64) {
+		v.Fatalf("%s has invalid generated integer conversion shape", v.Op)
+	}
+	width := int(v.Type.Size()) * 8
+	if width == 0 || width%bits != 0 {
+		v.Fatalf("%s has invalid integer conversion result width %d", v.Op, width)
+	}
+	resultLanes := width / bits
+	x := lfc.simdValueAs(v, v.Args[0], llvm.VectorType(laneType, lanes), ".x")
+	resultLane := GlobalCtxt.IntType(bits)
+	var result llvm.Value
+	if info.lowering == goALLCSIMDLowerExtendInteger {
+		if bits <= int(info.laneBits) || resultLanes > lanes {
+			v.Fatalf("%s has invalid integer extension shape", v.Op)
+		}
+		if resultLanes != lanes {
+			indices := make([]uint64, resultLanes)
+			for i := range indices {
+				indices[i] = uint64(i)
+			}
+			x = lfc.b.CreateShuffleVector(x, llvm.ConstNull(x.Type()), llvmVectorShuffleMask(indices...), v.String()+".low")
+		}
+		resultType := llvm.VectorType(resultLane, resultLanes)
+		if info.lane == goALLCSIMDLaneInt {
+			result = lfc.b.CreateSExt(x, resultType, v.String()+".extended")
+		} else {
+			result = lfc.b.CreateZExt(x, resultType, v.String()+".extended")
+		}
+	} else {
+		if bits >= int(info.laneBits) || resultLanes < lanes {
+			v.Fatalf("%s has invalid integer truncation shape", v.Op)
+		}
+		result = lfc.b.CreateTrunc(x, llvm.VectorType(resultLane, lanes), v.String()+".truncated")
+		if resultLanes != lanes {
+			indices := make([]uint64, resultLanes)
+			for i := range indices {
+				indices[i] = uint64(min(i, lanes))
+			}
+			result = lfc.b.CreateShuffleVector(result, llvm.ConstNull(result.Type()), llvmVectorShuffleMask(indices...), v.String()+".zeroed")
+		}
+	}
+	return lfc.simdLaneResult(v, result)
 }
 
 func llvmVectorShuffleMask(indices ...uint64) llvm.Value {
