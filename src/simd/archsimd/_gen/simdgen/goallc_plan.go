@@ -82,14 +82,9 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	// Pure data rearrangement. Constant and dynamic forms share this plan but
 	// may select different standard shufflevector or IR expansion recipes.
 	goALLCSIMDPlanShuffle: {
-		"ConcatEven", "ConcatOdd", "ConcatPermute", "ConcatPermute128Scalars",
+		"ConcatPermute", "ConcatPermute128Scalars",
 		"ConcatShiftBytesRight", "ConcatShiftBytesRightGrouped",
-		"GetHi", "GetLo", "InterleaveEven", "InterleaveHi",
-		"InterleaveHiGrouped", "InterleaveLo", "InterleaveLoGrouped",
-		"InterleaveOdd", "LookupOrZero", "Permute", "PermuteOrZero",
-		"PermuteOrZeroGrouped", "SetHi", "SetLo",
-		"broadcast1To2", "broadcast1To4", "broadcast1To8",
-		"broadcast1To16", "broadcast1To32", "broadcast1To64",
+		"LookupOrZero", "Permute", "PermuteOrZero", "PermuteOrZeroGrouped",
 		"concatSelectedConstant", "concatSelectedConstantGrouped",
 		"permuteScalars", "permuteScalarsGrouped", "permuteScalarsHi",
 		"permuteScalarsHiGrouped", "permuteScalarsLo",

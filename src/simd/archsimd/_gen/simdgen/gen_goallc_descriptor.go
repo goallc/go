@@ -144,8 +144,21 @@ var goALLCLoweringArity = map[string]int{
 	"mul-high": 2, "mul-sign": 2,
 	"extend-integer": 1, "truncate-integer": 1,
 	"saturate-integer": 1, "saturate-integer-pack128": 2,
-	"convert-float": 1,
-	"max":           2, "min": 2,
+	"convert-float":       1,
+	"get-low":             1,
+	"get-high":            1,
+	"set-low":             2,
+	"set-high":            2,
+	"broadcast-low":       1,
+	"interleave-low":      2,
+	"interleave-high":     2,
+	"interleave-low-128":  2,
+	"interleave-high-128": 2,
+	"concat-even":         2,
+	"concat-odd":          2,
+	"interleave-even":     2,
+	"interleave-odd":      2,
+	"max":                 2, "min": 2,
 	"equal": 2, "not-equal": 2, "greater": 2,
 	"greater-equal": 2, "less": 2, "less-equal": 2,
 }
@@ -174,6 +187,10 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	if (lowering == "extract-element" || lowering == "insert-element") &&
 		(genericOp.In[0].Class != "vreg" || genericOp.In[0].TreatLikeAScalarOfSize != nil) {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires the vector as the first input for %s", lowering, op.GenericName()))
+	}
+	if goALLCStaticShuffleLowering(lowering) {
+		validateGoALLCStaticShuffle(op, genericOp, lowering)
+		return
 	}
 	if goALLCConversionLowering(lowering) {
 		if lowering == "convert-float" {
@@ -316,6 +333,12 @@ func validateGoALLCIntegerConversion(op, genericOp Operation, lowering string) {
 
 func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut outShape, genericMask maskShape, genericImm immShape) sgutil.SIMDOpData {
 	if op.LLVMLowering == nil {
+		return sgutil.SIMDOpData{}
+	}
+	// The broadcast recipe routes all output lanes. Masked variants remain
+	// in the separately audited mask plan until inactive-lane semantics are
+	// implemented; the generic-op coverage check still requires that plan.
+	if *op.LLVMLowering == "broadcast-low" && genericMask != NoMask {
 		return sgutil.SIMDOpData{}
 	}
 	arch := CurrentArch().Arch

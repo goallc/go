@@ -51,6 +51,19 @@ const (
 	goALLCSIMDLowerSaturateInteger
 	goALLCSIMDLowerSaturateIntegerPack128
 	goALLCSIMDLowerConvertFloat
+	goALLCSIMDLowerGetLow
+	goALLCSIMDLowerGetHigh
+	goALLCSIMDLowerSetLow
+	goALLCSIMDLowerSetHigh
+	goALLCSIMDLowerBroadcastLow
+	goALLCSIMDLowerInterleaveLow
+	goALLCSIMDLowerInterleaveHigh
+	goALLCSIMDLowerInterleaveLow128
+	goALLCSIMDLowerInterleaveHigh128
+	goALLCSIMDLowerConcatEven
+	goALLCSIMDLowerConcatOdd
+	goALLCSIMDLowerInterleaveEven
+	goALLCSIMDLowerInterleaveOdd
 )
 
 type goALLCSIMDLane uint8

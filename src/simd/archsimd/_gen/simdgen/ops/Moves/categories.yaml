@@ -10,21 +10,25 @@
   documentation: !string |-
     // NAME returns the index'th element of x.
 - go: SetLo
+  llvmLowering: set-low
   commutative: false
   constImm: 0
   documentation: !string |-
     // NAME returns x with its lower half set to y.
 - go: GetLo
+  llvmLowering: get-low
   commutative: false
   constImm: 0
   documentation: !string |-
     // NAME returns the lower half of x.
 - go: SetHi
+  llvmLowering: set-high
   commutative: false
   constImm: 1
   documentation: !string |-
     // NAME returns x with its upper half set to y.
 - go: GetHi
+  llvmLowering: get-high
   commutative: false
   constImm: 1
   documentation: !string |-
@@ -101,31 +105,37 @@
   documentation: !string |-
     // NAME expands the lower elements of x into the masked elements of z.
 - go: broadcast1To2
+  llvmLowering: broadcast-low
   commutative: false
   documentation: !string |-
     // NAME copies the lowest element of its input to all 2 elements of
     // the output vector.
 - go: broadcast1To4
+  llvmLowering: broadcast-low
   commutative: false
   documentation: !string |-
     // NAME copies the lowest element of its input to all 4 elements of
     // the output vector.
 - go: broadcast1To8
+  llvmLowering: broadcast-low
   commutative: false
   documentation: !string |-
     // NAME copies the lowest element of its input to all 8 elements of
     // the output vector.
 - go: broadcast1To16
+  llvmLowering: broadcast-low
   commutative: false
   documentation: !string |-
     // NAME copies the lowest element of its input to all 16 elements of
     // the output vector.
 - go: broadcast1To32
+  llvmLowering: broadcast-low
   commutative: false
   documentation: !string |-
     // NAME copies the lowest element of its input to all 32 elements of
     // the output vector.
 - go: broadcast1To64
+  llvmLowering: broadcast-low
   commutative: false
   documentation: !string |-
     // NAME copies the lowest element of its input to all 64 elements of
@@ -170,18 +180,22 @@
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a grouped permutation of vector x using constant indices:
 - go: InterleaveHi
+  llvmLowering: interleave-high
   commutative: false
   documentation: !string |-
     // NAME interleaves the elements of the high halves of x and y.
 - go: InterleaveLo
+  llvmLowering: interleave-low
   commutative: false
   documentation: !string |-
     // NAME interleaves the elements of the low halves of x and y.
 - go: InterleaveHiGrouped
+  llvmLowering: interleave-high-128
   commutative: false
   documentation: !string |-
     // NAME interleaves the elements of the high half of each 128-bit subvector of x and y.
 - go: InterleaveLoGrouped
+  llvmLowering: interleave-low-128
   commutative: false
   documentation: !string |-
     // NAME interleaves the elements of the low half of each 128-bit subvector of x and y.
@@ -305,21 +319,25 @@
     // The result vector will be the lower half of the concatenated vector.
     // This operation is performed grouped by each 16 byte.
 - go: ConcatEven
+  llvmLowering: concat-even
   commutative: false
   documentation: !string |-
     // NAME concatenates even-indexed elements from the concatenation of x and y.
     // For x = [x0,x1,x2,x3] and y = [y0,y1,y2,y3], result = [x0,x2,y0,y2].
 - go: ConcatOdd
+  llvmLowering: concat-odd
   commutative: false
   documentation: !string |-
     // NAME concatenates odd-indexed elements from the concatenation of x and y.
     // For x = [x0,x1,x2,x3] and y = [y0,y1,y2,y3], result = [x1,x3,y1,y3].
 - go: InterleaveEven
+  llvmLowering: interleave-even
   commutative: false
   documentation: !string |-
     // NAME interleaves even elements from x and y.
     // For x = [a0,a1,a2,a3] and y = [b0,b1,b2,b3], result = [a0,b0,a2,b2].
 - go: InterleaveOdd
+  llvmLowering: interleave-odd
   commutative: false
   documentation: !string |-
     // NAME interleaves odd elements from x and y.
