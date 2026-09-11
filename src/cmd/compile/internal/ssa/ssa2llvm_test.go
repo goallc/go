@@ -511,6 +511,86 @@ func TestLLVMUntypedABI0FunctionAddressCreatesFunctionDeclaration(t *testing.T) 
 	}
 }
 
+func TestLLVMFunctionSymbolIndex(t *testing.T) {
+	oldTarget, oldIndex := typecheck.Target, llvmGoFunctionSymbols
+	t.Cleanup(func() {
+		typecheck.Target, llvmGoFunctionSymbols = oldTarget, oldIndex
+	})
+	typecheck.Target = new(ir.Package)
+	llvmGoFunctionSymbols = llvmFunctionSymbolIndex{}
+	pkg := types.NewPkg("llvm/functionindex", "functionindex")
+	declare := func(name string) *obj.LSym {
+		fn := ir.NewFunc(src.NoXPos, src.NoXPos, pkg.Lookup(name), nil)
+		fn.ABI = obj.ABI0
+		typecheck.Target.Funcs = append(typecheck.Target.Funcs, fn)
+		return fn.LinksymABI(fn.ABI)
+	}
+	for i := range 128 {
+		declare(fmt.Sprintf("assembly%d", i))
+	}
+	typecheck.Target.Funcs = append(typecheck.Target.Funcs, nil, new(ir.Func))
+	blank := declare("_")
+	data := &obj.LSym{Name: "llvm/functionindex.data"}
+	if llvmGoFunctionSymbol(data) || llvmGoFunctionSymbol(blank) {
+		t.Fatal("data or blank declaration classified as a function")
+	}
+	// Warm negative lookups must not reconstruct every declaration's linker
+	// name. This catches the quadratic data-reference/function-list scan
+	// without relying on a wall-clock timeout.
+	if allocs := testing.AllocsPerRun(100, func() {
+		if llvmGoFunctionSymbol(data) {
+			t.Fatal("data classified as a function")
+		}
+	}); allocs != 0 {
+		t.Fatalf("cached data lookup allocated %g times", allocs)
+	}
+	// The compiler can append generated functions after the first lookup.
+	late := pkg.Lookup("late").LinksymABI(obj.ABI0)
+	if llvmGoFunctionSymbol(late) {
+		t.Fatal("undeclared symbol classified as a function")
+	}
+	if declare("late") != late || !llvmGoFunctionSymbol(late) {
+		t.Fatal("new bodyless ABI0 declaration was not indexed")
+	}
+	if late.Type != objabi.Sxxx {
+		t.Fatalf("test requires unresolved symbol kind, got %v", late.Type)
+	}
+	if llvmGoFunctionSymbols.contains(typecheck.Target, pkg.Lookup("late").LinksymABI(obj.ABIInternal)) {
+		t.Fatal("function index confused ABI0 with ABIInternal")
+	}
+	typecheck.Target = new(ir.Package)
+	if llvmGoFunctionSymbol(late) {
+		t.Fatal("function index retained a previous package's declarations")
+	}
+}
+
+func BenchmarkLLVMFunctionSymbolLookup(b *testing.B) {
+	oldTarget, oldIndex := typecheck.Target, llvmGoFunctionSymbols
+	b.Cleanup(func() {
+		typecheck.Target, llvmGoFunctionSymbols = oldTarget, oldIndex
+	})
+	for _, count := range []int{1000, 4000, 16000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			typecheck.Target = new(ir.Package)
+			pkg := types.NewPkg("llvm/functionbenchmark", "functionbenchmark")
+			for i := range count {
+				fn := ir.NewFunc(src.NoXPos, src.NoXPos, pkg.Lookup(fmt.Sprintf("assembly%d", i)), nil)
+				fn.ABI = obj.ABI0
+				typecheck.Target.Funcs = append(typecheck.Target.Funcs, fn)
+			}
+			data := &obj.LSym{Name: "llvm/functionbenchmark.data"}
+			llvmGoFunctionSymbol(data)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if llvmGoFunctionSymbol(data) {
+					b.Fatal("data classified as a function")
+				}
+			}
+		})
+	}
+}
+
 func TestLLVMNamedAggregateConversionReshapesValue(t *testing.T) {
 	module := GlobalCtxt.NewModule("named_aggregate_conversion")
 	builder := GlobalCtxt.NewBuilder()

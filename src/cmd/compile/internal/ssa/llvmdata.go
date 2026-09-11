@@ -506,6 +506,35 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 	return g
 }
 
+// llvmFunctionSymbolIndex indexes declarations, including bodyless ABI0
+// functions whose LSym still has kind Sxxx. The frontend can append generated
+// functions while compiling a package, so extend the index before each lookup.
+// In particular, do not rescan every function for each ordinary data address.
+type llvmFunctionSymbolIndex struct {
+	pkg     *ir.Package
+	next    int
+	symbols map[*obj.LSym]bool
+}
+
+var llvmGoFunctionSymbols llvmFunctionSymbolIndex
+
+func (index *llvmFunctionSymbolIndex) contains(pkg *ir.Package, s *obj.LSym) bool {
+	if pkg == nil {
+		return false
+	}
+	if index.pkg != pkg {
+		*index = llvmFunctionSymbolIndex{pkg: pkg, symbols: make(map[*obj.LSym]bool)}
+	}
+	for ; index.next < len(pkg.Funcs); index.next++ {
+		fn := pkg.Funcs[index.next]
+		if fn == nil || fn.Nname == nil || fn.Sym() == nil || fn.Sym().Name == "_" {
+			continue
+		}
+		index.symbols[fn.LinksymABI(fn.ABI)] = true
+	}
+	return index.symbols[s]
+}
+
 func llvmGoFunctionSymbol(s *obj.LSym) bool {
 	if s.Type == objabi.STEXT || s.Type == objabi.STEXTFIPS || s.ABI() == obj.ABIInternal {
 		return true
@@ -514,18 +543,7 @@ func llvmGoFunctionSymbol(s *obj.LSym) bool {
 	// their LSym remains Sxxx. typecheck.Target.Funcs is the authoritative list
 	// of current-package function declarations and includes generated ABI
 	// wrappers before LLVM module initialization.
-	if typecheck.Target == nil {
-		return false
-	}
-	for _, fn := range typecheck.Target.Funcs {
-		if fn == nil || fn.Nname == nil || fn.Sym() == nil || fn.Sym().Name == "_" {
-			continue
-		}
-		if fn.LinksymABI(fn.ABI) == s {
-			return true
-		}
-	}
-	return false
+	return llvmGoFunctionSymbols.contains(typecheck.Target, s)
 }
 
 func (l *llvmDataLowerer) globalName(s *obj.LSym) string {

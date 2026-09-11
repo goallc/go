@@ -5839,6 +5839,7 @@ func InitModule(pkg *types.Pkg) {
 	goObjImportsWritten = false
 	llvmModuleFinalized = false
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
+	llvmGoFunctionSymbols = llvmFunctionSymbolIndex{}
 	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
 	initLLVMGoObjLocalDefinitions()
