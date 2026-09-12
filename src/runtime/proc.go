@@ -808,6 +808,9 @@ func cpuinit(env string) {
 		if cpu.X86.HasAVX512VPOPCNTDQ {
 			goallcFeatures |= goallcCPUFeatureAVX512VPOPCNTDQ
 		}
+		if cpu.X86.HasAVX512VBMI {
+			goallcFeatures |= goallcCPUFeatureAVX512VBMI
+		}
 		if cpu.X86.HasFMA {
 			goallcFeatures |= goallcCPUFeatureFMA
 		}

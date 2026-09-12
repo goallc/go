@@ -41,6 +41,8 @@ func goALLCCPUProfile(arch, feature string) string {
 	switch {
 	case feature == "AVX512BITALG":
 		return "x86.avx512bitalg"
+	case feature == "AVX512VBMI":
+		return "x86.avx512vbmi"
 	case feature == "AVX512VPOPCNTDQ":
 		return "x86.avx512vpopcntdq"
 	case strings.HasPrefix(feature, "AVX512"):
@@ -132,6 +134,8 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"permute": 2, "concat-permute": 3, "lookup-or-zero": 2,
+	"permute-or-zero": 2, "permute-or-zero-128": 2,
 	"permute-32-128": 1, "permute-low-16-128": 1, "permute-high-16-128": 1,
 	"concat-select-128": 2, "concat-permute-128": 2, "concat-shift-bytes-128": 2,
 	"add": 2, "sub": 2, "mul": 2, "div": 2,
@@ -182,7 +186,8 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	case "insert-element":
 		wantImm = VarImm
 	}
-	if genericIn != PureVregIn || genericOut != wantOut || genericImm != wantImm || genericMask != NoMask {
+	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
+	if !validIn || genericOut != wantOut || genericImm != wantImm || genericMask != NoMask {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q has unsupported shape: %s has in=%s out=%s imm=%s mask=%s", lowering, op.GenericName(), goALLCShapeName(genericIn), goALLCShapeName(genericOut), goALLCShapeName(genericImm), goALLCShapeName(genericMask)))
 	}
 	if len(genericOp.In) != wantArity {
@@ -197,6 +202,10 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	}
 	if goALLCImmediateShuffleLowering(lowering) {
 		validateGoALLCImmediateShuffle(op, genericOp, lowering)
+		return
+	}
+	if goALLCDynamicShuffleLowering(lowering) {
+		validateGoALLCDynamicShuffle(op, genericOp, lowering)
 		return
 	}
 	if goALLCStaticShuffleLowering(lowering) {
@@ -354,6 +363,9 @@ func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut
 	}
 	arch := CurrentArch().Arch
 	base, elemBits, _ := goALLCPrimaryLane(genericOp)
+	if *op.LLVMLowering == "permute" || *op.LLVMLowering == "concat-permute" {
+		base, elemBits, _, _ = goALLCLaneFromGoType(genericOp.In[1].Go)
+	}
 	operandOrder := ""
 	if op.OperandOrder != nil {
 		operandOrder = *op.OperandOrder

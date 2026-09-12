@@ -1817,6 +1817,7 @@ func TestLLVMCPUProfileCoverage(t *testing.T) {
 		floor    string
 		want     bool
 	}{
+		{name: "avx512-does-not-cover-vbmi", required: goCPUProfileX86AVX512VBMI, floor: goCPUProfileX86AVX512, want: false},
 		{name: "same", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX2, want: true},
 		{name: "avx2-covers-avx", required: goCPUProfileX86AVX, floor: goCPUProfileX86AVX2, want: true},
 		{name: "avx512-covers-avx2", required: goCPUProfileX86AVX2, floor: goCPUProfileX86AVX512, want: true},
@@ -1868,6 +1869,10 @@ func TestLLVMCPUProfileSupplies(t *testing.T) {
 		required string
 		want     bool
 	}{
+		{name: "vbmi-supplies-avx512", profile: goCPUProfileX86AVX512VBMI, required: goCPUProfileX86AVX512, want: true},
+		{name: "vbmi-supplies-avx2", profile: goCPUProfileX86AVX512VBMI, required: goCPUProfileX86AVX2, want: true},
+		{name: "vbmi-does-not-supply-bitalg", profile: goCPUProfileX86AVX512VBMI, required: goCPUProfileX86AVX512BITALG},
+		{name: "avx512-does-not-supply-vbmi", profile: goCPUProfileX86AVX512, required: goCPUProfileX86AVX512VBMI},
 		{name: "avx", profile: goCPUProfileX86AVX, required: goCPUProfileX86AVX, want: true},
 		{name: "avx2-supplies-avx", profile: goCPUProfileX86AVX2, required: goCPUProfileX86AVX, want: true},
 		{name: "avx512-supplies-avx", profile: goCPUProfileX86AVX512, required: goCPUProfileX86AVX, want: true},
@@ -1986,6 +1991,7 @@ func TestLLVMX86CPUFeatureProfile(t *testing.T) {
 		{field: "HasAVX2", want: goCPUProfileX86AVX2},
 		{field: "HasAVX512", want: goCPUProfileX86AVX512},
 		{field: "HasAVX512BITALG", want: goCPUProfileX86AVX512BITALG},
+		{field: "HasAVX512VBMI", want: goCPUProfileX86AVX512VBMI},
 		{field: "HasAVX512VPOPCNTDQ", want: goCPUProfileX86AVX512VPOPCNTDQ},
 		{field: "HasFMA", want: goCPUProfileX86FMA},
 		{field: "HasSSE41", want: goCPUProfileX86SSE41},

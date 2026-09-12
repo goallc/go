@@ -64,6 +64,11 @@ const (
 	goALLCSIMDLowerConcatOdd
 	goALLCSIMDLowerInterleaveEven
 	goALLCSIMDLowerInterleaveOdd
+	goALLCSIMDLowerPermute
+	goALLCSIMDLowerConcatPermute
+	goALLCSIMDLowerLookupOrZero
+	goALLCSIMDLowerPermuteOrZero
+	goALLCSIMDLowerPermuteOrZero128
 	goALLCSIMDLowerPermute32_128
 	goALLCSIMDLowerPermuteLow16_128
 	goALLCSIMDLowerPermuteHigh16_128

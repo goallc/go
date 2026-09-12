@@ -103,6 +103,13 @@ constexpr Profile AVX512Profile = {
     "amd64",
     FeatureAVX512,
     AVX512Capabilities};
+constexpr Profile AVX512VBMIProfile = {
+    "x86.avx512vbmi",
+    "avx512vbmi",
+    "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi",
+    "amd64",
+    FeatureAVX512VBMI,
+    AVX512Capabilities | FeatureAVX512VBMI};
 constexpr Profile AVX512BITALGProfile = {
     "x86.avx512bitalg",
     "avx512bitalg",
@@ -132,6 +139,8 @@ const Profile *findProfile(StringRef Name) {
     return &AVX2Profile;
   if (Name == AVX512Profile.Name)
     return &AVX512Profile;
+  if (Name == AVX512VBMIProfile.Name)
+    return &AVX512VBMIProfile;
   if (Name == AVX512BITALGProfile.Name)
     return &AVX512BITALGProfile;
   if (Name == AVX512VPOPCNTDQProfile.Name)
@@ -586,7 +595,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   for (const Profile *P :
        {&SSE41Profile, &AVXProfile, &AVX2Profile, &AVX512Profile,
         &AVX512BITALGProfile, &AVX512VPOPCNTDQProfile, &FMAProfile,
-        &POPCNTProfile, &ARM64LSEProfile}) {
+        &POPCNTProfile, &ARM64LSEProfile, &AVX512VBMIProfile}) {
     if (llvm::find(*Requested, P) != Requested->end())
       OrderedProfiles.push_back(P);
   }

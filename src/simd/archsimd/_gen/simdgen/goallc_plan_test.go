@@ -23,7 +23,7 @@ func TestGoALLCSIMDPlanLookup(t *testing.T) {
 		{"ConcatAddPairsInt16x8", goALLCSIMDPlanCompose, true},
 		// Implemented conversions are no longer classified as pending.
 		{"ConvertToInt32Float32x4", goALLCSIMDPlanInvalid, false},
-		{"PermuteUint8x16", goALLCSIMDPlanShuffle, true},
+		{"PermuteUint8x16", goALLCSIMDPlanInvalid, false},
 		{"blendInt8x16", goALLCSIMDPlanLegacy, true},
 		{"blendInt8x32", goALLCSIMDPlanCompose, true},
 		{"UnknownInt8x16", goALLCSIMDPlanInvalid, false},

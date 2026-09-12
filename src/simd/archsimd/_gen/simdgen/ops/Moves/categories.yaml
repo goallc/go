@@ -44,6 +44,7 @@
     //       result[i] = keep[i]
     //   }
 - go: LookupOrZero
+  llvmLowering: lookup-or-zero
   commutative: false
   documentation: !string |-
     // NAME looks up table. If an index is out of range, the result is 0.
@@ -54,6 +55,7 @@
     //       result[i] = 0
     //   }
 - go: PermuteOrZero
+  llvmLowering: permute-or-zero
   commutative: false
   documentation: !string |-
     // NAME permutes x. If an index is negative, the result is 0.
@@ -64,12 +66,14 @@
     //       z[i] = 0
     //   }
 - go: Permute
+  llvmLowering: permute
   commutative: false
   documentation: !string |-
     // NAME permutes x.
     //
     //   z[i] = x[indices[i] % len(x)]
 - go: ConcatPermute # ConcatPermute is only available on or after AVX512
+  llvmLowering: concat-permute
   commutative: false
   documentation: !string |-
     // NAME performs a full permutation of vector x, y using indices:
@@ -141,6 +145,7 @@
     // NAME copies the lowest element of its input to all 64 elements of
     // the output vector.
 - go: PermuteOrZeroGrouped
+  llvmLowering: permute-or-zero-128
   commutative: false
   documentation: !string |-
     // NAME permutes x within each 128-bit group. If an index is negative, the result is 0.

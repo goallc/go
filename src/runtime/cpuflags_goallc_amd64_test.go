@@ -25,6 +25,7 @@ func TestGoALLCCPUFeaturesSnapshot(t *testing.T) {
 		{cpu.X86.HasAVX512, runtime.GoALLCCPUFeatureAVX512ForTest},
 		{cpu.X86.HasAVX512BITALG, runtime.GoALLCCPUFeatureAVX512BITALGForTest},
 		{cpu.X86.HasAVX512VPOPCNTDQ, runtime.GoALLCCPUFeatureAVX512VPOPCNTDQForTest},
+		{cpu.X86.HasAVX512VBMI, runtime.GoALLCCPUFeatureAVX512VBMIForTest},
 		{cpu.X86.HasFMA, runtime.GoALLCCPUFeatureFMAForTest},
 		{cpu.X86.HasPOPCNT, runtime.GoALLCCPUFeaturePOPCNTForTest},
 	} {
@@ -38,6 +39,9 @@ func TestGoALLCCPUFeaturesSnapshot(t *testing.T) {
 }
 
 func TestGoALLCCPUWideFeatureABI(t *testing.T) {
+	if got, want := runtime.GoALLCCPUFeatureAVX512VBMIForTest, uint64(1<<13); got != want {
+		t.Fatalf("AVX-512 VBMI feature bit = %#x, want append-only ABI bit %#x", got, want)
+	}
 	if got, want := runtime.GoALLCCPUFeatureAVX2ForTest, uint64(1<<9); got != want {
 		t.Fatalf("AVX2 feature bit = %#x, want append-only ABI bit %#x", got, want)
 	}

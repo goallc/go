@@ -122,6 +122,7 @@ const (
 	goCPUProfileX86AVX512          = "x86.avx512"
 	goCPUProfileX86AVX512BITALG    = "x86.avx512bitalg"
 	goCPUProfileX86AVX512VPOPCNTDQ = "x86.avx512vpopcntdq"
+	goCPUProfileX86AVX512VBMI      = "x86.avx512vbmi"
 	goCPUProfileX86FMA             = "x86.fma"
 	goCPUProfileX86SSE41           = "x86.sse41"
 	goCPUProfileX86POPCNT          = "x86.popcnt"
@@ -773,7 +774,7 @@ func llvmCPUProfileSupplies(profile, required string) bool {
 		return true
 	}
 	switch profile {
-	case goCPUProfileX86AVX512BITALG, goCPUProfileX86AVX512VPOPCNTDQ:
+	case goCPUProfileX86AVX512BITALG, goCPUProfileX86AVX512VPOPCNTDQ, goCPUProfileX86AVX512VBMI:
 		return required == goCPUProfileX86AVX || required == goCPUProfileX86AVX2 || required == goCPUProfileX86AVX512
 	}
 	return false
@@ -975,7 +976,7 @@ func (lfc *LLVMFuncContext) requireCPUFeatureWithGuards(instruction llvm.Value, 
 	for _, guard := range guards {
 		lfc.CPUFeatureProfiles[guard] = true
 	}
-	profiles := make([]string, 0, 9)
+	profiles := make([]string, 0, 10)
 	for _, candidate := range []string{
 		goCPUProfileX86FMA,
 		goCPUProfileX86SSE41,
@@ -986,6 +987,7 @@ func (lfc *LLVMFuncContext) requireCPUFeatureWithGuards(instruction llvm.Value, 
 		goCPUProfileX86AVX512BITALG,
 		goCPUProfileX86AVX512VPOPCNTDQ,
 		goCPUProfileARM64LSE,
+		goCPUProfileX86AVX512VBMI,
 	} {
 		if lfc.CPUFeatureProfiles[candidate] {
 			profiles = append(profiles, candidate)
@@ -1006,6 +1008,8 @@ func llvmX86CPUFeatureProfile(field string) string {
 		return goCPUProfileX86AVX512BITALG
 	case "HasAVX512VPOPCNTDQ":
 		return goCPUProfileX86AVX512VPOPCNTDQ
+	case "HasAVX512VBMI":
+		return goCPUProfileX86AVX512VBMI
 	case "HasFMA":
 		return goCPUProfileX86FMA
 	case "HasSSE41":
@@ -2474,6 +2478,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	}
 
 	switch info.lowering {
+	case goALLCSIMDLowerPermute, goALLCSIMDLowerConcatPermute, goALLCSIMDLowerLookupOrZero, goALLCSIMDLowerPermuteOrZero, goALLCSIMDLowerPermuteOrZero128:
+		return finish(lfc.simdDynamicShuffle(v, info, laneType, lanes))
 	case goALLCSIMDLowerPermute32_128, goALLCSIMDLowerPermuteLow16_128, goALLCSIMDLowerPermuteHigh16_128, goALLCSIMDLowerConcatSelect128, goALLCSIMDLowerConcatPermute128, goALLCSIMDLowerConcatShiftBytes128:
 		return finish(lfc.simdImmediateShuffle(v, info, laneType, lanes))
 	case goALLCSIMDLowerGetLow, goALLCSIMDLowerGetHigh, goALLCSIMDLowerSetLow, goALLCSIMDLowerSetHigh, goALLCSIMDLowerBroadcastLow, goALLCSIMDLowerInterleaveLow, goALLCSIMDLowerInterleaveHigh, goALLCSIMDLowerInterleaveLow128, goALLCSIMDLowerInterleaveHigh128, goALLCSIMDLowerConcatEven, goALLCSIMDLowerConcatOdd, goALLCSIMDLowerInterleaveEven, goALLCSIMDLowerInterleaveOdd:

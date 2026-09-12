@@ -288,6 +288,28 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.AVX512VBMI
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx512-vbmi.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-avx512-vbmi.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
+    GoALLCCPUFeatures.VBMIUnguarded
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-vbmi-unguarded.ll"
+    CHECK
+    "${GOALLC_NOT_EXECUTABLE}"
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features -disable-output
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-vbmi-unguarded.ll"
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.ARM64LSE
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-arm64-lse.ll"
     CHECK

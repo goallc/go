@@ -70,4 +70,5 @@ const (
 	goallcCPUFeatureAVX512
 	goallcCPUFeatureAVX512BITALG
 	goallcCPUFeatureAVX512VPOPCNTDQ
+	goallcCPUFeatureAVX512VBMI
 )
