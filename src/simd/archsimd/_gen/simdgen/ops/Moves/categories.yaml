@@ -156,26 +156,32 @@
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a grouped permutation of vector x using indices:
 - go: permuteScalars
+  llvmLowering: permute-32-128
   commutative: false
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a permutation of vector x using constant indices:
 - go: permuteScalarsGrouped
+  llvmLowering: permute-32-128
   commutative: false
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a grouped permutation of vector x using constant indices:
 - go: permuteScalarsLo
+  llvmLowering: permute-low-16-128
   commutative: false
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a permutation of vector x using constant indices:
 - go: permuteScalarsLoGrouped
+  llvmLowering: permute-low-16-128
   commutative: false
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a grouped permutation of vector x using constant indices:
 - go: permuteScalarsHi
+  llvmLowering: permute-high-16-128
   commutative: false
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a permutation of vector x using constant indices:
 - go: permuteScalarsHiGrouped
+  llvmLowering: permute-high-16-128
   commutative: false
   documentation: !string |- # Detailed documentation will rely on the specific ops.
     // NAME performs a grouped permutation of vector x using constant indices:
@@ -201,6 +207,7 @@
     // NAME interleaves the elements of the low half of each 128-bit subvector of x and y.
 
 - go: concatSelectedConstant
+  llvmLowering: concat-select-128
   commutative: false
   out:
     - elemBits: 32
@@ -212,6 +219,7 @@
     // {2, 0, 5, 7} (don't forget that the binary constant is written big-endian).
 
 - go: concatSelectedConstant
+  llvmLowering: concat-select-128
   commutative: false
   out:
     - elemBits: 64
@@ -224,6 +232,7 @@
     // selecting from y, is 1, and selects 7.
 
 - go: concatSelectedConstantGrouped
+  llvmLowering: concat-select-128
   commutative: false
   out:
     - elemBits: 32
@@ -239,6 +248,7 @@
     // (don't forget that the binary constant is written big-endian).
 
 - go: concatSelectedConstantGrouped
+  llvmLowering: concat-select-128
   commutative: false
   out:
     - elemBits: 64
@@ -259,6 +269,7 @@
     // the 8-bit constant performs the same selection on both subvectors.
 
 - go: concatSelectedConstantGrouped
+  llvmLowering: concat-select-128
   commutative: false
   out:
     - elemBits: 32
@@ -278,6 +289,7 @@
     // (don't forget that the binary constant is written big-endian).
 
 - go: concatSelectedConstantGrouped
+  llvmLowering: concat-select-128
   commutative: false
   out:
     - elemBits: 64
@@ -300,6 +312,7 @@
     // the 8-bit constant performs the same selection on all the subvectors.
 
 - go: ConcatPermute128Scalars
+  llvmLowering: concat-permute-128
   commutative: false
   documentation: !string |-
     // NAME treats the 256-bit vectors x and y as a single vector of four
@@ -307,12 +320,14 @@
     // concatenating the two elements specified by lo and hi.
 
 - go: ConcatShiftBytesRight
+  llvmLowering: concat-shift-bytes-128
   commutative: false
   documentation: !string |-
     // NAME concatenates x and y and shifts it right by shift bytes.
     // The result vector will be the lower half of the concatenated vector.
 
 - go: ConcatShiftBytesRightGrouped
+  llvmLowering: concat-shift-bytes-128
   commutative: false
   documentation: !string |-
     // NAME concatenates x and y and shifts it right by shift bytes.

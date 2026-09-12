@@ -1059,517 +1059,517 @@ func simdGenericOps() []opData {
 		{name: "SetLoUint32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=set-low"},    // ARCH:amd64
 		{name: "SetLoUint64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=set-low"},       // ARCH:amd64
 		{name: "SetLoUint64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=set-low"},     // ARCH:amd64
-		{name: "ShiftAllLeftInt8x16", argLength: 2},                                                                                                          // ARCH:arm64,wasm
-		{name: "ShiftAllLeftInt16x8", argLength: 2},                                                                                                          // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftInt16x16", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllLeftInt16x32", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllLeftInt32x4", argLength: 2},                                                                                                          // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftInt32x8", argLength: 2},                                                                                                          // ARCH:amd64
-		{name: "ShiftAllLeftInt32x16", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllLeftInt64x2", argLength: 2},                                                                                                          // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftInt64x4", argLength: 2},                                                                                                          // ARCH:amd64
-		{name: "ShiftAllLeftInt64x8", argLength: 2},                                                                                                          // ARCH:amd64
-		{name: "ShiftAllLeftUint8x16", argLength: 2},                                                                                                         // ARCH:arm64,wasm
-		{name: "ShiftAllLeftUint16x8", argLength: 2},                                                                                                         // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftUint16x16", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllLeftUint16x32", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllLeftUint32x4", argLength: 2},                                                                                                         // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftUint32x8", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllLeftUint32x16", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllLeftUint64x2", argLength: 2},                                                                                                         // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftUint64x4", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllLeftUint64x8", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllRightInt8x16", argLength: 2},                                                                                                         // ARCH:arm64,wasm
-		{name: "ShiftAllRightInt16x8", argLength: 2},                                                                                                         // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllRightInt16x16", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllRightInt16x32", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllRightInt32x4", argLength: 2},                                                                                                         // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllRightInt32x8", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllRightInt32x16", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllRightInt64x2", argLength: 2},                                                                                                         // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllRightInt64x4", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllRightInt64x8", argLength: 2},                                                                                                         // ARCH:amd64
-		{name: "ShiftAllRightUint8x16", argLength: 2},                                                                                                        // ARCH:arm64,wasm
-		{name: "ShiftAllRightUint16x8", argLength: 2},                                                                                                        // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllRightUint16x16", argLength: 2},                                                                                                       // ARCH:amd64
-		{name: "ShiftAllRightUint16x32", argLength: 2},                                                                                                       // ARCH:amd64
-		{name: "ShiftAllRightUint32x4", argLength: 2},                                                                                                        // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllRightUint32x8", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllRightUint32x16", argLength: 2},                                                                                                       // ARCH:amd64
-		{name: "ShiftAllRightUint64x2", argLength: 2},                                                                                                        // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllRightUint64x4", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftAllRightUint64x8", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "ShiftInt8x16", argLength: 2},                                                                                                                 // ARCH:arm64
-		{name: "ShiftInt16x8", argLength: 2},                                                                                                                 // ARCH:arm64
-		{name: "ShiftInt32x4", argLength: 2},                                                                                                                 // ARCH:arm64
-		{name: "ShiftInt64x2", argLength: 2},                                                                                                                 // ARCH:arm64
-		{name: "ShiftLeftConcatMod16Int16x8", argLength: 3},                                                                                                  // ARCH:amd64
-		{name: "ShiftLeftConcatMod16Int16x16", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod16Int16x32", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod16Uint16x8", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod16Uint16x16", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftLeftConcatMod16Uint16x32", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftLeftConcatMod32Int32x4", argLength: 3},                                                                                                  // ARCH:amd64
-		{name: "ShiftLeftConcatMod32Int32x8", argLength: 3},                                                                                                  // ARCH:amd64
-		{name: "ShiftLeftConcatMod32Int32x16", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod32Uint32x4", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod32Uint32x8", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod32Uint32x16", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftLeftConcatMod64Int64x2", argLength: 3},                                                                                                  // ARCH:amd64
-		{name: "ShiftLeftConcatMod64Int64x4", argLength: 3},                                                                                                  // ARCH:amd64
-		{name: "ShiftLeftConcatMod64Int64x8", argLength: 3},                                                                                                  // ARCH:amd64
-		{name: "ShiftLeftConcatMod64Uint64x2", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod64Uint64x4", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftConcatMod64Uint64x8", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftLeftInt16x8", argLength: 2},                                                                                                             // ARCH:amd64
-		{name: "ShiftLeftInt16x16", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftInt16x32", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftInt32x4", argLength: 2},                                                                                                             // ARCH:amd64
-		{name: "ShiftLeftInt32x8", argLength: 2},                                                                                                             // ARCH:amd64
-		{name: "ShiftLeftInt32x16", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftInt64x2", argLength: 2},                                                                                                             // ARCH:amd64
-		{name: "ShiftLeftInt64x4", argLength: 2},                                                                                                             // ARCH:amd64
-		{name: "ShiftLeftInt64x8", argLength: 2},                                                                                                             // ARCH:amd64
-		{name: "ShiftLeftUint16x8", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftUint16x16", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftLeftUint16x32", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftLeftUint32x4", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftUint32x8", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftUint32x16", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftLeftUint64x2", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftUint64x4", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftLeftUint64x8", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightConcatMod16Int16x8", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftRightConcatMod16Int16x16", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod16Int16x32", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod16Uint16x8", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod16Uint16x16", argLength: 3},                                                                                               // ARCH:amd64
-		{name: "ShiftRightConcatMod16Uint16x32", argLength: 3},                                                                                               // ARCH:amd64
-		{name: "ShiftRightConcatMod32Int32x4", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftRightConcatMod32Int32x8", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftRightConcatMod32Int32x16", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod32Uint32x4", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod32Uint32x8", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod32Uint32x16", argLength: 3},                                                                                               // ARCH:amd64
-		{name: "ShiftRightConcatMod64Int64x2", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftRightConcatMod64Int64x4", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftRightConcatMod64Int64x8", argLength: 3},                                                                                                 // ARCH:amd64
-		{name: "ShiftRightConcatMod64Uint64x2", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod64Uint64x4", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightConcatMod64Uint64x8", argLength: 3},                                                                                                // ARCH:amd64
-		{name: "ShiftRightInt16x8", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightInt16x16", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightInt16x32", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightInt32x4", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightInt32x8", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightInt32x16", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightInt64x2", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightInt64x4", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightInt64x8", argLength: 2},                                                                                                            // ARCH:amd64
-		{name: "ShiftRightUint16x8", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightUint16x16", argLength: 2},                                                                                                          // ARCH:amd64
-		{name: "ShiftRightUint16x32", argLength: 2},                                                                                                          // ARCH:amd64
-		{name: "ShiftRightUint32x4", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightUint32x8", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightUint32x16", argLength: 2},                                                                                                          // ARCH:amd64
-		{name: "ShiftRightUint64x2", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightUint64x4", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftRightUint64x8", argLength: 2},                                                                                                           // ARCH:amd64
-		{name: "ShiftSaturatedInt8x16", argLength: 2},                                                                                                        // ARCH:arm64
-		{name: "ShiftSaturatedInt16x8", argLength: 2},                                                                                                        // ARCH:arm64
-		{name: "ShiftSaturatedInt32x4", argLength: 2},                                                                                                        // ARCH:arm64
-		{name: "ShiftSaturatedInt64x2", argLength: 2},                                                                                                        // ARCH:arm64
-		{name: "ShiftSaturatedUint8x16", argLength: 2},                                                                                                       // ARCH:arm64
-		{name: "ShiftSaturatedUint16x8", argLength: 2},                                                                                                       // ARCH:arm64
-		{name: "ShiftSaturatedUint32x4", argLength: 2},                                                                                                       // ARCH:arm64
-		{name: "ShiftSaturatedUint64x2", argLength: 2},                                                                                                       // ARCH:arm64
-		{name: "ShiftUint8x16", argLength: 2},                                                                                                                // ARCH:arm64
-		{name: "ShiftUint16x8", argLength: 2},                                                                                                                // ARCH:arm64
-		{name: "ShiftUint32x4", argLength: 2},                                                                                                                // ARCH:arm64
-		{name: "ShiftUint64x2", argLength: 2},                                                                                                                // ARCH:arm64
-		{name: "SqrtFloat32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sqrt"},                                          // ARCH:amd64,arm64,wasm
-		{name: "SqrtFloat32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sqrt"},                                          // ARCH:amd64
-		{name: "SqrtFloat32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=sqrt"},                                      // ARCH:amd64
-		{name: "SqrtFloat64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sqrt"},                                          // ARCH:amd64,arm64,wasm
-		{name: "SqrtFloat64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sqrt"},                                          // ARCH:amd64
-		{name: "SqrtFloat64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=sqrt"},                                       // ARCH:amd64
-		{name: "SubFloat32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sub"},                                            // ARCH:amd64,arm64,wasm
-		{name: "SubFloat32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sub"},                                            // ARCH:amd64
-		{name: "SubFloat32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=sub"},                                        // ARCH:amd64
-		{name: "SubFloat64x2", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sub"},                                            // ARCH:amd64,arm64,wasm
-		{name: "SubFloat64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sub"},                                            // ARCH:amd64
-		{name: "SubFloat64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=sub"},                                         // ARCH:amd64
-		{name: "SubInt8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=sub"},                                                 // ARCH:amd64,arm64,wasm
-		{name: "SubInt8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=sub"},                                                // ARCH:amd64
-		{name: "SubInt8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=sub"},                                              // ARCH:amd64
-		{name: "SubInt16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=sub"},                                                // ARCH:amd64,arm64,wasm
-		{name: "SubInt16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=sub"},                                              // ARCH:amd64
-		{name: "SubInt16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=sub"},                                            // ARCH:amd64
-		{name: "SubInt32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=sub"},                                                // ARCH:amd64,arm64,wasm
-		{name: "SubInt32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=sub"},                                               // ARCH:amd64
-		{name: "SubInt32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=sub"},                                            // ARCH:amd64
-		{name: "SubInt64x2", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=sub"},                                                // ARCH:amd64,arm64,wasm
-		{name: "SubInt64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=sub"},                                               // ARCH:amd64
-		{name: "SubInt64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=sub"},                                             // ARCH:amd64
-		{name: "SubSaturatedInt8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=sat-sub"},                                    // ARCH:amd64,arm64,wasm
-		{name: "SubSaturatedInt8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=sat-sub"},                                   // ARCH:amd64
-		{name: "SubSaturatedInt8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=sat-sub"},                                 // ARCH:amd64
-		{name: "SubSaturatedInt16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=sat-sub"},                                   // ARCH:amd64,arm64,wasm
-		{name: "SubSaturatedInt16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=sat-sub"},                                 // ARCH:amd64
-		{name: "SubSaturatedInt16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=sat-sub"},                               // ARCH:amd64
-		{name: "SubSaturatedInt32x4", argLength: 2, simd: "lane=int&laneBits=32&lower=sat-sub"},                                                              // ARCH:arm64
-		{name: "SubSaturatedInt64x2", argLength: 2, simd: "lane=int&laneBits=64&lower=sat-sub"},                                                              // ARCH:arm64
-		{name: "SubSaturatedUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=sat-sub"},                                  // ARCH:amd64,arm64,wasm
-		{name: "SubSaturatedUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=sat-sub"},                                 // ARCH:amd64
-		{name: "SubSaturatedUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=sat-sub"},                               // ARCH:amd64
-		{name: "SubSaturatedUint16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=sat-sub"},                                 // ARCH:amd64,arm64,wasm
-		{name: "SubSaturatedUint16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=sat-sub"},                               // ARCH:amd64
-		{name: "SubSaturatedUint16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=sat-sub"},                             // ARCH:amd64
-		{name: "SubSaturatedUint32x4", argLength: 2, simd: "lane=uint&laneBits=32&lower=sat-sub"},                                                            // ARCH:arm64
-		{name: "SubSaturatedUint64x2", argLength: 2, simd: "lane=uint&laneBits=64&lower=sat-sub"},                                                            // ARCH:arm64
-		{name: "SubUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=sub"},                                               // ARCH:amd64,arm64
-		{name: "SubUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=sub"},                                              // ARCH:amd64
-		{name: "SubUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=sub"},                                            // ARCH:amd64
-		{name: "SubUint16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=sub"},                                              // ARCH:amd64,arm64
-		{name: "SubUint16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=sub"},                                            // ARCH:amd64
-		{name: "SubUint16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=sub"},                                          // ARCH:amd64
-		{name: "SubUint32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=sub"},                                              // ARCH:amd64,arm64
-		{name: "SubUint32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=sub"},                                             // ARCH:amd64
-		{name: "SubUint32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=sub"},                                          // ARCH:amd64
-		{name: "SubUint64x2", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=sub"},                                              // ARCH:amd64,arm64
-		{name: "SubUint64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=sub"},                                             // ARCH:amd64
-		{name: "SubUint64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=sub"},                                           // ARCH:amd64
-		{name: "SumOf8AbsDiffUint8x16", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "SumOf8AbsDiffUint8x32", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "SumOf8AbsDiffUint8x64", argLength: 2},                                                                                                        // ARCH:amd64
-		{name: "TruncFloat32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=trunc"},                                        // ARCH:amd64,arm64,wasm
-		{name: "TruncFloat32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=trunc"},                                        // ARCH:amd64
-		{name: "TruncFloat64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=trunc"},                                        // ARCH:amd64,arm64,wasm
-		{name: "TruncFloat64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=trunc"},                                        // ARCH:amd64
-		{name: "TruncToInt8Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=truncate-integer&resultLaneBits=8"},       // ARCH:amd64,arm64
-		{name: "TruncToInt8Int16x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=truncate-integer&resultLaneBits=8"},      // ARCH:amd64
-		{name: "TruncToInt8Int16x32", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=truncate-integer&resultLaneBits=8"},      // ARCH:amd64
-		{name: "TruncToInt8Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=8"},       // ARCH:amd64
-		{name: "TruncToInt8Int32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=8"},       // ARCH:amd64
-		{name: "TruncToInt8Int32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=8"},      // ARCH:amd64
-		{name: "TruncToInt8Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=8"},       // ARCH:amd64
-		{name: "TruncToInt8Int64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=8"},       // ARCH:amd64
-		{name: "TruncToInt8Int64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=8"},       // ARCH:amd64
-		{name: "TruncToInt16Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=16"},     // ARCH:amd64,arm64
-		{name: "TruncToInt16Int32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=16"},     // ARCH:amd64
-		{name: "TruncToInt16Int32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=16"},    // ARCH:amd64
-		{name: "TruncToInt16Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=16"},     // ARCH:amd64
-		{name: "TruncToInt16Int64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=16"},     // ARCH:amd64
-		{name: "TruncToInt16Int64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=16"},     // ARCH:amd64
-		{name: "TruncToInt32Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=32"},     // ARCH:amd64,arm64
-		{name: "TruncToInt32Int64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=32"},     // ARCH:amd64
-		{name: "TruncToInt32Int64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=32"},     // ARCH:amd64
-		{name: "TruncToUint8Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=truncate-integer&resultLaneBits=8"},    // ARCH:amd64,arm64
-		{name: "TruncToUint8Uint16x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=truncate-integer&resultLaneBits=8"},   // ARCH:amd64
-		{name: "TruncToUint8Uint16x32", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=truncate-integer&resultLaneBits=8"},   // ARCH:amd64
-		{name: "TruncToUint8Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=8"},    // ARCH:amd64
-		{name: "TruncToUint8Uint32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=8"},    // ARCH:amd64
-		{name: "TruncToUint8Uint32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=8"},   // ARCH:amd64
-		{name: "TruncToUint8Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=8"},    // ARCH:amd64
-		{name: "TruncToUint8Uint64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=8"},    // ARCH:amd64
-		{name: "TruncToUint8Uint64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=8"},    // ARCH:amd64
-		{name: "TruncToUint16Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=16"},  // ARCH:amd64,arm64
-		{name: "TruncToUint16Uint32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=16"},  // ARCH:amd64
-		{name: "TruncToUint16Uint32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=16"}, // ARCH:amd64
-		{name: "TruncToUint16Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=16"},  // ARCH:amd64
-		{name: "TruncToUint16Uint64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=16"},  // ARCH:amd64
-		{name: "TruncToUint16Uint64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=16"},  // ARCH:amd64
-		{name: "TruncToUint32Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=32"},  // ARCH:amd64,arm64
-		{name: "TruncToUint32Uint64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=32"},  // ARCH:amd64
-		{name: "TruncToUint32Uint64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=32"},  // ARCH:amd64
-		{name: "XorInt8x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=xor"},                              // ARCH:amd64,arm64,wasm
-		{name: "XorInt8x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=xor"},                             // ARCH:amd64
-		{name: "XorInt8x64", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=xor"},                           // ARCH:amd64
-		{name: "XorInt16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=xor"},                             // ARCH:amd64,arm64,wasm
-		{name: "XorInt16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=xor"},                           // ARCH:amd64
-		{name: "XorInt16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=xor"},                         // ARCH:amd64
-		{name: "XorInt32x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=xor"},                             // ARCH:amd64,arm64,wasm
-		{name: "XorInt32x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=xor"},                            // ARCH:amd64
-		{name: "XorInt32x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=xor"},                         // ARCH:amd64
-		{name: "XorInt64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=xor"},                             // ARCH:amd64,arm64,wasm
-		{name: "XorInt64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=xor"},                            // ARCH:amd64
-		{name: "XorInt64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=xor"},                          // ARCH:amd64
-		{name: "XorUint8x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=xor"},                            // ARCH:amd64,arm64,wasm
-		{name: "XorUint8x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=xor"},                           // ARCH:amd64
-		{name: "XorUint8x64", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=xor"},                         // ARCH:amd64
-		{name: "XorUint16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=xor"},                           // ARCH:amd64,arm64,wasm
-		{name: "XorUint16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=xor"},                         // ARCH:amd64
-		{name: "XorUint16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=xor"},                       // ARCH:amd64
-		{name: "XorUint32x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=xor"},                           // ARCH:amd64,arm64,wasm
-		{name: "XorUint32x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=xor"},                          // ARCH:amd64
-		{name: "XorUint32x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=xor"},                       // ARCH:amd64
-		{name: "XorUint64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=xor"},                           // ARCH:amd64,arm64,wasm
-		{name: "XorUint64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=xor"},                          // ARCH:amd64
-		{name: "XorUint64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=xor"},                        // ARCH:amd64
-		{name: "bitSelectInt8x16", argLength: 3},                                                                                                             // ARCH:arm64
-		{name: "bitSelectNotInt8x16", argLength: 3},                                                                                                          // ARCH:arm64
-		{name: "blendInt8x16", argLength: 3},                                                                                                                 // ARCH:amd64
-		{name: "blendInt8x32", argLength: 3},                                                                                                                 // ARCH:amd64
-		{name: "blendMaskedInt8x64", argLength: 3},                                                                                                           // ARCH:amd64
-		{name: "blendMaskedInt16x32", argLength: 3},                                                                                                          // ARCH:amd64
-		{name: "blendMaskedInt32x16", argLength: 3},                                                                                                          // ARCH:amd64
-		{name: "blendMaskedInt64x8", argLength: 3},                                                                                                           // ARCH:amd64
-		{name: "broadcast1To2Float64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=64&lower=broadcast-low"},                       // ARCH:amd64,arm64
-		{name: "broadcast1To2Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=broadcast-low"},                           // ARCH:amd64,arm64
-		{name: "broadcast1To2MaskedFloat64x2", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To2MaskedInt64x2", argLength: 2},                                                                                                   // ARCH:amd64
-		{name: "broadcast1To2MaskedUint64x2", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To2Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=broadcast-low"},                         // ARCH:amd64,arm64
-		{name: "broadcast1To4Float32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=32&lower=broadcast-low"},                       // ARCH:amd64,arm64
-		{name: "broadcast1To4Float64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=64&lower=broadcast-low"},                       // ARCH:amd64
-		{name: "broadcast1To4Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=broadcast-low"},                           // ARCH:amd64,arm64
-		{name: "broadcast1To4Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=broadcast-low"},                           // ARCH:amd64
-		{name: "broadcast1To4MaskedFloat32x4", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To4MaskedFloat64x2", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To4MaskedInt32x4", argLength: 2},                                                                                                   // ARCH:amd64
-		{name: "broadcast1To4MaskedInt64x2", argLength: 2},                                                                                                   // ARCH:amd64
-		{name: "broadcast1To4MaskedUint32x4", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To4MaskedUint64x2", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To4Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=broadcast-low"},                         // ARCH:amd64,arm64
-		{name: "broadcast1To4Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=broadcast-low"},                         // ARCH:amd64
-		{name: "broadcast1To8Float32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=32&lower=broadcast-low"},                       // ARCH:amd64
-		{name: "broadcast1To8Float64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=broadcast-low"},                     // ARCH:amd64
-		{name: "broadcast1To8Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=broadcast-low"},                           // ARCH:amd64,arm64
-		{name: "broadcast1To8Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=broadcast-low"},                           // ARCH:amd64
-		{name: "broadcast1To8Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=broadcast-low"},                         // ARCH:amd64
-		{name: "broadcast1To8MaskedFloat32x4", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To8MaskedFloat64x2", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To8MaskedInt16x8", argLength: 2},                                                                                                   // ARCH:amd64
-		{name: "broadcast1To8MaskedInt32x4", argLength: 2},                                                                                                   // ARCH:amd64
-		{name: "broadcast1To8MaskedInt64x2", argLength: 2},                                                                                                   // ARCH:amd64
-		{name: "broadcast1To8MaskedUint16x8", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To8MaskedUint32x4", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To8MaskedUint64x2", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To8Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=broadcast-low"},                         // ARCH:amd64,arm64
-		{name: "broadcast1To8Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=broadcast-low"},                         // ARCH:amd64
-		{name: "broadcast1To8Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=broadcast-low"},                       // ARCH:amd64
-		{name: "broadcast1To16Float32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=broadcast-low"},                    // ARCH:amd64
-		{name: "broadcast1To16Int8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=broadcast-low"},                           // ARCH:amd64,arm64
-		{name: "broadcast1To16Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=broadcast-low"},                          // ARCH:amd64
-		{name: "broadcast1To16Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=broadcast-low"},                        // ARCH:amd64
-		{name: "broadcast1To16MaskedFloat32x4", argLength: 2},                                                                                                // ARCH:amd64
-		{name: "broadcast1To16MaskedInt8x16", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To16MaskedInt16x8", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To16MaskedInt32x4", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To16MaskedUint8x16", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To16MaskedUint16x8", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To16MaskedUint32x4", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To16Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=broadcast-low"},                         // ARCH:amd64,arm64
-		{name: "broadcast1To16Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=broadcast-low"},                        // ARCH:amd64
-		{name: "broadcast1To16Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=broadcast-low"},                      // ARCH:amd64
-		{name: "broadcast1To32Int8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=broadcast-low"},                           // ARCH:amd64
-		{name: "broadcast1To32Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=broadcast-low"},                        // ARCH:amd64
-		{name: "broadcast1To32MaskedInt8x16", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To32MaskedInt16x8", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To32MaskedUint8x16", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To32MaskedUint16x8", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To32Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=broadcast-low"},                         // ARCH:amd64
-		{name: "broadcast1To32Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=broadcast-low"},                      // ARCH:amd64
-		{name: "broadcast1To64Int8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=broadcast-low"},                         // ARCH:amd64
-		{name: "broadcast1To64MaskedInt8x16", argLength: 2},                                                                                                  // ARCH:amd64
-		{name: "broadcast1To64MaskedUint8x16", argLength: 2},                                                                                                 // ARCH:amd64
-		{name: "broadcast1To64Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=broadcast-low"},                       // ARCH:amd64
-		{name: "carrylessMultiplyWidenLoUint64x2", argLength: 2, commutative: true},                                                                          // ARCH:arm64
-		{name: "reduceMaxFloat32x4", argLength: 1, simd: "lane=float&laneBits=32&lower=reduce-max"},                                                          // ARCH:arm64
-		{name: "reduceMaxInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-max"},                                                               // ARCH:arm64
-		{name: "reduceMaxInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-max"},                                                              // ARCH:arm64
-		{name: "reduceMaxInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=reduce-max"},                                                              // ARCH:arm64
-		{name: "reduceMaxUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-max"},                                                             // ARCH:arm64
-		{name: "reduceMaxUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-max"},                                                            // ARCH:arm64
-		{name: "reduceMaxUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-max"},                                                            // ARCH:arm64
-		{name: "reduceMinFloat32x4", argLength: 1, simd: "lane=float&laneBits=32&lower=reduce-min"},                                                          // ARCH:arm64
-		{name: "reduceMinInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-min"},                                                               // ARCH:arm64
-		{name: "reduceMinInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-min"},                                                              // ARCH:arm64
-		{name: "reduceMinInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=reduce-min"},                                                              // ARCH:arm64
-		{name: "reduceMinUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-min"},                                                             // ARCH:arm64
-		{name: "reduceMinUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-min"},                                                            // ARCH:arm64
-		{name: "reduceMinUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-min"},                                                            // ARCH:arm64
-		{name: "reduceSumInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-add"},                                                               // ARCH:arm64
-		{name: "reduceSumInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-add"},                                                              // ARCH:arm64
-		{name: "reduceSumInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=reduce-add"},                                                              // ARCH:arm64
-		{name: "reduceSumUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-add"},                                                             // ARCH:arm64
-		{name: "reduceSumUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-add"},                                                            // ARCH:arm64
-		{name: "reduceSumUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-add"},                                                            // ARCH:arm64
-		{name: "AESRoundKeyGenAssistUint32x4", argLength: 1, aux: "UInt8"},                                                                                   // ARCH:amd64
-		{name: "CeilScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                            // ARCH:amd64
-		{name: "CeilScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                            // ARCH:amd64
-		{name: "CeilScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "CeilScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                            // ARCH:amd64
-		{name: "CeilScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                            // ARCH:amd64
-		{name: "CeilScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                            // ARCH:amd64
-		{name: "CeilScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                     // ARCH:amd64
-		{name: "CeilScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                     // ARCH:amd64
-		{name: "CeilScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "CeilScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                     // ARCH:amd64
-		{name: "CeilScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                     // ARCH:amd64
-		{name: "CeilScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                     // ARCH:amd64
-		{name: "ConcatPermute128ScalarsFloat32x8", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ConcatPermute128ScalarsFloat64x4", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ConcatPermute128ScalarsInt8x32", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ConcatPermute128ScalarsInt16x16", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ConcatPermute128ScalarsInt32x8", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ConcatPermute128ScalarsInt64x4", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ConcatPermute128ScalarsUint8x32", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ConcatPermute128ScalarsUint16x16", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ConcatPermute128ScalarsUint32x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ConcatPermute128ScalarsUint64x4", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ConcatShiftBytesRightGroupedUint8x32", argLength: 2, aux: "UInt8"},                                                                           // ARCH:amd64
-		{name: "ConcatShiftBytesRightGroupedUint8x64", argLength: 2, aux: "UInt8"},                                                                           // ARCH:amd64
-		{name: "ConcatShiftBytesRightUint8x16", argLength: 2, aux: "UInt8"},                                                                                  // ARCH:amd64,arm64
-		{name: "FloorScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "FloorScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "FloorScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                          // ARCH:amd64
-		{name: "FloorScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "FloorScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "FloorScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "FloorScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "FloorScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "FloorScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                   // ARCH:amd64
-		{name: "FloorScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "FloorScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "FloorScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "GaloisFieldAffineTransformInverseUint8x16", argLength: 2, aux: "UInt8"},                                                                      // ARCH:amd64
-		{name: "GaloisFieldAffineTransformInverseUint8x32", argLength: 2, aux: "UInt8"},                                                                      // ARCH:amd64
-		{name: "GaloisFieldAffineTransformInverseUint8x64", argLength: 2, aux: "UInt8"},                                                                      // ARCH:amd64
-		{name: "GaloisFieldAffineTransformUint8x16", argLength: 2, aux: "UInt8"},                                                                             // ARCH:amd64
-		{name: "GaloisFieldAffineTransformUint8x32", argLength: 2, aux: "UInt8"},                                                                             // ARCH:amd64
-		{name: "GaloisFieldAffineTransformUint8x64", argLength: 2, aux: "UInt8"},                                                                             // ARCH:amd64
-		{name: "GetElemFloat32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=extract-element"},              // ARCH:amd64,arm64,wasm
-		{name: "GetElemFloat64x2", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=extract-element"},              // ARCH:amd64,arm64,wasm
-		{name: "GetElemInt8x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=extract-element"},                   // ARCH:amd64,arm64,wasm
-		{name: "GetElemInt16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=extract-element"},                  // ARCH:amd64,arm64,wasm
-		{name: "GetElemInt32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=extract-element"},                  // ARCH:amd64,arm64,wasm
-		{name: "GetElemInt64x2", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=extract-element"},                  // ARCH:amd64,arm64,wasm
-		{name: "GetElemUint8x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=extract-element"},                 // ARCH:amd64,arm64,wasm
-		{name: "GetElemUint16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=extract-element"},                // ARCH:amd64,arm64,wasm
-		{name: "GetElemUint32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=extract-element"},                // ARCH:amd64,arm64,wasm
-		{name: "GetElemUint64x2", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=extract-element"},                // ARCH:amd64,arm64,wasm
-		{name: "RoundScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "RoundScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "RoundScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                          // ARCH:amd64
-		{name: "RoundScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "RoundScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "RoundScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "RoundScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "RoundScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "RoundScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                   // ARCH:amd64
-		{name: "RoundScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "RoundScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "RoundScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "SHA1FourRoundsUint32x4", argLength: 2, aux: "UInt8"},                                                                                         // ARCH:amd64
-		{name: "SetElemFloat32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=insert-element"},               // ARCH:amd64,arm64,wasm
-		{name: "SetElemFloat64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=insert-element"},               // ARCH:amd64,arm64,wasm
-		{name: "SetElemInt8x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=insert-element"},                    // ARCH:amd64,arm64,wasm
-		{name: "SetElemInt16x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=insert-element"},                   // ARCH:amd64,arm64,wasm
-		{name: "SetElemInt32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=insert-element"},                   // ARCH:amd64,arm64,wasm
-		{name: "SetElemInt64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=insert-element"},                   // ARCH:amd64,arm64,wasm
-		{name: "SetElemUint8x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=insert-element"},                  // ARCH:amd64,arm64,wasm
-		{name: "SetElemUint16x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=insert-element"},                 // ARCH:amd64,arm64,wasm
-		{name: "SetElemUint32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=insert-element"},                 // ARCH:amd64,arm64,wasm
-		{name: "SetElemUint64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=insert-element"},                 // ARCH:amd64,arm64,wasm
-		{name: "ShiftAllLeftConcatMod16Int16x8", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod16Int16x16", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod16Int16x32", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod16Uint16x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod16Uint16x16", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod16Uint16x32", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod32Int32x4", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod32Int32x8", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod32Int32x16", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod32Uint32x4", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod32Uint32x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod32Uint32x16", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod64Int64x2", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod64Int64x4", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod64Int64x8", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod64Uint64x2", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod64Uint64x4", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllLeftConcatMod64Uint64x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod16Int16x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod16Int16x16", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod16Int16x32", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod16Uint16x8", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod16Uint16x16", argLength: 2, aux: "UInt8"},                                                                              // ARCH:amd64
-		{name: "ShiftAllRightConcatMod16Uint16x32", argLength: 2, aux: "UInt8"},                                                                              // ARCH:amd64
-		{name: "ShiftAllRightConcatMod32Int32x4", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod32Int32x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod32Int32x16", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod32Uint32x4", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod32Uint32x8", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod32Uint32x16", argLength: 2, aux: "UInt8"},                                                                              // ARCH:amd64
-		{name: "ShiftAllRightConcatMod64Int64x2", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod64Int64x4", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod64Int64x8", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "ShiftAllRightConcatMod64Uint64x2", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod64Uint64x4", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "ShiftAllRightConcatMod64Uint64x8", argLength: 2, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "TruncScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "TruncScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "TruncScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                          // ARCH:amd64
-		{name: "TruncScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "TruncScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "TruncScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                           // ARCH:amd64
-		{name: "TruncScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "TruncScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "TruncScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                   // ARCH:amd64
-		{name: "TruncScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "TruncScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "TruncScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                    // ARCH:amd64
-		{name: "carrylessMultiplyUint64x2", argLength: 2, aux: "UInt8"},                                                                                      // ARCH:amd64
-		{name: "carrylessMultiplyUint64x4", argLength: 2, aux: "UInt8"},                                                                                      // ARCH:amd64
-		{name: "carrylessMultiplyUint64x8", argLength: 2, aux: "UInt8"},                                                                                      // ARCH:amd64
-		{name: "concatSelectedConstantFloat32x4", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "concatSelectedConstantFloat64x2", argLength: 2, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "concatSelectedConstantGroupedFloat32x8", argLength: 2, aux: "UInt8"},                                                                         // ARCH:amd64
-		{name: "concatSelectedConstantGroupedFloat32x16", argLength: 2, aux: "UInt8"},                                                                        // ARCH:amd64
-		{name: "concatSelectedConstantGroupedFloat64x4", argLength: 2, aux: "UInt8"},                                                                         // ARCH:amd64
-		{name: "concatSelectedConstantGroupedFloat64x8", argLength: 2, aux: "UInt8"},                                                                         // ARCH:amd64
-		{name: "concatSelectedConstantGroupedInt32x8", argLength: 2, aux: "UInt8"},                                                                           // ARCH:amd64
-		{name: "concatSelectedConstantGroupedInt32x16", argLength: 2, aux: "UInt8"},                                                                          // ARCH:amd64
-		{name: "concatSelectedConstantGroupedInt64x4", argLength: 2, aux: "UInt8"},                                                                           // ARCH:amd64
-		{name: "concatSelectedConstantGroupedInt64x8", argLength: 2, aux: "UInt8"},                                                                           // ARCH:amd64
-		{name: "concatSelectedConstantGroupedUint32x8", argLength: 2, aux: "UInt8"},                                                                          // ARCH:amd64
-		{name: "concatSelectedConstantGroupedUint32x16", argLength: 2, aux: "UInt8"},                                                                         // ARCH:amd64
-		{name: "concatSelectedConstantGroupedUint64x4", argLength: 2, aux: "UInt8"},                                                                          // ARCH:amd64
-		{name: "concatSelectedConstantGroupedUint64x8", argLength: 2, aux: "UInt8"},                                                                          // ARCH:amd64
-		{name: "concatSelectedConstantInt32x4", argLength: 2, aux: "UInt8"},                                                                                  // ARCH:amd64
-		{name: "concatSelectedConstantInt64x2", argLength: 2, aux: "UInt8"},                                                                                  // ARCH:amd64
-		{name: "concatSelectedConstantUint32x4", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "concatSelectedConstantUint64x2", argLength: 2, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "permuteScalarsGroupedInt32x8", argLength: 1, aux: "UInt8"},                                                                                   // ARCH:amd64
-		{name: "permuteScalarsGroupedInt32x16", argLength: 1, aux: "UInt8"},                                                                                  // ARCH:amd64
-		{name: "permuteScalarsGroupedUint32x8", argLength: 1, aux: "UInt8"},                                                                                  // ARCH:amd64
-		{name: "permuteScalarsGroupedUint32x16", argLength: 1, aux: "UInt8"},                                                                                 // ARCH:amd64
-		{name: "permuteScalarsHiGroupedInt16x16", argLength: 1, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "permuteScalarsHiGroupedInt16x32", argLength: 1, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "permuteScalarsHiGroupedUint16x16", argLength: 1, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "permuteScalarsHiGroupedUint16x32", argLength: 1, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "permuteScalarsHiInt16x8", argLength: 1, aux: "UInt8"},                                                                                        // ARCH:amd64
-		{name: "permuteScalarsHiUint16x8", argLength: 1, aux: "UInt8"},                                                                                       // ARCH:amd64
-		{name: "permuteScalarsInt32x4", argLength: 1, aux: "UInt8"},                                                                                          // ARCH:amd64
-		{name: "permuteScalarsLoGroupedInt16x16", argLength: 1, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "permuteScalarsLoGroupedInt16x32", argLength: 1, aux: "UInt8"},                                                                                // ARCH:amd64
-		{name: "permuteScalarsLoGroupedUint16x16", argLength: 1, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "permuteScalarsLoGroupedUint16x32", argLength: 1, aux: "UInt8"},                                                                               // ARCH:amd64
-		{name: "permuteScalarsLoInt16x8", argLength: 1, aux: "UInt8"},                                                                                        // ARCH:amd64
-		{name: "permuteScalarsLoUint16x8", argLength: 1, aux: "UInt8"},                                                                                       // ARCH:amd64
-		{name: "permuteScalarsUint32x4", argLength: 1, aux: "UInt8"},                                                                                         // ARCH:amd64
-		{name: "ternInt32x4", argLength: 3, aux: "UInt8"},                                                                                                    // ARCH:amd64
-		{name: "ternInt32x8", argLength: 3, aux: "UInt8"},                                                                                                    // ARCH:amd64
-		{name: "ternInt32x16", argLength: 3, aux: "UInt8"},                                                                                                   // ARCH:amd64
-		{name: "ternInt64x2", argLength: 3, aux: "UInt8"},                                                                                                    // ARCH:amd64
-		{name: "ternInt64x4", argLength: 3, aux: "UInt8"},                                                                                                    // ARCH:amd64
-		{name: "ternInt64x8", argLength: 3, aux: "UInt8"},                                                                                                    // ARCH:amd64
-		{name: "ternUint32x4", argLength: 3, aux: "UInt8"},                                                                                                   // ARCH:amd64
-		{name: "ternUint32x8", argLength: 3, aux: "UInt8"},                                                                                                   // ARCH:amd64
-		{name: "ternUint32x16", argLength: 3, aux: "UInt8"},                                                                                                  // ARCH:amd64
-		{name: "ternUint64x2", argLength: 3, aux: "UInt8"},                                                                                                   // ARCH:amd64
-		{name: "ternUint64x4", argLength: 3, aux: "UInt8"},                                                                                                   // ARCH:amd64
-		{name: "ternUint64x8", argLength: 3, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "ShiftAllLeftInt8x16", argLength: 2},                                                                                                                                             // ARCH:arm64,wasm
+		{name: "ShiftAllLeftInt16x8", argLength: 2},                                                                                                                                             // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftInt16x16", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllLeftInt16x32", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllLeftInt32x4", argLength: 2},                                                                                                                                             // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftInt32x8", argLength: 2},                                                                                                                                             // ARCH:amd64
+		{name: "ShiftAllLeftInt32x16", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllLeftInt64x2", argLength: 2},                                                                                                                                             // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftInt64x4", argLength: 2},                                                                                                                                             // ARCH:amd64
+		{name: "ShiftAllLeftInt64x8", argLength: 2},                                                                                                                                             // ARCH:amd64
+		{name: "ShiftAllLeftUint8x16", argLength: 2},                                                                                                                                            // ARCH:arm64,wasm
+		{name: "ShiftAllLeftUint16x8", argLength: 2},                                                                                                                                            // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftUint16x16", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllLeftUint16x32", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllLeftUint32x4", argLength: 2},                                                                                                                                            // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftUint32x8", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllLeftUint32x16", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllLeftUint64x2", argLength: 2},                                                                                                                                            // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftUint64x4", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllLeftUint64x8", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllRightInt8x16", argLength: 2},                                                                                                                                            // ARCH:arm64,wasm
+		{name: "ShiftAllRightInt16x8", argLength: 2},                                                                                                                                            // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllRightInt16x16", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllRightInt16x32", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllRightInt32x4", argLength: 2},                                                                                                                                            // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllRightInt32x8", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllRightInt32x16", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllRightInt64x2", argLength: 2},                                                                                                                                            // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllRightInt64x4", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllRightInt64x8", argLength: 2},                                                                                                                                            // ARCH:amd64
+		{name: "ShiftAllRightUint8x16", argLength: 2},                                                                                                                                           // ARCH:arm64,wasm
+		{name: "ShiftAllRightUint16x8", argLength: 2},                                                                                                                                           // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllRightUint16x16", argLength: 2},                                                                                                                                          // ARCH:amd64
+		{name: "ShiftAllRightUint16x32", argLength: 2},                                                                                                                                          // ARCH:amd64
+		{name: "ShiftAllRightUint32x4", argLength: 2},                                                                                                                                           // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllRightUint32x8", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllRightUint32x16", argLength: 2},                                                                                                                                          // ARCH:amd64
+		{name: "ShiftAllRightUint64x2", argLength: 2},                                                                                                                                           // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllRightUint64x4", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftAllRightUint64x8", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "ShiftInt8x16", argLength: 2},                                                                                                                                                    // ARCH:arm64
+		{name: "ShiftInt16x8", argLength: 2},                                                                                                                                                    // ARCH:arm64
+		{name: "ShiftInt32x4", argLength: 2},                                                                                                                                                    // ARCH:arm64
+		{name: "ShiftInt64x2", argLength: 2},                                                                                                                                                    // ARCH:arm64
+		{name: "ShiftLeftConcatMod16Int16x8", argLength: 3},                                                                                                                                     // ARCH:amd64
+		{name: "ShiftLeftConcatMod16Int16x16", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod16Int16x32", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod16Uint16x8", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod16Uint16x16", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftLeftConcatMod16Uint16x32", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftLeftConcatMod32Int32x4", argLength: 3},                                                                                                                                     // ARCH:amd64
+		{name: "ShiftLeftConcatMod32Int32x8", argLength: 3},                                                                                                                                     // ARCH:amd64
+		{name: "ShiftLeftConcatMod32Int32x16", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod32Uint32x4", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod32Uint32x8", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod32Uint32x16", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftLeftConcatMod64Int64x2", argLength: 3},                                                                                                                                     // ARCH:amd64
+		{name: "ShiftLeftConcatMod64Int64x4", argLength: 3},                                                                                                                                     // ARCH:amd64
+		{name: "ShiftLeftConcatMod64Int64x8", argLength: 3},                                                                                                                                     // ARCH:amd64
+		{name: "ShiftLeftConcatMod64Uint64x2", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod64Uint64x4", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftConcatMod64Uint64x8", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftLeftInt16x8", argLength: 2},                                                                                                                                                // ARCH:amd64
+		{name: "ShiftLeftInt16x16", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftInt16x32", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftInt32x4", argLength: 2},                                                                                                                                                // ARCH:amd64
+		{name: "ShiftLeftInt32x8", argLength: 2},                                                                                                                                                // ARCH:amd64
+		{name: "ShiftLeftInt32x16", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftInt64x2", argLength: 2},                                                                                                                                                // ARCH:amd64
+		{name: "ShiftLeftInt64x4", argLength: 2},                                                                                                                                                // ARCH:amd64
+		{name: "ShiftLeftInt64x8", argLength: 2},                                                                                                                                                // ARCH:amd64
+		{name: "ShiftLeftUint16x8", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftUint16x16", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftLeftUint16x32", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftLeftUint32x4", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftUint32x8", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftUint32x16", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftLeftUint64x2", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftUint64x4", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftLeftUint64x8", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightConcatMod16Int16x8", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftRightConcatMod16Int16x16", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod16Int16x32", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod16Uint16x8", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod16Uint16x16", argLength: 3},                                                                                                                                  // ARCH:amd64
+		{name: "ShiftRightConcatMod16Uint16x32", argLength: 3},                                                                                                                                  // ARCH:amd64
+		{name: "ShiftRightConcatMod32Int32x4", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftRightConcatMod32Int32x8", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftRightConcatMod32Int32x16", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod32Uint32x4", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod32Uint32x8", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod32Uint32x16", argLength: 3},                                                                                                                                  // ARCH:amd64
+		{name: "ShiftRightConcatMod64Int64x2", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftRightConcatMod64Int64x4", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftRightConcatMod64Int64x8", argLength: 3},                                                                                                                                    // ARCH:amd64
+		{name: "ShiftRightConcatMod64Uint64x2", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod64Uint64x4", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightConcatMod64Uint64x8", argLength: 3},                                                                                                                                   // ARCH:amd64
+		{name: "ShiftRightInt16x8", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightInt16x16", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightInt16x32", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightInt32x4", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightInt32x8", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightInt32x16", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightInt64x2", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightInt64x4", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightInt64x8", argLength: 2},                                                                                                                                               // ARCH:amd64
+		{name: "ShiftRightUint16x8", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightUint16x16", argLength: 2},                                                                                                                                             // ARCH:amd64
+		{name: "ShiftRightUint16x32", argLength: 2},                                                                                                                                             // ARCH:amd64
+		{name: "ShiftRightUint32x4", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightUint32x8", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightUint32x16", argLength: 2},                                                                                                                                             // ARCH:amd64
+		{name: "ShiftRightUint64x2", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightUint64x4", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftRightUint64x8", argLength: 2},                                                                                                                                              // ARCH:amd64
+		{name: "ShiftSaturatedInt8x16", argLength: 2},                                                                                                                                           // ARCH:arm64
+		{name: "ShiftSaturatedInt16x8", argLength: 2},                                                                                                                                           // ARCH:arm64
+		{name: "ShiftSaturatedInt32x4", argLength: 2},                                                                                                                                           // ARCH:arm64
+		{name: "ShiftSaturatedInt64x2", argLength: 2},                                                                                                                                           // ARCH:arm64
+		{name: "ShiftSaturatedUint8x16", argLength: 2},                                                                                                                                          // ARCH:arm64
+		{name: "ShiftSaturatedUint16x8", argLength: 2},                                                                                                                                          // ARCH:arm64
+		{name: "ShiftSaturatedUint32x4", argLength: 2},                                                                                                                                          // ARCH:arm64
+		{name: "ShiftSaturatedUint64x2", argLength: 2},                                                                                                                                          // ARCH:arm64
+		{name: "ShiftUint8x16", argLength: 2},                                                                                                                                                   // ARCH:arm64
+		{name: "ShiftUint16x8", argLength: 2},                                                                                                                                                   // ARCH:arm64
+		{name: "ShiftUint32x4", argLength: 2},                                                                                                                                                   // ARCH:arm64
+		{name: "ShiftUint64x2", argLength: 2},                                                                                                                                                   // ARCH:arm64
+		{name: "SqrtFloat32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sqrt"},                                                                             // ARCH:amd64,arm64,wasm
+		{name: "SqrtFloat32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sqrt"},                                                                             // ARCH:amd64
+		{name: "SqrtFloat32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=sqrt"},                                                                         // ARCH:amd64
+		{name: "SqrtFloat64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sqrt"},                                                                             // ARCH:amd64,arm64,wasm
+		{name: "SqrtFloat64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sqrt"},                                                                             // ARCH:amd64
+		{name: "SqrtFloat64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=sqrt"},                                                                          // ARCH:amd64
+		{name: "SubFloat32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sub"},                                                                               // ARCH:amd64,arm64,wasm
+		{name: "SubFloat32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=sub"},                                                                               // ARCH:amd64
+		{name: "SubFloat32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=sub"},                                                                           // ARCH:amd64
+		{name: "SubFloat64x2", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sub"},                                                                               // ARCH:amd64,arm64,wasm
+		{name: "SubFloat64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=sub"},                                                                               // ARCH:amd64
+		{name: "SubFloat64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=sub"},                                                                            // ARCH:amd64
+		{name: "SubInt8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=sub"},                                                                                    // ARCH:amd64,arm64,wasm
+		{name: "SubInt8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=sub"},                                                                                   // ARCH:amd64
+		{name: "SubInt8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=sub"},                                                                                 // ARCH:amd64
+		{name: "SubInt16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=sub"},                                                                                   // ARCH:amd64,arm64,wasm
+		{name: "SubInt16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=sub"},                                                                                 // ARCH:amd64
+		{name: "SubInt16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=sub"},                                                                               // ARCH:amd64
+		{name: "SubInt32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=sub"},                                                                                   // ARCH:amd64,arm64,wasm
+		{name: "SubInt32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=sub"},                                                                                  // ARCH:amd64
+		{name: "SubInt32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=sub"},                                                                               // ARCH:amd64
+		{name: "SubInt64x2", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=sub"},                                                                                   // ARCH:amd64,arm64,wasm
+		{name: "SubInt64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=sub"},                                                                                  // ARCH:amd64
+		{name: "SubInt64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=sub"},                                                                                // ARCH:amd64
+		{name: "SubSaturatedInt8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=sat-sub"},                                                                       // ARCH:amd64,arm64,wasm
+		{name: "SubSaturatedInt8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=sat-sub"},                                                                      // ARCH:amd64
+		{name: "SubSaturatedInt8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=sat-sub"},                                                                    // ARCH:amd64
+		{name: "SubSaturatedInt16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=sat-sub"},                                                                      // ARCH:amd64,arm64,wasm
+		{name: "SubSaturatedInt16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=sat-sub"},                                                                    // ARCH:amd64
+		{name: "SubSaturatedInt16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=sat-sub"},                                                                  // ARCH:amd64
+		{name: "SubSaturatedInt32x4", argLength: 2, simd: "lane=int&laneBits=32&lower=sat-sub"},                                                                                                 // ARCH:arm64
+		{name: "SubSaturatedInt64x2", argLength: 2, simd: "lane=int&laneBits=64&lower=sat-sub"},                                                                                                 // ARCH:arm64
+		{name: "SubSaturatedUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=sat-sub"},                                                                     // ARCH:amd64,arm64,wasm
+		{name: "SubSaturatedUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=sat-sub"},                                                                    // ARCH:amd64
+		{name: "SubSaturatedUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=sat-sub"},                                                                  // ARCH:amd64
+		{name: "SubSaturatedUint16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=sat-sub"},                                                                    // ARCH:amd64,arm64,wasm
+		{name: "SubSaturatedUint16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=sat-sub"},                                                                  // ARCH:amd64
+		{name: "SubSaturatedUint16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=sat-sub"},                                                                // ARCH:amd64
+		{name: "SubSaturatedUint32x4", argLength: 2, simd: "lane=uint&laneBits=32&lower=sat-sub"},                                                                                               // ARCH:arm64
+		{name: "SubSaturatedUint64x2", argLength: 2, simd: "lane=uint&laneBits=64&lower=sat-sub"},                                                                                               // ARCH:arm64
+		{name: "SubUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=sub"},                                                                                  // ARCH:amd64,arm64
+		{name: "SubUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=sub"},                                                                                 // ARCH:amd64
+		{name: "SubUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=sub"},                                                                               // ARCH:amd64
+		{name: "SubUint16x8", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=sub"},                                                                                 // ARCH:amd64,arm64
+		{name: "SubUint16x16", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=sub"},                                                                               // ARCH:amd64
+		{name: "SubUint16x32", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=sub"},                                                                             // ARCH:amd64
+		{name: "SubUint32x4", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=sub"},                                                                                 // ARCH:amd64,arm64
+		{name: "SubUint32x8", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=sub"},                                                                                // ARCH:amd64
+		{name: "SubUint32x16", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=sub"},                                                                             // ARCH:amd64
+		{name: "SubUint64x2", argLength: 2, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=sub"},                                                                                 // ARCH:amd64,arm64
+		{name: "SubUint64x4", argLength: 2, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=sub"},                                                                                // ARCH:amd64
+		{name: "SubUint64x8", argLength: 2, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=sub"},                                                                              // ARCH:amd64
+		{name: "SumOf8AbsDiffUint8x16", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "SumOf8AbsDiffUint8x32", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "SumOf8AbsDiffUint8x64", argLength: 2},                                                                                                                                           // ARCH:amd64
+		{name: "TruncFloat32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=trunc"},                                                                           // ARCH:amd64,arm64,wasm
+		{name: "TruncFloat32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=trunc"},                                                                           // ARCH:amd64
+		{name: "TruncFloat64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=trunc"},                                                                           // ARCH:amd64,arm64,wasm
+		{name: "TruncFloat64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=trunc"},                                                                           // ARCH:amd64
+		{name: "TruncToInt8Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=truncate-integer&resultLaneBits=8"},                                          // ARCH:amd64,arm64
+		{name: "TruncToInt8Int16x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=truncate-integer&resultLaneBits=8"},                                         // ARCH:amd64
+		{name: "TruncToInt8Int16x32", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=truncate-integer&resultLaneBits=8"},                                         // ARCH:amd64
+		{name: "TruncToInt8Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=8"},                                          // ARCH:amd64
+		{name: "TruncToInt8Int32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=8"},                                          // ARCH:amd64
+		{name: "TruncToInt8Int32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=8"},                                         // ARCH:amd64
+		{name: "TruncToInt8Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=8"},                                          // ARCH:amd64
+		{name: "TruncToInt8Int64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=8"},                                          // ARCH:amd64
+		{name: "TruncToInt8Int64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=8"},                                          // ARCH:amd64
+		{name: "TruncToInt16Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=16"},                                        // ARCH:amd64,arm64
+		{name: "TruncToInt16Int32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=16"},                                        // ARCH:amd64
+		{name: "TruncToInt16Int32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=truncate-integer&resultLaneBits=16"},                                       // ARCH:amd64
+		{name: "TruncToInt16Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=16"},                                        // ARCH:amd64
+		{name: "TruncToInt16Int64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=16"},                                        // ARCH:amd64
+		{name: "TruncToInt16Int64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=16"},                                        // ARCH:amd64
+		{name: "TruncToInt32Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=32"},                                        // ARCH:amd64,arm64
+		{name: "TruncToInt32Int64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=32"},                                        // ARCH:amd64
+		{name: "TruncToInt32Int64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=truncate-integer&resultLaneBits=32"},                                        // ARCH:amd64
+		{name: "TruncToUint8Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=truncate-integer&resultLaneBits=8"},                                       // ARCH:amd64,arm64
+		{name: "TruncToUint8Uint16x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=truncate-integer&resultLaneBits=8"},                                      // ARCH:amd64
+		{name: "TruncToUint8Uint16x32", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=truncate-integer&resultLaneBits=8"},                                      // ARCH:amd64
+		{name: "TruncToUint8Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=8"},                                       // ARCH:amd64
+		{name: "TruncToUint8Uint32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=8"},                                       // ARCH:amd64
+		{name: "TruncToUint8Uint32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=8"},                                      // ARCH:amd64
+		{name: "TruncToUint8Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=8"},                                       // ARCH:amd64
+		{name: "TruncToUint8Uint64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=8"},                                       // ARCH:amd64
+		{name: "TruncToUint8Uint64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=8"},                                       // ARCH:amd64
+		{name: "TruncToUint16Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=16"},                                     // ARCH:amd64,arm64
+		{name: "TruncToUint16Uint32x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=16"},                                     // ARCH:amd64
+		{name: "TruncToUint16Uint32x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=truncate-integer&resultLaneBits=16"},                                    // ARCH:amd64
+		{name: "TruncToUint16Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=16"},                                     // ARCH:amd64
+		{name: "TruncToUint16Uint64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=16"},                                     // ARCH:amd64
+		{name: "TruncToUint16Uint64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=16"},                                     // ARCH:amd64
+		{name: "TruncToUint32Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=32"},                                     // ARCH:amd64,arm64
+		{name: "TruncToUint32Uint64x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=32"},                                     // ARCH:amd64
+		{name: "TruncToUint32Uint64x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=truncate-integer&resultLaneBits=32"},                                     // ARCH:amd64
+		{name: "XorInt8x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=xor"},                                                                 // ARCH:amd64,arm64,wasm
+		{name: "XorInt8x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=xor"},                                                                // ARCH:amd64
+		{name: "XorInt8x64", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=xor"},                                                              // ARCH:amd64
+		{name: "XorInt16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=xor"},                                                                // ARCH:amd64,arm64,wasm
+		{name: "XorInt16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=xor"},                                                              // ARCH:amd64
+		{name: "XorInt16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=xor"},                                                            // ARCH:amd64
+		{name: "XorInt32x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=xor"},                                                                // ARCH:amd64,arm64,wasm
+		{name: "XorInt32x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=xor"},                                                               // ARCH:amd64
+		{name: "XorInt32x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=xor"},                                                            // ARCH:amd64
+		{name: "XorInt64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=xor"},                                                                // ARCH:amd64,arm64,wasm
+		{name: "XorInt64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=xor"},                                                               // ARCH:amd64
+		{name: "XorInt64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=xor"},                                                             // ARCH:amd64
+		{name: "XorUint8x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=xor"},                                                               // ARCH:amd64,arm64,wasm
+		{name: "XorUint8x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=xor"},                                                              // ARCH:amd64
+		{name: "XorUint8x64", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=xor"},                                                            // ARCH:amd64
+		{name: "XorUint16x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=xor"},                                                              // ARCH:amd64,arm64,wasm
+		{name: "XorUint16x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=xor"},                                                            // ARCH:amd64
+		{name: "XorUint16x32", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=xor"},                                                          // ARCH:amd64
+		{name: "XorUint32x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=xor"},                                                              // ARCH:amd64,arm64,wasm
+		{name: "XorUint32x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=xor"},                                                             // ARCH:amd64
+		{name: "XorUint32x16", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=xor"},                                                          // ARCH:amd64
+		{name: "XorUint64x2", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=xor"},                                                              // ARCH:amd64,arm64,wasm
+		{name: "XorUint64x4", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=xor"},                                                             // ARCH:amd64
+		{name: "XorUint64x8", argLength: 2, commutative: true, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=xor"},                                                           // ARCH:amd64
+		{name: "bitSelectInt8x16", argLength: 3},                                                                                                                                                // ARCH:arm64
+		{name: "bitSelectNotInt8x16", argLength: 3},                                                                                                                                             // ARCH:arm64
+		{name: "blendInt8x16", argLength: 3},                                                                                                                                                    // ARCH:amd64
+		{name: "blendInt8x32", argLength: 3},                                                                                                                                                    // ARCH:amd64
+		{name: "blendMaskedInt8x64", argLength: 3},                                                                                                                                              // ARCH:amd64
+		{name: "blendMaskedInt16x32", argLength: 3},                                                                                                                                             // ARCH:amd64
+		{name: "blendMaskedInt32x16", argLength: 3},                                                                                                                                             // ARCH:amd64
+		{name: "blendMaskedInt64x8", argLength: 3},                                                                                                                                              // ARCH:amd64
+		{name: "broadcast1To2Float64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=64&lower=broadcast-low"},                                                          // ARCH:amd64,arm64
+		{name: "broadcast1To2Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=broadcast-low"},                                                              // ARCH:amd64,arm64
+		{name: "broadcast1To2MaskedFloat64x2", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To2MaskedInt64x2", argLength: 2},                                                                                                                                      // ARCH:amd64
+		{name: "broadcast1To2MaskedUint64x2", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To2Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=broadcast-low"},                                                            // ARCH:amd64,arm64
+		{name: "broadcast1To4Float32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=32&lower=broadcast-low"},                                                          // ARCH:amd64,arm64
+		{name: "broadcast1To4Float64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=64&lower=broadcast-low"},                                                          // ARCH:amd64
+		{name: "broadcast1To4Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=broadcast-low"},                                                              // ARCH:amd64,arm64
+		{name: "broadcast1To4Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=broadcast-low"},                                                              // ARCH:amd64
+		{name: "broadcast1To4MaskedFloat32x4", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To4MaskedFloat64x2", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To4MaskedInt32x4", argLength: 2},                                                                                                                                      // ARCH:amd64
+		{name: "broadcast1To4MaskedInt64x2", argLength: 2},                                                                                                                                      // ARCH:amd64
+		{name: "broadcast1To4MaskedUint32x4", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To4MaskedUint64x2", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To4Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=broadcast-low"},                                                            // ARCH:amd64,arm64
+		{name: "broadcast1To4Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=broadcast-low"},                                                            // ARCH:amd64
+		{name: "broadcast1To8Float32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=float&laneBits=32&lower=broadcast-low"},                                                          // ARCH:amd64
+		{name: "broadcast1To8Float64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=broadcast-low"},                                                        // ARCH:amd64
+		{name: "broadcast1To8Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=broadcast-low"},                                                              // ARCH:amd64,arm64
+		{name: "broadcast1To8Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=broadcast-low"},                                                              // ARCH:amd64
+		{name: "broadcast1To8Int64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=broadcast-low"},                                                            // ARCH:amd64
+		{name: "broadcast1To8MaskedFloat32x4", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To8MaskedFloat64x2", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To8MaskedInt16x8", argLength: 2},                                                                                                                                      // ARCH:amd64
+		{name: "broadcast1To8MaskedInt32x4", argLength: 2},                                                                                                                                      // ARCH:amd64
+		{name: "broadcast1To8MaskedInt64x2", argLength: 2},                                                                                                                                      // ARCH:amd64
+		{name: "broadcast1To8MaskedUint16x8", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To8MaskedUint32x4", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To8MaskedUint64x2", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To8Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=broadcast-low"},                                                            // ARCH:amd64,arm64
+		{name: "broadcast1To8Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=broadcast-low"},                                                            // ARCH:amd64
+		{name: "broadcast1To8Uint64x2", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=broadcast-low"},                                                          // ARCH:amd64
+		{name: "broadcast1To16Float32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=broadcast-low"},                                                       // ARCH:amd64
+		{name: "broadcast1To16Int8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=broadcast-low"},                                                              // ARCH:amd64,arm64
+		{name: "broadcast1To16Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=broadcast-low"},                                                             // ARCH:amd64
+		{name: "broadcast1To16Int32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=broadcast-low"},                                                           // ARCH:amd64
+		{name: "broadcast1To16MaskedFloat32x4", argLength: 2},                                                                                                                                   // ARCH:amd64
+		{name: "broadcast1To16MaskedInt8x16", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To16MaskedInt16x8", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To16MaskedInt32x4", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To16MaskedUint8x16", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To16MaskedUint16x8", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To16MaskedUint32x4", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To16Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=broadcast-low"},                                                            // ARCH:amd64,arm64
+		{name: "broadcast1To16Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=broadcast-low"},                                                           // ARCH:amd64
+		{name: "broadcast1To16Uint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=broadcast-low"},                                                         // ARCH:amd64
+		{name: "broadcast1To32Int8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=broadcast-low"},                                                              // ARCH:amd64
+		{name: "broadcast1To32Int16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=broadcast-low"},                                                           // ARCH:amd64
+		{name: "broadcast1To32MaskedInt8x16", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To32MaskedInt16x8", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To32MaskedUint8x16", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To32MaskedUint16x8", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To32Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=broadcast-low"},                                                            // ARCH:amd64
+		{name: "broadcast1To32Uint16x8", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=broadcast-low"},                                                         // ARCH:amd64
+		{name: "broadcast1To64Int8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=8&lower=broadcast-low"},                                                            // ARCH:amd64
+		{name: "broadcast1To64MaskedInt8x16", argLength: 2},                                                                                                                                     // ARCH:amd64
+		{name: "broadcast1To64MaskedUint8x16", argLength: 2},                                                                                                                                    // ARCH:amd64
+		{name: "broadcast1To64Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=broadcast-low"},                                                          // ARCH:amd64
+		{name: "carrylessMultiplyWidenLoUint64x2", argLength: 2, commutative: true},                                                                                                             // ARCH:arm64
+		{name: "reduceMaxFloat32x4", argLength: 1, simd: "lane=float&laneBits=32&lower=reduce-max"},                                                                                             // ARCH:arm64
+		{name: "reduceMaxInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-max"},                                                                                                  // ARCH:arm64
+		{name: "reduceMaxInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-max"},                                                                                                 // ARCH:arm64
+		{name: "reduceMaxInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=reduce-max"},                                                                                                 // ARCH:arm64
+		{name: "reduceMaxUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-max"},                                                                                                // ARCH:arm64
+		{name: "reduceMaxUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-max"},                                                                                               // ARCH:arm64
+		{name: "reduceMaxUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-max"},                                                                                               // ARCH:arm64
+		{name: "reduceMinFloat32x4", argLength: 1, simd: "lane=float&laneBits=32&lower=reduce-min"},                                                                                             // ARCH:arm64
+		{name: "reduceMinInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-min"},                                                                                                  // ARCH:arm64
+		{name: "reduceMinInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-min"},                                                                                                 // ARCH:arm64
+		{name: "reduceMinInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=reduce-min"},                                                                                                 // ARCH:arm64
+		{name: "reduceMinUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-min"},                                                                                                // ARCH:arm64
+		{name: "reduceMinUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-min"},                                                                                               // ARCH:arm64
+		{name: "reduceMinUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-min"},                                                                                               // ARCH:arm64
+		{name: "reduceSumInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-add"},                                                                                                  // ARCH:arm64
+		{name: "reduceSumInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-add"},                                                                                                 // ARCH:arm64
+		{name: "reduceSumInt32x4", argLength: 1, simd: "lane=int&laneBits=32&lower=reduce-add"},                                                                                                 // ARCH:arm64
+		{name: "reduceSumUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-add"},                                                                                                // ARCH:arm64
+		{name: "reduceSumUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-add"},                                                                                               // ARCH:arm64
+		{name: "reduceSumUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-add"},                                                                                               // ARCH:arm64
+		{name: "AESRoundKeyGenAssistUint32x4", argLength: 1, aux: "UInt8"},                                                                                                                      // ARCH:amd64
+		{name: "CeilScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                                               // ARCH:amd64
+		{name: "CeilScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                                               // ARCH:amd64
+		{name: "CeilScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                                              // ARCH:amd64
+		{name: "CeilScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                                               // ARCH:amd64
+		{name: "CeilScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                                               // ARCH:amd64
+		{name: "CeilScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                                               // ARCH:amd64
+		{name: "CeilScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                                        // ARCH:amd64
+		{name: "CeilScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                                        // ARCH:amd64
+		{name: "CeilScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                                       // ARCH:amd64
+		{name: "CeilScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                                        // ARCH:amd64
+		{name: "CeilScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                                        // ARCH:amd64
+		{name: "CeilScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                                        // ARCH:amd64
+		{name: "ConcatPermute128ScalarsFloat32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=concat-permute-128"},          // ARCH:amd64
+		{name: "ConcatPermute128ScalarsFloat64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=concat-permute-128"},          // ARCH:amd64
+		{name: "ConcatPermute128ScalarsInt8x32", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=int&laneBits=8&lower=concat-permute-128"},              // ARCH:amd64
+		{name: "ConcatPermute128ScalarsInt16x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=concat-permute-128"},            // ARCH:amd64
+		{name: "ConcatPermute128ScalarsInt32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=concat-permute-128"},             // ARCH:amd64
+		{name: "ConcatPermute128ScalarsInt64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=int&laneBits=64&lower=concat-permute-128"},             // ARCH:amd64
+		{name: "ConcatPermute128ScalarsUint8x32", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=concat-permute-128"},            // ARCH:amd64
+		{name: "ConcatPermute128ScalarsUint16x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=concat-permute-128"},          // ARCH:amd64
+		{name: "ConcatPermute128ScalarsUint32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=concat-permute-128"},           // ARCH:amd64
+		{name: "ConcatPermute128ScalarsUint64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=II&arch.amd64.profile=x86.avx2&lane=uint&laneBits=64&lower=concat-permute-128"},           // ARCH:amd64
+		{name: "ConcatShiftBytesRightGroupedUint8x32", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=2I&arch.amd64.profile=x86.avx2&lane=uint&laneBits=8&lower=concat-shift-bytes-128"},   // ARCH:amd64
+		{name: "ConcatShiftBytesRightGroupedUint8x64", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=2I&arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=concat-shift-bytes-128"}, // ARCH:amd64
+		{name: "ConcatShiftBytesRightUint8x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.order=2I&arch.amd64.profile=x86.avx&arch.arm64.order=2I&lane=uint&laneBits=8&lower=concat-shift-bytes-128"}, // ARCH:amd64,arm64
+		{name: "FloorScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "FloorScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "FloorScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                         // ARCH:amd64
+		{name: "FloorScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "FloorScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "FloorScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "FloorScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "FloorScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "FloorScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                  // ARCH:amd64
+		{name: "FloorScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "FloorScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "FloorScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "GaloisFieldAffineTransformInverseUint8x16", argLength: 2, aux: "UInt8"},                                                                                     // ARCH:amd64
+		{name: "GaloisFieldAffineTransformInverseUint8x32", argLength: 2, aux: "UInt8"},                                                                                     // ARCH:amd64
+		{name: "GaloisFieldAffineTransformInverseUint8x64", argLength: 2, aux: "UInt8"},                                                                                     // ARCH:amd64
+		{name: "GaloisFieldAffineTransformUint8x16", argLength: 2, aux: "UInt8"},                                                                                            // ARCH:amd64
+		{name: "GaloisFieldAffineTransformUint8x32", argLength: 2, aux: "UInt8"},                                                                                            // ARCH:amd64
+		{name: "GaloisFieldAffineTransformUint8x64", argLength: 2, aux: "UInt8"},                                                                                            // ARCH:amd64
+		{name: "GetElemFloat32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=extract-element"},                             // ARCH:amd64,arm64,wasm
+		{name: "GetElemFloat64x2", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=extract-element"},                             // ARCH:amd64,arm64,wasm
+		{name: "GetElemInt8x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=extract-element"},                                  // ARCH:amd64,arm64,wasm
+		{name: "GetElemInt16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=extract-element"},                                 // ARCH:amd64,arm64,wasm
+		{name: "GetElemInt32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=extract-element"},                                 // ARCH:amd64,arm64,wasm
+		{name: "GetElemInt64x2", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=extract-element"},                                 // ARCH:amd64,arm64,wasm
+		{name: "GetElemUint8x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=extract-element"},                                // ARCH:amd64,arm64,wasm
+		{name: "GetElemUint16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=extract-element"},                               // ARCH:amd64,arm64,wasm
+		{name: "GetElemUint32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=extract-element"},                               // ARCH:amd64,arm64,wasm
+		{name: "GetElemUint64x2", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=extract-element"},                               // ARCH:amd64,arm64,wasm
+		{name: "RoundScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "RoundScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "RoundScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                         // ARCH:amd64
+		{name: "RoundScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "RoundScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "RoundScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "RoundScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "RoundScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "RoundScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                  // ARCH:amd64
+		{name: "RoundScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "RoundScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "RoundScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "SHA1FourRoundsUint32x4", argLength: 2, aux: "UInt8"},                                                                                                        // ARCH:amd64
+		{name: "SetElemFloat32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=insert-element"},                              // ARCH:amd64,arm64,wasm
+		{name: "SetElemFloat64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=insert-element"},                              // ARCH:amd64,arm64,wasm
+		{name: "SetElemInt8x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=insert-element"},                                   // ARCH:amd64,arm64,wasm
+		{name: "SetElemInt16x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=insert-element"},                                  // ARCH:amd64,arm64,wasm
+		{name: "SetElemInt32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=insert-element"},                                  // ARCH:amd64,arm64,wasm
+		{name: "SetElemInt64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=insert-element"},                                  // ARCH:amd64,arm64,wasm
+		{name: "SetElemUint8x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=8&lower=insert-element"},                                 // ARCH:amd64,arm64,wasm
+		{name: "SetElemUint16x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=insert-element"},                                // ARCH:amd64,arm64,wasm
+		{name: "SetElemUint32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=insert-element"},                                // ARCH:amd64,arm64,wasm
+		{name: "SetElemUint64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=insert-element"},                                // ARCH:amd64,arm64,wasm
+		{name: "ShiftAllLeftConcatMod16Int16x8", argLength: 2, aux: "UInt8"},                                                                                                // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod16Int16x16", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod16Int16x32", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod16Uint16x8", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod16Uint16x16", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod16Uint16x32", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod32Int32x4", argLength: 2, aux: "UInt8"},                                                                                                // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod32Int32x8", argLength: 2, aux: "UInt8"},                                                                                                // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod32Int32x16", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod32Uint32x4", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod32Uint32x8", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod32Uint32x16", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod64Int64x2", argLength: 2, aux: "UInt8"},                                                                                                // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod64Int64x4", argLength: 2, aux: "UInt8"},                                                                                                // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod64Int64x8", argLength: 2, aux: "UInt8"},                                                                                                // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod64Uint64x2", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod64Uint64x4", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllLeftConcatMod64Uint64x8", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod16Int16x8", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod16Int16x16", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod16Int16x32", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod16Uint16x8", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod16Uint16x16", argLength: 2, aux: "UInt8"},                                                                                             // ARCH:amd64
+		{name: "ShiftAllRightConcatMod16Uint16x32", argLength: 2, aux: "UInt8"},                                                                                             // ARCH:amd64
+		{name: "ShiftAllRightConcatMod32Int32x4", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod32Int32x8", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod32Int32x16", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod32Uint32x4", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod32Uint32x8", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod32Uint32x16", argLength: 2, aux: "UInt8"},                                                                                             // ARCH:amd64
+		{name: "ShiftAllRightConcatMod64Int64x2", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod64Int64x4", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod64Int64x8", argLength: 2, aux: "UInt8"},                                                                                               // ARCH:amd64
+		{name: "ShiftAllRightConcatMod64Uint64x2", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod64Uint64x4", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "ShiftAllRightConcatMod64Uint64x8", argLength: 2, aux: "UInt8"},                                                                                              // ARCH:amd64
+		{name: "TruncScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "TruncScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "TruncScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                         // ARCH:amd64
+		{name: "TruncScaledFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "TruncScaledFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "TruncScaledFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                          // ARCH:amd64
+		{name: "TruncScaledResidueFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "TruncScaledResidueFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "TruncScaledResidueFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                  // ARCH:amd64
+		{name: "TruncScaledResidueFloat64x2", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "TruncScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "TruncScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                   // ARCH:amd64
+		{name: "carrylessMultiplyUint64x2", argLength: 2, aux: "UInt8"},                                                                                                     // ARCH:amd64
+		{name: "carrylessMultiplyUint64x4", argLength: 2, aux: "UInt8"},                                                                                                     // ARCH:amd64
+		{name: "carrylessMultiplyUint64x8", argLength: 2, aux: "UInt8"},                                                                                                     // ARCH:amd64
+		{name: "concatSelectedConstantFloat32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=concat-select-128"},            // ARCH:amd64
+		{name: "concatSelectedConstantFloat64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=concat-select-128"},            // ARCH:amd64
+		{name: "concatSelectedConstantGroupedFloat32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=concat-select-128"},     // ARCH:amd64
+		{name: "concatSelectedConstantGroupedFloat32x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=32&lower=concat-select-128"}, // ARCH:amd64
+		{name: "concatSelectedConstantGroupedFloat64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=concat-select-128"},     // ARCH:amd64
+		{name: "concatSelectedConstantGroupedFloat64x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=float&laneBits=64&lower=concat-select-128"},  // ARCH:amd64
+		{name: "concatSelectedConstantGroupedInt32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=concat-select-128"},         // ARCH:amd64
+		{name: "concatSelectedConstantGroupedInt32x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=concat-select-128"},     // ARCH:amd64
+		{name: "concatSelectedConstantGroupedInt64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=concat-select-128"},         // ARCH:amd64
+		{name: "concatSelectedConstantGroupedInt64x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=64&lower=concat-select-128"},      // ARCH:amd64
+		{name: "concatSelectedConstantGroupedUint32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=concat-select-128"},       // ARCH:amd64
+		{name: "concatSelectedConstantGroupedUint32x16", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=concat-select-128"},   // ARCH:amd64
+		{name: "concatSelectedConstantGroupedUint64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=concat-select-128"},       // ARCH:amd64
+		{name: "concatSelectedConstantGroupedUint64x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=64&lower=concat-select-128"},    // ARCH:amd64
+		{name: "concatSelectedConstantInt32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=concat-select-128"},                // ARCH:amd64
+		{name: "concatSelectedConstantInt64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=64&lower=concat-select-128"},                // ARCH:amd64
+		{name: "concatSelectedConstantUint32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=concat-select-128"},              // ARCH:amd64
+		{name: "concatSelectedConstantUint64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=64&lower=concat-select-128"},              // ARCH:amd64
+		{name: "permuteScalarsGroupedInt32x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=32&lower=permute-32-128"},                   // ARCH:amd64
+		{name: "permuteScalarsGroupedInt32x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=32&lower=permute-32-128"},                // ARCH:amd64
+		{name: "permuteScalarsGroupedUint32x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=32&lower=permute-32-128"},                 // ARCH:amd64
+		{name: "permuteScalarsGroupedUint32x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=32&lower=permute-32-128"},              // ARCH:amd64
+		{name: "permuteScalarsHiGroupedInt16x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=permute-high-16-128"},           // ARCH:amd64
+		{name: "permuteScalarsHiGroupedInt16x32", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=permute-high-16-128"},         // ARCH:amd64
+		{name: "permuteScalarsHiGroupedUint16x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=permute-high-16-128"},         // ARCH:amd64
+		{name: "permuteScalarsHiGroupedUint16x32", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=permute-high-16-128"},       // ARCH:amd64
+		{name: "permuteScalarsHiInt16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=permute-high-16-128"},                    // ARCH:amd64
+		{name: "permuteScalarsHiUint16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=permute-high-16-128"},                  // ARCH:amd64
+		{name: "permuteScalarsInt32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=32&lower=permute-32-128"},                           // ARCH:amd64
+		{name: "permuteScalarsLoGroupedInt16x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx2&lane=int&laneBits=16&lower=permute-low-16-128"},            // ARCH:amd64
+		{name: "permuteScalarsLoGroupedInt16x32", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=int&laneBits=16&lower=permute-low-16-128"},          // ARCH:amd64
+		{name: "permuteScalarsLoGroupedUint16x16", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx2&lane=uint&laneBits=16&lower=permute-low-16-128"},          // ARCH:amd64
+		{name: "permuteScalarsLoGroupedUint16x32", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=16&lower=permute-low-16-128"},        // ARCH:amd64
+		{name: "permuteScalarsLoInt16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=16&lower=permute-low-16-128"},                     // ARCH:amd64
+		{name: "permuteScalarsLoUint16x8", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=16&lower=permute-low-16-128"},                   // ARCH:amd64
+		{name: "permuteScalarsUint32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=uint&laneBits=32&lower=permute-32-128"},                         // ARCH:amd64
+		{name: "ternInt32x4", argLength: 3, aux: "UInt8"},                                                                                                                   // ARCH:amd64
+		{name: "ternInt32x8", argLength: 3, aux: "UInt8"},                                                                                                                   // ARCH:amd64
+		{name: "ternInt32x16", argLength: 3, aux: "UInt8"},                                                                                                                  // ARCH:amd64
+		{name: "ternInt64x2", argLength: 3, aux: "UInt8"},                                                                                                                   // ARCH:amd64
+		{name: "ternInt64x4", argLength: 3, aux: "UInt8"},                                                                                                                   // ARCH:amd64
+		{name: "ternInt64x8", argLength: 3, aux: "UInt8"},                                                                                                                   // ARCH:amd64
+		{name: "ternUint32x4", argLength: 3, aux: "UInt8"},                                                                                                                  // ARCH:amd64
+		{name: "ternUint32x8", argLength: 3, aux: "UInt8"},                                                                                                                  // ARCH:amd64
+		{name: "ternUint32x16", argLength: 3, aux: "UInt8"},                                                                                                                 // ARCH:amd64
+		{name: "ternUint64x2", argLength: 3, aux: "UInt8"},                                                                                                                  // ARCH:amd64
+		{name: "ternUint64x4", argLength: 3, aux: "UInt8"},                                                                                                                  // ARCH:amd64
+		{name: "ternUint64x8", argLength: 3, aux: "UInt8"},                                                                                                                  // ARCH:amd64
 	}
 }

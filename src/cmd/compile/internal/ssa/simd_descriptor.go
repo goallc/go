@@ -64,6 +64,12 @@ const (
 	goALLCSIMDLowerConcatOdd
 	goALLCSIMDLowerInterleaveEven
 	goALLCSIMDLowerInterleaveOdd
+	goALLCSIMDLowerPermute32_128
+	goALLCSIMDLowerPermuteLow16_128
+	goALLCSIMDLowerPermuteHigh16_128
+	goALLCSIMDLowerConcatSelect128
+	goALLCSIMDLowerConcatPermute128
+	goALLCSIMDLowerConcatShiftBytes128
 )
 
 type goALLCSIMDLane uint8

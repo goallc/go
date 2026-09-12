@@ -132,6 +132,8 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"permute-32-128": 1, "permute-low-16-128": 1, "permute-high-16-128": 1,
+	"concat-select-128": 2, "concat-permute-128": 2, "concat-shift-bytes-128": 2,
 	"add": 2, "sub": 2, "mul": 2, "div": 2,
 	"sat-add": 2, "sat-sub": 2,
 	"extract-element": 1, "insert-element": 2,
@@ -169,6 +171,11 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		panic(fmt.Errorf("simdgen: unknown LLVM lowering %q for %s", lowering, op.GenericName()))
 	}
 	wantOut, wantImm := OneVregOut, NoImm
+	if goALLCImmediateShuffleLowering(lowering) {
+		// A user immediate is a UInt8 Aux value, even when its public
+		// variable form is expanded by the frontend into a jump table.
+		wantImm = VarImm
+	}
 	switch lowering {
 	case "extract-element":
 		wantOut, wantImm = OneGregOut, VarImm
@@ -187,6 +194,10 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	if (lowering == "extract-element" || lowering == "insert-element") &&
 		(genericOp.In[0].Class != "vreg" || genericOp.In[0].TreatLikeAScalarOfSize != nil) {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires the vector as the first input for %s", lowering, op.GenericName()))
+	}
+	if goALLCImmediateShuffleLowering(lowering) {
+		validateGoALLCImmediateShuffle(op, genericOp, lowering)
+		return
 	}
 	if goALLCStaticShuffleLowering(lowering) {
 		validateGoALLCStaticShuffle(op, genericOp, lowering)

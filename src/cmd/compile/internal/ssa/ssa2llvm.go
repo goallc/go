@@ -2474,6 +2474,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	}
 
 	switch info.lowering {
+	case goALLCSIMDLowerPermute32_128, goALLCSIMDLowerPermuteLow16_128, goALLCSIMDLowerPermuteHigh16_128, goALLCSIMDLowerConcatSelect128, goALLCSIMDLowerConcatPermute128, goALLCSIMDLowerConcatShiftBytes128:
+		return finish(lfc.simdImmediateShuffle(v, info, laneType, lanes))
 	case goALLCSIMDLowerGetLow, goALLCSIMDLowerGetHigh, goALLCSIMDLowerSetLow, goALLCSIMDLowerSetHigh, goALLCSIMDLowerBroadcastLow, goALLCSIMDLowerInterleaveLow, goALLCSIMDLowerInterleaveHigh, goALLCSIMDLowerInterleaveLow128, goALLCSIMDLowerInterleaveHigh128, goALLCSIMDLowerConcatEven, goALLCSIMDLowerConcatOdd, goALLCSIMDLowerInterleaveEven, goALLCSIMDLowerInterleaveOdd:
 		return finish(lfc.simdStaticShuffle(v, info, laneType, lanes))
 	case goALLCSIMDLowerExtendInteger, goALLCSIMDLowerTruncateInteger:
