@@ -543,10 +543,14 @@ var passes = [...]pass{
 	// results into physical ABI pieces. Clean unused memory before writebarrier;
 	// the later deadcode pass cleans the CFG/value debris left by writebarrier
 	// and direct-interface normalization.
-	{name: "llvm dead auto elim", fn: llvmDeadAutoElimPass},
+	// DSE needs live memory chains and can remove the last read of a copy
+	// source. Run dead-auto elimination once after DSE, then clean its
+	// debris before fusing empty paths and expanding write barriers.
 	{name: "llvm pre-writebarrier deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
-	{name: "llvm late fuse", fn: llvmLateFusePass},
 	{name: "llvm dse", fn: llvmDSEPass},
+	{name: "llvm dead auto elim", fn: llvmDeadAutoElimPass},
+	{name: "llvm post-dse deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
+	{name: "llvm late fuse", fn: llvmLateFusePass},
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
 	{name: "llvm deadcode", fn: deadcode, required: true},
@@ -606,11 +610,13 @@ type constraint struct {
 }
 
 var passOrder = [...]constraint{
-	// LLVM uses generic cleanup before expanding write barriers and emitting IR.
-	// DSE needs dead memory values removed; fusion can extend its local scope.
-	{"llvm pre-writebarrier deadcode", "llvm late fuse"},
-	{"llvm late fuse", "llvm dse"},
-	{"llvm dse", "llvm writebarrier"},
+	// Clean memory chains before DSE and newly dead locals after it. Fusion
+	// then consumes empty paths without hiding cleanup opportunities.
+	{"llvm pre-writebarrier deadcode", "llvm dse"},
+	{"llvm dse", "llvm dead auto elim"},
+	{"llvm dead auto elim", "llvm post-dse deadcode"},
+	{"llvm post-dse deadcode", "llvm late fuse"},
+	{"llvm late fuse", "llvm writebarrier"},
 
 	// "insert resched checks" uses mem, better to clean out stores first.
 	{"dse", "insert resched checks"},
