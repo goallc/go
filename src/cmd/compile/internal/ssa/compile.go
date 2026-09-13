@@ -171,6 +171,15 @@ func llvmWritebarrierPass(f *Func) {
 	}
 }
 
+func llvmDeadAutoElimPass(f *Func) {
+	if base.Flag.EnableLLVM {
+		// LLVM emission precedes the native dead-auto pass. Remove unread
+		// locals while calls still have their logical arguments, so LLVM need
+		// not rediscover that their storage and initialization are unused.
+		elimDeadAutosGeneric(f)
+	}
+}
+
 func llvmPreWritebarrierDeadcodePass(f *Func) {
 	if base.Flag.EnableLLVM {
 		// Optimizations can leave unused memory values. The native path removes
@@ -518,6 +527,7 @@ var passes = [...]pass{
 	// results into physical ABI pieces. Clean unused memory before writebarrier;
 	// the later deadcode pass cleans the CFG/value debris left by writebarrier
 	// and direct-interface normalization.
+	{name: "llvm dead auto elim", fn: llvmDeadAutoElimPass},
 	{name: "llvm pre-writebarrier deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},

@@ -5020,10 +5020,26 @@ func LLVMCompile(f *Func) {
 	}
 	for _, BB := range f.Blocks {
 		for _, v := range BB.Values {
-			if v.Op != OpLocalAddr || v.Uses == 0 {
+			if v.Uses == 0 {
 				continue
 			}
-			name, key := llvmLocalName(v)
+			var name *ir.Name
+			switch v.Op {
+			case OpLocalAddr:
+				name, _ = llvmLocalName(v)
+			case OpArgIntReg, OpArgFloatReg:
+				// Dead-auto elimination may remove a parameter's LocalAddr
+				// while a forwarded register piece still uses its input value.
+				// Reuse the parameter-home initialization for these readers.
+				aux, ok := v.Aux.(*AuxNameOffset)
+				if !ok || aux.Name == nil {
+					v.Fatalf("%s has invalid argument name/offset auxiliary %T", v.Op, v.Aux)
+				}
+				name = aux.Name
+			default:
+				continue
+			}
+			key := llvmLocalKeyForName(name)
 			_, created := preallocateLocal(name, v.String())
 			if !created {
 				continue
@@ -5169,7 +5185,8 @@ func LLVMCompile(f *Func) {
 	}
 	// Go's ABI assigns each parameter either wholly to registers or wholly to
 	// the stack. Give only parameters that already have an addressable Go SSA
-	// LocalAddr a complete LLVM memory home. Ordinary register parameters remain
+	// LocalAddr or a surviving ArgIntReg/ArgFloatReg reader a complete LLVM
+	// memory home. Ordinary unsplit register parameters remain
 	// direct LLVM SSA values, while the backend remains responsible for the
 	// physical Go ABI assignment.
 	//
