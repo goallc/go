@@ -25,8 +25,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PINNED_LLVM_RELEASE: goallc-llvm23.1.0-20260912T023042Z
-  PINNED_LLVM_REVISION: a4c334a728f62837247ec2005e8cf78af6062677
+  PINNED_LLVM_RELEASE: goallc-llvm23.1.0-20260913T101743Z
+  PINNED_LLVM_REVISION: 24e17992764c93eb974eceae277fcdad768025d0
 
 jobs:
   llvm-payload:
