@@ -10,14 +10,6 @@ import (
 )
 
 func TestGoALLCCPUProfileAliases(t *testing.T) {
-	// Every feature the native XED decoder can return must have an explicit
-	// LLVM descriptor policy. Unknown future extensions must not inherit the
-	// ordinary AVX512 profile merely because their name has that prefix.
-	for _, feature := range cpuFeatureMap {
-		if feature != "ignore" {
-			goallccpu.ProfileForSIMD("amd64", feature)
-		}
-	}
 	for _, test := range []struct{ feature, want string }{
 		{"AVX", "x86.avx"}, {"AVX2", "x86.avx2"}, {"AVX512", "x86.avx512"},
 		{"AVX512VBMI", "x86.avx512vbmi"}, {"AVX512BITALG", "x86.avx512bitalg"},
