@@ -8,12 +8,17 @@ package codegen
 
 // LLVM-LABEL: define goabiinternal {{.*}} @codegen.addressedPartiallyInitializedAggregateResult(
 // LLVM-SAME: ptr goret(%codegen.pointerAggregate) align 8 "goretindex"="15" %.result15)
-// LLVM: store ptr null, ptr {{%.*}}
-// LLVM: store ptr null, ptr {{%.*}}
-// LLVM: store ptr %first, ptr {{%.*}}
+// The first field's redundant zero is removed, but every field must be
+// initialized before the aggregate becomes observable at the call.
+// LLVM: [[RAW_SECOND:%.*]] = getelementptr i8, ptr %.result15, i64 16
+// LLVM: [[RAW_SCALAR:%.*]] = getelementptr i8, ptr %.result15, i64 8
+// LLVM: [[RAW_FIRST:%.*]] = getelementptr i8, ptr %.result15, i64 0
+// LLVM: store i64 0, ptr [[RAW_SCALAR]]
+// LLVM: store ptr null, ptr [[RAW_SECOND]]
+// LLVM: store ptr %first, ptr [[RAW_FIRST]]
 // LLVM: call goabiinternal void @codegen.observePointerAggregate(ptr %.result15)
 // LLVM: call goabiinternal void @codegen.safepoint()
-// LLVM: store ptr %second, ptr {{%.*}}
+// LLVM: store ptr %second, ptr [[RAW_SECOND]]
 // LLVM-LABEL: define goabiinternal {{.*}} @codegen.partiallyInitializedAggregateResult(
 // LLVM-SAME: ptr goret(%codegen.pointerAggregate) align 8 "goretindex"="15" %.result15)
 // LLVM: call goabiinternal void @codegen.safepoint()

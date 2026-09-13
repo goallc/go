@@ -171,6 +171,31 @@ func llvmWritebarrierPass(f *Func) {
 	}
 }
 
+func llvmLateFusePass(f *Func) {
+	if base.Flag.EnableLLVM {
+		// Deadcode can leave empty control-flow paths. Reuse the generic
+		// fusion pass before LLVM builds its blocks and PHIs.
+		fuseLate(f)
+	}
+}
+
+func llvmDSEPass(f *Func) {
+	if base.Flag.EnableLLVM {
+		// Remove overwritten stores before writebarrier expands them.
+		// Deadcode has already cleaned the memory chains needed by DSE.
+		dse(f)
+	}
+}
+
+func llvmDeadAutoElimPass(f *Func) {
+	if base.Flag.EnableLLVM {
+		// LLVM emission precedes the native dead-auto pass. Remove unread
+		// locals while calls still have their logical arguments, so LLVM need
+		// not rediscover that their storage and initialization are unused.
+		elimDeadAutosGeneric(f)
+	}
+}
+
 func llvmPreWritebarrierDeadcodePass(f *Func) {
 	if base.Flag.EnableLLVM {
 		// Optimizations can leave unused memory values. The native path removes
@@ -518,7 +543,10 @@ var passes = [...]pass{
 	// results into physical ABI pieces. Clean unused memory before writebarrier;
 	// the later deadcode pass cleans the CFG/value debris left by writebarrier
 	// and direct-interface normalization.
+	{name: "llvm dead auto elim", fn: llvmDeadAutoElimPass},
 	{name: "llvm pre-writebarrier deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
+	{name: "llvm late fuse", fn: llvmLateFusePass},
+	{name: "llvm dse", fn: llvmDSEPass},
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
 	{name: "llvm deadcode", fn: deadcode, required: true},
@@ -578,6 +606,12 @@ type constraint struct {
 }
 
 var passOrder = [...]constraint{
+	// LLVM uses generic cleanup before expanding write barriers and emitting IR.
+	// DSE needs dead memory values removed; fusion can extend its local scope.
+	{"llvm pre-writebarrier deadcode", "llvm late fuse"},
+	{"llvm late fuse", "llvm dse"},
+	{"llvm dse", "llvm writebarrier"},
+
 	// "insert resched checks" uses mem, better to clean out stores first.
 	{"dse", "insert resched checks"},
 	// insert resched checks adds new blocks containing generic instructions
