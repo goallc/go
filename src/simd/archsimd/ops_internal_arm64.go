@@ -104,7 +104,7 @@ func (x Uint8x16) broadcast1To16() Uint8x16
 //
 //	x.HiToLo().carrylessMultiplyWidenLo(y.HiToLo())
 //
-// Asm: VPMULL, CPU Feature: NEON
+// Asm: VPMULL, CPU Feature: PMULL
 func (x Uint64x2) carrylessMultiplyWidenLo(y Uint64x2) Uint64x2
 
 /* reduceMax */

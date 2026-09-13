@@ -2132,6 +2132,15 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		return finish(lfc.simdMulHigh(v, info, laneType, lanes, laneBits))
 	case goALLCSIMDLowerMulWidenEven, goALLCSIMDLowerMulWidenLow:
 		return finish(lfc.simdMulWiden(v, info, laneType, lanes))
+	case goALLCSIMDLowerCarrylessMulWidenLow:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		zero := llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false)
+		x = lfc.b.CreateExtractElement(x, zero, v.String()+".x.low")
+		y = lfc.b.CreateExtractElement(y, zero, v.String()+".y.low")
+		// LLVM represents the full 128-bit polynomial product as 16 bytes.
+		sig := llvm.FunctionType(llvm.VectorType(GlobalCtxt.Int8Type(), 16), []llvm.Type{laneType, laneType}, false)
+		fn := getOrInsertLLVMIntrinsic("llvm.aarch64.neon.pmull64", sig)
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(sig, fn, []llvm.Value{x, y}, v.String()+".product")))
 	case goALLCSIMDLowerMulSign:
 		if info.lane != goALLCSIMDLaneInt || len(v.Args) != 2 {
 			v.Fatalf("%s generated SIMD sign multiply requires two signed integer operands", v.Op)

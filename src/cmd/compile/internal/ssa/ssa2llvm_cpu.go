@@ -191,11 +191,9 @@ func llvmCPUProfileSupplies(profile, required string) bool {
 	return p != nil && r != nil && p.arch == r.arch && p.capabilities&r.capabilities == r.capabilities
 }
 
-// llvmX86CPUFeatureGuard recognizes which successor of an ordinary
-// internal/cpu.X86 feature test has the feature enabled. This mirrors the
-// source shape accepted by the native cpufeatures pass without changing that
-// pass or making fixed-width archsimd participate in Midway rewriting.
-func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled int) {
+// llvmCPUFeatureGuard recognizes the enabled successor of an ordinary
+// internal/cpu feature test, without changing native CPU analysis policy.
+func llvmCPUFeatureGuard(b *Block, arch string) (profile string, enabled int) {
 	if b.Kind != BlockIf || b.Controls[0] == nil || b.Controls[1] != nil || len(b.Succs) != 2 {
 		return "", -1
 	}
@@ -208,7 +206,7 @@ func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled int) {
 		taken = 1
 		condition = condition.Args[0]
 	}
-	profile = llvmX86CPUFeatureProfile(x86CPUFeatureField(condition))
+	profile = llvmCPUFieldProfile(arch, llvmCPUFeatureField(condition, arch))
 	if profile == "" {
 		return "", -1
 	}
@@ -222,7 +220,7 @@ func llvmX86CPUFeatureGuard(b *Block) (profile string, enabled int) {
 func llvmCPUFeatureGuardProfiles(f *Func, v *Value, required string) []string {
 	sdom := f.Sdom()
 	for b := sdom.Parent(v.Block); b != nil; b = sdom.Parent(b) {
-		profile, taken := llvmX86CPUFeatureGuard(b)
+		profile, taken := llvmCPUFeatureGuard(b, f.Config.arch)
 		if taken < 0 || !llvmCPUProfileSupplies(profile, required) {
 			continue
 		}
@@ -263,7 +261,7 @@ func llvmCPUFeatureGuardProfiles(f *Func, v *Value, required string) []string {
 		}
 		seen[b] = true
 		for _, pred := range b.Preds {
-			profile, taken := llvmX86CPUFeatureGuard(pred.Block())
+			profile, taken := llvmCPUFeatureGuard(pred.Block(), f.Config.arch)
 			if taken == pred.Index() && llvmCPUProfileSupplies(profile, required) {
 				profiles[profile] = true
 				continue
@@ -419,16 +417,26 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 	return plan
 }
 
-func llvmX86CPUFeatureProfile(field string) string {
+func llvmCPUFeatureField(v *Value, arch string) string {
+	switch arch {
+	case "amd64":
+		return cpuFeatureField(v, "internal/cpu.X86")
+	case "arm64":
+		return cpuFeatureField(v, "internal/cpu.ARM64")
+	}
+	return ""
+}
+
+func llvmCPUFieldProfile(arch, field string) string {
 	for _, p := range llvmCPUProfiles {
-		if p.arch == "amd64" && p.field == field {
+		if p.arch == arch && p.field == field {
 			return p.name
 		}
 	}
 	return ""
 }
 
-// The accepted source shapes are unchanged: user archsimd X86 field loads
+// User archsimd field loads
 // are marked only for selected predicates; compiler-generated scalar/atomic
 // guard loads retain their unconditional marker behavior.
 func llvmCPUFeatureGuardValue(v *Value, arch string) (profile string, selective bool) {
@@ -438,8 +446,8 @@ func llvmCPUFeatureGuardValue(v *Value, arch string) (profile string, selective 
 		}
 	}
 	if v.Op == OpLoad {
-		if arch == "amd64" {
-			return llvmX86CPUFeatureProfile(x86CPUFeatureField(v)), true
+		if profile := llvmCPUFieldProfile(arch, llvmCPUFeatureField(v, arch)); profile != "" {
+			return profile, true
 		}
 		if arch == "arm64" && len(v.Args) != 0 && v.Args[0].Op == OpAddr {
 			if sym, ok := v.Args[0].Aux.(*obj.LSym); ok {

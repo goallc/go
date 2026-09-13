@@ -90,6 +90,10 @@ func ifEffect(b *Block) (features CPUfeatures, taken int) {
 // used by archsimd feature checks. Native and LLVM analyses share only the
 // source-shape recognition; their feature and predicate policies stay separate.
 func x86CPUFeatureField(v *Value) string {
+	return cpuFeatureField(v, "internal/cpu.X86")
+}
+
+func cpuFeatureField(v *Value, symbol string) string {
 	if v == nil || v.Op != OpLoad || len(v.Args) == 0 {
 		return ""
 	}
@@ -102,7 +106,7 @@ func x86CPUFeatureField(v *Value) string {
 		return ""
 	}
 	sym, ok := addr.Aux.(*obj.LSym)
-	if !ok || sym.Name != "internal/cpu.X86" {
+	if !ok || sym.Name != symbol {
 		return ""
 	}
 	t := addr.Type

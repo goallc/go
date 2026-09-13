@@ -20,6 +20,7 @@ GOALLC_CPU_FEATURE(AVX512, 10)
 GOALLC_CPU_FEATURE(AVX512BITALG, 11)
 GOALLC_CPU_FEATURE(AVX512VPOPCNTDQ, 12)
 GOALLC_CPU_FEATURE(AVX512VBMI, 13)
+GOALLC_CPU_FEATURE(ARM64PMULL, 14)
 #endif
 
 #ifdef GOALLC_CPU_BASELINE
@@ -39,4 +40,5 @@ GOALLC_CPU_PROFILE("x86.fma", "fma", "+fma", "amd64", FeatureFMA)
 GOALLC_CPU_PROFILE("x86.popcnt", "popcnt", "+popcnt", "amd64", FeaturePOPCNT)
 GOALLC_CPU_PROFILE("arm64.lse", "lse", "+lse", "arm64", FeatureARM64LSE)
 GOALLC_CPU_PROFILE("x86.avx512vbmi", "avx512vbmi", "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi", "amd64", FeatureAVX512VBMI)
+GOALLC_CPU_PROFILE("arm64.pmull", "pmull", "+aes", "arm64", FeatureARM64PMULL)
 #endif
