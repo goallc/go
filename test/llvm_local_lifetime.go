@@ -47,7 +47,36 @@ func branch(take bool) {
 	}
 }
 
+//go:noinline
+func loopExits() {
+	n := 42
+	carried := record{p: &n}
+	for i := 0; i < 12; i++ {
+		observe(&carried, i)
+		var fresh record
+		// A previous iteration can leave both pointer and scalar fields live
+		// at a continue or break. The next lifetime must still start at zero.
+		if fresh.p != nil || fresh.x != [4]int{} {
+			panic("reused local was not zeroed")
+		}
+		observe(&fresh, 0)
+		fresh.p = &n
+		observe(&fresh, 1)
+		if i%3 == 0 {
+			continue
+		}
+		if i == 8 {
+			break
+		}
+		observe(&fresh, 2)
+	}
+	if carried.x[0] != 9 || carried.p != &n {
+		panic("loop exit corrupted live local")
+	}
+}
+
 func main() {
+	loopExits()
 	branch(false)
 	branch(true)
 	n := 42
