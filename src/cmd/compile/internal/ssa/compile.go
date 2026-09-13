@@ -547,6 +547,11 @@ var passes = [...]pass{
 	{name: "llvm pre-writebarrier deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
 	{name: "llvm late fuse", fn: llvmLateFusePass},
 	{name: "llvm dse", fn: llvmDSEPass},
+	// DSE can remove the last read of a local used as a copy source.
+	// Keep the earlier cleanup for fusion, then remove newly dead locals
+	// and their memory-chain debris before writebarrier.
+	{name: "llvm post-dse dead auto elim", fn: llvmDeadAutoElimPass},
+	{name: "llvm post-dse deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
 	{name: "llvm deadcode", fn: deadcode, required: true},
@@ -610,7 +615,9 @@ var passOrder = [...]constraint{
 	// DSE needs dead memory values removed; fusion can extend its local scope.
 	{"llvm pre-writebarrier deadcode", "llvm late fuse"},
 	{"llvm late fuse", "llvm dse"},
-	{"llvm dse", "llvm writebarrier"},
+	{"llvm dse", "llvm post-dse dead auto elim"},
+	{"llvm post-dse dead auto elim", "llvm post-dse deadcode"},
+	{"llvm post-dse deadcode", "llvm writebarrier"},
 
 	// "insert resched checks" uses mem, better to clean out stores first.
 	{"dse", "insert resched checks"},
