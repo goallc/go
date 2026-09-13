@@ -45,6 +45,8 @@ const (
 	goALLCSIMDLowerAverage
 	goALLCSIMDLowerLeadingSignBits
 	goALLCSIMDLowerMulHigh
+	goALLCSIMDLowerMulWidenEven
+	goALLCSIMDLowerMulWidenLow
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerExtendInteger
 	goALLCSIMDLowerTruncateInteger

@@ -296,6 +296,7 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"less": "goALLCSIMDLowerLess", "less-equal": "goALLCSIMDLowerLessEqual",
 		"average": "goALLCSIMDLowerAverage", "leading-sign-bits": "goALLCSIMDLowerLeadingSignBits",
 		"mul-high": "goALLCSIMDLowerMulHigh", "mul-sign": "goALLCSIMDLowerMulSign",
+		"mul-widen-even": "goALLCSIMDLowerMulWidenEven", "mul-widen-low": "goALLCSIMDLowerMulWidenLow",
 		"extend-integer": "goALLCSIMDLowerExtendInteger", "truncate-integer": "goALLCSIMDLowerTruncateInteger",
 		"saturate-integer": "goALLCSIMDLowerSaturateInteger", "saturate-integer-pack128": "goALLCSIMDLowerSaturateIntegerPack128",
 		"convert-float":          "goALLCSIMDLowerConvertFloat",

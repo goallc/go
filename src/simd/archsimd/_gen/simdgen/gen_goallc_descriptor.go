@@ -126,6 +126,7 @@ var goALLCLoweringArity = map[string]int{
 	"ones-count": 1, "leading-zeros": 1,
 	"average": 2, "leading-sign-bits": 1,
 	"mul-high": 2, "mul-sign": 2,
+	"mul-widen-even": 2, "mul-widen-low": 2,
 	"extend-integer": 1, "truncate-integer": 1,
 	"saturate-integer": 1, "saturate-integer-pack128": 2,
 	"convert-float":       1,

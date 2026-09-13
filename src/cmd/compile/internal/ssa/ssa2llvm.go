@@ -2130,6 +2130,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 			v.Fatalf("%s generated SIMD high multiply requires two integer operands", v.Op)
 		}
 		return finish(lfc.simdMulHigh(v, info, laneType, lanes, laneBits))
+	case goALLCSIMDLowerMulWidenEven, goALLCSIMDLowerMulWidenLow:
+		return finish(lfc.simdMulWiden(v, info, laneType, lanes))
 	case goALLCSIMDLowerMulSign:
 		if info.lane != goALLCSIMDLaneInt || len(v.Args) != 2 {
 			v.Fatalf("%s generated SIMD sign multiply requires two signed integer operands", v.Op)

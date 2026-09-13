@@ -5,6 +5,7 @@
   documentation: !string |-
     // NAME multiplies corresponding elements of two vectors, modulo 2ⁿ.
 - go: MulWidenEven
+  llvmLowering: mul-widen-even
   commutative: true
   documentation: !string |-
     // NAME multiplies even-indexed elements, widening the result.
@@ -15,6 +16,7 @@
   documentation: !string |-
     // NAME multiplies elements and stores the high part of the result.
 - go: MulWidenLo
+  llvmLowering: mul-widen-low
   commutative: true
   documentation: !string |-
     // NAME multiplies corresponding low-indexed elements and produces a result with double the element width.
