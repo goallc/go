@@ -91,8 +91,6 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	// existing target intrinsics. This does not authorize a Go-specific LLVM
 	// intrinsic or a new target node.
 	goALLCSIMDPlanTargetIntrinsic: {
-		"AESDecryptLastRound", "AESDecryptOneRound", "AESEncryptLastRound",
-		"AESEncryptOneRound", "AESInvMixColumns", "AESRoundKeyGenAssist",
 		"CeilScaled", "CeilScaledResidue", "FloorScaled",
 		"FloorScaledResidue", "GaloisFieldAffineTransform",
 		"GaloisFieldAffineTransformInverse", "GaloisFieldMul", "Reciprocal",

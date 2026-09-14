@@ -4,19 +4,19 @@ package main
 
 func simdGenericOps() []opData {
 	return []opData{
-		{name: "AESDecryptLastRoundUint8x16", argLength: 2},                                                                                         // ARCH:amd64
-		{name: "AESDecryptLastRoundUint8x32", argLength: 2},                                                                                         // ARCH:amd64
-		{name: "AESDecryptLastRoundUint8x64", argLength: 2},                                                                                         // ARCH:amd64
-		{name: "AESDecryptOneRoundUint8x16", argLength: 2},                                                                                          // ARCH:amd64
-		{name: "AESDecryptOneRoundUint8x32", argLength: 2},                                                                                          // ARCH:amd64
-		{name: "AESDecryptOneRoundUint8x64", argLength: 2},                                                                                          // ARCH:amd64
-		{name: "AESEncryptLastRoundUint8x16", argLength: 2},                                                                                         // ARCH:amd64
-		{name: "AESEncryptLastRoundUint8x32", argLength: 2},                                                                                         // ARCH:amd64
-		{name: "AESEncryptLastRoundUint8x64", argLength: 2},                                                                                         // ARCH:amd64
-		{name: "AESEncryptOneRoundUint8x16", argLength: 2},                                                                                          // ARCH:amd64
-		{name: "AESEncryptOneRoundUint8x32", argLength: 2},                                                                                          // ARCH:amd64
-		{name: "AESEncryptOneRoundUint8x64", argLength: 2},                                                                                          // ARCH:amd64
-		{name: "AESInvMixColumnsUint32x4", argLength: 1},                                                                                            // ARCH:amd64
+		{name: "AESDecryptLastRoundUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avxaes&lane=uint&laneBits=8&lower=aes-decrypt-last"},      // ARCH:amd64
+		{name: "AESDecryptLastRoundUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.vaes&lane=uint&laneBits=8&lower=aes-decrypt-last"},        // ARCH:amd64
+		{name: "AESDecryptLastRoundUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512vaes&lane=uint&laneBits=8&lower=aes-decrypt-last"},  // ARCH:amd64
+		{name: "AESDecryptOneRoundUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avxaes&lane=uint&laneBits=8&lower=aes-decrypt"},            // ARCH:amd64
+		{name: "AESDecryptOneRoundUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.vaes&lane=uint&laneBits=8&lower=aes-decrypt"},              // ARCH:amd64
+		{name: "AESDecryptOneRoundUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512vaes&lane=uint&laneBits=8&lower=aes-decrypt"},        // ARCH:amd64
+		{name: "AESEncryptLastRoundUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avxaes&lane=uint&laneBits=8&lower=aes-encrypt-last"},      // ARCH:amd64
+		{name: "AESEncryptLastRoundUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.vaes&lane=uint&laneBits=8&lower=aes-encrypt-last"},        // ARCH:amd64
+		{name: "AESEncryptLastRoundUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512vaes&lane=uint&laneBits=8&lower=aes-encrypt-last"},  // ARCH:amd64
+		{name: "AESEncryptOneRoundUint8x16", argLength: 2, simd: "arch.amd64.profile=x86.avxaes&lane=uint&laneBits=8&lower=aes-encrypt"},            // ARCH:amd64
+		{name: "AESEncryptOneRoundUint8x32", argLength: 2, simd: "arch.amd64.profile=x86.vaes&lane=uint&laneBits=8&lower=aes-encrypt"},              // ARCH:amd64
+		{name: "AESEncryptOneRoundUint8x64", argLength: 2, simd: "arch.amd64.profile=x86.avx512vaes&lane=uint&laneBits=8&lower=aes-encrypt"},        // ARCH:amd64
+		{name: "AESInvMixColumnsUint32x4", argLength: 1, simd: "arch.amd64.profile=x86.avxaes&lane=uint&laneBits=32&lower=aes-inverse-mix"},         // ARCH:amd64
 		{name: "AbsFloat32x4", argLength: 1, simd: "lane=float&laneBits=32&lower=abs"},                                                              // ARCH:arm64,wasm
 		{name: "AbsFloat64x2", argLength: 1, simd: "lane=float&laneBits=64&lower=abs"},                                                              // ARCH:arm64,wasm
 		{name: "AbsInt8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx&lane=int&laneBits=8&lower=abs"},                                        // ARCH:amd64,arm64,wasm
@@ -1395,7 +1395,7 @@ func simdGenericOps() []opData {
 		{name: "reduceSumUint8x16", argLength: 1, simd: "lane=uint&laneBits=8&lower=reduce-add"},                                                                                                          // ARCH:arm64
 		{name: "reduceSumUint16x8", argLength: 1, simd: "lane=uint&laneBits=16&lower=reduce-add"},                                                                                                         // ARCH:arm64
 		{name: "reduceSumUint32x4", argLength: 1, simd: "lane=uint&laneBits=32&lower=reduce-add"},                                                                                                         // ARCH:arm64
-		{name: "AESRoundKeyGenAssistUint32x4", argLength: 1, aux: "UInt8"},                                                                                                                                // ARCH:amd64
+		{name: "AESRoundKeyGenAssistUint32x4", argLength: 1, aux: "UInt8", simd: "arch.amd64.profile=x86.avxaes&lane=uint&laneBits=32&lower=aes-keygen"},                                                  // ARCH:amd64
 		{name: "CeilScaledFloat32x4", argLength: 1, aux: "UInt8"},                                                                                                                                         // ARCH:amd64
 		{name: "CeilScaledFloat32x8", argLength: 1, aux: "UInt8"},                                                                                                                                         // ARCH:amd64
 		{name: "CeilScaledFloat32x16", argLength: 1, aux: "UInt8"},                                                                                                                                        // ARCH:amd64

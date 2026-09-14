@@ -49,6 +49,12 @@ const (
 	goALLCSIMDLowerMulWidenLow
 	goALLCSIMDLowerCarrylessMulWidenLow
 	goALLCSIMDLowerCarrylessMul
+	goALLCSIMDLowerAESEncrypt
+	goALLCSIMDLowerAESEncryptLast
+	goALLCSIMDLowerAESDecrypt
+	goALLCSIMDLowerAESDecryptLast
+	goALLCSIMDLowerAESKeygen
+	goALLCSIMDLowerAESInverseMix
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerMulAddInteger
 	goALLCSIMDLowerFMA
