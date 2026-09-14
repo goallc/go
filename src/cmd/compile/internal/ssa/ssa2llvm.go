@@ -4304,9 +4304,9 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		if v.Op == OpLoad {
 			lfc.markCPUFeatureGuard(v, lVal)
 		}
-		if v.Type.IsSIMD() {
-			lVal.SetAlignment(int(v.Type.Alignment()))
-		}
+		// Go's alignment also applies to aggregates containing SIMD fields;
+		// LLVM's default vector/aggregate alignment may be stronger.
+		lVal.SetAlignment(int(v.Type.Alignment()))
 		// The runtime may resume at the first deferreturn call recorded for the
 		// function, which can be an ordinary exit rather than the fake recovery
 		// successor. Reload named results from their stack homes at every such
@@ -4441,9 +4441,7 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 			value = lfc.b.CreateZExt(value, getLLVMType(v.Args[1].Type), v.String()+".store")
 		}
 		lVal = lfc.b.CreateStore(value, address)
-		if v.Args[1].Type.IsSIMD() {
-			lVal.SetAlignment(int(v.Args[1].Type.Alignment()))
-		}
+		lVal.SetAlignment(int(v.Args[1].Type.Alignment()))
 		if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 			lVal.SetVolatile(true)
 		}

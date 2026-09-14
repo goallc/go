@@ -1467,6 +1467,16 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 		sum := &Value{ID: 5, Op: OpAddInt32x4, Type: typ, Args: []*Value{loaded, zero}}
 		store := &Value{ID: 6, Op: OpStore, Type: types.TypeMem, Args: []*Value{dst, sum}}
 		context.GenLV(store)
+		// A SIMD field does not give its enclosing Go struct LLVM's native
+		// vector alignment. This is the memory path used by generic boxing.
+		aggregate := types.NewStruct([]*types.Field{types.NewField(loaded.Pos, nil, typ)})
+		aggregateSrc := &Value{ID: 7, Op: OpArg, Type: types.NewPtr(aggregate)}
+		aggregateDst := &Value{ID: 8, Op: OpArg, Type: types.NewPtr(aggregate)}
+		context.Vs[aggregateSrc.ID] = function.Param(0)
+		context.Vs[aggregateDst.ID] = function.Param(1)
+		aggregateLoad := &Value{ID: 9, Op: OpLoad, Type: aggregate, Args: []*Value{aggregateSrc}}
+		aggregateStore := &Value{ID: 10, Op: OpStore, Type: types.TypeMem, Args: []*Value{aggregateDst, aggregateLoad}}
+		context.GenLV(aggregateStore)
 		builder.CreateRetVoid()
 
 		if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
@@ -1479,6 +1489,8 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 			"zeroinitializer",
 			"store <4 x i32>",
 			"ptr %1, align 8",
+			"load { <4 x i32> }, ptr %0, align 8",
+			"store { <4 x i32> } %v9, ptr %1, align 8",
 		} {
 			if !strings.Contains(ir, want) {
 				t.Errorf("Vec128 memory IR does not contain %q\n%s", want, ir)
@@ -2183,6 +2195,10 @@ func TestLLVMSIMDFeatureFloor(t *testing.T) {
 		{name: "param128", arch: "amd64", param: v128, want: goCPUProfileX86AVX},
 		{name: "param256-local512", arch: "amd64", param: v256, features: CPUavx | CPUavx512, want: goCPUProfileX86AVX},
 		{name: "result512", arch: "amd64", result: v512, want: goCPUProfileX86AVX512},
+		{name: "struct-param256", arch: "amd64", param: types.NewStruct([]*types.Field{types.NewField(src.NoXPos, nil, v256)}), want: goCPUProfileX86AVX},
+		{name: "struct-result512", arch: "amd64", result: types.NewStruct([]*types.Field{types.NewField(src.NoXPos, nil, v512)}), want: goCPUProfileX86AVX512},
+		{name: "struct-param128", arch: "amd64", param: types.NewStruct([]*types.Field{types.NewField(src.NoXPos, nil, v128)})},
+		{name: "stack-array256", arch: "amd64", param: types.NewArray(v256, 2)},
 		{name: "pointer512", arch: "amd64", param: types.NewPtr(v512)},
 		{name: "amd64-midway-128", arch: "amd64", funcName: "simd.Int8s.Add@simd128", want: goCPUProfileX86AVX},
 		{name: "amd64-midway-256", arch: "amd64", features: CPUavx, funcName: "simd.Int8s.Add@simd256", want: goCPUProfileX86AVX2},
@@ -2204,9 +2220,8 @@ func TestLLVMSIMDFeatureFloor(t *testing.T) {
 				results = append(results, types.NewField(src.NoXPos, nil, test.result))
 			}
 			f.Type = types.NewSignature(nil, params, results)
-			if test.funcName != "" {
-				f.OwnAux = &AuxCall{Fn: &obj.LSym{Name: test.funcName}}
-			}
+			config := abi.NewABIConfig(9, 15, 0, uint8(obj.ABIInternal))
+			f.OwnAux = OwnAuxCall(&obj.LSym{Name: test.funcName}, config.ABIAnalyzeFuncType(f.Type))
 			if got := llvmSIMDFeatureFloor(f); got != test.want {
 				t.Fatalf("llvmSIMDFeatureFloor() = %q, want %q", got, test.want)
 			}

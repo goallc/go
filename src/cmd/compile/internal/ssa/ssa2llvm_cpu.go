@@ -115,13 +115,21 @@ func llvmSIMDFeatureFloor(f *Func) string {
 	// vector hoisted out of a guarded region. Those are not caller promises
 	// and must not raise the target features of fallback implementations.
 	// Preserve the direct SIMD parameter/result contract used by cpufeatures;
-	// pointers and ordinary aggregates do not establish that contract.
+	// pointers do not establish that contract.
 	var width int64
 	if f.Type != nil {
 		for _, field := range f.Type.RecvParamsResults() {
 			if field.Type.IsSIMD() {
 				width = max(width, field.Type.Size())
 			}
+		}
+	}
+	// Generic shape functions may receive SIMD fields inside aggregates
+	// without a Midway name or a direct SIMD parameter. Use Go's ABI analysis
+	// for these carriers just as for calls; stack-only values need no feature.
+	if f.OwnAux != nil && f.OwnAux.ABIInfo() != nil {
+		if abiWidth := llvmWideVectorCallWidth(f.OwnAux); abiWidth > 16 {
+			width = max(width, abiWidth)
 		}
 	}
 	switch width {
