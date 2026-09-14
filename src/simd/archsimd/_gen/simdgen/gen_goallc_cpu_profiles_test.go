@@ -14,7 +14,7 @@ func TestGoALLCCPUProfileAliases(t *testing.T) {
 		{"AVX", "x86.avx"}, {"AVX2", "x86.avx2"}, {"AVX512", "x86.avx512"},
 		{"AVXAES", "x86.avxaes"}, {"AVXPCLMULQDQ", "x86.avxpclmulqdq"}, {"VAES", "x86.vaes"},
 		{"AVX512VBMI", "x86.avx512vbmi"}, {"AVX512BITALG", "x86.avx512bitalg"},
-		{"AVX512VPOPCNTDQ", "x86.avx512vpopcntdq"}, {"FMA", "x86.fma"}, {"SHA", ""}, {"", ""},
+		{"AVX512VPOPCNTDQ", "x86.avx512vpopcntdq"}, {"FMA", "x86.fma"}, {"SHA", "x86.sha"}, {"", ""},
 	} {
 		if got := goallccpu.ProfileForSIMD("amd64", test.feature); got != test.want {
 			t.Errorf("%s = %q, want %q", test.feature, got, test.want)

@@ -60,6 +60,7 @@
   out:
   - *uint32s
 - go: SHA1FourRounds
+  llvmLowering: sha1-rounds
   asm: SHA1RNDS4
   operandOrder: "SHA1RNDS4"
   in: &2uint1imm
@@ -72,20 +73,24 @@
   out: &1uint
   - *uint
 - go: SHA1NextE
+  llvmLowering: sha1-next-e
   asm: SHA1NEXTE
   in: &2uint
   - *uint
   - *uint
   out: *1uint
 - go: SHA1Message1
+  llvmLowering: sha1-message1
   asm: SHA1MSG1
   in: *2uint
   out: *1uint
 - go: SHA1Message2
+  llvmLowering: sha1-message2
   asm: SHA1MSG2
   in: *2uint
   out: *1uint
 - go: SHA256TwoRounds
+  llvmLowering: sha256-rounds
   asm: SHA256RNDS2
   in:
   - base: uint
@@ -95,10 +100,12 @@
   out:
   - base: uint
 - go: SHA256Message1
+  llvmLowering: sha256-message1
   asm: SHA256MSG1
   in: *2uint
   out: *1uint
 - go: SHA256Message2
+  llvmLowering: sha256-message2
   asm: SHA256MSG2
   in: *2uint
   out: *1uint

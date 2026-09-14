@@ -50,6 +50,7 @@ var features = []feature{
 	{Name: "AVX512VPCLMULQDQ", Bit: 20, Arch: "amd64", Field: "HasAVX512VPCLMULQDQ", Provides: []string{"AVX512"}, LLVM: []string{"vpclmulqdq"}},
 	{Name: "AVX512VAES", Bit: 21, Arch: "amd64", Field: "HasAVX512VAES", Provides: []string{"AVX512"}, LLVM: []string{"vaes"}},
 	{Name: "AVX512GFNI", Bit: 22, Arch: "amd64", Field: "HasAVX512GFNI", Provides: []string{"AVX512"}, LLVM: []string{"gfni"}},
+	{Name: "SHA", Bit: 23, Arch: "amd64", Field: "HasSHA", LLVM: []string{"sha"}},
 }
 
 // Preserve the existing FMV subset order, suffixes and target-feature order.
@@ -80,6 +81,7 @@ var profiles = []profile{
 	{Name: "x86.avx512vpclmulqdq", Feature: "AVX512VPCLMULQDQ", SIMDAliases: []string{"AVX512VPCLMULQDQ"}},
 	{Name: "x86.avx512vaes", Feature: "AVX512VAES", SIMDAliases: []string{"AVX512VAES"}},
 	{Name: "x86.avx512gfni", Feature: "AVX512GFNI", SIMDAliases: []string{"AVX512GFNI"}},
+	{Name: "x86.sha", Feature: "SHA", SIMDAliases: []string{"SHA"}},
 }
 
-var unprofiledSIMDAliases = []string{"", "SHA"}
+var unprofiledSIMDAliases = []string{""}

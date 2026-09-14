@@ -111,6 +111,8 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"sha1-rounds": 2, "sha1-next-e": 2, "sha1-message1": 2, "sha1-message2": 2,
+	"sha256-rounds": 3, "sha256-message1": 2, "sha256-message2": 2,
 	"gf-mul": 2, "gf-affine": 2, "gf-affine-inverse": 2,
 	"aes-encrypt": 2, "aes-encrypt-last": 2, "aes-decrypt": 2, "aes-decrypt-last": 2,
 	"aes-keygen": 1, "aes-inverse-mix": 1,
@@ -183,7 +185,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	switch lowering {
 	case "extract-element":
 		wantOut, wantImm = OneGregOut, VarImm
-	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul", "aes-keygen", "gf-affine", "gf-affine-inverse":
+	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul", "aes-keygen", "gf-affine", "gf-affine-inverse", "sha1-rounds":
 		wantImm = VarImm
 	}
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
