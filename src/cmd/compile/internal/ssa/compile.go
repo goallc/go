@@ -72,6 +72,9 @@ func Compile(f *Func) {
 		if !f.Config.optimize && !p.required || p.disabled {
 			continue
 		}
+		if base.Flag.EnableLLVM && p.nativeOnly || !base.Flag.EnableLLVM && p.llvmOnly {
+			continue
+		}
 		f.pass = &p
 		phaseName = p.name
 		if f.Log() {
@@ -165,65 +168,13 @@ func Compile(f *Func) {
 	phaseName = ""
 }
 
-func llvmWritebarrierPass(f *Func) {
+// LLVM keeps logical calls through the generic optimization pipeline. The
+// native continuation still needs physical calls for frame allocation.
+func llvmNativeCallsPass(f *Func) {
 	if base.Flag.EnableLLVM {
-		writebarrier(f)
-	}
-}
-
-func llvmLateFusePass(f *Func) {
-	if base.Flag.EnableLLVM {
-		// Deadcode can leave empty control-flow paths. Reuse the generic
-		// fusion pass before LLVM builds its blocks and PHIs.
-		fuseLate(f)
-	}
-}
-
-func llvmDSEPass(f *Func) {
-	if base.Flag.EnableLLVM {
-		// Remove overwritten stores before writebarrier expands them.
-		// Deadcode has already cleaned the memory chains needed by DSE.
-		dse(f)
-	}
-}
-
-func llvmDeadAutoElimPass(f *Func) {
-	if base.Flag.EnableLLVM {
-		// LLVM emission precedes the native dead-auto pass. Remove unread
-		// locals while calls still have their logical arguments, so LLVM need
-		// not rediscover that their storage and initialization are unused.
-		elimDeadAutosGeneric(f)
-	}
-}
-
-func llvmPreWritebarrierDeadcodePass(f *Func) {
-	if base.Flag.EnableLLVM {
-		// Optimizations can leave unused memory values. The native path removes
-		// them before writebarrier, whose store ordering requires a single live
-		// memory chain, so preserve that invariant for the earlier LLVM path.
+		expandCalls(f)
+		postExpandCallsDecompose(f)
 		deadcode(f)
-	}
-}
-
-func llvmCPUFeaturesPass(f *Func) {
-	if base.Flag.EnableLLVM && buildcfg.Experiment.SIMD {
-		// LLVM emission precedes the native cpufeatures phase because it needs
-		// logical arguments and results before expandCalls. Run the same Go
-		// analysis here so LLVM sees the feature assumptions already encoded by
-		// SIMD signatures, Midway specialization, and internal/cpu guards.
-		cpufeatures(f)
-	}
-}
-
-func llvmCompilePass(f *Func) {
-	if base.Flag.EnableLLVM {
-		LLVMCompile(f)
-	}
-}
-
-func nativeWritebarrierPass(f *Func) {
-	if !base.Flag.EnableLLVM {
-		writebarrier(f)
 	}
 }
 
@@ -261,16 +212,18 @@ func (f *Func) dumpFile(phaseName string) {
 }
 
 type pass struct {
-	name     string
-	fn       func(*Func)
-	required bool
-	disabled bool
-	time     bool            // report time to run pass
-	mem      bool            // report mem stats to run pass
-	stats    int             // pass reports own "stats" (e.g., branches removed)
-	debug    int             // pass performs some debugging. =1 should be in error-testing-friendly Warnl format.
-	test     int             // pass-specific ad-hoc option, perhaps useful in development
-	dump     map[string]bool // dump if function name matches
+	name       string
+	fn         func(*Func)
+	required   bool
+	nativeOnly bool // Skip this placement on the LLVM path.
+	llvmOnly   bool // Not part of the native Go pipeline.
+	disabled   bool
+	time       bool            // report time to run pass
+	mem        bool            // report mem stats to run pass
+	stats      int             // pass reports own "stats" (e.g., branches removed)
+	debug      int             // pass performs some debugging. =1 should be in error-testing-friendly Warnl format.
+	test       int             // pass-specific ad-hoc option, perhaps useful in development
+	dump       map[string]bool // dump if function name matches
 }
 
 func (p *pass) addDump(s string) {
@@ -537,41 +490,30 @@ var passes = [...]pass{
 	{name: "middle opt", fn: opt, required: true},
 	{name: "known bits", fn: knownBits},
 	{name: "early fuse", fn: fuseEarly},
-	// LLVM consumes the optimized generic SSA while calls and logical aggregate
-	// values still retain their frontend ABI shape. Keep its normalization and
-	// emission immediately before expandCalls dismantles logical arguments and
-	// results into physical ABI pieces. Clean unused memory before writebarrier;
-	// the later deadcode pass cleans the CFG/value debris left by writebarrier
-	// and direct-interface normalization.
-	// DSE needs live memory chains and can remove the last read of a copy
-	// source. Run dead-auto elimination once after DSE, then clean its
-	// debris before fusing empty paths and expanding write barriers.
-	{name: "llvm pre-writebarrier deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
-	{name: "llvm dse", fn: llvmDSEPass},
-	{name: "llvm dead auto elim", fn: llvmDeadAutoElimPass},
-	{name: "llvm post-dse deadcode", fn: llvmPreWritebarrierDeadcodePass, required: true},
-	{name: "llvm late fuse", fn: llvmLateFusePass},
-	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
-	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
-	{name: "llvm deadcode", fn: deadcode, required: true},
-	{name: "llvm cpufeatures", fn: llvmCPUFeaturesPass, required: true},
-	{name: "llvm", fn: llvmCompilePass, required: true},
-	{name: "expand calls", fn: expandCalls, required: true},
+	{name: "expand calls", fn: expandCalls, required: true, nativeOnly: true},
 	{name: "decompose builtin", fn: postExpandCallsDecompose, required: true},
 	{name: "softfloat", fn: softfloat, required: true},
-	{name: "branchelim", fn: branchelim},
+	{name: "branchelim", fn: branchelim, nativeOnly: true},
 	{name: "late opt", fn: opt, required: true},
-	{name: "dead auto elim", fn: elimDeadAutosGeneric},
+	{name: "dead auto elim", fn: elimDeadAutosGeneric, nativeOnly: true},
 	{name: "sccp", fn: sccp},
 	{name: "generic deadcode", fn: deadcode, required: true}, // remove dead stores, which otherwise mess up store chain
 	{name: "late fuse", fn: fuseLate},
 	{name: "check bce", fn: checkbce},
 	{name: "dse", fn: dse},
-	{name: "memcombine", fn: memcombine},
-	{name: "writebarrier", fn: nativeWritebarrierPass, required: true}, // expand write barrier ops
-	{name: "insert resched checks", fn: insertLoopReschedChecks,
+	{name: "memcombine", fn: memcombine, nativeOnly: true},
+	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
+	{name: "insert resched checks", fn: insertLoopReschedChecks, nativeOnly: true,
 		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
 	{name: "cpufeatures", fn: cpufeatures, required: buildcfg.Experiment.SIMD, disabled: !buildcfg.Experiment.SIMD},
+	// LLVM consumes generic SSA after Go's normal optimizations, before
+	// target-specific rewriting and physical call lowering.
+	{name: "llvm dead auto elim", fn: elimDeadAutosGeneric, llvmOnly: true},
+	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true, llvmOnly: true},
+	{name: "llvm late cse", fn: cse, llvmOnly: true},
+	{name: "llvm deadcode", fn: deadcode, required: true, llvmOnly: true},
+	{name: "llvm", fn: LLVMCompile, required: true, llvmOnly: true},
+	{name: "llvm native calls", fn: llvmNativeCallsPass, required: true, llvmOnly: true},
 	{name: "rewrite tern", fn: rewriteTern, required: false, disabled: !buildcfg.Experiment.SIMD},
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},
@@ -610,13 +552,14 @@ type constraint struct {
 }
 
 var passOrder = [...]constraint{
-	// Clean memory chains before DSE and newly dead locals after it. Fusion
-	// then consumes empty paths without hiding cleanup opportunities.
-	{"llvm pre-writebarrier deadcode", "llvm dse"},
-	{"llvm dse", "llvm dead auto elim"},
-	{"llvm dead auto elim", "llvm post-dse deadcode"},
-	{"llvm post-dse deadcode", "llvm late fuse"},
-	{"llvm late fuse", "llvm writebarrier"},
+	{"cpufeatures", "llvm dead auto elim"},
+	{"dse", "llvm dead auto elim"},
+	{"llvm dead auto elim", "llvm deadcode"},
+	{"llvm direct iface", "llvm late cse"},
+	{"llvm late cse", "llvm deadcode"},
+	{"llvm deadcode", "llvm"},
+	{"llvm", "llvm native calls"},
+	{"llvm native calls", "rewrite tern"},
 
 	// "insert resched checks" uses mem, better to clean out stores first.
 	{"dse", "insert resched checks"},

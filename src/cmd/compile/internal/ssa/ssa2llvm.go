@@ -1435,6 +1435,14 @@ func (lfc *LLVMFuncContext) llvmCondition(v llvm.Value, name string) llvm.Value 
 	if v.Type().IntTypeWidth() == 1 {
 		return v
 	}
+	// Comparisons are widened to Go bools by goBool. Reuse their i1
+	// predicate when branching instead of comparing the widened value to zero.
+	if !v.IsAZExtInst().IsNil() {
+		cond := v.Operand(0)
+		if cond.Type().IntTypeWidth() == 1 {
+			return cond
+		}
+	}
 	zero := llvm.ConstInt(v.Type(), 0, false)
 	return lfc.b.CreateICmp(llvm.IntNE, v, zero, name)
 }

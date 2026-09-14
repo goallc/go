@@ -63,18 +63,18 @@ func llvmRegisterArgumentMemoryHome(x llvmArgumentStrings3) int {
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmStackArgumentMemoryHome(ptr byval([2 x { ptr, i64 }]) align 8 %x)
 // LLVM-NOT: alloca
-// LLVM: getelementptr i8, ptr %x, i64 0
-// LLVM: getelementptr i8, ptr %x, i64 16
-// LLVM: load { ptr, i64 }
-// LLVM: load { ptr, i64 }
+// LLVM-DAG: [[LEN0:%.*]] = getelementptr i8, ptr %x, i64 8
+// LLVM-DAG: [[LEN1:%.*]] = getelementptr i8, ptr %x, i64 24
+// LLVM-DAG: load i64, ptr [[LEN0]]
+// LLVM-DAG: load i64, ptr [[LEN1]]
 // LLVM: ret i64
 //
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmStackArgumentMemoryHome(ptr{{.*}}byval([2 x { ptr, i64 }]) align 8{{.*}} %x)
 // LLVM-OPT-NOT: alloca
-// LLVM-OPT: getelementptr {{.*}}ptr %x, i64 8
-// LLVM-OPT: load i64
-// LLVM-OPT: getelementptr {{.*}}ptr %x, i64 24
-// LLVM-OPT: load i64
+// LLVM-OPT-DAG: [[OPT_LEN0:%.*]] = getelementptr {{.*}}ptr %x, i64 8
+// LLVM-OPT-DAG: [[OPT_LEN1:%.*]] = getelementptr {{.*}}ptr %x, i64 24
+// LLVM-OPT-DAG: load i64, ptr [[OPT_LEN0]]
+// LLVM-OPT-DAG: load i64, ptr [[OPT_LEN1]]
 // LLVM-OPT: ret i64
 //
 //go:noinline
