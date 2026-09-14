@@ -111,6 +111,7 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"gf-mul": 2, "gf-affine": 2, "gf-affine-inverse": 2,
 	"aes-encrypt": 2, "aes-encrypt-last": 2, "aes-decrypt": 2, "aes-decrypt-last": 2,
 	"aes-keygen": 1, "aes-inverse-mix": 1,
 	"rotate-left": 2, "rotate-right": 2,
@@ -182,7 +183,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	switch lowering {
 	case "extract-element":
 		wantOut, wantImm = OneGregOut, VarImm
-	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul", "aes-keygen":
+	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul", "aes-keygen", "gf-affine", "gf-affine-inverse":
 		wantImm = VarImm
 	}
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
@@ -262,6 +263,10 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		if strings.HasPrefix(lowering, "aes-") && i == 1 {
 			// AES rounds accept byte states and uint32 round-key words.
 			inputElemBits, inputLanes = 32, width/32
+		}
+		if (lowering == "gf-affine" || lowering == "gf-affine-inverse") && i == 1 {
+			// Each uint64 matrix transforms eight byte lanes.
+			inputElemBits, inputLanes = 64, width/64
 		}
 		if lowering == "dot-pairs-us-sat" && i == 1 {
 			inputBase = "int"

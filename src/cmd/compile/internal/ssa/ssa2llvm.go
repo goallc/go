@@ -2192,6 +2192,19 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		}
 		fn := getLLVMIntrinsicDeclaration(name)
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{x, y, imm}, v.String()+".product")))
+	case goALLCSIMDLowerGFMul, goALLCSIMDLowerGFAffine, goALLCSIMDLowerGFAffineInverse:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		op := "vgf2p8mulb"
+		args := []llvm.Value{x, y}
+		if info.lowering != goALLCSIMDLowerGFMul {
+			op = "vgf2p8affineqb"
+			if info.lowering == goALLCSIMDLowerGFAffineInverse {
+				op = "vgf2p8affineinvqb"
+			}
+			args = append(args, llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(uint8(v.AuxInt)), false))
+		}
+		fn := getLLVMIntrinsicDeclaration(fmt.Sprintf("llvm.x86.%s.%d", op, width))
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+".gf")))
 	case goALLCSIMDLowerMulAddInteger:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		z := lfc.simdValueAs(v, v.Args[2], x.Type(), ".z")

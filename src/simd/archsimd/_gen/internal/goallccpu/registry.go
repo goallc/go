@@ -49,6 +49,7 @@ var features = []feature{
 	{Name: "VPCLMULQDQ", Bit: 19, Arch: "amd64", Field: "HasVPCLMULQDQ", Provides: []string{"AVX"}, LLVM: []string{"vpclmulqdq"}},
 	{Name: "AVX512VPCLMULQDQ", Bit: 20, Arch: "amd64", Field: "HasAVX512VPCLMULQDQ", Provides: []string{"AVX512"}, LLVM: []string{"vpclmulqdq"}},
 	{Name: "AVX512VAES", Bit: 21, Arch: "amd64", Field: "HasAVX512VAES", Provides: []string{"AVX512"}, LLVM: []string{"vaes"}},
+	{Name: "AVX512GFNI", Bit: 22, Arch: "amd64", Field: "HasAVX512GFNI", Provides: []string{"AVX512"}, LLVM: []string{"gfni"}},
 }
 
 // Preserve the existing FMV subset order, suffixes and target-feature order.
@@ -59,7 +60,7 @@ var profiles = []profile{
 	{Name: "x86.sse41", Feature: "SSE41", RuntimeGuard: "runtime.x86HasSSE41"},
 	{Name: "x86.avx", Feature: "AVX", SIMDAliases: []string{"AVX"}},
 	{Name: "x86.avx2", Feature: "AVX2", SIMDAliases: []string{"AVX2", "AVXVNNI"}},
-	{Name: "x86.avx512", Feature: "AVX512", SIMDAliases: []string{"AVX512", "AVX512F", "AVX512CD", "AVX512BW", "AVX512DQ", "AVX512VL", "AVX512GFNI", "AVX512VNNI"}},
+	{Name: "x86.avx512", Feature: "AVX512", SIMDAliases: []string{"AVX512", "AVX512F", "AVX512CD", "AVX512BW", "AVX512DQ", "AVX512VL", "AVX512VNNI"}},
 	{Name: "x86.avx512bitalg", Feature: "AVX512BITALG", SIMDAliases: []string{"AVX512BITALG"}},
 	{Name: "x86.avx512vpopcntdq", Feature: "AVX512VPOPCNTDQ", SIMDAliases: []string{"AVX512VPOPCNTDQ"}},
 	{Name: "x86.fma", Feature: "FMA", RuntimeGuard: "runtime.x86HasFMA", SIMDAliases: []string{"FMA"}},
@@ -78,6 +79,7 @@ var profiles = []profile{
 	{Name: "x86.vpclmulqdq", Feature: "VPCLMULQDQ", SIMDAliases: []string{"VPCLMULQDQ"}},
 	{Name: "x86.avx512vpclmulqdq", Feature: "AVX512VPCLMULQDQ", SIMDAliases: []string{"AVX512VPCLMULQDQ"}},
 	{Name: "x86.avx512vaes", Feature: "AVX512VAES", SIMDAliases: []string{"AVX512VAES"}},
+	{Name: "x86.avx512gfni", Feature: "AVX512GFNI", SIMDAliases: []string{"AVX512GFNI"}},
 }
 
 var unprofiledSIMDAliases = []string{"", "SHA"}

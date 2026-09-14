@@ -33,6 +33,7 @@ const (
 	goCPUProfileX86VPCLMULQDQ              = "x86.vpclmulqdq"
 	goCPUProfileX86AVX512VPCLMULQDQ        = "x86.avx512vpclmulqdq"
 	goCPUProfileX86AVX512VAES              = "x86.avx512vaes"
+	goCPUProfileX86AVX512GFNI              = "x86.avx512gfni"
 )
 
 var llvmCPUProfiles = [...]llvmCPUProfile{
@@ -56,4 +57,5 @@ var llvmCPUProfiles = [...]llvmCPUProfile{
 	{name: goCPUProfileX86VPCLMULQDQ, arch: "amd64", field: "HasVPCLMULQDQ", runtimeGuard: "", predicates: 0x80000, capabilities: 0x80010, targetFeatures: "+avx,+vpclmulqdq"},
 	{name: goCPUProfileX86AVX512VPCLMULQDQ, arch: "amd64", field: "HasAVX512VPCLMULQDQ", runtimeGuard: "", predicates: 0x100000, capabilities: 0x100610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vpclmulqdq"},
 	{name: goCPUProfileX86AVX512VAES, arch: "amd64", field: "HasAVX512VAES", runtimeGuard: "", predicates: 0x200000, capabilities: 0x200610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vaes"},
+	{name: goCPUProfileX86AVX512GFNI, arch: "amd64", field: "HasAVX512GFNI", runtimeGuard: "", predicates: 0x400000, capabilities: 0x400610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+gfni"},
 }

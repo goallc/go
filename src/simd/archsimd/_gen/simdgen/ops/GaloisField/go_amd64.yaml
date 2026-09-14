@@ -1,5 +1,6 @@
 !sum
 - go: GaloisFieldAffineTransform
+  llvmLowering: gf-affine
   asm: VGF2P8AFFINEQB
   operandOrder: 2I # 2nd operand, then immediate
   in: &AffineArgs
@@ -18,6 +19,7 @@
   - *uint8
 
 - go: GaloisFieldAffineTransformInverse
+  llvmLowering: gf-affine-inverse
   asm: VGF2P8AFFINEINVQB
   operandOrder: 2I # 2nd operand, then immediate
   in: *AffineArgs
@@ -25,6 +27,7 @@
   - *uint8
 
 - go: GaloisFieldMul
+  llvmLowering: gf-mul
   asm: VGF2P8MULB
   in:
   - *uint8

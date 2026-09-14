@@ -2007,7 +2007,7 @@ func TestLLVMX86CPUFeatureProfile(t *testing.T) {
 		{field: "HasFMA", want: goCPUProfileX86FMA},
 		{field: "HasSSE41", want: goCPUProfileX86SSE41},
 		{field: "HasPOPCNT", want: goCPUProfileX86POPCNT},
-		{field: "HasAVX512GFNI"},
+		{field: "HasAVX512GFNI", want: goCPUProfileX86AVX512GFNI},
 		{field: "HasAVXVNNI"},
 	} {
 		t.Run(test.field, func(t *testing.T) {

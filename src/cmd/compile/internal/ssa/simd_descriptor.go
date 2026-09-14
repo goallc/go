@@ -55,6 +55,9 @@ const (
 	goALLCSIMDLowerAESDecryptLast
 	goALLCSIMDLowerAESKeygen
 	goALLCSIMDLowerAESInverseMix
+	goALLCSIMDLowerGFMul
+	goALLCSIMDLowerGFAffine
+	goALLCSIMDLowerGFAffineInverse
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerMulAddInteger
 	goALLCSIMDLowerFMA
