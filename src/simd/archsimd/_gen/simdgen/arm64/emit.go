@@ -107,7 +107,17 @@ func (template *template) Emit(arrangement string) *unify.Value {
 	db.Add("asm", unify.NewValue(unify.NewStringExact(mnemonic)))
 	db.Add("arrangement", unify.NewValue(unify.NewStringExact(arrangement)))
 	db.Add("goarch", unify.NewValue(unify.NewStringExact("arm64")))
-	db.Add("cpuFeature", unify.NewValue(unify.NewStringExact("NEON"))) // TODO: features
+	feature := "NEON"
+	if mnemonic == "VPMULL" || mnemonic == "VPMULL2" {
+		// The byte form is baseline NEON; the 64-bit source form
+		// additionally requires FEAT_PMULL (the Go HasPMULL predicate).
+		for _, op := range template.operands {
+			if op.Role != "destination" && op.ElemBits == 64 {
+				feature = "PMULL"
+			}
+		}
+	}
+	db.Add("cpuFeature", unify.NewValue(unify.NewStringExact(feature)))
 	db.Add("inVariant", unify.NewValue(unify.NewTuple()))
 
 	if doc := template.instruction.Documentation(); doc != "" {

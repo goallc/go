@@ -199,15 +199,16 @@ func Generate(root string) error {
 // ProfileForSIMD maps the upstream operation feature to its reviewed LLVM
 // lowering profile. It reads authoring data directly, not generated Go code.
 func ProfileForSIMD(arch, name string) string {
-	if arch != "amd64" {
-		return ""
-	}
 	for _, p := range profiles {
 		if slices.Contains(p.SIMDAliases, name) {
-			return p.Name
+			for _, f := range features {
+				if f.Name == p.Feature && f.Arch == arch {
+					return p.Name
+				}
+			}
 		}
 	}
-	if slices.Contains(unprofiledSIMDAliases, name) {
+	if arch != "amd64" || slices.Contains(unprofiledSIMDAliases, name) {
 		return ""
 	}
 	panic(fmt.Sprintf("simdgen: unknown GoALLC CPU feature %q; update _gen/internal/goallccpu", name))

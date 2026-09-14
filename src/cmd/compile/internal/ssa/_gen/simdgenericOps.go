@@ -1374,7 +1374,7 @@ func simdGenericOps() []opData {
 		{name: "broadcast1To64MaskedInt8x16", argLength: 2},                                                                                                                                               // ARCH:amd64
 		{name: "broadcast1To64MaskedUint8x16", argLength: 2},                                                                                                                                              // ARCH:amd64
 		{name: "broadcast1To64Uint8x16", argLength: 1, simd: "arch.amd64.profile=x86.avx512&lane=uint&laneBits=8&lower=broadcast-low"},                                                                    // ARCH:amd64
-		{name: "carrylessMultiplyWidenLoUint64x2", argLength: 2, commutative: true},                                                                                                                       // ARCH:arm64
+		{name: "carrylessMultiplyWidenLoUint64x2", argLength: 2, commutative: true, simd: "arch.arm64.profile=arm64.pmull&lane=uint&laneBits=64&lower=carryless-mul-widen-low"},                           // ARCH:arm64
 		{name: "reduceMaxFloat32x4", argLength: 1, simd: "lane=float&laneBits=32&lower=reduce-max"},                                                                                                       // ARCH:arm64
 		{name: "reduceMaxInt8x16", argLength: 1, simd: "lane=int&laneBits=8&lower=reduce-max"},                                                                                                            // ARCH:arm64
 		{name: "reduceMaxInt16x8", argLength: 1, simd: "lane=int&laneBits=16&lower=reduce-max"},                                                                                                           // ARCH:arm64

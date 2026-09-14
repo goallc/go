@@ -15,6 +15,9 @@ func TestGoALLCCPUFeaturesSnapshot(t *testing.T) {
 	if cpu.ARM64.HasATOMICS {
 		want |= runtime.GoALLCCPUFeatureARM64LSEForTest
 	}
+	if cpu.ARM64.HasPMULL {
+		want |= runtime.GoALLCCPUFeatureARM64PMULLForTest
+	}
 	if got := runtime.GoALLCCPUFeaturesForTest(); got != want {
 		t.Fatalf("goallcCPUFeatures = %#x, want effective internal/cpu snapshot %#x", got, want)
 	}

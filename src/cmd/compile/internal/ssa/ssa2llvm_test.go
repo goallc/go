@@ -2011,8 +2011,8 @@ func TestLLVMX86CPUFeatureProfile(t *testing.T) {
 		{field: "HasAVXVNNI"},
 	} {
 		t.Run(test.field, func(t *testing.T) {
-			if got := llvmX86CPUFeatureProfile(test.field); got != test.want {
-				t.Fatalf("llvmX86CPUFeatureProfile(%q) = %q, want %q", test.field, got, test.want)
+			if got := llvmCPUFieldProfile("amd64", test.field); got != test.want {
+				t.Fatalf("llvmCPUFieldProfile(%q) = %q, want %q", test.field, got, test.want)
 			}
 		})
 	}
@@ -2037,7 +2037,7 @@ func TestLLVMX86CPUFeatureGuard(t *testing.T) {
 		Controls: [2]*Value{load, nil},
 		Succs:    []Edge{{b: enabled}, {b: disabled}},
 	}
-	profile, successor := llvmX86CPUFeatureGuard(guard)
+	profile, successor := llvmCPUFeatureGuard(guard, "amd64")
 	if profile != goCPUProfileX86AVX2 || successor != 0 {
 		t.Fatalf("positive guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, 0)
 	}
@@ -2047,7 +2047,7 @@ func TestLLVMX86CPUFeatureGuard(t *testing.T) {
 
 	not := &Value{Op: OpNot, Args: []*Value{load}}
 	guard.Controls[0] = not
-	profile, successor = llvmX86CPUFeatureGuard(guard)
+	profile, successor = llvmCPUFeatureGuard(guard, "amd64")
 	if profile != goCPUProfileX86AVX2 || successor != 1 {
 		t.Fatalf("negated guard = (%q, %v), want (%q, %v)", profile, successor, goCPUProfileX86AVX2, 1)
 	}
@@ -2059,7 +2059,7 @@ func TestLLVMX86CPUFeatureGuard(t *testing.T) {
 	if caps, _ := ifEffect(guard); caps != CPUNone {
 		t.Fatalf("shared recognition widened native FMA policy: %v", caps)
 	}
-	if profile, taken := llvmX86CPUFeatureGuard(guard); profile != goCPUProfileX86FMA || taken != 1 {
+	if profile, taken := llvmCPUFeatureGuard(guard, "amd64"); profile != goCPUProfileX86FMA || taken != 1 {
 		t.Fatalf("shared recognition lost LLVM FMA predicate: (%s, %d)", profile, taken)
 	}
 }

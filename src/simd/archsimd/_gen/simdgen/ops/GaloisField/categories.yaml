@@ -26,6 +26,7 @@
 
 - go: carrylessMultiplyWidenLo
   commutative: true
+  llvmLowering: carryless-mul-widen-low
   documentation: !string |-
     // NAME returns the carryless (polynomial) product of the low halves
     // of x and y.
