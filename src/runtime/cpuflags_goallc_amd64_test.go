@@ -32,6 +32,7 @@ func TestGoALLCCPUFeaturesSnapshot(t *testing.T) {
 		{cpu.X86.HasVAES, runtime.GoALLCCPUFeatureVAESForTest},
 		{cpu.X86.HasAVX512VAES, runtime.GoALLCCPUFeatureAVX512VAESForTest},
 		{cpu.X86.HasAVX512GFNI, runtime.GoALLCCPUFeatureAVX512GFNIForTest},
+		{cpu.X86.HasSHA, runtime.GoALLCCPUFeatureSHAForTest},
 		{cpu.X86.HasVPCLMULQDQ, runtime.GoALLCCPUFeatureVPCLMULQDQForTest},
 		{cpu.X86.HasAVX512VPCLMULQDQ, runtime.GoALLCCPUFeatureAVX512VPCLMULQDQForTest},
 		{cpu.X86.HasFMA, runtime.GoALLCCPUFeatureFMAForTest},

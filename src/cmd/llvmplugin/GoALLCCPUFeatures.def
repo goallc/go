@@ -29,6 +29,7 @@ GOALLC_CPU_FEATURE(VPCLMULQDQ, 19)
 GOALLC_CPU_FEATURE(AVX512VPCLMULQDQ, 20)
 GOALLC_CPU_FEATURE(AVX512VAES, 21)
 GOALLC_CPU_FEATURE(AVX512GFNI, 22)
+GOALLC_CPU_FEATURE(SHA, 23)
 #endif
 
 #ifdef GOALLC_CPU_BASELINE
@@ -59,4 +60,5 @@ GOALLC_CPU_PROFILE("x86.vpclmulqdq", "vpclmulqdq", "+avx,+vpclmulqdq", "amd64", 
 GOALLC_CPU_PROFILE("x86.avx512vpclmulqdq", "avx512vpclmulqdq", "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vpclmulqdq", "amd64", FeatureAVX512VPCLMULQDQ)
 GOALLC_CPU_PROFILE("x86.avx512vaes", "avx512vaes", "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vaes", "amd64", FeatureAVX512VAES)
 GOALLC_CPU_PROFILE("x86.avx512gfni", "avx512gfni", "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+gfni", "amd64", FeatureAVX512GFNI)
+GOALLC_CPU_PROFILE("x86.sha", "sha", "+sha", "amd64", FeatureSHA)
 #endif

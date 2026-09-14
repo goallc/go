@@ -1960,6 +1960,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	switch info.lowering {
 	case goALLCSIMDLowerAESEncrypt, goALLCSIMDLowerAESEncryptLast, goALLCSIMDLowerAESDecrypt, goALLCSIMDLowerAESDecryptLast, goALLCSIMDLowerAESKeygen, goALLCSIMDLowerAESInverseMix:
 		return finish(lfc.simdAES(v, info.lowering, width))
+	case goALLCSIMDLowerSHA1Rounds, goALLCSIMDLowerSHA1NextE, goALLCSIMDLowerSHA1Message1, goALLCSIMDLowerSHA1Message2, goALLCSIMDLowerSHA256Rounds, goALLCSIMDLowerSHA256Message1, goALLCSIMDLowerSHA256Message2:
+		return finish(lfc.simdSHA(v, info.lowering))
 	case goALLCSIMDLowerShiftSignedCount, goALLCSIMDLowerShiftSignedCountSaturated:
 		// Unlike ordinary Go SIMD shifts, these ARM64 operations interpret
 		// only the signed low byte of each count lane. The NEON intrinsics

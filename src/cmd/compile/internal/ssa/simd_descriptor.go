@@ -58,6 +58,13 @@ const (
 	goALLCSIMDLowerGFMul
 	goALLCSIMDLowerGFAffine
 	goALLCSIMDLowerGFAffineInverse
+	goALLCSIMDLowerSHA1Rounds
+	goALLCSIMDLowerSHA1NextE
+	goALLCSIMDLowerSHA1Message1
+	goALLCSIMDLowerSHA1Message2
+	goALLCSIMDLowerSHA256Rounds
+	goALLCSIMDLowerSHA256Message1
+	goALLCSIMDLowerSHA256Message2
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerMulAddInteger
 	goALLCSIMDLowerFMA
