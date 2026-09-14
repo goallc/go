@@ -2044,6 +2044,17 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 			return finish(lfc.simdBinary(v, laneType, lanes, lfc.b.CreateFAdd))
 		}
 		return finish(lfc.simdBinary(v, laneType, lanes, lfc.b.CreateAdd))
+	case goALLCSIMDLowerPairAdd, goALLCSIMDLowerPairSub, goALLCSIMDLowerPairAdd128, goALLCSIMDLowerPairSub128, goALLCSIMDLowerPairSAddSat, goALLCSIMDLowerPairSSubSat, goALLCSIMDLowerPairSAddSat128, goALLCSIMDLowerPairSSubSat128:
+		return finish(lfc.simdHorizontal(v, info, laneType, lanes))
+	case goALLCSIMDLowerAddOddSubEven:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		even := make([]llvm.Value, lanes)
+		for i := range even {
+			even[i] = llvm.ConstInt(GlobalCtxt.Int1Type(), uint64(1-i%2), false)
+		}
+		add := lfc.b.CreateFAdd(x, y, v.String()+".add")
+		sub := lfc.b.CreateFSub(x, y, v.String()+".sub")
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateSelect(llvm.ConstVector(even, false), sub, add, v.String())))
 	case goALLCSIMDLowerSub:
 		if isFloat {
 			return finish(lfc.simdBinary(v, laneType, lanes, lfc.b.CreateFSub))
