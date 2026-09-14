@@ -602,12 +602,20 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
 
+	if base.Flag.EnableLLVM {
+		// LLVM has emitted the function and owns its frame and parameter
+		// spills. Native AllocFrame requires native register allocation.
+		// ABI analysis and ArgInfo generation above, and package-level Go
+		// data emission after function compilation, are still required.
+		return s.f
+	}
+
 	fe.AllocFrame(s.f)
 
 	// Native code generation consumes open-defer metadata from the ordinary
 	// linker object. Both LLVM code-generation paths instead carry the defer
 	// contract through LLVM IR and the GoALLC pre-codegen pipeline.
-	if len(s.openDefers) != 0 && !base.Flag.EnableLLVM {
+	if len(s.openDefers) != 0 {
 		s.emitOpenDeferInfo()
 	}
 
