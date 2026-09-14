@@ -29,6 +29,7 @@
   documentation: !string |-
     // NAME rounds elements to the nearest integer, rounding ties to even.
 - go: RoundScaled
+  llvmLowering: round-scaled
   commutative: false
   constImm: 0
   documentation: !string |-
@@ -45,6 +46,7 @@
   documentation: !string |-
     // NAME rounds elements down to the nearest integer.
 - go: FloorScaled
+  llvmLowering: floor-scaled
   commutative: false
   constImm: 1
   documentation: !string |-
@@ -61,6 +63,7 @@
   documentation: !string |-
     // NAME rounds elements up to the nearest integer.
 - go: CeilScaled
+  llvmLowering: ceil-scaled
   commutative: false
   constImm: 2
   documentation: !string |-
@@ -77,6 +80,7 @@
   documentation: !string |-
     // NAME truncates elements towards zero.
 - go: TruncScaled
+  llvmLowering: trunc-scaled
   commutative: false
   constImm: 3
   documentation: !string |-

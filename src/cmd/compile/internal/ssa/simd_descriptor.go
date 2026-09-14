@@ -35,6 +35,10 @@ const (
 	goALLCSIMDLowerFloor
 	goALLCSIMDLowerCeil
 	goALLCSIMDLowerTrunc
+	goALLCSIMDLowerRoundScaled
+	goALLCSIMDLowerFloorScaled
+	goALLCSIMDLowerCeilScaled
+	goALLCSIMDLowerTruncScaled
 	goALLCSIMDLowerOnesCount
 	goALLCSIMDLowerLeadingZeros
 	goALLCSIMDLowerMax

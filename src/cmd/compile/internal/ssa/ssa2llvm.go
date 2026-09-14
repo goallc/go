@@ -2151,6 +2151,30 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		}
 		fn := getLLVMIntrinsicDeclaration(name)
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+".estimate")))
+	case goALLCSIMDLowerRoundScaled, goALLCSIMDLowerFloorScaled, goALLCSIMDLowerCeilScaled, goALLCSIMDLowerTruncScaled:
+		var mode uint8
+		switch info.lowering {
+		case goALLCSIMDLowerFloorScaled:
+			mode = 1
+		case goALLCSIMDLowerCeilScaled:
+			mode = 2
+		case goALLCSIMDLowerTruncScaled:
+			mode = 3
+		}
+		// The frontend has already shifted prec into imm8[7:4]. Add only
+		// the operation's rounding mode, as the native rewrite does.
+		imm := llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint8(v.AuxInt)|mode), false)
+		x := lfc.simdValueAs(v, v.Args[0], llvm.VectorType(laneType, lanes), ".x")
+		args := []llvm.Value{x, imm, llvm.ConstNull(x.Type()), llvm.ConstAllOnes(GlobalCtxt.IntType(max(8, lanes)))}
+		kind := "ps"
+		if laneBits == 64 {
+			kind = "pd"
+		}
+		if width == 512 {
+			args = append(args, llvm.ConstInt(GlobalCtxt.Int32Type(), 4, false))
+		}
+		fn := getLLVMIntrinsicDeclaration(fmt.Sprintf("llvm.x86.avx512.mask.rndscale.%s.%d", kind, width))
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+".roundscaled")))
 	case goALLCSIMDLowerScale:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		kind := "ps"
