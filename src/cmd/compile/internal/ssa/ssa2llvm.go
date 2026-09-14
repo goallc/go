@@ -2165,6 +2165,24 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 			v.Fatalf("%s generated SIMD sign multiply requires two signed integer operands", v.Op)
 		}
 		return finish(lfc.simdMulSign(v, laneType, lanes, laneBits))
+	case goALLCSIMDLowerFMA, goALLCSIMDLowerFMAAddEven, goALLCSIMDLowerFMAAddOdd:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		z := lfc.simdValueAs(v, v.Args[2], x.Type(), ".z")
+		if info.lowering != goALLCSIMDLowerFMA {
+			negate := make([]llvm.Value, lanes)
+			for i := range negate {
+				bit := uint64(0)
+				if (i%2 == 0) == (info.lowering == goALLCSIMDLowerFMAAddOdd) {
+					bit = 1
+				}
+				negate[i] = llvm.ConstInt(GlobalCtxt.Int1Type(), bit, false)
+			}
+			z = lfc.b.CreateSelect(llvm.ConstVector(negate, false), lfc.b.CreateFNeg(z, v.String()+".negz"), z, v.String()+".addend")
+		}
+		// llvm.fma, unlike separate fmul/fadd, guarantees a single rounding.
+		sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type(), x.Type(), x.Type()}, false)
+		fn := getOrInsertLLVMIntrinsic(fmt.Sprintf("llvm.fma.v%df%d", lanes, laneBits), sig)
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(sig, fn, []llvm.Value{x, y, z}, v.String())))
 	case goALLCSIMDLowerMax, goALLCSIMDLowerMin:
 		operation := ""
 		switch info.lane {

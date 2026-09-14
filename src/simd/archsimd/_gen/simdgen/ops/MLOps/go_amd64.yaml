@@ -52,6 +52,7 @@
   - *pdpa_acc
 - go: MulAdd
   asm: "VFMADD213PS|VFMADD213PD"
+  llvmLowering: fma
   documentation: !string |-
     // NAME performs a fused (x * y) + z.
   in:
@@ -63,7 +64,8 @@
   out:
   - *fma_op
 - go: MulAddEvenSubOdd
-  asm: "VFMADDSUB213PS|VFMADDSUB213PD"
+  asm: "VFMSUBADD213PS|VFMSUBADD213PD"
+  llvmLowering: fma-add-even
   in:
   - *fma_op
   - *fma_op
@@ -71,7 +73,8 @@
   out:
   - *fma_op
 - go: MulAddOddSubEven
-  asm: "VFMSUBADD213PS|VFMSUBADD213PD"
+  asm: "VFMADDSUB213PS|VFMADDSUB213PD"
+  llvmLowering: fma-add-odd
   in:
   - *fma_op
   - *fma_op

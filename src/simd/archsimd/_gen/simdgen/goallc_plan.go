@@ -71,7 +71,6 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 		"ConcatSubPairs", "ConcatSubPairsGrouped",
 		"ConcatSubPairsSaturated", "ConcatSubPairsSaturatedGrouped",
 		"DotProductPairs", "DotProductPairsSaturated",
-		"MulAdd", "MulAddEvenSubOdd", "MulAddOddSubEven",
 		"SumOf8AbsDiff",
 		"blend", "tern",
 	},
