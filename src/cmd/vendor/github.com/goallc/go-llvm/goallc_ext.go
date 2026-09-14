@@ -29,6 +29,12 @@ func LLVMSetValueName2(value Value, name string) {
 	C.LLVMSetValueName2(value.C, namestr, C.size_t(len(name)))
 }
 
+// SetDiscardValueNames controls names of local IR values. Global symbols and
+// debug-info metadata retain their names.
+func (c Context) SetDiscardValueNames(discard bool) {
+	C.LLVMContextSetDiscardValueNames(c.C, boolToLLVMBool(discard))
+}
+
 func (c Context) PointerType(addressSpace uint32) (t Type) {
 	t.C = C.LLVMPointerTypeInContext(c.C, C.unsigned(addressSpace))
 	return
