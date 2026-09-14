@@ -2154,6 +2154,12 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		sig := llvm.FunctionType(llvm.VectorType(GlobalCtxt.Int8Type(), 16), []llvm.Type{laneType, laneType}, false)
 		fn := getOrInsertLLVMIntrinsic("llvm.aarch64.neon.pmull64", sig)
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(sig, fn, []llvm.Value{x, y}, v.String()+".product")))
+	case goALLCSIMDLowerMulAddInteger:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		z := lfc.simdValueAs(v, v.Args[2], x.Type(), ".z")
+		// Both steps wrap at the lane width; do not attach no-wrap flags.
+		product := lfc.b.CreateMul(x, y, v.String()+".product")
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateAdd(product, z, v.String()+".sum")))
 	case goALLCSIMDLowerMulSign:
 		if info.lane != goALLCSIMDLaneInt || len(v.Args) != 2 {
 			v.Fatalf("%s generated SIMD sign multiply requires two signed integer operands", v.Op)
