@@ -1032,6 +1032,15 @@ func setGoObjMarkerRelocMetadata(source llvm.Value, s *obj.LSym) {
 // cloned marker to its final containing function and removes the intrinsic.
 func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 	var sideeffect llvm.Value
+	// These relocations describe reachability edges, so repeated references
+	// from the same function carry no additional information. In particular,
+	// Go inlining may add many copies of the same interface-use marker.
+	type markerKey struct {
+		target *obj.LSym
+		typ    objabi.RelocType
+		addend int64
+	}
+	seen := make(map[markerKey]bool)
 	for _, r := range s.R {
 		switch r.Type {
 		case objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD:
@@ -1045,6 +1054,11 @@ func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 		if r.Sym == nil {
 			base.Fatalf("nil GoObj marker target in %s", s.Name)
 		}
+		key := markerKey{r.Sym, r.Type, r.Add}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if sideeffect.IsNil() {
 			sideeffect = getLLVMIntrinsicDeclaration("llvm.sideeffect")
 		}

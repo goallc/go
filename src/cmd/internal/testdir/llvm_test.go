@@ -6,6 +6,7 @@ package testdir_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"internal/testenv"
@@ -660,6 +661,7 @@ type llvmObjviewObject struct {
 			} `json:"target"`
 		} `json:"aux"`
 		Relocations []struct {
+			Addend int64  `json:"addend"`
 			Size   uint8  `json:"size"`
 			Type   string `json:"type"`
 			Target struct {
@@ -698,6 +700,7 @@ func llvmObjviewSummary(label string, data []byte) ([]byte, error) {
 		lines = append(lines, fmt.Sprintf("%s reference name=%q class=%s", label, ref.Name, ref.Class))
 	}
 	relocationCounts := make(map[string]int)
+	markerEdges := make(map[string]map[string]bool)
 	for _, symbol := range object.Symbols {
 		lines = append(lines, fmt.Sprintf("%s symbol name=%q kind=%s flags=%s class=%s hash=%s", label, symbol.Name, symbol.Kind, strings.Join(symbol.FlagNames, ","), symbol.Class, symbol.Hash))
 		for _, aux := range symbol.Aux {
@@ -706,12 +709,28 @@ func llvmObjviewSummary(label string, data []byte) ([]byte, error) {
 		}
 		for _, reloc := range symbol.Relocations {
 			relocationCounts[reloc.Type]++
+			switch reloc.Type {
+			case "R_USEIFACE", "R_USEIFACEMETHOD", "R_USENAMEDMETHOD", "R_INITORDER":
+				if markerEdges[reloc.Type] == nil {
+					markerEdges[reloc.Type] = make(map[string]bool)
+				}
+				edge := fmt.Sprintf("%q %q %q %d", symbol.Name, reloc.Target.Package, reloc.Target.Name, reloc.Addend)
+				markerEdges[reloc.Type][edge] = true
+			}
 			lines = append(lines, fmt.Sprintf("%s relocation owner=%q type=%s size=%d target_kind=%s target_package=%q target_name=%q target_index=%d",
 				label, symbol.Name, reloc.Type, reloc.Size, reloc.Target.Kind, reloc.Target.Package, reloc.Target.Name, reloc.Target.SymIndex))
 		}
 	}
 	for relocation, count := range relocationCounts {
 		lines = append(lines, fmt.Sprintf("%s relocation-count type=%s count=%d", label, relocation, count))
+	}
+	for kind, edges := range markerEdges {
+		var keys []string
+		for edge := range edges {
+			keys = append(keys, edge)
+		}
+		sort.Strings(keys)
+		lines = append(lines, fmt.Sprintf("%s relocation-edges type=%s count=%d sha256=%x", label, kind, len(keys), sha256.Sum256([]byte(strings.Join(keys, "\n")))))
 	}
 	sort.Strings(lines)
 	return []byte(strings.Join(lines, "\n") + "\n"), nil

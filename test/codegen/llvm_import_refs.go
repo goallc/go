@@ -21,7 +21,7 @@ import (
 // LLVM-NATIVE-OBJSUMMARY-DAG: NATIVE reference name="reflect.(*rtype).Elem" class=nonpackage_reference
 // LLVM-NATIVE-OBJSUMMARY-DAG: NATIVE reference name="reflect.(*rtype).Kind" class=nonpackage_reference
 // LLVM-NATIVE-OBJSUMMARY-DAG: NATIVE relocation {{.*}} type=[[CALL_RELOC:R_CALL(ARM64)?]] {{.*}} target_kind=imported target_package="fmt" target_name="fmt.Sprintf" target_index=[[FMT_INDEX:[0-9]+]]
-// LLVM-NATIVE-OBJSUMMARY-DAG: NATIVE relocation-count type=R_USEIFACE count=[[USEIFACE:[0-9]+]]
+// LLVM-NATIVE-OBJSUMMARY-DAG: NATIVE relocation-edges type=R_USEIFACE count=[[USEIFACE:[0-9]+]] sha256=[[USEIFACE_HASH:[0-9a-f]+]]
 // LLVM-NATIVE-OBJSUMMARY-DAG: NATIVE relocation-count type=R_USENAMEDMETHOD count=[[USENAMEDMETHOD:[0-9]+]]
 // LLVM-NATIVE-OBJSUMMARY: LLVM autolib package="encoding/hex" fingerprint=[[HEX]]
 // LLVM-NATIVE-OBJSUMMARY: LLVM autolib package="fmt" fingerprint=[[FMT]]
@@ -31,7 +31,7 @@ import (
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM reference name="reflect.(*rtype).Elem" class=nonpackage_reference
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM reference name="reflect.(*rtype).Kind" class=nonpackage_reference
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation {{.*}} type=[[CALL_RELOC]] {{.*}} target_kind=imported target_package="fmt" target_name="fmt.Sprintf" target_index=[[FMT_INDEX]]
-// LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation-count type=R_USEIFACE count=[[USEIFACE]]
+// LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation-edges type=R_USEIFACE count=[[USEIFACE]] sha256=[[USEIFACE_HASH]]
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation-count type=R_USENAMEDMETHOD count=[[USENAMEDMETHOD]]
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM symbol name={{"codegen.llvmImportBox.*"}} kind=STEXT flags={{.*}}dupok
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM symbol name={{".goallc.anon.*"}} kind={{.*}} flags={{.*}}local
