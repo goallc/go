@@ -644,6 +644,17 @@ if(BUILD_TESTING)
     COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
       "${GOALLC_POINTER_ADDRESS_PIPELINE}"
   )
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.NotInHeapSharedGraph
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/notinheap-shared-graph.ll"
+    CHECK
+  )
+  # The old path-local walks enumerate over 2^30 shared paths. Keep a bounded
+  # regression budget; node-wise traversal completes well within it.
+  set_tests_properties(GoALLCStatepoints.NotInHeapSharedGraph PROPERTIES
+    TIMEOUT 20
+  )
+
   goallc_add_filecheck_test(
     GoALLCStatepoints.PointerAddressObservationO2
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pointer-address-observation.ll"
