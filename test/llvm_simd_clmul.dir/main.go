@@ -53,7 +53,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		for _, flags := range []string{"", "cpu.pclmulqdq=off", "cpu.avx=off", "cpu.avx=off,cpu.pclmulqdq=off"} {
+		for _, flags := range []string{"", "cpu.pclmulqdq=off", "cpu.avx=off", "cpu.avx=off,cpu.pclmulqdq=off", "cpu.vpclmulqdq=off"} {
 			cmd := exec.Command(self)
 			cmd.Env = append(os.Environ(), "GOALLC_CLMUL_CHILD=1", "GODEBUG="+flags)
 			if output, err := cmd.CombinedOutput(); err != nil {
@@ -80,6 +80,7 @@ func main() {
 			}
 		}
 	}
+	checkWide()
 	if os.Getenv("GOALLC_SIMD_CLMUL_TRACE") != "" {
 		fmt.Printf("avx=%v clmul=%v products=%d\n", avx, enabled, len(data)*len(data)*4)
 	}

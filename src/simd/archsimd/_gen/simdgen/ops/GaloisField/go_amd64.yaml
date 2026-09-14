@@ -54,6 +54,7 @@
   hideMaskMethods: true
 
 - go: carrylessMultiply
+  llvmLowering: carryless-mul
   documentation: !string |-
     // NAME computes one of two possible Galois polynomial
     // products of selected high and low halves of each of the two
@@ -74,6 +75,7 @@
   hideMaskMethods: true
 
 - go: carrylessMultiply
+  llvmLowering: carryless-mul
   documentation: !string |-
     // NAME computes one of four possible Galois polynomial
     // products of selected high and low halves of each of the four

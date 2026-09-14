@@ -25,6 +25,8 @@ GOALLC_CPU_FEATURE(AVX512VBMI2, 15)
 GOALLC_CPU_FEATURE(AES, 16)
 GOALLC_CPU_FEATURE(PCLMULQDQ, 17)
 GOALLC_CPU_FEATURE(VAES, 18)
+GOALLC_CPU_FEATURE(VPCLMULQDQ, 19)
+GOALLC_CPU_FEATURE(AVX512VPCLMULQDQ, 20)
 #endif
 
 #ifdef GOALLC_CPU_BASELINE
@@ -51,4 +53,6 @@ GOALLC_CPU_PROFILE("x86.pclmulqdq", "pclmulqdq", "+pclmul", "amd64", FeaturePCLM
 GOALLC_CPU_PROFILE("x86.vaes", "vaes", "+avx,+vaes", "amd64", FeatureVAES)
 GOALLC_CPU_PROFILE("x86.avxaes", "avxaes", "+avx,+aes", "amd64", FeatureAVX | FeatureAES)
 GOALLC_CPU_PROFILE("x86.avxpclmulqdq", "avxpclmulqdq", "+avx,+pclmul", "amd64", FeatureAVX | FeaturePCLMULQDQ)
+GOALLC_CPU_PROFILE("x86.vpclmulqdq", "vpclmulqdq", "+avx,+vpclmulqdq", "amd64", FeatureVPCLMULQDQ)
+GOALLC_CPU_PROFILE("x86.avx512vpclmulqdq", "avx512vpclmulqdq", "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vpclmulqdq", "amd64", FeatureAVX512VPCLMULQDQ)
 #endif
