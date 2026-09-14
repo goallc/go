@@ -623,22 +623,36 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/function-marker-inline.ll"
     -o -
   )
-  set(GOALLC_FUNCTION_MARKER_PIPELINE
-    "'${GOALLC_OPT_EXECUTABLE}' -S '-passes=default<O2>'"
-    " '${CMAKE_CURRENT_SOURCE_DIR}/testdata/function-marker-inline.ll' -o -"
-    " | '${GOALLC_LLC_EXECUTABLE}'"
-    " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
-    " -goallc-pass-plugin-emit-ir -filetype=null -o - -"
-    " 2>&1"
-    " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=INLINE-REWRITE"
-    " '${CMAKE_CURRENT_SOURCE_DIR}/testdata/function-marker-inline.ll'")
-  string(JOIN "" GOALLC_FUNCTION_MARKER_PIPELINE
-    ${GOALLC_FUNCTION_MARKER_PIPELINE})
-  add_test(
-    NAME GoALLCStatepoints.FunctionMarkerInlineRewrite
-    COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
-      "${GOALLC_FUNCTION_MARKER_PIPELINE}"
-  )
+  function(goallc_add_optimized_marker_test NAME INPUT PREFIX)
+    set(GOALLC_MARKER_PIPELINE
+      "'${GOALLC_OPT_EXECUTABLE}' -S '-passes=default<O2>' '${INPUT}' -o -"
+      " | '${GOALLC_LLC_EXECUTABLE}'"
+      " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
+      " -goallc-pass-plugin-emit-ir -filetype=null -o - - 2>&1"
+      " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix='${PREFIX}' '${INPUT}'")
+    string(JOIN "" GOALLC_MARKER_PIPELINE ${GOALLC_MARKER_PIPELINE})
+    add_test(NAME "${NAME}" COMMAND "${GOALLC_BASH_EXECUTABLE}"
+      -o pipefail -c "${GOALLC_MARKER_PIPELINE}")
+  endfunction()
+  goallc_add_optimized_marker_test(
+    GoALLCStatepoints.FunctionMarkerInlineRewrite
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/function-marker-inline.ll"
+    INLINE-REWRITE)
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.ReflectMethodInlineOpt
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/reflect-method-inline.ll" OPT
+    "${GOALLC_OPT_EXECUTABLE}" -S "-passes=default<O2>"
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/reflect-method-inline.ll" -o -)
+  goallc_add_optimized_marker_test(
+    GoALLCStatepoints.ReflectMethodInlineRewrite
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/reflect-method-inline.ll" REWRITE)
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.ReflectMethodInvalid
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/reflect-method-invalid.ll" CHECK
+    "${GOALLC_NOT_EXECUTABLE}" "${GOALLC_LLC_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -filetype=null -o /dev/null
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/reflect-method-invalid.ll")
 
   set(GOALLC_POINTER_ADDRESS_PIPELINE
     "'${GOALLC_OPT_EXECUTABLE}' -S '-passes=default<O2>' -o -"

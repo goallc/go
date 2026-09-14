@@ -26,6 +26,39 @@ const llvmDefaultCaseTimeoutSeconds = 300
 
 const llvmBlacklistReasonRequirement = "known unsupported capability, timeout, OOM, or slow CI case"
 
+// testLLVMReflectMethodInline leaves a dynamic reflection lookup for LLVM to
+// inline. Its linker reachability fact must follow the lookup into the caller.
+func testLLVMReflectMethodInline(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	testenv.MustHaveCGO(t)
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "darwin/arm64", "linux/amd64", "linux/arm64":
+	default:
+		t.Skip("LLVM GoObj is not configured for this platform")
+	}
+	goTool = testenv.GoToolPath(t)
+	configureLLVMTestToolchain(t)
+	exe := filepath.Join(t.TempDir(), "reflect-method-inline")
+	source := filepath.Join(runtime.GOROOT(), "test", "llvm_reflect_method_inline.go")
+	cmd := testenv.Command(t, goTool, "build", "-gcflags=all=-enablellvm", "-gcflags=-enablellvm -l", "-o", exe, source)
+	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("LLVM reflection executable build failed: %v\n%s", err, out)
+	}
+	out, err := testenv.Command(t, goTool, "tool", "nm", exe).CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspecting LLVM reflection executable: %v\n%s", err, out)
+	}
+	for _, name := range []string{"main.lookupReflected", "main.nestedLookup"} {
+		if bytes.Contains(out, []byte(" T "+name+"\n")) {
+			t.Fatalf("LLVM did not inline reflection helper %s", name)
+		}
+	}
+	if out, err := testenv.Command(t, exe).CombinedOutput(); err != nil {
+		t.Fatalf("LLVM-inlined reflection lookup failed: %v\n%s", err, out)
+	}
+}
+
 type llvmPolicySet struct {
 	Blacklist         map[string]string            `json:"blacklist"`
 	PlatformBlacklist map[string]map[string]string `json:"platform_blacklist,omitempty"`

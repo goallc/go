@@ -57,6 +57,8 @@ constexpr StringLiteral GoOpenDeferBitsMD = "goallc.open_defer_bits";
 constexpr StringLiteral GoOpenDeferSlotsMD = "goallc.open_defer_slots";
 constexpr StringLiteral GoNotInHeapAddressMD = "goallc.notinheap";
 constexpr StringLiteral GoObjMarkerRelocMD = "goobj.marker_reloc";
+constexpr StringLiteral GoObjReflectMethodMD = "goobj.reflect_method";
+constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
 constexpr StringLiteral StackColoringNoMergeMD = "llvm.stackcoloring.no_merge";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
@@ -4358,7 +4360,34 @@ Error rewriteFunction(Function &F) {
   return Error::success();
 }
 
-Error materializeFunctionMarkerRelocs(Module &M) {
+// Only the reflection reachability fact follows inlining. Other symbol flags
+// describe the physical function and must not be copied from an inlinee.
+Error markReflectMethod(Function &F) {
+  uint8_t Flags = 0, Flags2 = 0;
+  if (MDNode *MD = F.getMetadata(GoObjSymbolFlagsMD)) {
+    if (MD->getNumOperands() != 2)
+      return createStringError(
+          std::errc::invalid_argument,
+          "GoALLC symbol flags metadata must have two operands");
+    auto *First = mdconst::dyn_extract<ConstantInt>(MD->getOperand(0));
+    auto *Second = mdconst::dyn_extract<ConstantInt>(MD->getOperand(1));
+    if (!First || !Second || First->getValue().ugt(UINT8_MAX) ||
+        Second->getValue().ugt(UINT8_MAX))
+      return createStringError(std::errc::invalid_argument,
+                               "GoALLC symbol flags metadata is invalid");
+    Flags = First->getZExtValue();
+    Flags2 = Second->getZExtValue();
+  }
+  Flags |= GoObj::SymFlagReflectMethod;
+  LLVMContext &Ctx = F.getContext();
+  Metadata *Operands[] = {
+      ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(Ctx), Flags)),
+      ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(Ctx), Flags2))};
+  F.setMetadata(GoObjSymbolFlagsMD, MDNode::get(Ctx, Operands));
+  return Error::success();
+}
+
+Error materializeFunctionMarkers(Module &M) {
   SmallVector<Instruction *, 16> Markers;
   NamedMDNode *Relocs = nullptr;
   for (Function &F : M) {
@@ -4366,9 +4395,21 @@ Error materializeFunctionMarkerRelocs(Module &M) {
       auto *II = dyn_cast<IntrinsicInst>(&I);
       if (!II || II->getIntrinsicID() != Intrinsic::sideeffect)
         continue;
+      MDNode *ReflectMD = I.getMetadata(GoObjReflectMethodMD);
+      if (ReflectMD) {
+        if (ReflectMD->getNumOperands() != 0)
+          return createStringError(
+              std::errc::invalid_argument,
+              "GoALLC reflection method marker metadata must be empty");
+        if (Error Err = markReflectMethod(F))
+          return Err;
+      }
       MDNode *MD = I.getMetadata(GoObjMarkerRelocMD);
-      if (!MD)
+      if (!MD) {
+        if (ReflectMD)
+          Markers.push_back(&I);
         continue;
+      }
       if (MD->getNumOperands() != 3)
         return createStringError(
             std::errc::invalid_argument,
@@ -4442,7 +4483,7 @@ void lowerPointerAddressConversions(Function &F) {
 } // namespace
 
 Error goallc::prepareStatepointModule(Module &M) {
-  if (Error Err = materializeFunctionMarkerRelocs(M))
+  if (Error Err = materializeFunctionMarkers(M))
     return Err;
   return Error::success();
 }

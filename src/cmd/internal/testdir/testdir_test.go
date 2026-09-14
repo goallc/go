@@ -88,6 +88,7 @@ func Test(t *testing.T) {
 func TestLLVM(t *testing.T) {
 	t.Run("stdlib", testLLVMStdlib)
 	t.Run("content-addressable-closure-external-link", testLLVMContentAddressableClosureExternalLink)
+	t.Run("reflect-method-inline", testLLVMReflectMethodInline)
 	t.Run("testdir", func(t *testing.T) {
 		runTestDir(t, true)
 	})

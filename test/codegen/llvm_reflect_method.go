@@ -10,7 +10,9 @@ import "reflect"
 
 // LLVM-LABEL: define goabiinternal %reflect.Value @codegen.llvmReflectMethod(
 // LLVM-SAME: !goobj.symbol.flags ![[FLAGS:[0-9]+]]
+// LLVM: call void @llvm.sideeffect(), !goobj.reflect_method ![[MARKER:[0-9]+]]
 // LLVM-DAG: ![[FLAGS]] = !{i32 32, i32 0}
+// LLVM-DAG: ![[MARKER]] = !{}
 // LLVM-OBJSUMMARY: LLVM symbol name="codegen.llvmReflectMethod" kind=STEXT flags={{.*}}reflect_method
 func llvmReflectMethod(v reflect.Value) reflect.Value {
 	return v.Method(0)

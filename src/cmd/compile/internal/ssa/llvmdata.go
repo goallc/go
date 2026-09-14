@@ -1030,12 +1030,20 @@ func setGoObjMarkerRelocMetadata(source llvm.Value, s *obj.LSym) {
 	}
 }
 
-// Function marker relocations participate in linker reachability but carry no
+// Function markers participate in linker reachability but carry no
 // storage. Represent them as inlineable side-effect markers until the LLVM
 // optimization pipeline has finished. The statepoint plugin then anchors each
 // cloned marker to its final containing function and removes the intrinsic.
 func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 	var sideeffect llvm.Value
+	// Function metadata does not follow LLVM inlining. Keep the dynamic
+	// reflection lookup's reachability fact with its body instead, so the
+	// plugin can mark the final containing function after optimization.
+	if s.ReflectMethod() {
+		sideeffect = getLLVMIntrinsicDeclaration("llvm.sideeffect")
+		marker := b.CreateCall(sideeffect.GlobalValueType(), sideeffect, nil, "")
+		marker.SetMetadata(GlobalCtxt.MDKindID("goobj.reflect_method"), GlobalCtxt.MDNode(nil))
+	}
 	// These relocations describe reachability edges, so repeated references
 	// from the same function carry no additional information. In particular,
 	// Go inlining may add many copies of the same interface-use marker.
