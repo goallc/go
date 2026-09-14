@@ -54,6 +54,9 @@ const (
 	goALLCSIMDLowerFMAAddEven
 	goALLCSIMDLowerFMAAddOdd
 	goALLCSIMDLowerPairAdd
+	goALLCSIMDLowerDotPairs
+	goALLCSIMDLowerDotPairsUSSat
+	goALLCSIMDLowerSum8AbsDiff
 	goALLCSIMDLowerPairSub
 	goALLCSIMDLowerPairAdd128
 	goALLCSIMDLowerPairSub128

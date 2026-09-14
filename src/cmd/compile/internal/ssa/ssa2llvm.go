@@ -2046,6 +2046,10 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		return finish(lfc.simdBinary(v, laneType, lanes, lfc.b.CreateAdd))
 	case goALLCSIMDLowerPairAdd, goALLCSIMDLowerPairSub, goALLCSIMDLowerPairAdd128, goALLCSIMDLowerPairSub128, goALLCSIMDLowerPairSAddSat, goALLCSIMDLowerPairSSubSat, goALLCSIMDLowerPairSAddSat128, goALLCSIMDLowerPairSSubSat128:
 		return finish(lfc.simdHorizontal(v, info, laneType, lanes))
+	case goALLCSIMDLowerDotPairs:
+		return finish(lfc.simdDotPairs(v, laneType, lanes))
+	case goALLCSIMDLowerDotPairsUSSat, goALLCSIMDLowerSum8AbsDiff:
+		return finish(lfc.simdGroupedByteArithmetic(v, info, laneType, lanes))
 	case goALLCSIMDLowerAddOddSubEven:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		even := make([]llvm.Value, lanes)

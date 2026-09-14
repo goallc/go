@@ -111,6 +111,7 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"dot-pairs": 2, "dot-pairs-us-sat": 2, "sum-8-abs-diff": 2,
 	"pair-add":          2,
 	"pair-sub":          2,
 	"pair-add-128":      2,
@@ -237,7 +238,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		panic(fmt.Errorf("simdgen: LLVM lowering %q requires signed integer lanes for %s", lowering, op.GenericName()))
 	}
 	scalarInputs := 0
-	for _, in := range genericOp.In {
+	for i, in := range genericOp.In {
 		if in.Class == "greg" || in.TreatLikeAScalarOfSize != nil {
 			scalarInputs++
 			base, elemBits, ok := goALLCScalarLane(in)
@@ -250,7 +251,11 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		if !ok && in.Base != nil && in.ElemBits != nil && in.Lanes != nil {
 			base, elemBits, lanes, ok = *in.Base, *in.ElemBits, *in.Lanes, true
 		}
-		if in.Class != "vreg" || in.Bits == nil || *in.Bits != width || !ok || base != wantBase || elemBits != wantElemBits || lanes != wantLanes {
+		inputBase := wantBase
+		if lowering == "dot-pairs-us-sat" && i == 1 {
+			inputBase = "int"
+		}
+		if in.Class != "vreg" || in.Bits == nil || *in.Bits != width || !ok || base != inputBase || elemBits != wantElemBits || lanes != wantLanes {
 			panic(fmt.Errorf("simdgen: LLVM lowering %q has heterogeneous input shape for %s", lowering, op.GenericName()))
 		}
 	}
