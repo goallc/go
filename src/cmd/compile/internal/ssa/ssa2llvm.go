@@ -4873,6 +4873,12 @@ func LLVMCompile(f *Func) {
 		}
 		features += llvmCPUProfileByName(floor).targetFeatures
 	}
+	for _, profile := range FCtxt.CPUFeatures.entryProfiles {
+		if features != "" {
+			features += ","
+		}
+		features += llvmCPUProfileByName(profile).targetFeatures
+	}
 	if features != "" {
 		// GOARM64 makes LSE mandatory at v8.1 and can request it explicitly at
 		// v8.0. Generic LLVM atomics need the same function feature in order to

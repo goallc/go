@@ -23,6 +23,7 @@ type profile struct {
 	Name         string
 	Feature      string
 	RuntimeGuard string
+	GuardImplies bool // true guarantees the feature; the converse need not hold
 	SIMDAliases  []string
 }
 
@@ -75,7 +76,7 @@ var profiles = []profile{
 	{Name: "x86.vaes", Feature: "VAES", SIMDAliases: []string{"VAES"}},
 	// Virtual features expand using the upstream definitions. They have no
 	// runtime bit or field; FMV specializes their constituent predicates.
-	{Name: "x86.avxaes", Feature: "AVXAES", SIMDAliases: []string{"AVXAES"}},
+	{Name: "x86.avxaes", Feature: "AVXAES", RuntimeGuard: "internal/runtime/maps.UseAeshash", GuardImplies: true, SIMDAliases: []string{"AVXAES"}},
 	{Name: "x86.avxpclmulqdq", Feature: "AVXPCLMULQDQ", SIMDAliases: []string{"AVXPCLMULQDQ"}},
 	{Name: "x86.vpclmulqdq", Feature: "VPCLMULQDQ", SIMDAliases: []string{"VPCLMULQDQ"}},
 	{Name: "x86.avx512vpclmulqdq", Feature: "AVX512VPCLMULQDQ", SIMDAliases: []string{"AVX512VPCLMULQDQ"}},

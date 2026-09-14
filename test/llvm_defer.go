@@ -105,7 +105,20 @@ func namedPointerResultSurvivesPanic() (result *deferResultObject) {
 	panic("named result liveness")
 }
 
+//go:noinline
+func exitBeforeDefer() {
+	runtime.Goexit()
+	defer func() { panic("unreachable defer") }()
+}
+
 func main() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		exitBeforeDefer()
+		panic("Goexit returned")
+	}()
+	<-done
 	if got := normalDefers(); got != 17 || deferTrace != 21 {
 		panic("normal defer order or named result is incorrect")
 	}

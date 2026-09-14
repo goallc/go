@@ -2028,6 +2028,21 @@ func TestLLVMCPUFeatureGuardProfiles(t *testing.T) {
 			t.Errorf("%s requiring %s: guard = %q, want %q", test.block, test.required, got, test.want)
 		}
 	}
+	// Independent checks jointly protect a composite operation only on the
+	// path that crossed both. Do not merge capabilities from different paths.
+	x86Type.Field(0).Sym = pkg.Lookup("HasAVX")
+	x86Type.Field(1).Sym = pkg.Lookup("HasAES")
+	for _, test := range []struct{ block, want string }{
+		{"both", "x86.aes,x86.avx"},
+		{"highonly", ""},
+		{"exit", ""},
+	} {
+		v := &Value{Block: fun.blocks[test.block]}
+		got := llvmCPUFeatureGuardProfiles(fun.f, v, goCPUProfileX86AVXAES)
+		if strings.Join(got, ",") != test.want {
+			t.Errorf("%s: composite guards = %v, want %s", test.block, got, test.want)
+		}
+	}
 }
 
 func TestLLVMCPUFeatureGuardPaths(t *testing.T) {

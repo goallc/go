@@ -22,7 +22,10 @@ func maskResult(bits uint8) maskBox {
 //go:noinline
 func zeros(x []byte) (bool, bool) {
 	if archsimd.X86.AVX() {
-		return archsimd.LoadUint8x16(x).IsZero(), archsimd.LoadUint8x32(x).IsZero()
+		a, b := archsimd.LoadUint8x16(x), archsimd.LoadUint8x32(x)
+		// Clearing hardware upper bits must preserve live Go SIMD values.
+		archsimd.ClearAVXUpperBits()
+		return a.IsZero(), b.IsZero()
 	}
 	return false, false
 }

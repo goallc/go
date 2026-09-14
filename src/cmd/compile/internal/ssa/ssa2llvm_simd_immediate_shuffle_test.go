@@ -14,6 +14,44 @@ import (
 	"testing"
 )
 
+// AuxInt stores imm8 as int8, including cases emitted by the dynamic-immediate
+// jump table. LLVM's unsigned constant constructor requires the original byte.
+func TestLLVMGeneratedSIMDCarrylessImmediate(t *testing.T) {
+	oldTypes, oldModule := type2lTypes, CurrentModule
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() { type2lTypes, CurrentModule = oldTypes, oldModule }()
+	for i, typ := range []*types.Type{types.TypeVec128, types.TypeVec256, types.TypeVec512} {
+		module := GlobalCtxt.NewModule("carryless-immediate")
+		CurrentModule = module
+		defer module.Dispose()
+		builder := GlobalCtxt.NewBuilder()
+		defer builder.Dispose()
+		fn := llvm.AddFunction(module, "clmul", llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
+		block := llvm.AddBasicBlock(fn, "entry")
+		builder.SetInsertPointAtEnd(block)
+		arg := &Value{ID: 1, Op: OpArg, Type: typ}
+		ctx := &LLVMFuncContext{F: &Func{Config: &Config{arch: "amd64"}}, CPUFeatures: &llvmCPUFeaturePlan{}, Vs: map[ID]llvm.Value{1: llvm.ConstNull(getLLVMType(typ))}, b: builder}
+		controls := []uint8{0, 17, 128, 255}
+		for _, control := range controls {
+			v := &Value{ID: 2, Op: []Op{OpcarrylessMultiplyUint64x2, OpcarrylessMultiplyUint64x4, OpcarrylessMultiplyUint64x8}[i], Type: typ, Args: []*Value{arg, arg}, AuxInt: int64(int8(control))}
+			ctx.lowerGeneratedSIMD(v)
+		}
+		builder.CreateRetVoid()
+		if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+		var got []uint8
+		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+			if !inst.IsACallInst().IsNil() && strings.HasPrefix(inst.CalledValue().Name(), "llvm.x86.pclmulqdq") {
+				got = append(got, uint8(inst.Operand(2).ZExtValue()))
+			}
+		}
+		if fmt.Sprint(got) != fmt.Sprint(controls) {
+			t.Fatalf("%v: immediate bytes %v, want %v", typ, got, controls)
+		}
+	}
+}
+
 // Reference routing builds source groups explicitly, independently of the
 // lowering's per-output mask arithmetic.
 func immediateShuffleReference(family string, bits, n, control int) []uint64 {

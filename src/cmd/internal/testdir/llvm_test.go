@@ -237,6 +237,14 @@ func (m *llvmTestMode) selectTest(t *testing.T, test test) bool {
 	case "asmcheck":
 		m.codegenCandidates[name] = true
 		return !isLLVMTestBlacklisted(t, m.effective.Codegen, name)
+	case "compile":
+		// Upstream SIMD compiler regressions also live outside codegen/.
+		// Run their original recipes with the shared LLVM compiler flags.
+		if test.dir == "simd" {
+			m.codegenCandidates[name] = true
+			return !isLLVMTestBlacklisted(t, m.effective.Codegen, name)
+		}
+		return false
 	case "run", "runoutput", "rundir", "runindir", "buildrundir", "errorcheckandrundir":
 		m.runCandidates[name] = true
 		return !isLLVMTestBlacklisted(t, m.effective.Run, name)

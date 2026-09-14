@@ -29,6 +29,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <cstdint>
@@ -69,6 +70,7 @@ struct Profile {
   StringLiteral TargetFeature;
   StringLiteral Arch;
   uint64_t Predicate;
+  bool GuardImplies;
 };
 
 struct CPUConfig {
@@ -84,8 +86,8 @@ struct CPUConfig {
 #undef GOALLC_CPU_BASELINE
 
 constexpr Profile Profiles[] = {
-#define GOALLC_CPU_PROFILE(Name, Suffix, Target, Arch, Predicate) \
-  {Name, Suffix, Target, Arch, Predicate},
+#define GOALLC_CPU_PROFILE(Name, Suffix, Target, Arch, Predicate, GuardImplies) \
+  {Name, Suffix, Target, Arch, Predicate, GuardImplies},
 #include "GoALLCCPUFeatures.def"
 #undef GOALLC_CPU_PROFILE
 };
@@ -300,6 +302,12 @@ Expected<bool> specializeGuards(Function &F, uint64_t Predicates) {
       return createStringError(inconvertibleErrorCode(),
                                "unknown GoALLC CPU guard profile " + *Name);
     bool Enabled = (Predicates & P->Predicate) == P->Predicate;
+    if (P->GuardImplies && Enabled) {
+      // A derived algorithm flag may remain false even on a capable CPU
+      // (for example before hash-key initialization). Preserve that state.
+      Load->setMetadata(GuardMD, nullptr);
+      continue;
+    }
     Load->replaceAllUsesWith(ConstantInt::get(Load->getType(), Enabled));
     Load->eraseFromParent();
   }
@@ -518,6 +526,10 @@ Error registerGoObjDebugFunction(Function &F) {
                                  " has no debug subprogram");
   Metadata *Operands[] = {SP, ConstantAsMetadata::get(&F)};
   Funcs->addOperand(MDNode::get(F.getContext(), Operands));
+  // Named metadata alone does not keep its symbol alive through GlobalDCE.
+  // Match frontend debug records: GoObj still needs the symbol even when
+  // optimization proves that a dispatch variant cannot be selected.
+  appendToCompilerUsed(*F.getParent(), {&F});
   return Error::success();
 }
 

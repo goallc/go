@@ -1052,7 +1052,7 @@ func (t test) run() error {
 
 	case "compile":
 		// Compile Go file.
-		_, err := compileFile(runcmd, long, flags)
+		_, err := compileFile(runcmd, long, t.toolCompileFlags(flags))
 		return err
 
 	case "compiledir":

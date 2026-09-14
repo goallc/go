@@ -17,6 +17,7 @@ const (
 	llvmSIMDIsNaN
 	llvmSIMDMaskedLoad
 	llvmSIMDMaskedStore
+	llvmSIMDClearUpper
 )
 
 type llvmSIMDHelper struct {
@@ -49,6 +50,8 @@ func llvmSIMDHelperInfo(v *Value) (llvmSIMDHelper, bool) {
 		h.kind, h.bits = llvmSIMDToBits, 64
 	case OpIsZeroVec:
 		h.kind, h.bits = llvmSIMDIsZero, 8
+	case OpAMD64VZEROUPPER:
+		h.kind, h.bits = llvmSIMDClearUpper, 8
 	case OpIsNaNFloat32x4, OpIsNaNFloat32x8, OpIsNaNFloat32x16:
 		h.kind, h.bits = llvmSIMDIsNaN, 32
 	case OpIsNaNFloat64x2, OpIsNaNFloat64x4, OpIsNaNFloat64x8:
@@ -99,6 +102,9 @@ func llvmSIMDHelperInfo(v *Value) (llvmSIMDHelper, bool) {
 func (lfc *LLVMFuncContext) lowerSIMDHelper(v *Value, h llvmSIMDHelper) llvm.Value {
 	laneType := GlobalCtxt.IntType(h.bits)
 	switch h.kind {
+	case llvmSIMDClearUpper:
+		fn := getLLVMIntrinsicDeclaration("llvm.x86.avx.vzeroupper")
+		return lfc.b.CreateCall(fn.GlobalValueType(), fn, nil, "")
 	case llvmSIMDFromBits:
 		lanes := int(v.Type.Size()) * 8 / h.bits
 		bitmap := lfc.GenLV(v.Args[0])

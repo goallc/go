@@ -53,7 +53,7 @@ var llvmCPUProfiles = [...]llvmCPUProfile{
 	{name: goCPUProfileX86AES, arch: "amd64", field: "HasAES", runtimeGuard: "", predicates: 0x10000, capabilities: 0x10000, targetFeatures: "+aes"},
 	{name: goCPUProfileX86PCLMULQDQ, arch: "amd64", field: "HasPCLMULQDQ", runtimeGuard: "", predicates: 0x20000, capabilities: 0x20000, targetFeatures: "+pclmul"},
 	{name: goCPUProfileX86VAES, arch: "amd64", field: "HasVAES", runtimeGuard: "", predicates: 0x40000, capabilities: 0x40010, targetFeatures: "+avx,+vaes"},
-	{name: goCPUProfileX86AVXAES, arch: "amd64", field: "", runtimeGuard: "", predicates: 0x10010, capabilities: 0x10010, targetFeatures: "+avx,+aes"},
+	{name: goCPUProfileX86AVXAES, arch: "amd64", field: "", runtimeGuard: "internal/runtime/maps.UseAeshash", predicates: 0x10010, capabilities: 0x10010, targetFeatures: "+avx,+aes", guardImplies: true},
 	{name: goCPUProfileX86AVXPCLMULQDQ, arch: "amd64", field: "", runtimeGuard: "", predicates: 0x20010, capabilities: 0x20010, targetFeatures: "+avx,+pclmul"},
 	{name: goCPUProfileX86VPCLMULQDQ, arch: "amd64", field: "HasVPCLMULQDQ", runtimeGuard: "", predicates: 0x80000, capabilities: 0x80010, targetFeatures: "+avx,+vpclmulqdq"},
 	{name: goCPUProfileX86AVX512VPCLMULQDQ, arch: "amd64", field: "HasAVX512VPCLMULQDQ", runtimeGuard: "", predicates: 0x100000, capabilities: 0x100610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vpclmulqdq"},

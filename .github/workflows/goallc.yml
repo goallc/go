@@ -94,6 +94,12 @@ jobs:
             task: stdlib
             shard: 1
             shards: 2
+          - arch: amd64
+            runner: ubuntu-22.04
+            name: linux-amd64-simd
+            task: simd
+            shard: 0
+            shards: 1
           - arch: arm64
             runner: ubuntu-22.04-arm
             name: linux-arm64
@@ -112,6 +118,12 @@ jobs:
             task: stdlib
             shard: 1
             shards: 2
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            name: linux-arm64-simd
+            task: simd
+            shard: 0
+            shards: 1
     env:
       LLVM_RELEASE: ${{ needs.llvm-payload.outputs.release_tag }}
       LLVM_REVISION: ${{ needs.llvm-payload.outputs.revision }}
@@ -277,6 +289,34 @@ jobs:
           free -h
           swapon --show
           df -h "$RUNNER_TEMP"
+
+      - name: Test SIMD packages with LLVM
+        if: matrix.task == 'simd'
+        shell: bash
+        env:
+          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
+          GOEXPERIMENT: simd
+          # Also compile testdata subprocesses launched by the package tests
+          # with LLVM; a command-line -gcflags would not be inherited.
+          GOFLAGS: -gcflags=all=-enablellvm
+        run: |
+          set -euo pipefail
+          ./bin/go test -p=1 -short -count=1 -v simd/...
+
+      - name: Test SIMD standard library, runtime and upstream testdir with LLVM
+        if: matrix.task == 'simd'
+        shell: bash
+        env:
+          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
+          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
+          GOALLC_RUN_LLVM_STDLIB: "1"
+          GOEXPERIMENT: simd
+        run: |
+          set -euo pipefail
+          # SIMD is used by runtime/maps, so indirect consumers span std.
+          # Reuse the complete policy instead of maintaining an import list.
+          ./bin/go test -short cmd/internal/testdir \
+            -run '^TestLLVM$' -count=1 -timeout=100m -v
 
       - name: Test LLVM standard library package policy
         if: matrix.task == 'stdlib'

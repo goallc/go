@@ -18,6 +18,27 @@ import (
 	"testing"
 )
 
+func TestLLVMCPUEntryPreconditions(t *testing.T) {
+	llvmCPUPlanBaselineForTest(t)
+	for _, guarded := range []bool{false, true} {
+		f := llvmCPUPlanGuardedFunc(t)
+		if !guarded {
+			// An operation before the guard establishes a caller precondition.
+			v := f.values["add"]
+			f.f.Entry.NewValue2(src.NoXPos, v.Op, v.Type, v.Args[0], v.Args[1])
+		}
+		p := llvmPlanCPUFeatures(f.f)
+		if got := slices.Contains(p.entryProfiles, goCPUProfileX86AVX2); got == guarded {
+			t.Fatalf("guarded=%v: entry profiles %v", guarded, p.entryProfiles)
+		}
+		// A capability precondition never asserts a runtime CPU predicate or
+		// removes the independent, stronger guard's FMV requirement.
+		if p.guards[f.values["high"].ID] != goCPUProfileX86AVX512 || len(p.requirements) != 2 {
+			t.Fatalf("guarded=%v: source guard or requirements lost: %+v", guarded, p)
+		}
+	}
+}
+
 func TestLLVMCPUProfileBaselines(t *testing.T) {
 	for _, test := range []struct {
 		name, arch, profile string

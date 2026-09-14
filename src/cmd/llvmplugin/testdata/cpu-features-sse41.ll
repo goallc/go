@@ -8,7 +8,8 @@ target triple = "x86_64-unknown-linux-gnu"
 
 @runtime.goallcCPUFeatures = external global i8
 
-; CHECK: @round.goallc.fmv.slot = internal global ptr @"round<goallc.fmv.resolve>", section ".noptrdata", align 8, !goobj.symbol.nonpackage ![[NONPACKAGE:[0-9]+]]
+; CHECK-DAG: @round.goallc.fmv.slot = internal global ptr @"round<goallc.fmv.resolve>", section ".noptrdata", align 8, !goobj.symbol.nonpackage ![[NONPACKAGE:[0-9]+]]
+; CHECK-DAG: @llvm.compiler.used = {{.*}}ptr @"round<goallc.fmv.baseline>"{{.*}}ptr @"round<goallc.fmv.sse41>"{{.*}}ptr @"round<goallc.fmv.resolve>"
 
 declare double @fallback(double)
 declare double @llvm.floor.f64(double)

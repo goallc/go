@@ -25,6 +25,7 @@ type llvmCPUProfile struct {
 	targetFeatures                  string
 	capabilities                    uint64
 	predicates                      uint64
+	guardImplies                    bool
 }
 
 func llvmCPUProfileByName(name string) *llvmCPUProfile {
@@ -214,7 +215,7 @@ func llvmCPUFeatureGuard(b *Block, arch string) (profile string, enabled int) {
 		taken = 1
 		condition = condition.Args[0]
 	}
-	profile = llvmCPUFieldProfile(arch, llvmCPUFeatureField(condition, arch))
+	profile, _ = llvmCPUFeatureGuardValue(condition, arch)
 	if profile == "" {
 		return "", -1
 	}
@@ -252,29 +253,41 @@ func llvmCPUFeatureGuardProfiles(f *Func, v *Value, required string) []string {
 		}
 	}
 
-	// Cut each backwards path at an enabled edge supplying the requirement.
-	// Reaching entry means some path is unguarded. Visited blocks also bound
-	// traversal through loops, whose first entry must still cross the cut.
-	seen := make(map[*Block]bool)
+	// Cut each backwards path once its enabled edges jointly supply the
+	// requirement (for example AVX && AES). Reaching entry with capabilities
+	// still missing means some path is unguarded. Include the remaining
+	// capabilities in the visited state so a join cannot mix separate paths.
+	type path struct {
+		block   *Block
+		missing uint64
+	}
+	seen := make(map[path]bool)
 	profiles := make(map[string]bool)
-	work := []*Block{v.Block}
+	work := []path{{v.Block, llvmCPUProfileByName(required).capabilities}}
 	for len(work) != 0 {
-		b := work[len(work)-1]
+		current := work[len(work)-1]
 		work = work[:len(work)-1]
+		b := current.block
 		if b == f.Entry {
 			return nil
 		}
-		if seen[b] {
+		if seen[current] {
 			continue
 		}
-		seen[b] = true
+		seen[current] = true
 		for _, pred := range b.Preds {
+			missing := current.missing
 			profile, taken := llvmCPUFeatureGuard(pred.Block(), f.Config.arch)
-			if taken == pred.Index() && llvmCPUProfileSupplies(profile, required) {
-				profiles[profile] = true
+			if taken == pred.Index() {
+				if caps := llvmCPUProfileByName(profile).capabilities; caps&missing != 0 {
+					profiles[profile] = true
+					missing &^= caps
+				}
+			}
+			if missing == 0 {
 				continue
 			}
-			work = append(work, pred.Block())
+			work = append(work, path{pred.Block(), missing})
 		}
 	}
 	var guards []string
@@ -308,6 +321,9 @@ type llvmCPUFeaturePlan struct {
 	requirements map[ID]string
 	guards       map[ID]string
 	profiles     []string
+	// Unguarded SIMD operations retain native Go's caller preconditions.
+	// These supply capabilities, never runtime predicates.
+	entryProfiles []string
 }
 
 func llvmCPURequirement(v *Value, arch string) (string, llvmCPURequirementKind) {
@@ -406,12 +422,18 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 			guards = findGuards(r.value, r.profile)
 		}
 		if len(guards) == 0 {
-			// An unguarded SIMD operation requests its Go feature so the baseline
-			// verifier continues to reject the surviving requirement.
-			guards = []string{r.profile}
+			// As in native Go, an out-of-line operation may rely on a caller's
+			// CPU check (including a guard outside a callback). Record that
+			// precondition as target-features, not a runtime predicate. Local
+			// guarded operations still use FMV and retain their fallback paths.
+			if !slices.Contains(plan.entryProfiles, r.profile) {
+				plan.entryProfiles = append(plan.entryProfiles, r.profile)
+			}
+			continue
 		}
 		plan.requirements[r.value.ID] = r.profile
 		for _, guard := range guards {
+			selected[guard] = true
 			// A virtual Go feature is a conjunction, not a new runtime bit.
 			// Request its atoms independently so partial feature combinations
 			// preserve other observations of those same Go booleans.
@@ -423,13 +445,14 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 			}
 		}
 	}
+	slices.Sort(plan.entryProfiles)
 	for _, guard := range guards {
 		if !guard.selective || selected[guard.profile] {
 			plan.guards[guard.id] = guard.profile
 		}
 	}
 	for _, p := range llvmCPUProfiles {
-		if selected[p.name] {
+		if selected[p.name] && p.field != "" {
 			plan.profiles = append(plan.profiles, p.name)
 		}
 	}
@@ -471,9 +494,17 @@ func llvmCPUFeatureGuardValue(v *Value, arch string) (profile string, selective 
 		if profile := llvmCPUFieldProfile(arch, llvmCPUFeatureField(v, arch)); profile != "" {
 			return profile, true
 		}
-		if arch == "arm64" && len(v.Args) != 0 && v.Args[0].Op == OpAddr {
+		if len(v.Args) != 0 && v.Args[0].Op == OpAddr {
 			if sym, ok := v.Args[0].Aux.(*obj.LSym); ok {
-				return llvmCPUProfileByRuntimeGuard(arch, sym.Name), false
+				if profile := llvmCPUProfileByRuntimeGuard(arch, sym.Name); profile != "" {
+					p := llvmCPUProfileByName(profile)
+					// UseAeshash implies AVX only for the SIMD implementation.
+					// Unlike compiler-inserted feature guards, select derived
+					// algorithm-state loads only when an operation needs them.
+					if !p.guardImplies || buildcfg.Experiment.SIMD {
+						return profile, p.guardImplies
+					}
+				}
 			}
 		}
 	}

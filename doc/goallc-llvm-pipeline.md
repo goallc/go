@@ -34,6 +34,22 @@ the relative order of the native Go passes. New generic Go optimizations added
 before the LLVM boundary therefore become available without copying their
 scheduling into a separate LLVM pipeline.
 
+## SIMD CPU preconditions
+
+Go CPU features map to LLVM capabilities through the existing `archsimd`
+generator. Fixed-width ABI requirements, Midway implementation widths, and
+unguarded SIMD operations supply function `target-features`. As in native Go,
+an unguarded operation is a caller precondition: the caller must check the CPU
+before entering that function or callback. The compiler does not add a check
+or fallback on its behalf, and this contract is independent of package names.
+
+Locally guarded operations still use the early LLVM FMV pass. Entry capabilities
+do not make Go CPU predicates true; explicit checks and fallback paths retain
+their meaning, including feature disabling with `GODEBUG`. The surviving IR
+requirements are still verified against each implementation's target features.
+Derived algorithm flags such as `maps.UseAeshash` only imply CPU availability;
+a capable CPU does not imply that the algorithm has been initialized or enabled.
+
 ## An optimization exposed by the shared pipeline
 
 Before builtin decomposition, an interface data word can remain hidden behind
