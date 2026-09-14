@@ -24,6 +24,7 @@ const (
 	goallcCPUFeatureAVX512VPOPCNTDQ uint64 = 1 << 12
 	goallcCPUFeatureAVX512VBMI      uint64 = 1 << 13
 	goallcCPUFeatureARM64PMULL      uint64 = 1 << 14
+	goallcCPUFeatureAVX512VBMI2     uint64 = 1 << 15
 )
 
 // Snapshot only effective Go booleans after internal/cpu applies GODEBUG.
@@ -67,6 +68,9 @@ func goallcCPUFeatureSnapshot() uint64 {
 		}
 		if cpu.X86.HasAVX512VBMI {
 			mask |= goallcCPUFeatureAVX512VBMI
+		}
+		if cpu.X86.HasAVX512VBMI2 {
+			mask |= goallcCPUFeatureAVX512VBMI2
 		}
 	case "arm64":
 		if cpu.ARM64.HasATOMICS {

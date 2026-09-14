@@ -1964,6 +1964,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		return finish(lfc.simdBinaryIntrinsic(v, laneType, lanes, name))
 	case goALLCSIMDLowerShiftAllLeft, goALLCSIMDLowerShiftAllRight, goALLCSIMDLowerShiftLeft, goALLCSIMDLowerShiftRight:
 		return finish(lfc.simdShift(v, info, laneType, lanes))
+	case goALLCSIMDLowerRotateLeft, goALLCSIMDLowerRotateRight, goALLCSIMDLowerFunnelLeft, goALLCSIMDLowerFunnelRight, goALLCSIMDLowerFunnelAllLeft, goALLCSIMDLowerFunnelAllRight:
+		return finish(lfc.simdFunnelShift(v, info, laneType, lanes))
 	case goALLCSIMDLowerPermute, goALLCSIMDLowerConcatPermute, goALLCSIMDLowerLookupOrZero, goALLCSIMDLowerPermuteOrZero, goALLCSIMDLowerPermuteOrZero128:
 		return finish(lfc.simdDynamicShuffle(v, info, laneType, lanes))
 	case goALLCSIMDLowerPermute32_128, goALLCSIMDLowerPermuteLow16_128, goALLCSIMDLowerPermuteHigh16_128, goALLCSIMDLowerConcatSelect128, goALLCSIMDLowerConcatPermute128, goALLCSIMDLowerConcatShiftBytes128:

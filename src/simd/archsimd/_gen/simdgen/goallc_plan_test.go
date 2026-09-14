@@ -30,9 +30,9 @@ func TestGoALLCSIMDPlanLookup(t *testing.T) {
 		{"ShiftRightUint32x16", goALLCSIMDPlanInvalid, false},
 		{"ShiftInt8x16", goALLCSIMDPlanInvalid, false},
 		{"ShiftSaturatedInt16x8", goALLCSIMDPlanInvalid, false},
-		{"ShiftAllLeftConcatMod16Int16x8", goALLCSIMDPlanShift, true},
-		{"ShiftRightConcatMod64Uint64x8", goALLCSIMDPlanShift, true},
-		{"RotateLeftInt32x4", goALLCSIMDPlanShift, true},
+		{"ShiftAllLeftConcatMod16Int16x8", goALLCSIMDPlanInvalid, false},
+		{"ShiftRightConcatMod64Uint64x8", goALLCSIMDPlanInvalid, false},
+		{"RotateLeftInt32x4", goALLCSIMDPlanInvalid, false},
 		{"blendInt8x16", goALLCSIMDPlanLegacy, true},
 		{"blendInt8x32", goALLCSIMDPlanCompose, true},
 		{"UnknownInt8x16", goALLCSIMDPlanInvalid, false},
@@ -127,9 +127,6 @@ func TestGoALLCSIMDPlanCoversGeneratedOps(t *testing.T) {
 		if got := ordinaryShifts[family]; got != want {
 			t.Errorf("implemented %s operations = %d, want %d", family, got, want)
 		}
-	}
-	if got := counts[goALLCSIMDPlanShift.String()]; got != 96 {
-		t.Errorf("pending shift operations = %d, want 96", got)
 	}
 
 	for _, status := range []string{"implemented", "standard", "compose", "convert", "shuffle", "mask", "shift", "target-intrinsic", "legacy"} {

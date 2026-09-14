@@ -20,6 +20,7 @@ const (
 	GoALLCCPUFeatureAVX512BITALGForTest    = goallcCPUFeatureAVX512BITALG
 	GoALLCCPUFeatureAVX512VPOPCNTDQForTest = goallcCPUFeatureAVX512VPOPCNTDQ
 	GoALLCCPUFeatureAVX512VBMIForTest      = goallcCPUFeatureAVX512VBMI
+	GoALLCCPUFeatureAVX512VBMI2ForTest     = goallcCPUFeatureAVX512VBMI2
 )
 
 func GoALLCCPUFeaturesForTest() uint64 {

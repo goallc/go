@@ -84,17 +84,8 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 		"broadcast1To32Masked", "broadcast1To64Masked",
 	},
 
-	// Remaining shifts and rotates need concatenate/modulo recipes.
-	goALLCSIMDPlanShift: {
-		"RotateLeft", "RotateRight",
-		"ShiftAllLeftConcatMod16", "ShiftAllLeftConcatMod32",
-		"ShiftAllLeftConcatMod64",
-		"ShiftAllRightConcatMod16", "ShiftAllRightConcatMod32",
-		"ShiftAllRightConcatMod64", "ShiftLeftConcatMod16",
-		"ShiftLeftConcatMod32", "ShiftLeftConcatMod64",
-		"ShiftRightConcatMod16", "ShiftRightConcatMod32",
-		"ShiftRightConcatMod64",
-	},
+	// Shift and rotate families now carry generated lowering descriptors.
+	goALLCSIMDPlanShift: {},
 
 	// Operations whose exact semantics or useful implementation are tied to
 	// existing target intrinsics. This does not authorize a Go-specific LLVM
