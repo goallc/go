@@ -92,18 +92,16 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 		"broadcast1To32Masked", "broadcast1To64Masked",
 	},
 
-	// Ordinary shifts have generated lowering descriptors. The remaining
-	// shift and rotate operations have signed counts, saturation, or
-	// concatenate/modulo semantics that need separate recipes.
+	// Remaining shifts and rotates need concatenate/modulo recipes.
 	goALLCSIMDPlanShift: {
-		"RotateLeft", "RotateRight", "Shift",
+		"RotateLeft", "RotateRight",
 		"ShiftAllLeftConcatMod16", "ShiftAllLeftConcatMod32",
 		"ShiftAllLeftConcatMod64",
 		"ShiftAllRightConcatMod16", "ShiftAllRightConcatMod32",
 		"ShiftAllRightConcatMod64", "ShiftLeftConcatMod16",
 		"ShiftLeftConcatMod32", "ShiftLeftConcatMod64",
 		"ShiftRightConcatMod16", "ShiftRightConcatMod32",
-		"ShiftRightConcatMod64", "ShiftSaturated",
+		"ShiftRightConcatMod64",
 	},
 
 	// Operations whose exact semantics or useful implementation are tied to

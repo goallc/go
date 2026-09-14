@@ -8,7 +8,8 @@ import "fmt"
 
 func goALLCShiftLowering(lowering string) bool {
 	switch lowering {
-	case "shift-all-left", "shift-all-right", "shift-left", "shift-right":
+	case "shift-all-left", "shift-all-right", "shift-left", "shift-right",
+		"shift-signed-count", "shift-signed-saturated":
 		return true
 	}
 	return false
@@ -17,6 +18,7 @@ func goALLCShiftLowering(lowering string) bool {
 // Ordinary shifts keep data first and an unsigned count second in generic
 // SSA. Scalar counts retain all 64 bits; vector counts have the same lane
 // width and lane count as the data. Neither form masks oversized counts.
+// ARM64 signed-count shifts instead use signed vector lanes.
 func validateGoALLCShift(op, genericOp Operation, lowering string) {
 	if op.Commutative || genericOp.Commutative ||
 		(op.OperandOrder != nil && *op.OperandOrder != "") ||
@@ -43,6 +45,10 @@ func validateGoALLCShift(op, genericOp Operation, lowering string) {
 	checkVector(genericOp.In[0], base)
 	checkVector(genericOp.Out[0], base)
 	count := genericOp.In[1]
+	if lowering == "shift-signed-count" || lowering == "shift-signed-saturated" {
+		checkVector(count, "int")
+		return
+	}
 	if lowering == "shift-left" || lowering == "shift-right" {
 		checkVector(count, "uint")
 		return
