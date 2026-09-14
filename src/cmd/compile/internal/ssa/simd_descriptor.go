@@ -82,6 +82,8 @@ const (
 	goALLCSIMDLowerShiftAllRight
 	goALLCSIMDLowerShiftLeft
 	goALLCSIMDLowerShiftRight
+	goALLCSIMDLowerShiftSignedCount
+	goALLCSIMDLowerShiftSignedCountSaturated
 )
 
 type goALLCSIMDLane uint8

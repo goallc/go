@@ -1,11 +1,13 @@
 !sum
 
 - go: Shift
+  llvmLowering: shift-signed-count
   commutative: false
   documentation: !string |-
     // NAME shifts each element in x by the signed value of the least significant byte
     // of y's corresponding element: positive values shift left, negative values shift right.
 - go: ShiftSaturated
+  llvmLowering: shift-signed-saturated
   signed: true
   commutative: false
   documentation: !string |-
@@ -13,6 +15,7 @@
     // of y's corresponding element (positive shifts left, negative shifts right).
     // Results are saturated to the signed range on overflow.
 - go: ShiftSaturated
+  llvmLowering: shift-signed-saturated
   signed: false
   commutative: false
   documentation: !string |-

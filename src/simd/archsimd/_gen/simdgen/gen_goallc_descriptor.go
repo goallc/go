@@ -112,6 +112,7 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 
 var goALLCLoweringArity = map[string]int{
 	"shift-all-left": 2, "shift-all-right": 2, "shift-left": 2, "shift-right": 2,
+	"shift-signed-count": 2, "shift-signed-saturated": 2,
 	"permute": 2, "concat-permute": 3, "lookup-or-zero": 2,
 	"permute-or-zero": 2, "permute-or-zero-128": 2,
 	"permute-32-128": 1, "permute-low-16-128": 1, "permute-high-16-128": 1,

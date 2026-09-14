@@ -1948,6 +1948,19 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	}
 
 	switch info.lowering {
+	case goALLCSIMDLowerShiftSignedCount, goALLCSIMDLowerShiftSignedCountSaturated:
+		// Unlike ordinary Go SIMD shifts, these ARM64 operations interpret
+		// only the signed low byte of each count lane. The NEON intrinsics
+		// preserve that behavior, including oversized counts and saturation.
+		op := "s"
+		if info.lane == goALLCSIMDLaneUint {
+			op = "u"
+		}
+		if info.lowering == goALLCSIMDLowerShiftSignedCountSaturated {
+			op += "q"
+		}
+		name := fmt.Sprintf("llvm.aarch64.neon.%sshl.v%di%d", op, lanes, laneBits)
+		return finish(lfc.simdBinaryIntrinsic(v, laneType, lanes, name))
 	case goALLCSIMDLowerShiftAllLeft, goALLCSIMDLowerShiftAllRight, goALLCSIMDLowerShiftLeft, goALLCSIMDLowerShiftRight:
 		return finish(lfc.simdShift(v, info, laneType, lanes))
 	case goALLCSIMDLowerPermute, goALLCSIMDLowerConcatPermute, goALLCSIMDLowerLookupOrZero, goALLCSIMDLowerPermuteOrZero, goALLCSIMDLowerPermuteOrZero128:

@@ -316,6 +316,8 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"shift-all-right":        "goALLCSIMDLowerShiftAllRight",
 		"shift-left":             "goALLCSIMDLowerShiftLeft",
 		"shift-right":            "goALLCSIMDLowerShiftRight",
+		"shift-signed-count":     "goALLCSIMDLowerShiftSignedCount",
+		"shift-signed-saturated": "goALLCSIMDLowerShiftSignedCountSaturated",
 		"get-low":                "goALLCSIMDLowerGetLow",
 		"get-high":               "goALLCSIMDLowerGetHigh",
 		"set-low":                "goALLCSIMDLowerSetLow",
