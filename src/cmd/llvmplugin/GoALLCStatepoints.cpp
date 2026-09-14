@@ -1370,37 +1370,40 @@ Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
 // semantics. The two walks deliberately separate "reaches a marker" from
 // "contains only marked inputs": a self-referential loop PHI is accepted when
 // anchored by a marker, but an otherwise unanchored pointer cycle is not.
+// Keep visited nodes for the entire query, not just the active recursion path:
+// shared PHI/select graphs can have exponentially more paths than nodes. A
+// revisit contributes false to marker reachability and true to the all-inputs
+// predicate; each query still explores every previously unseen input.
 bool hasNotInHeapAddressMarker(const Value *V,
-                               SmallPtrSetImpl<const Value *> &Active) {
+                               SmallPtrSetImpl<const Value *> &Visited) {
   if (const auto *I = dyn_cast<Instruction>(V);
       I && I->getMetadata(GoNotInHeapAddressMD))
     return true;
-  if (!V->getType()->isPointerTy() || !Active.insert(V).second)
+  if (!V->getType()->isPointerTy() || !Visited.insert(V).second)
     return false;
 
   bool Result = false;
   if (const auto *GEP = dyn_cast<GetElementPtrInst>(V))
-    Result = hasNotInHeapAddressMarker(GEP->getPointerOperand(), Active);
+    Result = hasNotInHeapAddressMarker(GEP->getPointerOperand(), Visited);
   else if (const auto *Freeze = dyn_cast<FreezeInst>(V))
-    Result = hasNotInHeapAddressMarker(Freeze->getOperand(0), Active);
+    Result = hasNotInHeapAddressMarker(Freeze->getOperand(0), Visited);
   else if (const auto *Cast = dyn_cast<CastInst>(V);
            Cast && Cast->getSrcTy()->isPointerTy() &&
            Cast->getDestTy()->isPointerTy())
-    Result = hasNotInHeapAddressMarker(Cast->getOperand(0), Active);
+    Result = hasNotInHeapAddressMarker(Cast->getOperand(0), Visited);
   else if (const auto *Phi = dyn_cast<PHINode>(V))
     Result = llvm::any_of(Phi->incoming_values(), [&](const Value *Incoming) {
-      return hasNotInHeapAddressMarker(Incoming, Active);
+      return hasNotInHeapAddressMarker(Incoming, Visited);
     });
   else if (const auto *Select = dyn_cast<SelectInst>(V))
-    Result = hasNotInHeapAddressMarker(Select->getTrueValue(), Active) ||
-             hasNotInHeapAddressMarker(Select->getFalseValue(), Active);
+    Result = hasNotInHeapAddressMarker(Select->getTrueValue(), Visited) ||
+             hasNotInHeapAddressMarker(Select->getFalseValue(), Visited);
 
-  Active.erase(V);
   return Result;
 }
 
 bool hasOnlyNotInHeapAddressInputs(const Value *V,
-                                   SmallPtrSetImpl<const Value *> &Active) {
+                                   SmallPtrSetImpl<const Value *> &Visited) {
   if (const auto *I = dyn_cast<Instruction>(V);
       I && I->getMetadata(GoNotInHeapAddressMD))
     return true;
@@ -1408,38 +1411,37 @@ bool hasOnlyNotInHeapAddressInputs(const Value *V,
     return true;
   if (!V->getType()->isPointerTy())
     return false;
-  if (!Active.insert(V).second)
+  if (!Visited.insert(V).second)
     return true;
 
   bool Result = false;
   if (const auto *GEP = dyn_cast<GetElementPtrInst>(V))
-    Result = hasOnlyNotInHeapAddressInputs(GEP->getPointerOperand(), Active);
+    Result = hasOnlyNotInHeapAddressInputs(GEP->getPointerOperand(), Visited);
   else if (const auto *Freeze = dyn_cast<FreezeInst>(V))
-    Result = hasOnlyNotInHeapAddressInputs(Freeze->getOperand(0), Active);
+    Result = hasOnlyNotInHeapAddressInputs(Freeze->getOperand(0), Visited);
   else if (const auto *Cast = dyn_cast<CastInst>(V);
            Cast && Cast->getSrcTy()->isPointerTy() &&
            Cast->getDestTy()->isPointerTy())
-    Result = hasOnlyNotInHeapAddressInputs(Cast->getOperand(0), Active);
+    Result = hasOnlyNotInHeapAddressInputs(Cast->getOperand(0), Visited);
   else if (const auto *Phi = dyn_cast<PHINode>(V))
     Result = llvm::all_of(Phi->incoming_values(), [&](const Value *Incoming) {
-      return hasOnlyNotInHeapAddressInputs(Incoming, Active);
+      return hasOnlyNotInHeapAddressInputs(Incoming, Visited);
     });
   else if (const auto *Select = dyn_cast<SelectInst>(V))
-    Result = hasOnlyNotInHeapAddressInputs(Select->getTrueValue(), Active) &&
-             hasOnlyNotInHeapAddressInputs(Select->getFalseValue(), Active);
+    Result = hasOnlyNotInHeapAddressInputs(Select->getTrueValue(), Visited) &&
+             hasOnlyNotInHeapAddressInputs(Select->getFalseValue(), Visited);
 
-  Active.erase(V);
   return Result;
 }
 
 bool isNotInHeapAddress(const Value *V) {
   if (!V->getType()->isPointerTy())
     return false;
-  SmallPtrSet<const Value *, 16> MarkerActive;
-  if (!hasNotInHeapAddressMarker(V, MarkerActive))
+  SmallPtrSet<const Value *, 16> MarkerVisited;
+  if (!hasNotInHeapAddressMarker(V, MarkerVisited))
     return false;
-  SmallPtrSet<const Value *, 16> InputActive;
-  return hasOnlyNotInHeapAddressInputs(V, InputActive);
+  SmallPtrSet<const Value *, 16> InputVisited;
+  return hasOnlyNotInHeapAddressInputs(V, InputVisited);
 }
 
 bool isStatepointValue(const Value *V) {
