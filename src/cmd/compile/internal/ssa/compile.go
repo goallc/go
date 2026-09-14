@@ -142,6 +142,11 @@ func Compile(f *Func) {
 		if checkEnabled {
 			checkFunc(f)
 		}
+		if base.Flag.EnableLLVM && p.name == "llvm" {
+			// LLVM owns instruction selection, scheduling, register allocation,
+			// and frame layout. The remaining passes prepare native codegen.
+			break
+		}
 	}
 
 	if f.HTMLWriter != nil {
@@ -166,16 +171,6 @@ func Compile(f *Func) {
 
 	// Squash error printing defer
 	phaseName = ""
-}
-
-// LLVM keeps logical calls through the generic optimization pipeline. The
-// native continuation still needs physical calls for frame allocation.
-func llvmNativeCallsPass(f *Func) {
-	if base.Flag.EnableLLVM {
-		expandCalls(f)
-		postExpandCallsDecompose(f)
-		deadcode(f)
-	}
 }
 
 // DumpFileForPhase creates a file from the function name and phase name,
@@ -513,7 +508,6 @@ var passes = [...]pass{
 	{name: "llvm late cse", fn: cse, llvmOnly: true},
 	{name: "llvm deadcode", fn: deadcode, required: true, llvmOnly: true},
 	{name: "llvm", fn: LLVMCompile, required: true, llvmOnly: true},
-	{name: "llvm native calls", fn: llvmNativeCallsPass, required: true, llvmOnly: true},
 	{name: "rewrite tern", fn: rewriteTern, required: false, disabled: !buildcfg.Experiment.SIMD},
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},
@@ -558,8 +552,7 @@ var passOrder = [...]constraint{
 	{"llvm direct iface", "llvm late cse"},
 	{"llvm late cse", "llvm deadcode"},
 	{"llvm deadcode", "llvm"},
-	{"llvm", "llvm native calls"},
-	{"llvm native calls", "rewrite tern"},
+	{"llvm", "rewrite tern"},
 
 	// "insert resched checks" uses mem, better to clean out stores first.
 	{"dse", "insert resched checks"},
