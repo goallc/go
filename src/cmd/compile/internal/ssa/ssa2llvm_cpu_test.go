@@ -40,6 +40,8 @@ func TestLLVMCPUProfileBaselines(t *testing.T) {
 		{"v4-avx512", "amd64", goCPUProfileX86AVX512, 4, false, false},
 		{"v4-vbmi", "amd64", goCPUProfileX86AVX512VBMI, 4, false, true},
 		{"v4-bitalg", "amd64", goCPUProfileX86AVX512BITALG, 4, false, true},
+		{"v4-avxaes", "amd64", goCPUProfileX86AVXAES, 4, false, true},
+		{"v4-avxpclmulqdq", "amd64", goCPUProfileX86AVXPCLMULQDQ, 4, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := llvmCPUProfileByName(test.profile)
@@ -91,6 +93,7 @@ func llvmCPUPlanGuardedFunc(t *testing.T) fun {
 		Bloc("exit", Exit("mem")),
 	)
 	f.f.Entry.CPUfeatures = CPUavx
+	f.f.Type = types.NewSignature(nil, []*types.Field{types.NewField(src.NoXPos, nil, vec)}, nil)
 	return f
 }
 

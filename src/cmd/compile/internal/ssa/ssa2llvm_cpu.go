@@ -24,6 +24,7 @@ type llvmCPUProfile struct {
 	name, arch, field, runtimeGuard string
 	targetFeatures                  string
 	capabilities                    uint64
+	predicates                      uint64
 }
 
 func llvmCPUProfileByName(name string) *llvmCPUProfile {
@@ -97,7 +98,7 @@ func llvmMidwaySIMDFeatureFloor(f *Func) (string, bool) {
 }
 
 // llvmSIMDFeatureFloor returns the function-wide target features established
-// by Go's SSA CPU-feature analysis in the entry block or by a Midway variant's
+// by Go's fixed-width SIMD parameter/result contract or a Midway variant's
 // selected width. The generic Vec256 ABI itself needs AVX, while @simd256 is
 // reached only after the portable dispatcher has observed HasAVX2; keep those
 // two contracts distinct. This is a precondition, not a new runtime dispatch
@@ -109,16 +110,23 @@ func llvmSIMDFeatureFloor(f *Func) string {
 	if floor, midway := llvmMidwaySIMDFeatureFloor(f); midway {
 		return floor
 	}
-	features := CPUNone
-	if f.Entry != nil {
-		features = f.Entry.CPUfeatures
+	// Block.CPUfeatures also includes local SIMD values, such as a zero
+	// vector hoisted out of a guarded region. Those are not caller promises
+	// and must not raise the target features of fallback implementations.
+	// Preserve the direct SIMD parameter/result contract used by cpufeatures;
+	// pointers and ordinary aggregates do not establish that contract.
+	var width int64
+	if f.Type != nil {
+		for _, field := range f.Type.RecvParamsResults() {
+			if field.Type.IsSIMD() {
+				width = max(width, field.Type.Size())
+			}
+		}
 	}
-	switch {
-	case features.hasFeature(CPUavx512):
+	switch width {
+	case 64:
 		return goCPUProfileX86AVX512
-	case features.hasFeature(CPUavx2):
-		return goCPUProfileX86AVX2
-	case features.hasFeature(CPUavx):
+	case 16, 32:
 		return goCPUProfileX86AVX
 	}
 	return ""
@@ -401,7 +409,15 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 		}
 		plan.requirements[r.value.ID] = r.profile
 		for _, guard := range guards {
-			selected[guard] = true
+			// A virtual Go feature is a conjunction, not a new runtime bit.
+			// Request its atoms independently so partial feature combinations
+			// preserve other observations of those same Go booleans.
+			p := llvmCPUProfileByName(guard)
+			for _, atom := range llvmCPUProfiles {
+				if atom.field != "" && atom.arch == p.arch && atom.predicates&p.predicates == atom.predicates {
+					selected[atom.name] = true
+				}
+			}
 		}
 	}
 	for _, guard := range guards {
@@ -428,6 +444,9 @@ func llvmCPUFeatureField(v *Value, arch string) string {
 }
 
 func llvmCPUFieldProfile(arch, field string) string {
+	if field == "" {
+		return ""
+	}
 	for _, p := range llvmCPUProfiles {
 		if p.arch == arch && p.field == field {
 			return p.name

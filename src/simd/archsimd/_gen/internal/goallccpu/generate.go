@@ -24,11 +24,12 @@ const header = `// Copyright 2026 The Go Authors. All rights reserved.
 
 type resolvedFeature struct {
 	feature
-	Mask    uint64
-	Targets []string
+	Mask       uint64
+	Predicates uint64
+	Targets    []string
 }
 
-func resolve(fs []feature) (map[string]resolvedFeature, error) {
+func resolve(fs []feature, virtuals map[string][]string) (map[string]resolvedFeature, error) {
 	byName := make(map[string]feature)
 	bits := make(map[uint]bool)
 	for _, f := range fs {
@@ -51,11 +52,19 @@ func resolve(fs []feature) (map[string]resolvedFeature, error) {
 			return r, nil
 		}
 		f, ok := byName[name]
+		dependencies, virtual := virtuals[name]
+		if !ok && virtual {
+			f, ok = feature{Name: name, Arch: "amd64", Provides: dependencies}, true
+		}
 		if !ok || visiting[name] {
 			return resolvedFeature{}, fmt.Errorf("unknown or cyclic capability %s", name)
 		}
 		visiting[name] = true
-		r := resolvedFeature{feature: f, Mask: uint64(1) << f.Bit}
+		r := resolvedFeature{feature: f}
+		if !virtual {
+			r.Mask = uint64(1) << f.Bit
+			r.Predicates = r.Mask
+		}
 		for _, dependency := range f.Provides {
 			d, err := visit(dependency)
 			if err != nil {
@@ -65,6 +74,9 @@ func resolve(fs []feature) (map[string]resolvedFeature, error) {
 				return resolvedFeature{}, fmt.Errorf("cross-architecture capability %s -> %s", name, dependency)
 			}
 			r.Mask |= d.Mask
+			if virtual {
+				r.Predicates |= d.Predicates
+			}
 			for _, target := range d.Targets {
 				if !slices.Contains(r.Targets, target) {
 					r.Targets = append(r.Targets, target)
@@ -82,6 +94,11 @@ func resolve(fs []feature) (map[string]resolvedFeature, error) {
 	}
 	for _, f := range fs {
 		if _, err := visit(f.Name); err != nil {
+			return nil, err
+		}
+	}
+	for name := range virtuals {
+		if _, err := visit(name); err != nil {
 			return nil, err
 		}
 	}
@@ -103,8 +120,8 @@ func runtimeName(f feature) string {
 	return "goallcCPUFeature" + f.Name
 }
 
-func generatedFiles() (map[string][]byte, error) {
-	resolved, err := resolve(features)
+func generatedFiles(virtuals map[string][]string) (map[string][]byte, error) {
+	resolved, err := resolve(features, virtuals)
 	if err != nil {
 		return nil, err
 	}
@@ -139,9 +156,15 @@ func generatedFiles() (map[string][]byte, error) {
 	for _, p := range profiles {
 		f := resolved[p.Feature]
 		targets := "+" + strings.Join(f.Targets, ",+")
-		fmt.Fprintf(&goData, "{name:%s, arch:%q, field:%q, runtimeGuard:%q, capabilities:%#x, targetFeatures:%q},\n", goProfileName(p), f.Arch, f.Field, p.RuntimeGuard, f.Mask, targets)
+		fmt.Fprintf(&goData, "{name:%s, arch:%q, field:%q, runtimeGuard:%q, predicates:%#x, capabilities:%#x, targetFeatures:%q},\n", goProfileName(p), f.Arch, f.Field, p.RuntimeGuard, f.Predicates, f.Mask, targets)
 		_, suffix, _ := strings.Cut(p.Name, ".")
-		fmt.Fprintf(&defs, "GOALLC_CPU_PROFILE(%q, %q, %q, %q, Feature%s)\n", p.Name, suffix, targets, f.Arch, f.Name)
+		var predicates []string
+		for _, atom := range features {
+			if f.Predicates&(uint64(1)<<atom.Bit) != 0 {
+				predicates = append(predicates, "Feature"+atom.Name)
+			}
+		}
+		fmt.Fprintf(&defs, "GOALLC_CPU_PROFILE(%q, %q, %q, %q, %s)\n", p.Name, suffix, targets, f.Arch, strings.Join(predicates, " | "))
 	}
 	fmt.Fprint(&defs, "#endif\n")
 	fmt.Fprint(&goData, "}\n")
@@ -177,8 +200,8 @@ func generatedFiles() (map[string][]byte, error) {
 
 // Generate writes the committed tables.
 // No XED or ARM ISA data is needed for this stage.
-func Generate(root string) error {
-	files, err := generatedFiles()
+func Generate(root string, virtuals map[string][]string) error {
+	files, err := generatedFiles(virtuals)
 	if err != nil {
 		return err
 	}
@@ -201,6 +224,9 @@ func Generate(root string) error {
 func ProfileForSIMD(arch, name string) string {
 	for _, p := range profiles {
 		if slices.Contains(p.SIMDAliases, name) {
+			if arch == "amd64" && strings.HasPrefix(p.Name, "x86.") {
+				return p.Name
+			}
 			for _, f := range features {
 				if f.Name == p.Feature && f.Arch == arch {
 					return p.Name

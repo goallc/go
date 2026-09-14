@@ -25,19 +25,29 @@ const (
 	goCPUProfileX86AVX512VBMI             = "x86.avx512vbmi"
 	goCPUProfileARM64PMULL                = "arm64.pmull"
 	goCPUProfileX86AVX512VBMI2            = "x86.avx512vbmi2"
+	goCPUProfileX86AES                    = "x86.aes"
+	goCPUProfileX86PCLMULQDQ              = "x86.pclmulqdq"
+	goCPUProfileX86VAES                   = "x86.vaes"
+	goCPUProfileX86AVXAES                 = "x86.avxaes"
+	goCPUProfileX86AVXPCLMULQDQ           = "x86.avxpclmulqdq"
 )
 
 var llvmCPUProfiles = [...]llvmCPUProfile{
-	{name: goCPUProfileX86SSE41, arch: "amd64", field: "HasSSE41", runtimeGuard: "runtime.x86HasSSE41", capabilities: 0x4, targetFeatures: "+sse4.1"},
-	{name: goCPUProfileX86AVX, arch: "amd64", field: "HasAVX", runtimeGuard: "", capabilities: 0x10, targetFeatures: "+avx"},
-	{name: goCPUProfileX86AVX2, arch: "amd64", field: "HasAVX2", runtimeGuard: "", capabilities: 0x210, targetFeatures: "+avx,+avx2"},
-	{name: goCPUProfileX86AVX512, arch: "amd64", field: "HasAVX512", runtimeGuard: "", capabilities: 0x610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
-	{name: goCPUProfileX86AVX512BITALG, arch: "amd64", field: "HasAVX512BITALG", runtimeGuard: "", capabilities: 0xe10, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512bitalg"},
-	{name: goCPUProfileX86AVX512VPOPCNTDQ, arch: "amd64", field: "HasAVX512VPOPCNTDQ", runtimeGuard: "", capabilities: 0x1610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vpopcntdq"},
-	{name: goCPUProfileX86FMA, arch: "amd64", field: "HasFMA", runtimeGuard: "runtime.x86HasFMA", capabilities: 0x20, targetFeatures: "+fma"},
-	{name: goCPUProfileX86POPCNT, arch: "amd64", field: "HasPOPCNT", runtimeGuard: "runtime.x86HasPOPCNT", capabilities: 0x80, targetFeatures: "+popcnt"},
-	{name: goCPUProfileARM64LSE, arch: "arm64", field: "HasATOMICS", runtimeGuard: "runtime.arm64HasATOMICS", capabilities: 0x100, targetFeatures: "+lse"},
-	{name: goCPUProfileX86AVX512VBMI, arch: "amd64", field: "HasAVX512VBMI", runtimeGuard: "", capabilities: 0x2610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi"},
-	{name: goCPUProfileARM64PMULL, arch: "arm64", field: "HasPMULL", runtimeGuard: "", capabilities: 0x4000, targetFeatures: "+aes"},
-	{name: goCPUProfileX86AVX512VBMI2, arch: "amd64", field: "HasAVX512VBMI2", runtimeGuard: "", capabilities: 0x8610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi2"},
+	{name: goCPUProfileX86SSE41, arch: "amd64", field: "HasSSE41", runtimeGuard: "runtime.x86HasSSE41", predicates: 0x4, capabilities: 0x4, targetFeatures: "+sse4.1"},
+	{name: goCPUProfileX86AVX, arch: "amd64", field: "HasAVX", runtimeGuard: "", predicates: 0x10, capabilities: 0x10, targetFeatures: "+avx"},
+	{name: goCPUProfileX86AVX2, arch: "amd64", field: "HasAVX2", runtimeGuard: "", predicates: 0x200, capabilities: 0x210, targetFeatures: "+avx,+avx2"},
+	{name: goCPUProfileX86AVX512, arch: "amd64", field: "HasAVX512", runtimeGuard: "", predicates: 0x400, capabilities: 0x610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"},
+	{name: goCPUProfileX86AVX512BITALG, arch: "amd64", field: "HasAVX512BITALG", runtimeGuard: "", predicates: 0x800, capabilities: 0xe10, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512bitalg"},
+	{name: goCPUProfileX86AVX512VPOPCNTDQ, arch: "amd64", field: "HasAVX512VPOPCNTDQ", runtimeGuard: "", predicates: 0x1000, capabilities: 0x1610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vpopcntdq"},
+	{name: goCPUProfileX86FMA, arch: "amd64", field: "HasFMA", runtimeGuard: "runtime.x86HasFMA", predicates: 0x20, capabilities: 0x20, targetFeatures: "+fma"},
+	{name: goCPUProfileX86POPCNT, arch: "amd64", field: "HasPOPCNT", runtimeGuard: "runtime.x86HasPOPCNT", predicates: 0x80, capabilities: 0x80, targetFeatures: "+popcnt"},
+	{name: goCPUProfileARM64LSE, arch: "arm64", field: "HasATOMICS", runtimeGuard: "runtime.arm64HasATOMICS", predicates: 0x100, capabilities: 0x100, targetFeatures: "+lse"},
+	{name: goCPUProfileX86AVX512VBMI, arch: "amd64", field: "HasAVX512VBMI", runtimeGuard: "", predicates: 0x2000, capabilities: 0x2610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi"},
+	{name: goCPUProfileARM64PMULL, arch: "arm64", field: "HasPMULL", runtimeGuard: "", predicates: 0x4000, capabilities: 0x4000, targetFeatures: "+aes"},
+	{name: goCPUProfileX86AVX512VBMI2, arch: "amd64", field: "HasAVX512VBMI2", runtimeGuard: "", predicates: 0x8000, capabilities: 0x8610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi2"},
+	{name: goCPUProfileX86AES, arch: "amd64", field: "HasAES", runtimeGuard: "", predicates: 0x10000, capabilities: 0x10000, targetFeatures: "+aes"},
+	{name: goCPUProfileX86PCLMULQDQ, arch: "amd64", field: "HasPCLMULQDQ", runtimeGuard: "", predicates: 0x20000, capabilities: 0x20000, targetFeatures: "+pclmul"},
+	{name: goCPUProfileX86VAES, arch: "amd64", field: "HasVAES", runtimeGuard: "", predicates: 0x40000, capabilities: 0x40010, targetFeatures: "+avx,+vaes"},
+	{name: goCPUProfileX86AVXAES, arch: "amd64", field: "", runtimeGuard: "", predicates: 0x10010, capabilities: 0x10010, targetFeatures: "+avx,+aes"},
+	{name: goCPUProfileX86AVXPCLMULQDQ, arch: "amd64", field: "", runtimeGuard: "", predicates: 0x20010, capabilities: 0x20010, targetFeatures: "+avx,+pclmul"},
 }

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"simd/archsimd/_gen/internal/goallccpu"
 	"strings"
 )
 
@@ -61,14 +60,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Shared CPU data is also consumed directly by simdgen. Generate its
-	// compiler/plugin/runtime outputs once, before the architecture stages.
-	if *flagN {
-		fmt.Fprintln(os.Stderr, "# generate shared GoALLC CPU tables")
-	} else if err := goallccpu.Generate(goRoot); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	// Read CPU feature definitions inside simdgen, without loading ISA data.
+	goRun("-C", "simdgen", ".", "-o", "goallccpu", "-goroot", goRoot)
 	if *flagCPUOnly {
 		return
 	}
