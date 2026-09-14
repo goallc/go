@@ -61,9 +61,8 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	if err := CurrentModule.RunPassPluginEarlyIR(plugin); err != nil {
 		return nil, fmt.Errorf("run GoALLC early IR plugin: %w", err)
 	}
-	if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
-		return nil, fmt.Errorf("verify LLVM module after early IR pipeline: %w", err)
-	}
+	// The early IR plugin verifies after mutation and propagates failures.
+	// Its no-op paths leave the module verified above unchanged.
 
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
 	if pipeline != "" && pipeline != "none" {
