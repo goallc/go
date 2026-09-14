@@ -25,6 +25,7 @@ import (
 type LLVMFuncContext struct {
 	BBs                 map[ID]llvm.BasicBlock
 	Vs                  map[ID]llvm.Value
+	AddressOnlyLoads    map[ID]bool
 	Locals              map[llvmLocalKey]llvmStackSlot
 	LocalLifetimeValues map[ID]bool
 	LocalLifetimeBlocks map[ID][]llvmLocalKey
@@ -2821,6 +2822,12 @@ func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *
 	return llvm.Value{}, nil
 }
 
+func llvmCanForwardMemorySource(v, value *Value, logical *types.Type) bool {
+	return types.Identical(value.Type, logical) &&
+		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0 &&
+		value.MemoryArg() == v.MemoryArg()
+}
+
 func (lfc *LLVMFuncContext) llvmByValCallArgument(v, argValue *Value, index int, logical *types.Type, param llvmParamSignature) llvm.Value {
 	if !param.ByVal || logical.Size() == 0 {
 		v.Fatalf("argument %d is not a non-empty byval parameter", index)
@@ -2832,9 +2839,7 @@ func (lfc *LLVMFuncContext) llvmByValCallArgument(v, argValue *Value, index int,
 	// aggregate value and a second alloca would only obscure that source from
 	// ordinary memcpy forwarding. A different memory state requires the SSA
 	// value path below so later argument evaluation cannot change the snapshot.
-	if types.Identical(argValue.Type, logical) &&
-		(argValue.Op == OpLoad || argValue.Op == OpDereference) && len(argValue.Args) != 0 &&
-		argValue.MemoryArg() == v.MemoryArg() {
+	if llvmCanForwardMemorySource(v, argValue, logical) {
 		address := lfc.GenLV(argValue.Args[0])
 		if address.Type().TypeKind() != llvm.PointerTypeKind {
 			v.Fatalf("byval argument %d has non-pointer source address", index)
@@ -2898,9 +2903,7 @@ func (lfc *LLVMFuncContext) storeMemoryResult(v, value *Value, index int) {
 	}
 	logical := lfc.F.OwnAux.TypeOfResult(int64(index))
 	dst := lfc.LF.Param(result.ParamIndex)
-	if types.Identical(value.Type, logical) &&
-		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0 &&
-		value.MemoryArg() == v.MemoryArg() {
+	if llvmCanForwardMemorySource(v, value, logical) {
 		src := lfc.GenLV(value.Args[0])
 		if src.Type().TypeKind() != llvm.PointerTypeKind {
 			v.Fatalf("memory result %d has a non-pointer source address", index)
@@ -3504,6 +3507,9 @@ func (lfc *LLVMFuncContext) llvmWriteBarrier(v *Value) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
+	if lfc.AddressOnlyLoads[v.ID] {
+		v.Fatalf("LLVM value requested for an address-only ABI load")
+	}
 	if v.Op == OpSP {
 		// OpSP is a zero-width fixed-register value in Go SSA, not a snapshot
 		// of SP at its entry-block definition. LocalAddr consumes it only as an
@@ -4342,7 +4348,7 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		lfc.llvmLifetimeStart(lfc.Locals[key])
 	}
 	for _, v := range values {
-		if v.Op == OpSP {
+		if v.Op == OpSP || lfc.AddressOnlyLoads[v.ID] {
 			continue
 		}
 		lfc.GenLV(v)
@@ -5123,12 +5129,28 @@ func LLVMCompile(f *Func) {
 	// Results assigned by Go to memory use caller-owned typed goret carriers.
 	// Reserve every destination before call emission; ordinary SelectN loads
 	// from the same object that SelectNAddr exposes by address.
+	// Count value uses replaced by source addresses in the same ABI lowering.
+	// Loads with other consumers must still be emitted at their original memory
+	// position. In particular, a later call cannot reuse a snapshot's address
+	// when its memory token differs from the load's token.
+	addressUses := make(map[*Value]int32)
 	for _, BB := range f.Blocks {
 		for _, call := range BB.Values {
+			argStart := 0
 			switch call.Op {
-			case OpStaticCall, OpStaticLECall, OpTailLECall,
-				OpClosureCall, OpClosureLECall,
-				OpInterCall, OpInterLECall, OpTailLECallInter:
+			case OpStaticCall, OpStaticLECall, OpTailLECall:
+			case OpClosureCall, OpClosureLECall:
+				argStart = 2
+			case OpInterCall, OpInterLECall, OpTailLECallInter:
+				argStart = 1
+			case OpMakeResult:
+				for i, result := range FCtxt.Results {
+					value := call.Args[i]
+					if result.InMemory && llvmCanForwardMemorySource(call, value, f.OwnAux.TypeOfResult(int64(i))) {
+						addressUses[value]++
+					}
+				}
+				continue
 			default:
 				continue
 			}
@@ -5137,6 +5159,12 @@ func LLVMCompile(f *Func) {
 				call.Fatalf("call has no ABI information")
 			}
 			callSig := llvmSignature(aux)
+			for i, param := range callSig.Params {
+				value := call.Args[argStart+i]
+				if param.ByVal && llvmCanForwardMemorySource(call, value, aux.TypeOfArg(int64(i))) {
+					addressUses[value]++
+				}
+			}
 			for index, result := range callSig.Results {
 				if !result.InMemory {
 					continue
@@ -5161,6 +5189,20 @@ func LLVMCompile(f *Func) {
 				}
 				FCtxt.CallResultSlots[llvmCallResultKey{Call: call.ID, Index: int64(index)}] = slot
 			}
+		}
+	}
+
+	FCtxt.AddressOnlyLoads = make(map[ID]bool, len(addressUses))
+	for value, uses := range addressUses {
+		// Defer recovery loads carry volatile/reload semantics even when ABI
+		// consumers only need an address. Preserve that existing lowering.
+		address := value.Args[0]
+		_, deferResult := FCtxt.DeferResultKeys[address.ID]
+		if deferResult || FCtxt.isDeferResultAddress(address) || FCtxt.isOpenDeferAddress(address) {
+			continue
+		}
+		if uses == value.Uses {
+			FCtxt.AddressOnlyLoads[value.ID] = true
 		}
 	}
 
