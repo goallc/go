@@ -2127,6 +2127,30 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 			return finish(lfc.simdUnaryIntrinsic(v, laneType, lanes, name))
 		}
 		return finish(lfc.simdIntegerAbs(v, laneType, lanes))
+	case goALLCSIMDLowerReciprocal, goALLCSIMDLowerReciprocalSqrt:
+		op := "rcp"
+		if info.lowering == goALLCSIMDLowerReciprocalSqrt {
+			op = "rsqrt"
+		}
+		x := lfc.simdValueAs(v, v.Args[0], llvm.VectorType(laneType, lanes), ".x")
+		args := []llvm.Value{x}
+		var name string
+		if laneBits == 32 && width < 512 {
+			// Preserve the legacy estimate, including its denormal behavior.
+			name = "llvm.x86.sse." + op + ".ps"
+			if width == 256 {
+				name = "llvm.x86.avx." + op + ".ps.256"
+			}
+		} else {
+			kind := "ps"
+			if laneBits == 64 {
+				kind = "pd"
+			}
+			name = fmt.Sprintf("llvm.x86.avx512.%s14.%s.%d", op, kind, width)
+			args = append(args, llvm.ConstNull(x.Type()), llvm.ConstAllOnes(GlobalCtxt.IntType(max(8, lanes))))
+		}
+		fn := getLLVMIntrinsicDeclaration(name)
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+".estimate")))
 	case goALLCSIMDLowerScale:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		kind := "ps"

@@ -14,10 +14,12 @@
   out: *1fp
 # TODO: Provide separate methods for 12-bit precision and 14-bit precision?
 - go: Reciprocal
+  llvmLowering: reciprocal
   asm: "VRCP(14)?P[SD]"
   in: *1fp
   out: *1fp
 - go: ReciprocalSqrt
+  llvmLowering: reciprocal-sqrt
   asm: "V?RSQRT(14)?P[SD]"
   in: *1fp
   out: *1fp

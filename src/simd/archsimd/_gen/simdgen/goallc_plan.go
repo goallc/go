@@ -92,8 +92,7 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	// intrinsic or a new target node.
 	goALLCSIMDPlanTargetIntrinsic: {
 		"CeilScaled", "CeilScaledResidue", "FloorScaled",
-		"FloorScaledResidue", "Reciprocal",
-		"ReciprocalSqrt", "RoundScaled", "RoundScaledResidue", "TruncScaled",
+		"FloorScaledResidue", "RoundScaled", "RoundScaledResidue", "TruncScaled",
 		"TruncScaledResidue",
 	},
 }
