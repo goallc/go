@@ -165,6 +165,15 @@ func Compile(f *Func) {
 	phaseName = ""
 }
 
+func llvmLateCSEPass(f *Func) {
+	if base.Flag.EnableLLVM {
+		// Late rewrites and write-barrier expansion can introduce equivalent
+		// addresses after generic CSE. Share them before emitting LLVM IR;
+		// the following deadcode pass removes the replaced values.
+		cse(f)
+	}
+}
+
 func llvmWritebarrierPass(f *Func) {
 	if base.Flag.EnableLLVM {
 		writebarrier(f)
@@ -553,6 +562,7 @@ var passes = [...]pass{
 	{name: "llvm late fuse", fn: llvmLateFusePass},
 	{name: "llvm writebarrier", fn: llvmWritebarrierPass, required: true},
 	{name: "llvm direct iface", fn: llvmDirectIfacePass, required: true},
+	{name: "llvm late cse", fn: llvmLateCSEPass},
 	{name: "llvm deadcode", fn: deadcode, required: true},
 	{name: "llvm cpufeatures", fn: llvmCPUFeaturesPass, required: true},
 	{name: "llvm", fn: llvmCompilePass, required: true},
@@ -617,6 +627,8 @@ var passOrder = [...]constraint{
 	{"llvm dead auto elim", "llvm post-dse deadcode"},
 	{"llvm post-dse deadcode", "llvm late fuse"},
 	{"llvm late fuse", "llvm writebarrier"},
+	{"llvm direct iface", "llvm late cse"},
+	{"llvm late cse", "llvm deadcode"},
 
 	// "insert resched checks" uses mem, better to clean out stores first.
 	{"dse", "insert resched checks"},
