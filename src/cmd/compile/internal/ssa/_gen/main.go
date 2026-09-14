@@ -302,6 +302,7 @@ func goALLCSIMDOpLiteral(encoded string) string {
 		"aes-encrypt":             "goALLCSIMDLowerAESEncrypt", "aes-encrypt-last": "goALLCSIMDLowerAESEncryptLast",
 		"aes-decrypt": "goALLCSIMDLowerAESDecrypt", "aes-decrypt-last": "goALLCSIMDLowerAESDecryptLast",
 		"aes-keygen": "goALLCSIMDLowerAESKeygen", "aes-inverse-mix": "goALLCSIMDLowerAESInverseMix",
+		"gf-mul": "goALLCSIMDLowerGFMul", "gf-affine": "goALLCSIMDLowerGFAffine", "gf-affine-inverse": "goALLCSIMDLowerGFAffineInverse",
 		"mul-add-integer":   "goALLCSIMDLowerMulAddInteger",
 		"pair-add":          "goALLCSIMDLowerPairAdd",
 		"dot-pairs":         "goALLCSIMDLowerDotPairs",
