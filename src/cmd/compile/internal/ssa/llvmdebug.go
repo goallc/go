@@ -581,6 +581,12 @@ func (lfc *LLVMFuncContext) llvmDebugScope(pos src.Pos, chain []int) (llvm.Metad
 }
 
 func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
+	if location, ok := lfc.DebugLocations[xpos]; ok {
+		// Lowering helpers can clear or change the builder's location, so
+		// restore it even when consecutive values have the same position.
+		lfc.b.SetCurrentDebugLocationMetadata(location)
+		return
+	}
 	pos := llvmSourcePos(xpos)
 	if !pos.IsKnown() || pos.RelLine() == 0 {
 		lfc.b.ClearCurrentDebugLocation()
@@ -592,6 +598,13 @@ func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
 	locationScope := llvmDIScopeForPos(scope, pos, 0)
 	location := GlobalCtxt.CreateDebugLocation(
 		pos.RelLine(), pos.RelCol(), locationScope, inlinedAt)
+	// Keep the cache local to this function: the same source position in
+	// another function belongs to a different DISubprogram. XPos retains
+	// the source base (including inline identity), line, and column.
+	if lfc.DebugLocations == nil {
+		lfc.DebugLocations = make(map[src.XPos]llvm.Metadata)
+	}
+	lfc.DebugLocations[xpos] = location
 	lfc.b.SetCurrentDebugLocationMetadata(location)
 }
 
