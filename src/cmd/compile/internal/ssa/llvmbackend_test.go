@@ -7,14 +7,80 @@
 package ssa
 
 import (
+	"cmd/compile/internal/base"
+	"cmd/compile/internal/types"
 	"cmd/internal/llvmbackend"
 	"internal/buildcfg"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/goallc/go-llvm"
 )
+
+func TestLLVMEmissionRejectsInvalidIRBeforeOptimization(t *testing.T) {
+	module := GlobalCtxt.NewModule("invalid_before_optimization")
+	defer module.Dispose()
+	module.SetTarget(goObjTargetTriple())
+	oldModule, oldFinalized := CurrentModule, llvmModuleFinalized
+	oldShared, oldKeepIR := base.Flag.Shared, base.Flag.LLVMKeepIR
+	defer func() {
+		CurrentModule, llvmModuleFinalized = oldModule, oldFinalized
+		base.Flag.Shared, base.Flag.LLVMKeepIR = oldShared, oldKeepIR
+	}()
+	CurrentModule, llvmModuleFinalized = module, true
+	shared := false
+	base.Flag.Shared, base.Flag.LLVMKeepIR = &shared, true
+	addGoObjConfigMetadata(types.NewPkg("invalid_before_optimization", "invalid_before_optimization"))
+	function := llvm.AddFunction(module, "missing_terminator", llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
+	llvm.AddBasicBlock(function, "entry")
+
+	output := filepath.Join(t.TempDir(), "invalid.a")
+	data, err := EmitLLVMGoObj(output)
+	if err == nil || !strings.Contains(err.Error(), "verify LLVM module before optimization") {
+		t.Fatalf("EmitLLVMGoObj error = %v, want pre-optimization verification failure", err)
+	}
+	if len(data) != 0 {
+		t.Fatal("invalid module produced object data")
+	}
+	if _, err := os.Stat(output + ".ll"); !os.IsNotExist(err) {
+		t.Fatalf("invalid module reached IR output: %v", err)
+	}
+}
+
+func TestLLVMEarlyIRReportsVerifierFailure(t *testing.T) {
+	context := llvm.NewContext()
+	defer context.Dispose()
+	module := context.NewModule("invalid_early_ir")
+	defer module.Dispose()
+	// Exercise the plugin's verifier through the production Go binding.
+	// Both linked and dynamically loaded plugins must return its failure.
+	module.AddNamedMetadataOperand("goallc.cpu.config", context.MDNode([]llvm.Metadata{
+		context.MDString("goallc.cpu.v1"),
+		context.MDString("amd64"),
+		context.MDString("v1"),
+	}))
+	function := llvm.AddFunction(module, "missing_terminator", llvm.FunctionType(context.VoidType(), nil, false))
+	llvm.AddBasicBlock(function, "entry")
+	plugin := ""
+	if !llvm.UsesLinkedPassPlugin() {
+		var err error
+		plugin, err = llvmbackend.PassPlugin()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := module.RunPassPluginEarlyIR(plugin)
+	if err == nil {
+		t.Fatal("early IR plugin accepted invalid IR")
+	}
+	if !strings.Contains(err.Error(), "GoALLC early IR pass reported an error") &&
+		!strings.Contains(err.Error(), "GoALLC CPU multiversioning produced invalid IR") {
+		t.Fatalf("unexpected early IR error: %v", err)
+	}
+}
 
 func TestLLVMCodeGenOptions(t *testing.T) {
 	want := []string{

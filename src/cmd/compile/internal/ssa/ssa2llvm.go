@@ -5387,9 +5387,12 @@ func LLVMCompile(f *Func) {
 	FCtxt.finishCPUFeatures()
 	FCtxt.MappingName()
 
-	err := llvm.VerifyFunction(FCtxt.LF, llvm.PrintMessageAction)
-	if err != nil {
-		f.fe.Fatalf(f.Entry.Pos, "LLVM verifier failed for %s: %v", f.Name, err)
+	// Normal compilation verifies the complete module before optimization.
+	// Keep immediate per-function diagnostics for SSA consistency checking.
+	if checkEnabled {
+		if err := llvm.VerifyFunction(FCtxt.LF, llvm.PrintMessageAction); err != nil {
+			f.fe.Fatalf(f.Entry.Pos, "LLVM verifier failed for %s: %v", f.Name, err)
+		}
 	}
 }
 
