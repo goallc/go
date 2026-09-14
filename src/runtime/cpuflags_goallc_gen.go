@@ -9,25 +9,27 @@ package runtime
 import "internal/cpu"
 
 const (
-	goallcCPUFeatureSSE3            uint64 = 1 << 0
-	goallcCPUFeatureSSSE3           uint64 = 1 << 1
-	goallcCPUFeatureSSE41           uint64 = 1 << 2
-	goallcCPUFeatureSSE42           uint64 = 1 << 3
-	goallcCPUFeatureAVX             uint64 = 1 << 4
-	goallcCPUFeatureFMA             uint64 = 1 << 5
-	goallcCPUFeaturesInitialized    uint64 = 1 << 6
-	goallcCPUFeaturePOPCNT          uint64 = 1 << 7
-	goallcCPUFeatureARM64LSE        uint64 = 1 << 8
-	goallcCPUFeatureAVX2            uint64 = 1 << 9
-	goallcCPUFeatureAVX512          uint64 = 1 << 10
-	goallcCPUFeatureAVX512BITALG    uint64 = 1 << 11
-	goallcCPUFeatureAVX512VPOPCNTDQ uint64 = 1 << 12
-	goallcCPUFeatureAVX512VBMI      uint64 = 1 << 13
-	goallcCPUFeatureARM64PMULL      uint64 = 1 << 14
-	goallcCPUFeatureAVX512VBMI2     uint64 = 1 << 15
-	goallcCPUFeatureAES             uint64 = 1 << 16
-	goallcCPUFeaturePCLMULQDQ       uint64 = 1 << 17
-	goallcCPUFeatureVAES            uint64 = 1 << 18
+	goallcCPUFeatureSSE3             uint64 = 1 << 0
+	goallcCPUFeatureSSSE3            uint64 = 1 << 1
+	goallcCPUFeatureSSE41            uint64 = 1 << 2
+	goallcCPUFeatureSSE42            uint64 = 1 << 3
+	goallcCPUFeatureAVX              uint64 = 1 << 4
+	goallcCPUFeatureFMA              uint64 = 1 << 5
+	goallcCPUFeaturesInitialized     uint64 = 1 << 6
+	goallcCPUFeaturePOPCNT           uint64 = 1 << 7
+	goallcCPUFeatureARM64LSE         uint64 = 1 << 8
+	goallcCPUFeatureAVX2             uint64 = 1 << 9
+	goallcCPUFeatureAVX512           uint64 = 1 << 10
+	goallcCPUFeatureAVX512BITALG     uint64 = 1 << 11
+	goallcCPUFeatureAVX512VPOPCNTDQ  uint64 = 1 << 12
+	goallcCPUFeatureAVX512VBMI       uint64 = 1 << 13
+	goallcCPUFeatureARM64PMULL       uint64 = 1 << 14
+	goallcCPUFeatureAVX512VBMI2      uint64 = 1 << 15
+	goallcCPUFeatureAES              uint64 = 1 << 16
+	goallcCPUFeaturePCLMULQDQ        uint64 = 1 << 17
+	goallcCPUFeatureVAES             uint64 = 1 << 18
+	goallcCPUFeatureVPCLMULQDQ       uint64 = 1 << 19
+	goallcCPUFeatureAVX512VPCLMULQDQ uint64 = 1 << 20
 )
 
 // Snapshot only effective Go booleans after internal/cpu applies GODEBUG.
@@ -83,6 +85,12 @@ func goallcCPUFeatureSnapshot() uint64 {
 		}
 		if cpu.X86.HasVAES {
 			mask |= goallcCPUFeatureVAES
+		}
+		if cpu.X86.HasVPCLMULQDQ {
+			mask |= goallcCPUFeatureVPCLMULQDQ
+		}
+		if cpu.X86.HasAVX512VPCLMULQDQ {
+			mask |= goallcCPUFeatureAVX512VPCLMULQDQ
 		}
 	case "arm64":
 		if cpu.ARM64.HasATOMICS {

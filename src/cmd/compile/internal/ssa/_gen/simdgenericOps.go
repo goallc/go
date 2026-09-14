@@ -1521,8 +1521,8 @@ func simdGenericOps() []opData {
 		{name: "TruncScaledResidueFloat64x4", argLength: 1, aux: "UInt8"},                                                                                                                                 // ARCH:amd64
 		{name: "TruncScaledResidueFloat64x8", argLength: 1, aux: "UInt8"},                                                                                                                                 // ARCH:amd64
 		{name: "carrylessMultiplyUint64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avxpclmulqdq&lane=uint&laneBits=64&lower=carryless-mul"},                                            // ARCH:amd64
-		{name: "carrylessMultiplyUint64x4", argLength: 2, aux: "UInt8"},                                                                                                                                   // ARCH:amd64
-		{name: "carrylessMultiplyUint64x8", argLength: 2, aux: "UInt8"},                                                                                                                                   // ARCH:amd64
+		{name: "carrylessMultiplyUint64x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.vpclmulqdq&lane=uint&laneBits=64&lower=carryless-mul"},                                              // ARCH:amd64
+		{name: "carrylessMultiplyUint64x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx512vpclmulqdq&lane=uint&laneBits=64&lower=carryless-mul"},                                        // ARCH:amd64
 		{name: "concatSelectedConstantFloat32x4", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=concat-select-128"},                                          // ARCH:amd64
 		{name: "concatSelectedConstantFloat64x2", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=64&lower=concat-select-128"},                                          // ARCH:amd64
 		{name: "concatSelectedConstantGroupedFloat32x8", argLength: 2, aux: "UInt8", simd: "arch.amd64.profile=x86.avx&lane=float&laneBits=32&lower=concat-select-128"},                                   // ARCH:amd64

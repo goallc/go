@@ -46,6 +46,8 @@ var features = []feature{
 	{Name: "AES", Bit: 16, Arch: "amd64", Field: "HasAES", LLVM: []string{"aes"}},
 	{Name: "PCLMULQDQ", Bit: 17, Arch: "amd64", Field: "HasPCLMULQDQ", LLVM: []string{"pclmul"}},
 	{Name: "VAES", Bit: 18, Arch: "amd64", Field: "HasVAES", Provides: []string{"AVX"}, LLVM: []string{"vaes"}},
+	{Name: "VPCLMULQDQ", Bit: 19, Arch: "amd64", Field: "HasVPCLMULQDQ", Provides: []string{"AVX"}, LLVM: []string{"vpclmulqdq"}},
+	{Name: "AVX512VPCLMULQDQ", Bit: 20, Arch: "amd64", Field: "HasAVX512VPCLMULQDQ", Provides: []string{"AVX512"}, LLVM: []string{"vpclmulqdq"}},
 }
 
 // Preserve the existing FMV subset order, suffixes and target-feature order.
@@ -72,6 +74,8 @@ var profiles = []profile{
 	// runtime bit or field; FMV specializes their constituent predicates.
 	{Name: "x86.avxaes", Feature: "AVXAES", SIMDAliases: []string{"AVXAES"}},
 	{Name: "x86.avxpclmulqdq", Feature: "AVXPCLMULQDQ", SIMDAliases: []string{"AVXPCLMULQDQ"}},
+	{Name: "x86.vpclmulqdq", Feature: "VPCLMULQDQ", SIMDAliases: []string{"VPCLMULQDQ"}},
+	{Name: "x86.avx512vpclmulqdq", Feature: "AVX512VPCLMULQDQ", SIMDAliases: []string{"AVX512VPCLMULQDQ"}},
 }
 
 var unprofiledSIMDAliases = []string{"", "SHA"}

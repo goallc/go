@@ -2183,7 +2183,11 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	case goALLCSIMDLowerCarrylessMul:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		imm := llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(v.AuxInt), false)
-		fn := getLLVMIntrinsicDeclaration("llvm.x86.pclmulqdq")
+		name := "llvm.x86.pclmulqdq"
+		if lanes > 2 {
+			name += fmt.Sprintf(".%d", lanes*laneBits)
+		}
+		fn := getLLVMIntrinsicDeclaration(name)
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{x, y, imm}, v.String()+".product")))
 	case goALLCSIMDLowerMulAddInteger:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)

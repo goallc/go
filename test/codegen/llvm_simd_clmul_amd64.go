@@ -16,7 +16,7 @@ import "simd/archsimd"
 // LLVM-AMD64-DAG: !{!"x86.pclmulqdq"}
 // LLVM-OPT-AMD64-DAG: define internal {{.*}} @"codegen.clmul<goallc.fmv.avx-pclmulqdq>"
 // LLVM-OPT-AMD64-DAG: "target-features"="{{[^"]*}}+avx{{[^"]*}}+pclmul{{[^"]*}}"
-// LLVM-ASM-AMD64-DAG: VPCLMULQDQ
+// LLVM-ASM-AMD64-DAG: VPCLMULQDQ {{.*X[0-9]}}
 //
 //go:noinline
 func clmul(x, y archsimd.Uint64x2) archsimd.Uint64x2 {
@@ -24,6 +24,34 @@ func clmul(x, y archsimd.Uint64x2) archsimd.Uint64x2 {
 		return x
 	}
 	return x.CarrylessMultiplyOdd(y)
+}
+
+// LLVM-AMD64-DAG: call <4 x i64> @llvm.x86.pclmulqdq.256({{.*}}i8 1)
+// LLVM-AMD64-DAG: !{!"x86.vpclmulqdq"}
+// LLVM-OPT-AMD64-DAG: define internal {{.*}} @"codegen.clmul256<goallc.fmv.vpclmulqdq>"({{.*}}) [[ATTR256:#[0-9]+]]
+// LLVM-OPT-AMD64-DAG: attributes [[ATTR256]] = { {{.*}}"target-features"="{{[^"]*}}+vpclmulqdq{{[^"]*}}"
+// LLVM-ASM-AMD64-DAG: VPCLMULQDQ {{.*Y[0-9]}}
+//
+//go:noinline
+func clmul256(x, y archsimd.Uint64x4) archsimd.Uint64x4 {
+	if !archsimd.X86.VPCLMULQDQ() {
+		return x
+	}
+	return x.CarrylessMultiplyOddEven(y)
+}
+
+// LLVM-AMD64-DAG: call <8 x i64> @llvm.x86.pclmulqdq.512({{.*}}i8 16)
+// LLVM-AMD64-DAG: !{!"x86.avx512vpclmulqdq"}
+// LLVM-OPT-AMD64-DAG: define internal {{.*}} @"codegen.clmul512<goallc.fmv.avx512vpclmulqdq>"({{.*}}) [[ATTR512:#[0-9]+]]
+// LLVM-OPT-AMD64-DAG: attributes [[ATTR512]] = { {{.*}}"target-features"="{{[^"]*}}+avx512f{{[^"]*}}+vpclmulqdq{{[^"]*}}"
+// LLVM-ASM-AMD64-DAG: VPCLMULQDQ {{.*Z[0-9]}}
+//
+//go:noinline
+func clmul512(x, y archsimd.Uint64x8) archsimd.Uint64x8 {
+	if !archsimd.X86.AVX512VPCLMULQDQ() {
+		return x
+	}
+	return x.CarrylessMultiplyEvenOdd(y)
 }
 
 // A local zero vector may be hoisted into entry. It is not a function-wide

@@ -9,27 +9,29 @@
 package ssa
 
 const (
-	llvmCPUBaselineV2              uint64 = 0x8f
-	llvmCPUBaselineV3              uint64 = 0x2bf
-	llvmCPUBaselineV4              uint64 = 0x6bf
-	llvmCPUBaselineLSE             uint64 = 0x100
-	goCPUProfileX86SSE41                  = "x86.sse41"
-	goCPUProfileX86AVX                    = "x86.avx"
-	goCPUProfileX86AVX2                   = "x86.avx2"
-	goCPUProfileX86AVX512                 = "x86.avx512"
-	goCPUProfileX86AVX512BITALG           = "x86.avx512bitalg"
-	goCPUProfileX86AVX512VPOPCNTDQ        = "x86.avx512vpopcntdq"
-	goCPUProfileX86FMA                    = "x86.fma"
-	goCPUProfileX86POPCNT                 = "x86.popcnt"
-	goCPUProfileARM64LSE                  = "arm64.lse"
-	goCPUProfileX86AVX512VBMI             = "x86.avx512vbmi"
-	goCPUProfileARM64PMULL                = "arm64.pmull"
-	goCPUProfileX86AVX512VBMI2            = "x86.avx512vbmi2"
-	goCPUProfileX86AES                    = "x86.aes"
-	goCPUProfileX86PCLMULQDQ              = "x86.pclmulqdq"
-	goCPUProfileX86VAES                   = "x86.vaes"
-	goCPUProfileX86AVXAES                 = "x86.avxaes"
-	goCPUProfileX86AVXPCLMULQDQ           = "x86.avxpclmulqdq"
+	llvmCPUBaselineV2               uint64 = 0x8f
+	llvmCPUBaselineV3               uint64 = 0x2bf
+	llvmCPUBaselineV4               uint64 = 0x6bf
+	llvmCPUBaselineLSE              uint64 = 0x100
+	goCPUProfileX86SSE41                   = "x86.sse41"
+	goCPUProfileX86AVX                     = "x86.avx"
+	goCPUProfileX86AVX2                    = "x86.avx2"
+	goCPUProfileX86AVX512                  = "x86.avx512"
+	goCPUProfileX86AVX512BITALG            = "x86.avx512bitalg"
+	goCPUProfileX86AVX512VPOPCNTDQ         = "x86.avx512vpopcntdq"
+	goCPUProfileX86FMA                     = "x86.fma"
+	goCPUProfileX86POPCNT                  = "x86.popcnt"
+	goCPUProfileARM64LSE                   = "arm64.lse"
+	goCPUProfileX86AVX512VBMI              = "x86.avx512vbmi"
+	goCPUProfileARM64PMULL                 = "arm64.pmull"
+	goCPUProfileX86AVX512VBMI2             = "x86.avx512vbmi2"
+	goCPUProfileX86AES                     = "x86.aes"
+	goCPUProfileX86PCLMULQDQ               = "x86.pclmulqdq"
+	goCPUProfileX86VAES                    = "x86.vaes"
+	goCPUProfileX86AVXAES                  = "x86.avxaes"
+	goCPUProfileX86AVXPCLMULQDQ            = "x86.avxpclmulqdq"
+	goCPUProfileX86VPCLMULQDQ              = "x86.vpclmulqdq"
+	goCPUProfileX86AVX512VPCLMULQDQ        = "x86.avx512vpclmulqdq"
 )
 
 var llvmCPUProfiles = [...]llvmCPUProfile{
@@ -50,4 +52,6 @@ var llvmCPUProfiles = [...]llvmCPUProfile{
 	{name: goCPUProfileX86VAES, arch: "amd64", field: "HasVAES", runtimeGuard: "", predicates: 0x40000, capabilities: 0x40010, targetFeatures: "+avx,+vaes"},
 	{name: goCPUProfileX86AVXAES, arch: "amd64", field: "", runtimeGuard: "", predicates: 0x10010, capabilities: 0x10010, targetFeatures: "+avx,+aes"},
 	{name: goCPUProfileX86AVXPCLMULQDQ, arch: "amd64", field: "", runtimeGuard: "", predicates: 0x20010, capabilities: 0x20010, targetFeatures: "+avx,+pclmul"},
+	{name: goCPUProfileX86VPCLMULQDQ, arch: "amd64", field: "HasVPCLMULQDQ", runtimeGuard: "", predicates: 0x80000, capabilities: 0x80010, targetFeatures: "+avx,+vpclmulqdq"},
+	{name: goCPUProfileX86AVX512VPCLMULQDQ, arch: "amd64", field: "HasAVX512VPCLMULQDQ", runtimeGuard: "", predicates: 0x100000, capabilities: 0x100610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+vpclmulqdq"},
 }

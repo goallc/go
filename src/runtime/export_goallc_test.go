@@ -24,6 +24,9 @@ const (
 	GoALLCCPUFeatureAESForTest             = goallcCPUFeatureAES
 	GoALLCCPUFeaturePCLMULQDQForTest       = goallcCPUFeaturePCLMULQDQ
 	GoALLCCPUFeatureVAESForTest            = goallcCPUFeatureVAES
+
+	GoALLCCPUFeatureVPCLMULQDQForTest       = goallcCPUFeatureVPCLMULQDQ
+	GoALLCCPUFeatureAVX512VPCLMULQDQForTest = goallcCPUFeatureAVX512VPCLMULQDQ
 )
 
 func GoALLCCPUFeaturesForTest() uint64 {

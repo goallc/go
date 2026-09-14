@@ -99,7 +99,7 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 		"ReciprocalSqrt", "RoundScaled", "RoundScaledResidue", "SHA1FourRounds",
 		"SHA1Message1", "SHA1Message2", "SHA1NextE", "SHA256Message1",
 		"SHA256Message2", "SHA256TwoRounds", "Scale", "TruncScaled",
-		"TruncScaledResidue", "carrylessMultiply",
+		"TruncScaledResidue",
 	},
 }
 
