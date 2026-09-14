@@ -615,6 +615,43 @@ func TestLLVMNamedAggregateConversionReshapesValue(t *testing.T) {
 	}
 }
 
+func TestLLVMOrderedEmissionRestoresRecursiveBlock(t *testing.T) {
+	module := GlobalCtxt.NewModule("recursive_value_blocks")
+	builder := GlobalCtxt.NewBuilder()
+	t.Cleanup(module.Dispose)
+	t.Cleanup(builder.Dispose)
+	i64 := GlobalCtxt.Int64Type()
+	function := llvm.AddFunction(module, "recursive_value_blocks", llvm.FunctionType(i64, []llvm.Type{i64, i64}, false))
+	entryLLVM := llvm.AddBasicBlock(function, "entry")
+	useLLVM := llvm.AddBasicBlock(function, "use")
+	entry := &Block{ID: 1, Kind: BlockPlain}
+	use := &Block{ID: 2, Kind: BlockRet}
+	entry.Succs = []Edge{{b: use}}
+	a := &Value{ID: 1, Type: types.Types[types.TINT64]}
+	b := &Value{ID: 2, Type: types.Types[types.TINT64]}
+	producer := &Value{ID: 3, Op: OpAdd64, Type: a.Type, Block: entry, Args: []*Value{a, b}}
+	consumer := &Value{ID: 4, Op: OpSub64, Type: a.Type, Block: use, Args: []*Value{producer, b}}
+	use.Controls[0] = consumer
+	context := &LLVMFuncContext{
+		BBs: map[ID]llvm.BasicBlock{entry.ID: entryLLVM, use.ID: useLLVM},
+		Vs:  map[ID]llvm.Value{a.ID: function.Param(0), b.ID: function.Param(1)},
+		LF:  function, b: builder, ResultCount: 1, ReturnCount: 1,
+	}
+	// Visit the consumer first so its producer must be emitted recursively
+	// into a different block. The subtraction and return must stay in use.
+	context.CompileBlock(use, []*Value{consumer})
+	context.CompileBlock(entry, nil)
+	if context.Vs[producer.ID].InstructionParent() != entryLLVM {
+		t.Fatal("recursive producer was emitted outside its defining block")
+	}
+	if context.Vs[consumer.ID].InstructionParent() != useLLVM {
+		t.Fatal("recursive emission did not restore the consumer's block")
+	}
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid recursive value emission: %v\n%s", err, module.String())
+	}
+}
+
 func TestLLVMJumpTableDefaultIsUnreachable(t *testing.T) {
 	module := GlobalCtxt.NewModule("jump_table_default")
 	builder := GlobalCtxt.NewBuilder()

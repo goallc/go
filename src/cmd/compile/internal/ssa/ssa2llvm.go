@@ -3544,6 +3544,13 @@ func (lfc *LLVMFuncContext) llvmWriteBarrier(v *Value) llvm.Value {
 }
 
 func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
+	return lfc.genLV(v, true)
+}
+
+// genLV may leave the builder at v when called by CompileBlock's ordered
+// value loop. Recursive materialization must restore the caller's insertion
+// block and debug location before the caller emits its own instructions.
+func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 	if lfc.AddressOnlyLoads[v.ID] {
 		v.Fatalf("LLVM value requested for an address-only ABI load")
 	}
@@ -3558,18 +3565,20 @@ func (lfc *LLVMFuncContext) GenLV(v *Value) llvm.Value {
 	if lv, ok := lfc.Vs[v.ID]; ok {
 		return lv
 	}
-	savedBlock := lfc.b.GetInsertBlock()
-	savedLocation := lfc.b.CurrentDebugLocationMetadata()
+	if restoreBuilder {
+		savedBlock := lfc.b.GetInsertBlock()
+		savedLocation := lfc.b.CurrentDebugLocationMetadata()
+		defer func() {
+			lfc.b.SetCurrentDebugLocationMetadata(savedLocation)
+			if !savedBlock.IsNil() {
+				lfc.b.SetInsertPointAtEnd(savedBlock)
+			}
+		}()
+	}
 	if v.Block != nil {
 		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
 	lfc.setDebugLocation(v.Pos)
-	defer func() {
-		lfc.b.SetCurrentDebugLocationMetadata(savedLocation)
-		if !savedBlock.IsNil() {
-			lfc.b.SetInsertPointAtEnd(savedBlock)
-		}
-	}()
 	var lVal llvm.Value
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }
 	arg1 := func() llvm.Value { return lfc.GenLV(v.Args[1]) }
@@ -4388,7 +4397,9 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		if v.Op == OpSP || lfc.AddressOnlyLoads[v.ID] {
 			continue
 		}
-		lfc.GenLV(v)
+		// Each new value sets its own insertion block and source location.
+		// No caller instructions need the previous value's builder state.
+		lfc.genLV(v, false)
 	}
 	lfc.setDebugLocation(BB.Pos)
 	defer lfc.b.ClearCurrentDebugLocation()
