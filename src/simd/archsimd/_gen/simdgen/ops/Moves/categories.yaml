@@ -93,10 +93,12 @@
     // NAME blends two vectors based on mask values, choosing either
     // the first or the second based on whether the third is false or true
 - go: bitSelect
+  llvmLowering: bit-select
   commutative: false
   documentation: !string |-
     // NAME returns the bitwise selection if mask[i] then x[i] else y[i].
 - go: bitSelectNot
+  llvmLowering: bit-select-not
   commutative: false
   documentation: !string |-
     // NAME returns the bitwise selection if mask[i] then y[i] else x[i].

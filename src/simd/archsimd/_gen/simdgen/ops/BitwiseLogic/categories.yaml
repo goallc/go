@@ -30,6 +30,7 @@
   documentation: !string |-
     // NAME returns the bitwise complement of x.
 - go: tern
+  llvmLowering: ternary
   commutative: false
   documentation: !string |-
     // NAME performs a logical operation on three vectors based on the 8-bit truth table.

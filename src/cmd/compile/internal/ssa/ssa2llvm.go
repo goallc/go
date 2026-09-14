@@ -1958,6 +1958,14 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	}
 
 	switch info.lowering {
+	case goALLCSIMDLowerBitSelect, goALLCSIMDLowerBitSelectNot:
+		return finish(lfc.simdBitSelect(v, info.lowering == goALLCSIMDLowerBitSelectNot))
+	case goALLCSIMDLowerBlendBytes:
+		return finish(lfc.simdBlendBytes(v, lanes))
+	case goALLCSIMDLowerTernary:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		z := lfc.simdValueAs(v, v.Args[2], x.Type(), ".z")
+		return finish(lfc.simdLaneResult(v, lfc.simdTernary(uint8(v.AuxInt), []llvm.Value{x, y, z})))
 	case goALLCSIMDLowerAESEncrypt, goALLCSIMDLowerAESEncryptLast, goALLCSIMDLowerAESDecrypt, goALLCSIMDLowerAESDecryptLast, goALLCSIMDLowerAESKeygen, goALLCSIMDLowerAESInverseMix:
 		return finish(lfc.simdAES(v, info.lowering, width))
 	case goALLCSIMDLowerSHA1Rounds, goALLCSIMDLowerSHA1NextE, goALLCSIMDLowerSHA1Message1, goALLCSIMDLowerSHA1Message2, goALLCSIMDLowerSHA256Rounds, goALLCSIMDLowerSHA256Message1, goALLCSIMDLowerSHA256Message2:
@@ -2151,15 +2159,21 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		}
 		fn := getLLVMIntrinsicDeclaration(name)
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+".estimate")))
-	case goALLCSIMDLowerRoundScaled, goALLCSIMDLowerFloorScaled, goALLCSIMDLowerCeilScaled, goALLCSIMDLowerTruncScaled:
+	case goALLCSIMDLowerRoundScaled, goALLCSIMDLowerFloorScaled, goALLCSIMDLowerCeilScaled, goALLCSIMDLowerTruncScaled,
+		goALLCSIMDLowerRoundScaledResidue, goALLCSIMDLowerFloorScaledResidue, goALLCSIMDLowerCeilScaledResidue, goALLCSIMDLowerTruncScaledResidue:
 		var mode uint8
 		switch info.lowering {
-		case goALLCSIMDLowerFloorScaled:
+		case goALLCSIMDLowerFloorScaled, goALLCSIMDLowerFloorScaledResidue:
 			mode = 1
-		case goALLCSIMDLowerCeilScaled:
+		case goALLCSIMDLowerCeilScaled, goALLCSIMDLowerCeilScaledResidue:
 			mode = 2
-		case goALLCSIMDLowerTruncScaled:
+		case goALLCSIMDLowerTruncScaled, goALLCSIMDLowerTruncScaledResidue:
 			mode = 3
+		}
+		op := "rndscale"
+		switch info.lowering {
+		case goALLCSIMDLowerRoundScaledResidue, goALLCSIMDLowerFloorScaledResidue, goALLCSIMDLowerCeilScaledResidue, goALLCSIMDLowerTruncScaledResidue:
+			op = "reduce"
 		}
 		// The frontend has already shifted prec into imm8[7:4]. Add only
 		// the operation's rounding mode, as the native rewrite does.
@@ -2173,8 +2187,8 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		if width == 512 {
 			args = append(args, llvm.ConstInt(GlobalCtxt.Int32Type(), 4, false))
 		}
-		fn := getLLVMIntrinsicDeclaration(fmt.Sprintf("llvm.x86.avx512.mask.rndscale.%s.%d", kind, width))
-		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+".roundscaled")))
+		fn := getLLVMIntrinsicDeclaration(fmt.Sprintf("llvm.x86.avx512.mask.%s.%s.%d", op, kind, width))
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, args, v.String()+"."+op)))
 	case goALLCSIMDLowerScale:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		kind := "ps"
@@ -2392,11 +2406,6 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 }
 
 func (lfc *LLVMFuncContext) simdBitSelect(v *Value, invertMask bool) llvm.Value {
-	switch v.Op {
-	case OpbitSelectInt8x16, OpbitSelectNotInt8x16:
-	default:
-		v.Fatalf("unsupported SIMD bit-select operation %s", v.Op)
-	}
 	resultType := llvmAMD64ByteVectorType()
 	x := lfc.simdValueAs(v, v.Args[0], resultType, ".x")
 	y := lfc.simdValueAs(v, v.Args[1], resultType, ".y")
@@ -2409,8 +2418,8 @@ func (lfc *LLVMFuncContext) simdBitSelect(v *Value, invertMask bool) llvm.Value 
 	return lfc.b.CreateOr(xBits, yBits, v.String())
 }
 
-func (lfc *LLVMFuncContext) simdBlendBytes(v *Value) llvm.Value {
-	carrier := llvmAMD64ByteVectorType()
+func (lfc *LLVMFuncContext) simdBlendBytes(v *Value, lanes int) llvm.Value {
+	carrier := llvm.VectorType(GlobalCtxt.Int8Type(), lanes)
 	x := lfc.simdValueAs(v, v.Args[0], carrier, ".x")
 	y := lfc.simdValueAs(v, v.Args[1], carrier, ".y")
 	mask := lfc.simdValueAs(v, v.Args[2], carrier, ".mask")
@@ -2418,7 +2427,30 @@ func (lfc *LLVMFuncContext) simdBlendBytes(v *Value) llvm.Value {
 	// set. Go SIMD masks are canonical zero/all-ones bytes, but retaining the
 	// sign-bit rule here also preserves the exact private intrinsic semantics.
 	condition := lfc.b.CreateICmp(llvm.IntSLT, mask, llvm.ConstNull(carrier), v.String()+".condition")
-	return lfc.b.CreateSelect(condition, y, x, v.String())
+	return lfc.simdLaneResult(v, lfc.b.CreateSelect(condition, y, x, v.String()))
+}
+
+// Split the constant truth table on successive input bits. Each cofactor
+// is another bitwise function; LLVM folds the resulting boolean network.
+func (lfc *LLVMFuncContext) simdTernary(table uint8, inputs []llvm.Value) llvm.Value {
+	x := inputs[0]
+	mask := uint8((uint16(1) << (1 << len(inputs))) - 1)
+	table &= mask
+	if table == 0 {
+		return llvm.ConstNull(x.Type())
+	}
+	if table == mask {
+		return llvm.ConstAllOnes(x.Type())
+	}
+	if len(inputs) == 1 {
+		if table == 2 {
+			return x
+		}
+		return lfc.b.CreateNot(x, "")
+	}
+	lo := lfc.simdTernary(table, inputs[1:])
+	hi := lfc.simdTernary(table>>(1<<(len(inputs)-1)), inputs[1:])
+	return lfc.b.CreateXor(lo, lfc.b.CreateAnd(x, lfc.b.CreateXor(lo, hi, ""), ""), "")
 }
 
 // simdIntegerConversion selects low lanes before widening, or clears unused
@@ -3772,12 +3804,6 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		lVal = lfc.aggregate(v, v.Args)
 	case OpZeroSIMD:
 		lVal = llvm.ConstNull(getLLVMType(v.Type))
-	case OpbitSelectInt8x16:
-		lVal = lfc.simdBitSelect(v, false)
-	case OpbitSelectNotInt8x16:
-		lVal = lfc.simdBitSelect(v, true)
-	case OpblendInt8x16:
-		lVal = lfc.simdBlendBytes(v)
 	case OpAdd64, OpAdd32, OpAdd16, OpAdd8:
 		lVal = lfc.b.CreateAdd(arg0(), arg1(), v.String())
 	case OpAdd64carry:

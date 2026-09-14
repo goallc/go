@@ -39,6 +39,14 @@ const (
 	goALLCSIMDLowerFloorScaled
 	goALLCSIMDLowerCeilScaled
 	goALLCSIMDLowerTruncScaled
+	goALLCSIMDLowerRoundScaledResidue
+	goALLCSIMDLowerFloorScaledResidue
+	goALLCSIMDLowerCeilScaledResidue
+	goALLCSIMDLowerTruncScaledResidue
+	goALLCSIMDLowerBitSelect
+	goALLCSIMDLowerBitSelectNot
+	goALLCSIMDLowerBlendBytes
+	goALLCSIMDLowerTernary
 	goALLCSIMDLowerOnesCount
 	goALLCSIMDLowerLeadingZeros
 	goALLCSIMDLowerMax

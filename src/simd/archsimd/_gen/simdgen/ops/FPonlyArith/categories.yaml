@@ -35,6 +35,7 @@
   documentation: !string |-
     // NAME rounds elements with specified precision.
 - go: RoundScaledResidue
+  llvmLowering: round-scaled-residue
   commutative: false
   constImm: 0
   documentation: !string |-
@@ -52,6 +53,7 @@
   documentation: !string |-
     // NAME rounds elements down with specified precision.
 - go: FloorScaledResidue
+  llvmLowering: floor-scaled-residue
   commutative: false
   constImm: 1
   documentation: !string |-
@@ -69,6 +71,7 @@
   documentation: !string |-
     // NAME rounds elements up with specified precision.
 - go: CeilScaledResidue
+  llvmLowering: ceil-scaled-residue
   commutative: false
   constImm: 2
   documentation: !string |-
@@ -86,6 +89,7 @@
   documentation: !string |-
     // NAME truncates elements with specified precision.
 - go: TruncScaledResidue
+  llvmLowering: trunc-scaled-residue
   commutative: false
   constImm: 3
   documentation: !string |-

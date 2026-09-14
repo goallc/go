@@ -20,7 +20,7 @@ func TestGoALLCSIMDPlanLookup(t *testing.T) {
 		want goALLCSIMDPlan
 		ok   bool
 	}{
-		{"ternInt32x4", goALLCSIMDPlanCompose, true},
+		{"ternInt32x4", goALLCSIMDPlanInvalid, false},
 		// Implemented conversions are no longer classified as pending.
 		{"ConvertToInt32Float32x4", goALLCSIMDPlanInvalid, false},
 		{"PermuteUint8x16", goALLCSIMDPlanInvalid, false},
@@ -33,8 +33,8 @@ func TestGoALLCSIMDPlanLookup(t *testing.T) {
 		{"ShiftAllLeftConcatMod16Int16x8", goALLCSIMDPlanInvalid, false},
 		{"ShiftRightConcatMod64Uint64x8", goALLCSIMDPlanInvalid, false},
 		{"RotateLeftInt32x4", goALLCSIMDPlanInvalid, false},
-		{"blendInt8x16", goALLCSIMDPlanLegacy, true},
-		{"blendInt8x32", goALLCSIMDPlanCompose, true},
+		{"blendInt8x16", goALLCSIMDPlanInvalid, false},
+		{"blendInt8x32", goALLCSIMDPlanInvalid, false},
 		{"UnknownInt8x16", goALLCSIMDPlanInvalid, false},
 	}
 	for _, test := range tests {
@@ -65,7 +65,6 @@ func TestGoALLCSIMDPlanCoversGeneratedOps(t *testing.T) {
 		"ShiftAllLeft": 20, "ShiftAllRight": 20, "ShiftLeft": 18, "ShiftRight": 18,
 	}
 	seenFamilies := map[string]bool{}
-	seenLegacy := map[string]bool{}
 	var missing []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -99,12 +98,8 @@ func TestGoALLCSIMDPlanCoversGeneratedOps(t *testing.T) {
 			continue
 		}
 		counts[plan.String()]++
-		if plan == goALLCSIMDPlanLegacy {
-			seenLegacy[name] = true
-		} else {
-			family := goALLCSIMDTypeSuffixRE.ReplaceAllString(name, "")
-			seenFamilies[family] = true
-		}
+		family := goALLCSIMDTypeSuffixRE.ReplaceAllString(name, "")
+		seenFamilies[family] = true
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
@@ -118,18 +113,13 @@ func TestGoALLCSIMDPlanCoversGeneratedOps(t *testing.T) {
 			t.Errorf("GoALLC SIMD plan contains unused family %q", family)
 		}
 	}
-	for name := range goALLCSIMDLegacyOps {
-		if !seenLegacy[name] {
-			t.Errorf("GoALLC SIMD legacy exception %q is no longer present", name)
-		}
-	}
 	for family, want := range wantOrdinaryShifts {
 		if got := ordinaryShifts[family]; got != want {
 			t.Errorf("implemented %s operations = %d, want %d", family, got, want)
 		}
 	}
 
-	for _, status := range []string{"implemented", "standard", "compose", "convert", "shuffle", "mask", "shift", "target-intrinsic", "legacy"} {
+	for _, status := range []string{"implemented", "standard", "compose", "convert", "shuffle", "mask", "shift", "target-intrinsic"} {
 		t.Logf("%-16s %d", status, counts[status])
 	}
 }

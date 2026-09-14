@@ -398,6 +398,7 @@
 # That means the signature is wrong.
 - go: blend
   asm: VPBLENDVB
+  llvmLowering: blend-bytes
   zeroing: false
   in:
   - &v

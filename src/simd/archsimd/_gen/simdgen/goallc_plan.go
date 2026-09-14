@@ -27,7 +27,6 @@ const (
 	goALLCSIMDPlanMask
 	goALLCSIMDPlanShift
 	goALLCSIMDPlanTargetIntrinsic
-	goALLCSIMDPlanLegacy
 )
 
 func (p goALLCSIMDPlan) String() string {
@@ -46,8 +45,6 @@ func (p goALLCSIMDPlan) String() string {
 		return "shift"
 	case goALLCSIMDPlanTargetIntrinsic:
 		return "target-intrinsic"
-	case goALLCSIMDPlanLegacy:
-		return "legacy"
 	default:
 		return "invalid"
 	}
@@ -64,9 +61,7 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 
 	// Operations built from multiple target-independent LLVM instructions or
 	// generic intrinsics.
-	goALLCSIMDPlanCompose: {
-		"blend", "tern",
-	},
+	goALLCSIMDPlanCompose: {},
 
 	// Lane conversion families now carry generated lowering descriptors.
 	goALLCSIMDPlanConvert: {},
@@ -90,20 +85,7 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	// Operations whose exact semantics or useful implementation are tied to
 	// existing target intrinsics. This does not authorize a Go-specific LLVM
 	// intrinsic or a new target node.
-	goALLCSIMDPlanTargetIntrinsic: {
-		"CeilScaledResidue", "FloorScaledResidue", "RoundScaledResidue",
-		"TruncScaledResidue",
-	},
-}
-
-// These generic operations predate the generated descriptor path and are
-// still lowered by explicit cases in ssa2llvm.go. Keeping the exceptions exact
-// prevents a wider operation with the same method stem from being silently
-// treated as implemented.
-var goALLCSIMDLegacyOps = map[string]struct{}{
-	"bitSelectInt8x16":    {},
-	"bitSelectNotInt8x16": {},
-	"blendInt8x16":        {},
+	goALLCSIMDPlanTargetIntrinsic: {},
 }
 
 var goALLCSIMDTypeSuffixRE = regexp.MustCompile(`(?:Float|Int|Uint)[0-9]+x[0-9]+(?:x[0-9]+)?$`)
@@ -111,7 +93,7 @@ var goALLCSIMDTypeSuffixRE = regexp.MustCompile(`(?:Float|Int|Uint)[0-9]+x[0-9]+
 var goALLCSIMDPlanByFamily = func() map[string]goALLCSIMDPlan {
 	result := make(map[string]goALLCSIMDPlan)
 	for plan, families := range goALLCSIMDPlannedFamilies {
-		if plan == goALLCSIMDPlanInvalid || plan == goALLCSIMDPlanLegacy {
+		if plan == goALLCSIMDPlanInvalid {
 			panic(fmt.Sprintf("invalid pending GoALLC SIMD plan %s", plan))
 		}
 		for _, family := range families {
@@ -127,9 +109,6 @@ var goALLCSIMDPlanByFamily = func() map[string]goALLCSIMDPlan {
 // goALLCSIMDPlanForGenericOp returns the reviewed plan for a generic operation
 // that has no generated LLVM lowering descriptor.
 func goALLCSIMDPlanForGenericOp(name string) (goALLCSIMDPlan, bool) {
-	if _, ok := goALLCSIMDLegacyOps[name]; ok {
-		return goALLCSIMDPlanLegacy, true
-	}
 	family := goALLCSIMDTypeSuffixRE.ReplaceAllString(name, "")
 	plan, ok := goALLCSIMDPlanByFamily[family]
 	return plan, ok

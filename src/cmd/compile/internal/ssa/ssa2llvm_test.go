@@ -1406,8 +1406,12 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 
 			function := llvm.AddFunction(module, test.name, llvm.FunctionType(vectorType, []llvm.Type{vectorType, vectorType, vectorType}, false))
 			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+			arch := "arm64"
+			if test.op == OpblendInt8x16 {
+				arch = "amd64"
+			}
 			context := &LLVMFuncContext{
-				F:  &Func{Config: &Config{arch: "arm64"}},
+				F:  &Func{Config: &Config{arch: arch}, Entry: &Block{CPUfeatures: CPUavx}},
 				Vs: make(map[ID]llvm.Value),
 				b:  builder,
 			}

@@ -147,6 +147,8 @@ var goALLCLoweringArity = map[string]int{
 	"not": 1, "neg": 1, "abs": 1,
 	"sqrt": 1, "round-even": 1, "floor": 1, "ceil": 1, "trunc": 1,
 	"round-scaled": 1, "floor-scaled": 1, "ceil-scaled": 1, "trunc-scaled": 1,
+	"round-scaled-residue": 1, "floor-scaled-residue": 1, "ceil-scaled-residue": 1, "trunc-scaled-residue": 1,
+	"bit-select": 3, "bit-select-not": 3, "blend-bytes": 3, "ternary": 3,
 	"ones-count": 1, "leading-zeros": 1,
 	"average": 2, "leading-sign-bits": 1,
 	"mul-high": 2, "mul-sign": 2,
@@ -191,6 +193,8 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul", "aes-keygen", "gf-affine", "gf-affine-inverse", "sha1-rounds":
 		wantImm = VarImm
 	case "round-scaled", "floor-scaled", "ceil-scaled", "trunc-scaled":
+		wantImm = VarImm
+	case "round-scaled-residue", "floor-scaled-residue", "ceil-scaled-residue", "trunc-scaled-residue", "ternary":
 		wantImm = VarImm
 	}
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
