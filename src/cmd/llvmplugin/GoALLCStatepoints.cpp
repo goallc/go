@@ -1567,6 +1567,60 @@ ValueSet liveAtCall(CallInst &Call, LivenessData &Data) {
   return Live;
 }
 
+// Queries must follow instruction order without modifying the IR. Retain only
+// the current block's snapshots, and keep their SetVector order so preservation
+// plans and statepoint operands are independent of the backward traversal.
+class CallsiteLiveness {
+  LivenessData &Data;
+  BasicBlock *Block = nullptr;
+  SmallVector<CallInst *, 8> Calls;
+  SmallVector<SmallVector<Value *, 0>, 8> Snapshots;
+  ValueSet SingleLive;
+  unsigned Next = 0;
+
+public:
+  explicit CallsiteLiveness(LivenessData &Data) : Data(Data) {}
+
+  ArrayRef<Value *> get(CallInst &Call) {
+    if (Block != Call.getParent()) {
+      Block = Call.getParent();
+      Calls.clear();
+      Snapshots.clear();
+      Next = 0;
+      for (Instruction &I : make_range(Call.getIterator(), Block->end())) {
+        auto *Candidate = dyn_cast<CallInst>(&I);
+        if (Candidate && !isa<GCStatepointInst>(Candidate) &&
+            !isLeafCall(*Candidate) && !Candidate->isMustTailCall())
+          Calls.push_back(Candidate);
+      }
+      if (Calls.size() == 1) {
+        // Most blocks have one safepoint; avoid allocating snapshots for them.
+        SingleLive = liveAtCall(Call, Data);
+      } else {
+        Snapshots.resize(Calls.size());
+        ValueSet Live = Data.LiveOut[Block];
+        auto Cursor = Block->rbegin();
+        for (unsigned Index = Calls.size(); Index != 0; --Index) {
+          CallInst *Current = Calls[Index - 1];
+          auto End = Current->getIterator().getReverse();
+          scanBackward(Cursor, End, Live);
+          Live.remove(Current);
+          Snapshots[Index - 1].append(Live.begin(), Live.end());
+          // Leave the call at the cursor: its arguments are not live at its
+          // own safepoint, but must be considered for earlier safepoints.
+          Cursor = End;
+        }
+      }
+    }
+    assert(Next < Calls.size() && Calls[Next] == &Call &&
+           "callsite liveness queries must follow instruction order");
+    unsigned Index = Next++;
+    if (Calls.size() == 1)
+      return SingleLive.getArrayRef();
+    return Snapshots[Index];
+  }
+};
+
 Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
                                SmallVectorImpl<AggregateLeaf> &Leaves) {
   if (auto *ST = dyn_cast<StructType>(Ty)) {
@@ -2106,13 +2160,14 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
 MapVector<Value *, StatepointPreservationPlan>
 buildStatepointPreservationPlans(Function &F, LoopInfo &LI, DominatorTree &DT) {
   LivenessData StatepointLiveness = computeStatepointLiveness(F);
+  CallsiteLiveness CallLiveness(StatepointLiveness);
   MapVector<Value *, StatepointPreservationPlan> Plans;
   for (Instruction &I : instructions(F)) {
     auto *Call = dyn_cast<CallInst>(&I);
     if (!Call || isa<GCStatepointInst>(Call) || isLeafCall(*Call) ||
         Call->isMustTailCall())
       continue;
-    for (Value *Live : liveAtCall(*Call, StatepointLiveness)) {
+    for (Value *Live : CallLiveness.get(*Call)) {
       auto It = Plans.find(Live);
       if (It == Plans.end()) {
         Plans.insert({Live, {Live}});
@@ -4165,6 +4220,7 @@ Error rewriteFunction(Function &F) {
   // each value at the callsite. Pointer-containing memory has independent
   // content liveness and is added below by the alloca/fixed-argument analyses.
   LivenessData FinalLiveness = computeStatepointLiveness(F);
+  CallsiteLiveness CallLiveness(FinalLiveness);
   SmallVector<SafepointRecord, 8> Records;
   uint64_t CallOrdinal = 0;
 
@@ -4180,7 +4236,7 @@ Error rewriteFunction(Function &F) {
           "GoALLC statepoints do not yet support invoke or callbr");
     SafepointRecord Record{OrdinaryCall,
                            stableStatepointID(F.getName(), CallOrdinal++)};
-    for (Value *Live : liveAtCall(*OrdinaryCall, FinalLiveness)) {
+    for (Value *Live : CallLiveness.get(*OrdinaryCall)) {
       if (isFixedFrameAddress(Live)) {
         // Address liveness is independent from object-content liveness. Map
         // every same-object alloca/byval/goret recipe to its canonical frame
