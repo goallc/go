@@ -32,6 +32,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: @checkpoint{{.*}}ptr %local, i64 8, i64 1,{{.*}}ptr %arg, i64 8, i64 1,
 ; IR-LABEL: define goabiinternal ptr @mixed_alloca_loop_phi(
 ; IR-COUNT-2: @checkpoint{{.*}}ptr %left, i64 9, i64 1,{{.*}}ptr %right, i64 9, i64 1,
+; IR-LABEL: define goabiinternal ptr @loop_partial_overwrite(
+; IR: @checkpoint{{.*}}ptr %slot, i64 17, i64 3,
 
 %pair = type { ptr, ptr }
 declare goabiinternal void @observe(ptr)
@@ -237,4 +239,23 @@ next:
   br label %loop
 exit:
   ret ptr %result
+}
+
+; Deliberately place the exit before the loop in block order. Killing the first
+; pointer slot must not hide the second slot's read across the backedge.
+define goabiinternal ptr @loop_partial_overwrite(ptr %a, ptr %b, i1 %again) gc "goallc" {
+entry:
+  %slot = alloca %pair, align 8
+  %second = getelementptr %pair, ptr %slot, i64 0, i32 1
+  store ptr %a, ptr %slot
+  store ptr %b, ptr %second
+  call goabiinternal void @observe(ptr %slot)
+  br label %loop
+exit:
+  %result = load ptr, ptr %second
+  ret ptr %result
+loop:
+  call goabiinternal void @checkpoint()
+  store ptr null, ptr %slot
+  br i1 %again, label %loop, label %exit
 }

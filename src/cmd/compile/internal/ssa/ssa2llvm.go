@@ -5516,6 +5516,10 @@ func getLLVMType(typ *types.Type) llvm.Type {
 }
 
 func InitModule(pkg *types.Pkg) {
+	// Local SSA names are only useful in saved IR. Let LLVM avoid maintaining
+	// their symbol tables during normal compilation, including optimization.
+	// Global symbols and source-level debug names are unaffected.
+	GlobalCtxt.SetDiscardValueNames(!base.Flag.LLVMKeepIR)
 	type2lTypes = map[*types.Type]llvm.Type{
 		types.Types[types.TINT8]:   GlobalCtxt.Int8Type(),
 		types.Types[types.TUINT8]:  GlobalCtxt.Int8Type(),

@@ -479,18 +479,22 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 		currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
 	}
 	currentLLVMDataLowerer.roots[s] = true
-	local := false
-	for _, candidate := range base.Ctxt.Data {
-		if candidate == s {
-			local = true
-			break
+	// Supported data kinds have the same lowering whether or not they are
+	// already in Ctxt.Data. Only unresolved kinds need the locality check.
+	if !llvmDataSymbolKindSupported(s.Type) {
+		local := false
+		for _, candidate := range base.Ctxt.Data {
+			if candidate == s {
+				local = true
+				break
+			}
 		}
-	}
-	if !local && !llvmDataSymbolKindSupported(s.Type) {
-		g := llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), currentLLVMDataLowerer.globalName(s))
-		currentLLVMDataLowerer.values[s] = g
-		attachGoObjSymbolRef(g, s)
-		return g
+		if !local {
+			g := llvm.AddGlobal(CurrentModule, GlobalCtxt.Int8Type(), currentLLVMDataLowerer.globalName(s))
+			currentLLVMDataLowerer.values[s] = g
+			attachGoObjSymbolRef(g, s)
+			return g
+		}
 	}
 	currentLLVMDataLowerer.data[s] = true
 	g := llvm.AddGlobal(CurrentModule, currentLLVMDataLowerer.dataType(s), currentLLVMDataLowerer.globalName(s))
