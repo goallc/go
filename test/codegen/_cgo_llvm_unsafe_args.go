@@ -22,7 +22,7 @@ func llvmCgoUnsafeSink(*uintptr)
 // LLVM: [[Q_VALUE:%.*]] = load i64, ptr %q
 // LLVM: store i64 [[Q_VALUE]], ptr [[Q]]
 // LLVM: {{.*}}call goabiinternal void @codegen.llvmCgoUnsafeSink(ptr{{.*}} [[FRAME]])
-// LLVM: {{%.*}} = load i64, ptr [[RESULT]]
+// LLVM-NOT: load i64, ptr [[RESULT]]
 // LLVM: call void @llvm.memmove{{.*}}(ptr align 8 [[RESULT_HOME]], ptr align 8 [[RESULT]], i64 8, i1 false)
 // LLVM-OPT-LABEL: define goabi0 void @"codegen.llvmCgoUnsafeFrame<ABI0>"(
 // LLVM-OPT-SAME: ptr{{.*}}byval(i64) align 8{{.*}} %p, ptr{{.*}}byval(i64) align 8{{.*}} %q, ptr{{.*}}goret(i64) align 8{{.*}} "goretindex"="0" [[OPT_RESULT_HOME:%[^)]+]]) {{.*}}#[[OPT_NOINLINE:[0-9]+]] gc "goallc"
