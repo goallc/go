@@ -24,6 +24,7 @@ const (
 	goCPUProfileARM64LSE                  = "arm64.lse"
 	goCPUProfileX86AVX512VBMI             = "x86.avx512vbmi"
 	goCPUProfileARM64PMULL                = "arm64.pmull"
+	goCPUProfileX86AVX512VBMI2            = "x86.avx512vbmi2"
 )
 
 var llvmCPUProfiles = [...]llvmCPUProfile{
@@ -38,4 +39,5 @@ var llvmCPUProfiles = [...]llvmCPUProfile{
 	{name: goCPUProfileARM64LSE, arch: "arm64", field: "HasATOMICS", runtimeGuard: "runtime.arm64HasATOMICS", capabilities: 0x100, targetFeatures: "+lse"},
 	{name: goCPUProfileX86AVX512VBMI, arch: "amd64", field: "HasAVX512VBMI", runtimeGuard: "", capabilities: 0x2610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi"},
 	{name: goCPUProfileARM64PMULL, arch: "arm64", field: "HasPMULL", runtimeGuard: "", capabilities: 0x4000, targetFeatures: "+aes"},
+	{name: goCPUProfileX86AVX512VBMI2, arch: "amd64", field: "HasAVX512VBMI2", runtimeGuard: "", capabilities: 0x8610, targetFeatures: "+avx,+avx2,+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl,+avx512vbmi2"},
 }

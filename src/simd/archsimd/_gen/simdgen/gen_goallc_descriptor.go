@@ -111,6 +111,9 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"rotate-left": 2, "rotate-right": 2,
+	"funnel-left": 3, "funnel-right": 3,
+	"funnel-all-left": 2, "funnel-all-right": 2,
 	"dot-pairs": 2, "dot-pairs-us-sat": 2, "sum-8-abs-diff": 2,
 	"pair-add":          2,
 	"pair-sub":          2,
@@ -176,7 +179,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	switch lowering {
 	case "extract-element":
 		wantOut, wantImm = OneGregOut, VarImm
-	case "insert-element":
+	case "insert-element", "funnel-all-left", "funnel-all-right":
 		wantImm = VarImm
 	}
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
@@ -254,6 +257,9 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 		inputBase := wantBase
 		if lowering == "dot-pairs-us-sat" && i == 1 {
 			inputBase = "int"
+		}
+		if (lowering == "funnel-left" || lowering == "funnel-right") && i == 2 {
+			inputBase = "uint"
 		}
 		if in.Class != "vreg" || in.Bits == nil || *in.Bits != width || !ok || base != inputBase || elemBits != wantElemBits || lanes != wantLanes {
 			panic(fmt.Errorf("simdgen: LLVM lowering %q has heterogeneous input shape for %s", lowering, op.GenericName()))

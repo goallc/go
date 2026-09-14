@@ -55,6 +55,12 @@ const (
 	goALLCSIMDLowerFMAAddOdd
 	goALLCSIMDLowerPairAdd
 	goALLCSIMDLowerDotPairs
+	goALLCSIMDLowerRotateLeft
+	goALLCSIMDLowerRotateRight
+	goALLCSIMDLowerFunnelLeft
+	goALLCSIMDLowerFunnelRight
+	goALLCSIMDLowerFunnelAllLeft
+	goALLCSIMDLowerFunnelAllRight
 	goALLCSIMDLowerDotPairsUSSat
 	goALLCSIMDLowerSum8AbsDiff
 	goALLCSIMDLowerPairSub

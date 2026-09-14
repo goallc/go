@@ -26,6 +26,7 @@ func TestGoALLCCPUFeaturesSnapshot(t *testing.T) {
 		{cpu.X86.HasAVX512BITALG, runtime.GoALLCCPUFeatureAVX512BITALGForTest},
 		{cpu.X86.HasAVX512VPOPCNTDQ, runtime.GoALLCCPUFeatureAVX512VPOPCNTDQForTest},
 		{cpu.X86.HasAVX512VBMI, runtime.GoALLCCPUFeatureAVX512VBMIForTest},
+		{cpu.X86.HasAVX512VBMI2, runtime.GoALLCCPUFeatureAVX512VBMI2ForTest},
 		{cpu.X86.HasFMA, runtime.GoALLCCPUFeatureFMAForTest},
 		{cpu.X86.HasPOPCNT, runtime.GoALLCCPUFeaturePOPCNTForTest},
 	} {
