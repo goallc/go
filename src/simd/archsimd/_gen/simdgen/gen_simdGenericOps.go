@@ -45,9 +45,7 @@ func writeSIMDGenericOps(ops []Operation, genericOpsFilePath string) *bytes.Buff
 		genericName := gOp.GenericName()
 		simd := goALLCSIMDDescriptor(op, gOp, genericIn, genericOut, genericMask, genericImm)
 		if simd.IsZero() {
-			if _, ok := goALLCSIMDPlanForGenericOp(genericName); !ok {
-				panic(fmt.Errorf("simdgen: generic op %q has neither an LLVM lowering nor a reviewed GoALLC plan", genericName))
-			}
+			panic(fmt.Errorf("simdgen: generic op %q has no LLVM lowering", genericName))
 		}
 
 		newOps = append(newOps, sgutil.GenericOpsData{

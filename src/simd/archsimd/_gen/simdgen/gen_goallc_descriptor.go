@@ -111,6 +111,7 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"compress": 2, "expand": 2, "blend-masked": 3, "broadcast-low-masked": 2,
 	"reciprocal": 1, "reciprocal-sqrt": 1,
 	"scale":       2,
 	"sha1-rounds": 2, "sha1-next-e": 2, "sha1-message1": 2, "sha1-message2": 2,
@@ -197,8 +198,13 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	case "round-scaled-residue", "floor-scaled-residue", "ceil-scaled-residue", "trunc-scaled-residue", "ternary":
 		wantImm = VarImm
 	}
+	wantMask := NoMask
+	masked := lowering == "compress" || lowering == "expand" || lowering == "blend-masked" || lowering == "broadcast-low-masked"
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
-	if !validIn || genericOut != wantOut || genericImm != wantImm || genericMask != NoMask {
+	if masked {
+		wantMask, validIn = OneMask, genericIn == OneKmaskIn
+	}
+	if !validIn || genericOut != wantOut || genericImm != wantImm || genericMask != wantMask {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q has unsupported shape: %s has in=%s out=%s imm=%s mask=%s", lowering, op.GenericName(), goALLCShapeName(genericIn), goALLCShapeName(genericOut), goALLCShapeName(genericImm), goALLCShapeName(genericMask)))
 	}
 	if len(genericOp.In) != wantArity {
@@ -206,6 +212,27 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	}
 	if len(genericOp.Out) != 1 {
 		panic(fmt.Errorf("simdgen: LLVM lowering %q for %s has %d outputs, want 1", lowering, op.GenericName(), len(genericOp.Out)))
+	}
+	if masked {
+		base, bits, lanes := goALLCPrimaryLane(genericOp)
+		outBase, outBits, outLanes, ok := goALLCLaneFromGoType(genericOp.Out[0].Go)
+		if !ok || outBase != base || outBits != bits ||
+			(lowering != "broadcast-low-masked" && outLanes != lanes) ||
+			(lowering == "broadcast-low-masked" && (bits*lanes != 128 || outLanes < lanes)) {
+			panic(fmt.Errorf("simdgen: incompatible LLVM masked output for %s", op.GenericName()))
+		}
+		for _, in := range genericOp.In {
+			if in.Class == "mask" {
+				// Upstream broadcast masks follow the source width, including
+				// widening broadcasts. Keep those semantics until upstream changes.
+				if in.Go == nil || *in.Go != fmt.Sprintf("Mask%dx%d", bits, lanes) {
+					panic(fmt.Errorf("simdgen: incompatible LLVM mask for %s", op.GenericName()))
+				}
+			} else if b, e, n, ok := goALLCLaneFromGoType(in.Go); !ok || b != base || e != bits || n != lanes {
+				panic(fmt.Errorf("simdgen: incompatible LLVM masked input for %s", op.GenericName()))
+			}
+		}
+		return
 	}
 	if (lowering == "extract-element" || lowering == "insert-element") &&
 		(genericOp.In[0].Class != "vreg" || genericOp.In[0].TreatLikeAScalarOfSize != nil) {
@@ -386,12 +413,6 @@ func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut
 	if op.LLVMLowering == nil {
 		return sgutil.SIMDOpData{}
 	}
-	// The broadcast recipe routes all output lanes. Masked variants remain
-	// in the separately audited mask plan until inactive-lane semantics are
-	// implemented; the generic-op coverage check still requires that plan.
-	if *op.LLVMLowering == "broadcast-low" && genericMask != NoMask {
-		return sgutil.SIMDOpData{}
-	}
 	arch := CurrentArch().Arch
 	base, elemBits, _ := goALLCPrimaryLane(genericOp)
 	if *op.LLVMLowering == "permute" || *op.LLVMLowering == "concat-permute" {
@@ -411,6 +432,9 @@ func goALLCSIMDDescriptor(op, genericOp Operation, genericIn inShape, genericOut
 				OperandOrder: operandOrder,
 			},
 		},
+	}
+	if d.Lowering == "broadcast-low" && genericMask != NoMask {
+		d.Lowering = "broadcast-low-masked"
 	}
 	validateGoALLCLowering(op, genericOp, d.Lowering, genericIn, genericOut, genericMask, genericImm)
 	if goALLCConversionLowering(d.Lowering) {

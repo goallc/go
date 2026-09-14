@@ -315,6 +315,9 @@ func llvmCPURequirement(v *Value, arch string) (string, llvmCPURequirementKind) 
 		return info.archInfo(arch).cpuProfile, llvmCPUGenerated
 	}
 	if arch == "amd64" {
+		if helper, ok := llvmSIMDHelperInfo(v); ok {
+			return helper.profile, llvmCPUGenerated
+		}
 		if aux := llvmCallAux(v); aux != nil {
 			return llvmWideVectorCPUProfile(llvmWideVectorCallWidth(aux)), llvmCPUWideCall
 		}
@@ -483,11 +486,11 @@ func (lfc *LLVMFuncContext) requireCPUFeature(v *Value, instruction llvm.Value) 
 	}
 }
 
-// A generated operation may fold to a constant, argument, or a producer
+// A SIMD operation may fold to a constant, argument, or a producer
 // outside its source guard. Anchor the preplanned requirement at the source
 // position instead of attaching it to that result. The early FMV pass keeps
 // the anchor through specialization and removes it after checking legality.
-func (lfc *LLVMFuncContext) requireGeneratedSIMDCPUFeature(v *Value) {
+func (lfc *LLVMFuncContext) requireSIMDCPUFeature(v *Value) {
 	if lfc.CPUFeatures.requirements[v.ID] == "" {
 		return
 	}

@@ -416,6 +416,7 @@
 # For AVX512
 - go: blend
   asm: VPBLENDM[BWDQ]
+  llvmLowering: blend-masked
   zeroing: false
   in:
   - &v

@@ -1953,15 +1953,15 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 	laneBits := int(info.laneBits)
 	isFloat := info.lane == goALLCSIMDLaneFloat
 	finish := func(result llvm.Value) (llvm.Value, bool) {
-		lfc.requireGeneratedSIMDCPUFeature(v)
+		lfc.requireSIMDCPUFeature(v)
 		return result, true
 	}
 
 	switch info.lowering {
+	case goALLCSIMDLowerCompress, goALLCSIMDLowerExpand, goALLCSIMDLowerBlendMasked, goALLCSIMDLowerBlendBytes, goALLCSIMDLowerBroadcastLowMasked:
+		return finish(lfc.simdMasked(v, info, laneType, lanes))
 	case goALLCSIMDLowerBitSelect, goALLCSIMDLowerBitSelectNot:
 		return finish(lfc.simdBitSelect(v, info.lowering == goALLCSIMDLowerBitSelectNot))
-	case goALLCSIMDLowerBlendBytes:
-		return finish(lfc.simdBlendBytes(v, lanes))
 	case goALLCSIMDLowerTernary:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		z := lfc.simdValueAs(v, v.Args[2], x.Type(), ".z")
@@ -2416,18 +2416,6 @@ func (lfc *LLVMFuncContext) simdBitSelect(v *Value, invertMask bool) llvm.Value 
 	xBits := lfc.b.CreateAnd(x, mask, v.String()+".selected")
 	yBits := lfc.b.CreateAnd(y, lfc.b.CreateNot(mask, v.String()+".notmask"), v.String()+".fallback")
 	return lfc.b.CreateOr(xBits, yBits, v.String())
-}
-
-func (lfc *LLVMFuncContext) simdBlendBytes(v *Value, lanes int) llvm.Value {
-	carrier := llvm.VectorType(GlobalCtxt.Int8Type(), lanes)
-	x := lfc.simdValueAs(v, v.Args[0], carrier, ".x")
-	y := lfc.simdValueAs(v, v.Args[1], carrier, ".y")
-	mask := lfc.simdValueAs(v, v.Args[2], carrier, ".mask")
-	// VPBLENDVB selects y when the high bit of the corresponding mask byte is
-	// set. Go SIMD masks are canonical zero/all-ones bytes, but retaining the
-	// sign-bit rule here also preserves the exact private intrinsic semantics.
-	condition := lfc.b.CreateICmp(llvm.IntSLT, mask, llvm.ConstNull(carrier), v.String()+".condition")
-	return lfc.simdLaneResult(v, lfc.b.CreateSelect(condition, y, x, v.String()))
 }
 
 // Split the constant truth table on successive input bits. Each cofactor
@@ -3679,6 +3667,12 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 	if generated, ok := lfc.lowerGeneratedSIMD(v); ok {
 		lfc.Vs[v.ID] = generated
 		return generated
+	}
+	if helper, ok := llvmSIMDHelperInfo(v); ok && lfc.F.Config.arch == "amd64" {
+		result := lfc.lowerSIMDHelper(v, helper)
+		lfc.requireSIMDCPUFeature(v)
+		lfc.Vs[v.ID] = result
+		return result
 	}
 	switch v.Op {
 	case OpInitMem, OpSB, OpWBend:

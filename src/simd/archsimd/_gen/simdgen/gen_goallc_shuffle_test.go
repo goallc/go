@@ -51,14 +51,3 @@ func TestGoALLCStaticShuffleShape(t *testing.T) {
 		})
 	}
 }
-
-func TestGoALLCMaskedBroadcastRemainsPlanned(t *testing.T) {
-	lowering := "broadcast-low"
-	op := Operation{LLVMLowering: &lowering}
-	if got := goALLCSIMDDescriptor(op, op, OneKmaskIn, OneVregOut, OneMask, NoImm); !got.IsZero() {
-		t.Fatal("unmasked broadcast recipe must not claim masked semantics")
-	}
-	if plan, ok := goALLCSIMDPlanForGenericOp("broadcast1To4MaskedInt32x4"); !ok || plan != goALLCSIMDPlanMask {
-		t.Fatal("masked broadcast must remain in the reviewed mask plan")
-	}
-}

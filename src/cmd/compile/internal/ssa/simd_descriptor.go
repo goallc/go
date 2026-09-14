@@ -46,6 +46,10 @@ const (
 	goALLCSIMDLowerBitSelect
 	goALLCSIMDLowerBitSelectNot
 	goALLCSIMDLowerBlendBytes
+	goALLCSIMDLowerBlendMasked
+	goALLCSIMDLowerCompress
+	goALLCSIMDLowerExpand
+	goALLCSIMDLowerBroadcastLowMasked
 	goALLCSIMDLowerTernary
 	goALLCSIMDLowerOnesCount
 	goALLCSIMDLowerLeadingZeros

@@ -2356,7 +2356,13 @@ func simdCvtVToMask(elemBits, lanes int) func(s *state, n *ir.CallExpr, args []*
 		if op == 0 {
 			panic(fmt.Sprintf("Unknown mask shape: Mask%dx%d", elemBits, lanes))
 		}
-		return s.newValue1(op, types.TypeMask, args[0])
+		t := types.TypeMask
+		if base.Flag.EnableLLVM {
+			// Native lowering replaces this temporary mask-register type with
+			// a vector. LLVM consumes generic SSA, so retain the Go result type.
+			t = n.Type()
+		}
+		return s.newValue1(op, t, args[0])
 	}
 }
 

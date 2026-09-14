@@ -83,6 +83,7 @@
     // where xy is the concatenation of x (lower half) and y (upper half).
     // Only the needed bits to represent xy's index are used in indices' elements.
 - go: Compress
+  llvmLowering: compress
   commutative: false
   documentation: !string |-
     // NAME packs the masked elements of x into the lower indexed elements of z,
@@ -107,6 +108,7 @@
   noTypes: "true"
   noGenericOps: "true"
 - go: Expand
+  llvmLowering: expand
   commutative: false
   documentation: !string |-
     // NAME expands the lower elements of x into the masked elements of z.
