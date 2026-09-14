@@ -82,13 +82,27 @@ func llvmStackArgumentMemoryHome(x llvmArgumentStringArray) int {
 	return len(x[0]) + len(x[1])
 }
 
+// LLVM-LABEL: define goabiinternal i64 @codegen.llvmForwardInterfaceStackArgumentMemory(
+// LLVM-NOT: load [2 x { ptr, i64 }]
+// LLVM: call goabiinternal i64 %
+// LLVM-NOT: load [2 x { ptr, i64 }]
+// LLVM: ret i64
+//
+// LLVM-LABEL: define goabiinternal i64 @codegen.llvmForwardIndirectStackArgumentMemory(
+// LLVM-NOT: load [2 x { ptr, i64 }]
+// LLVM: call goabiinternal i64 %
+// LLVM-NOT: load [2 x { ptr, i64 }]
+// LLVM: ret i64
+//
 // A stack-assigned value that already resides in memory is the byval source
 // directly. The frontend must not load the complete aggregate and materialize
 // a second temporary object before the call.
 //
 // LLVM-LABEL: define goabiinternal i64 @codegen.llvmForwardStackArgumentMemory(ptr byval([2 x { ptr, i64 }]) align 8 %x)
 // LLVM-NOT: alloca
+// LLVM-NOT: load [2 x { ptr, i64 }]
 // LLVM: call goabiinternal i64 @codegen.llvmStackArgumentMemoryHome(ptr byval([2 x { ptr, i64 }]) align 8 %x)
+// LLVM-NOT: load [2 x { ptr, i64 }]
 // LLVM: ret i64
 //
 // LLVM-OPT-LABEL: define goabiinternal i64 @codegen.llvmForwardStackArgumentMemory(ptr{{.*}}byval([2 x { ptr, i64 }]) align 8{{.*}} %x)
@@ -99,6 +113,20 @@ func llvmStackArgumentMemoryHome(x llvmArgumentStringArray) int {
 //go:noinline
 func llvmForwardStackArgumentMemory(x llvmArgumentStringArray) int {
 	return llvmStackArgumentMemoryHome(x)
+}
+
+//go:noinline
+func llvmForwardIndirectStackArgumentMemory(fn func(llvmArgumentStringArray) int, x llvmArgumentStringArray) int {
+	return fn(x)
+}
+
+type llvmArgumentArrayReader interface {
+	Read(llvmArgumentStringArray) int
+}
+
+//go:noinline
+func llvmForwardInterfaceStackArgumentMemory(reader llvmArgumentArrayReader, x llvmArgumentStringArray) int {
+	return reader.Read(x)
 }
 
 // A register-assigned parameter that Go SSA can use directly remains an LLVM

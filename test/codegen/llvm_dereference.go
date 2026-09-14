@@ -19,6 +19,7 @@ type llvmDereferenceLargeResult struct {
 // LLVM-SAME: i64 %seed, ptr goret(%codegen.llvmDereferenceLargeResult) align 8 "goretindex"="0" [[LARGE_RESULT:%[^)]+]])
 // LLVM: call goabiinternal void @codegen.llvmFillNamedLargeStackResult(ptr [[LARGE_RESULT]], i64 %seed)
 // LLVM-NOT: memmove
+// LLVM-NOT: load %codegen.llvmDereferenceLargeResult
 // LLVM: ret void
 //
 // LLVM-LABEL: define goabiinternal %codegen.llvmDereferenceAddressedResult @codegen.llvmNamedStackResult(
