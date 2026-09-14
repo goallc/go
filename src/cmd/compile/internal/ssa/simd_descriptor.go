@@ -50,6 +50,9 @@ const (
 	goALLCSIMDLowerCarrylessMulWidenLow
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerMulAddInteger
+	goALLCSIMDLowerFMA
+	goALLCSIMDLowerFMAAddEven
+	goALLCSIMDLowerFMAAddOdd
 	goALLCSIMDLowerExtendInteger
 	goALLCSIMDLowerTruncateInteger
 	goALLCSIMDLowerSaturateInteger

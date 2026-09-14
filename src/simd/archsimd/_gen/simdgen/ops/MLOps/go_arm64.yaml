@@ -19,6 +19,7 @@
 # VFMLA: Vd = Vn*Vm + Vd
 - go: MulAdd
   asm: "VFMLA"
+  llvmLowering: fma
   specialLower: !string "earlymatch (%g x y z) => (VFMLA%a z x y)"
   documentation: !string |-
     // NAME performs a fused (x * y) + z.
