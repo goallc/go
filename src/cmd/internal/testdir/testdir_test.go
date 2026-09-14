@@ -841,6 +841,14 @@ func (t test) run() error {
 		if action == "run" || action == "runoutput" {
 			flags = appendBuildFlag(flags, "ldflags", "", "-w")
 		}
+		if slices.Contains(flags, "-race") {
+			// The ordinary runtime warm-up does not populate the race build
+			// cache. Separate go commands can compile the same missing race
+			// dependencies concurrently, so let subsequent race recipes reuse
+			// the first recipe's cached packages.
+			t.llvm.raceMu.Lock()
+			defer t.llvm.raceMu.Unlock()
+		}
 	}
 	if action == "errorcheck" {
 		found := false

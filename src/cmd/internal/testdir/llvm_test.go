@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -35,6 +36,7 @@ type llvmTestPolicy struct {
 }
 
 type llvmTestMode struct {
+	raceMu            sync.Mutex
 	platform          string
 	policy            llvmTestPolicy
 	effective         llvmTestPolicy
