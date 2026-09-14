@@ -43,6 +43,7 @@ type LLVMFuncContext struct {
 	F                   *Func
 	LF                  llvm.Value
 	DISubprogram        llvm.Metadata
+	DebugLocations      map[src.XPos]llvm.Metadata
 	Prologue            llvm.BasicBlock
 	OpenDeferRecovery   llvm.BasicBlock
 	ClosureContext      llvm.Value
