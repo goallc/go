@@ -1,6 +1,7 @@
 !sum
 - go: DotProductPairs
   asm: VPMADDWD
+  llvmLowering: dot-pairs
   in:
   - &int
     go: $t
@@ -12,6 +13,7 @@
     base: int
 - go: DotProductPairsSaturated
   asm: VPMADDUBSW
+  llvmLowering: dot-pairs-us-sat
   in:
   - &uint
     go: $t
@@ -83,6 +85,7 @@
   - *fma_op
 - go: SumOf8AbsDiff
   asm: "VPSADBW"
+  llvmLowering: sum-8-abs-diff
   in:
   - go: $t
     base: uint

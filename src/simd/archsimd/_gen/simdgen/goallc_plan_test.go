@@ -20,7 +20,7 @@ func TestGoALLCSIMDPlanLookup(t *testing.T) {
 		want goALLCSIMDPlan
 		ok   bool
 	}{
-		{"DotProductPairsInt16x8", goALLCSIMDPlanCompose, true},
+		{"ternInt32x4", goALLCSIMDPlanCompose, true},
 		// Implemented conversions are no longer classified as pending.
 		{"ConvertToInt32Float32x4", goALLCSIMDPlanInvalid, false},
 		{"PermuteUint8x16", goALLCSIMDPlanInvalid, false},
