@@ -24,6 +24,7 @@ const (
 	GoALLCCPUFeatureAESForTest             = goallcCPUFeatureAES
 	GoALLCCPUFeaturePCLMULQDQForTest       = goallcCPUFeaturePCLMULQDQ
 	GoALLCCPUFeatureVAESForTest            = goallcCPUFeatureVAES
+	GoALLCCPUFeatureAVX512VAESForTest      = goallcCPUFeatureAVX512VAES
 
 	GoALLCCPUFeatureVPCLMULQDQForTest       = goallcCPUFeatureVPCLMULQDQ
 	GoALLCCPUFeatureAVX512VPCLMULQDQForTest = goallcCPUFeatureAVX512VPCLMULQDQ

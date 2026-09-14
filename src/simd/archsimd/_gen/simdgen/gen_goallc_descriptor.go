@@ -111,6 +111,8 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"aes-encrypt": 2, "aes-encrypt-last": 2, "aes-decrypt": 2, "aes-decrypt-last": 2,
+	"aes-keygen": 1, "aes-inverse-mix": 1,
 	"rotate-left": 2, "rotate-right": 2,
 	"funnel-left": 3, "funnel-right": 3,
 	"funnel-all-left": 2, "funnel-all-right": 2,
@@ -180,7 +182,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	switch lowering {
 	case "extract-element":
 		wantOut, wantImm = OneGregOut, VarImm
-	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul":
+	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul", "aes-keygen":
 		wantImm = VarImm
 	}
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)
@@ -256,13 +258,18 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 			base, elemBits, lanes, ok = *in.Base, *in.ElemBits, *in.Lanes, true
 		}
 		inputBase := wantBase
+		inputElemBits, inputLanes := wantElemBits, wantLanes
+		if strings.HasPrefix(lowering, "aes-") && i == 1 {
+			// AES rounds accept byte states and uint32 round-key words.
+			inputElemBits, inputLanes = 32, width/32
+		}
 		if lowering == "dot-pairs-us-sat" && i == 1 {
 			inputBase = "int"
 		}
 		if (lowering == "funnel-left" || lowering == "funnel-right") && i == 2 {
 			inputBase = "uint"
 		}
-		if in.Class != "vreg" || in.Bits == nil || *in.Bits != width || !ok || base != inputBase || elemBits != wantElemBits || lanes != wantLanes {
+		if in.Class != "vreg" || in.Bits == nil || *in.Bits != width || !ok || base != inputBase || elemBits != inputElemBits || lanes != inputLanes {
 			panic(fmt.Errorf("simdgen: LLVM lowering %q has heterogeneous input shape for %s", lowering, op.GenericName()))
 		}
 	}

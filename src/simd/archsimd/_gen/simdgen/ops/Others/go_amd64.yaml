@@ -7,6 +7,7 @@
   out:
   - *any
 - go: AESEncryptOneRound
+  llvmLowering: aes-encrypt
   asm: VAESENC
   in:
   - &uint8s
@@ -18,6 +19,7 @@
   out:
   - *uint8s
 - go: AESEncryptLastRound
+  llvmLowering: aes-encrypt-last
   asm: VAESENCLAST
   in:
   - *uint8s
@@ -25,6 +27,7 @@
   out:
   - *uint8s
 - go: AESRoundKeyGenAssist
+  llvmLowering: aes-keygen
   asm: VAESKEYGENASSIST
   in:
   - *uint32s
@@ -34,6 +37,7 @@
   out:
   - *uint32s
 - go: AESDecryptOneRound
+  llvmLowering: aes-decrypt
   asm: VAESDEC
   in:
   - *uint8s
@@ -41,6 +45,7 @@
   out:
   - *uint8s
 - go: AESDecryptLastRound
+  llvmLowering: aes-decrypt-last
   asm: VAESDECLAST
   in:
   - *uint8s
@@ -48,6 +53,7 @@
   out:
   - *uint8s
 - go: AESInvMixColumns
+  llvmLowering: aes-inverse-mix
   asm: VAESIMC
   in:
   - *uint32s
