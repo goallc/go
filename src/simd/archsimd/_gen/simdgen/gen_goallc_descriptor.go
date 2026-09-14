@@ -111,6 +111,7 @@ func goALLCPrimaryLane(op Operation) (base string, elemBits, lanes int) {
 }
 
 var goALLCLoweringArity = map[string]int{
+	"scale":       2,
 	"sha1-rounds": 2, "sha1-next-e": 2, "sha1-message1": 2, "sha1-message2": 2,
 	"sha256-rounds": 3, "sha256-message1": 2, "sha256-message2": 2,
 	"gf-mul": 2, "gf-affine": 2, "gf-affine-inverse": 2,

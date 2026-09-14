@@ -93,7 +93,7 @@ var goALLCSIMDPlannedFamilies = map[goALLCSIMDPlan][]string{
 	goALLCSIMDPlanTargetIntrinsic: {
 		"CeilScaled", "CeilScaledResidue", "FloorScaled",
 		"FloorScaledResidue", "Reciprocal",
-		"ReciprocalSqrt", "RoundScaled", "RoundScaledResidue", "Scale", "TruncScaled",
+		"ReciprocalSqrt", "RoundScaled", "RoundScaledResidue", "TruncScaled",
 		"TruncScaledResidue",
 	},
 }

@@ -22,6 +22,7 @@
   in: *1fp
   out: *1fp
 - go: Scale
+  llvmLowering: scale
   asm: "VSCALEFP[SD]"
   in: *2fp
   out: *1fp

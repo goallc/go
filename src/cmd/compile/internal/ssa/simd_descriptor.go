@@ -28,6 +28,7 @@ const (
 	goALLCSIMDLowerNeg
 	goALLCSIMDLowerAbs
 	goALLCSIMDLowerSqrt
+	goALLCSIMDLowerScale
 	goALLCSIMDLowerRoundEven
 	goALLCSIMDLowerFloor
 	goALLCSIMDLowerCeil
