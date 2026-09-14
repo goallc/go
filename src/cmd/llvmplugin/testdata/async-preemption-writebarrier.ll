@@ -101,3 +101,38 @@ attributes #1 = { "gc-leaf-function" }
 ; OBJVIEW: "start": 0
 ; OBJVIEW-NEXT: "end": [[#FALLBACK_SIZE]]
 ; OBJVIEW-NEXT: "value": -2
+
+; The condition depends on the flag through a cyclic PHI. Reachability must
+; converge and preserve the safe tail rather than falling back to marking the
+; entire function unsafe.
+define goabiinternal i64 @cyclic_write_barrier(ptr %dst, ptr %value, i1 %again) #0 gc "goallc" {
+entry:
+  br label %loop
+loop:
+  %previous = phi i32 [ 0, %entry ], [ %flag, %latch ]
+  %flag = load i32, ptr @"runtime.writeBarrier<builtin.1>", align 4
+  %combined = or i32 %previous, %flag
+  %enabled = icmp ne i32 %combined, 0
+  br i1 %enabled, label %slow, label %join
+slow:
+  %old = load ptr, ptr %dst, align 8
+  %buf = call ptr @llvm.go.gc.write.barrier(i32 2)
+  store ptr %value, ptr %buf, align 8
+  %next = getelementptr i8, ptr %buf, i64 8
+  store ptr %old, ptr %next, align 8
+  br label %join
+join:
+  store ptr %value, ptr %dst, align 8
+  br i1 %again, label %latch, label %tail
+latch:
+  br label %loop
+tail:
+  %result = load atomic i64, ptr @counter monotonic, align 8
+  ret i64 %result
+}
+
+; OBJVIEW-LABEL: "name": "cyclic_write_barrier"
+; OBJVIEW: "kind": "unsafe_point"
+; OBJVIEW: "value": -2
+; OBJVIEW-NOT: "kind":
+; OBJVIEW: "value": -1

@@ -56,25 +56,6 @@ bool isWriteBarrierFlagLoad(const Instruction &I) {
   return Load && isWriteBarrierFlag(Load->getPointerOperand());
 }
 
-bool dependsOnWriteBarrierFlag(const Value *V,
-                               SmallPtrSetImpl<const Value *> &Visited) {
-  if (!V || !Visited.insert(V).second)
-    return false;
-  if (const auto *I = dyn_cast<Instruction>(V)) {
-    if (isWriteBarrierFlagLoad(*I))
-      return true;
-  } else if (!isa<ConstantExpr>(V)) {
-    return false;
-  }
-  const auto *UserValue = dyn_cast<User>(V);
-  if (!UserValue)
-    return false;
-  for (const Use &Operand : UserValue->operands())
-    if (dependsOnWriteBarrierFlag(Operand.get(), Visited))
-      return true;
-  return false;
-}
-
 bool isWriteBarrierOperation(const CallBase &Call) {
   if (const auto *II = dyn_cast<IntrinsicInst>(&Call))
     if (II->getIntrinsicID() == Intrinsic::go_gc_write_barrier)
@@ -101,18 +82,37 @@ struct WriteBarrierRegions {
 bool collectWriteBarrierRegions(const Function &F, WriteBarrierRegions &Out) {
   SmallVector<const CondBrInst *, 8> Checks;
   SmallVector<const CallBase *, 8> Operations;
+  SmallPtrSet<const Value *, 32> FlagDependent;
+  SmallVector<const Value *, 16> Worklist;
   for (const BasicBlock &BB : F) {
     for (const Instruction &I : BB) {
-      if (const auto *Branch = dyn_cast<CondBrInst>(&I)) {
-        SmallPtrSet<const Value *, 16> Visited;
-        if (dependsOnWriteBarrierFlag(Branch->getCondition(), Visited))
-          Checks.push_back(Branch);
+      if (isWriteBarrierFlagLoad(I)) {
+        FlagDependent.insert(&I);
+        Worklist.push_back(&I);
       }
       if (const auto *Call = dyn_cast<CallBase>(&I);
           Call && isWriteBarrierOperation(*Call))
         Operations.push_back(Call);
     }
   }
+
+  // Compute the same operand-graph reachability once, in the reverse
+  // direction. Shared conditions and cyclic PHIs no longer repeat a DFS for
+  // every branch. Only instructions and constant expressions participate,
+  // matching the original dependency walk.
+  while (!Worklist.empty()) {
+    const Value *V = Worklist.pop_back_val();
+    for (const User *U : V->users()) {
+      if (!isa<Instruction, ConstantExpr>(U) ||
+          !FlagDependent.insert(U).second)
+        continue;
+      Worklist.push_back(U);
+    }
+  }
+  for (const BasicBlock &BB : F)
+    if (const auto *Branch = dyn_cast<CondBrInst>(BB.getTerminator()))
+      if (FlagDependent.contains(Branch->getCondition()))
+        Checks.push_back(Branch);
 
   if (Checks.empty() && Operations.empty())
     return true;

@@ -3143,24 +3143,44 @@ Error computePointerAllocaActivity(
           std::errc::not_supported,
           "GoALLC cannot determine pointer alloca live-out activity");
 
+    // The transfer only generates or kills individual pointer-slot bits.
+    // Evaluating the existing transfer on empty and full live-out sets gives
+    // T(LiveOut) = Gen | (LiveOut & Through). Reuse these summaries instead
+    // of scanning every instruction on each fixed-point iteration.
+    struct BlockTransfer {
+      SmallBitVector Gen;
+      SmallBitVector Through;
+    };
+    DenseMap<const BasicBlock *, BlockTransfer> Transfers;
     DenseMap<const BasicBlock *, SmallBitVector> LiveIn;
-    bool Changed;
-    do {
-      Changed = false;
-      for (BasicBlock &BB : llvm::reverse(F)) {
-        SmallBitVector LiveOut(Record.Layout.Leaves.size());
-        for (BasicBlock *Succ : successors(&BB))
-          if (auto It = LiveIn.find(Succ); It != LiveIn.end())
-            LiveOut |= It->second;
-        SmallBitVector NewLiveIn =
-            pointerAllocaLiveInBlock(Record, BB, std::move(LiveOut));
-        auto It = LiveIn.find(&BB);
-        if (It == LiveIn.end() || NewLiveIn != It->second) {
-          LiveIn[&BB] = NewLiveIn;
-          Changed = true;
-        }
+    SmallSetVector<const BasicBlock *, 32> Worklist;
+    const size_t SlotCount = Record.Layout.Leaves.size();
+    Transfers.reserve(F.size());
+    LiveIn.reserve(F.size());
+    for (BasicBlock &BB : F) {
+      Transfers[&BB] = {
+          pointerAllocaLiveInBlock(Record, BB, SmallBitVector(SlotCount)),
+          pointerAllocaLiveInBlock(Record, BB, SmallBitVector(SlotCount, true))};
+      LiveIn[&BB] = SmallBitVector(SlotCount);
+      // Seed every block, including unreachable components. Popping from the
+      // back starts in the same reverse block order as the original solver.
+      Worklist.insert(&BB);
+    }
+    while (!Worklist.empty()) {
+      const BasicBlock *BB = Worklist.pop_back_val();
+      SmallBitVector NewLiveIn(SlotCount);
+      for (const BasicBlock *Succ : successors(BB))
+        NewLiveIn |= LiveIn.find(Succ)->second;
+      const BlockTransfer &Transfer = Transfers.find(BB)->second;
+      NewLiveIn &= Transfer.Through;
+      NewLiveIn |= Transfer.Gen;
+      SmallBitVector &OldLiveIn = LiveIn.find(BB)->second;
+      if (NewLiveIn != OldLiveIn) {
+        OldLiveIn = std::move(NewLiveIn);
+        for (const BasicBlock *Pred : predecessors(BB))
+          Worklist.insert(Pred);
       }
-    } while (Changed);
+    }
 
     for (BasicBlock &BB : F) {
       SmallBitVector Live(Record.Layout.Leaves.size());
