@@ -53,6 +53,15 @@ const (
 	goALLCSIMDLowerFMA
 	goALLCSIMDLowerFMAAddEven
 	goALLCSIMDLowerFMAAddOdd
+	goALLCSIMDLowerPairAdd
+	goALLCSIMDLowerPairSub
+	goALLCSIMDLowerPairAdd128
+	goALLCSIMDLowerPairSub128
+	goALLCSIMDLowerPairSAddSat
+	goALLCSIMDLowerPairSSubSat
+	goALLCSIMDLowerPairSAddSat128
+	goALLCSIMDLowerPairSSubSat128
+	goALLCSIMDLowerAddOddSubEven
 	goALLCSIMDLowerExtendInteger
 	goALLCSIMDLowerTruncateInteger
 	goALLCSIMDLowerSaturateInteger
