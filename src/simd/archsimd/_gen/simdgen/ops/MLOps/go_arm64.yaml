@@ -3,6 +3,7 @@
 # VMLA: Vd = Vn*Vm + Vd
 - go: MulAdd
   asm: "VMLA"
+  llvmLowering: mul-add-integer
   specialLower: !string "earlymatch (%g x y z) => (VMLA%a z x y)"
   documentation: !string |-
     // NAME computes (x * y) + z.
