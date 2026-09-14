@@ -48,6 +48,7 @@ const (
 	goALLCSIMDLowerMulWidenEven
 	goALLCSIMDLowerMulWidenLow
 	goALLCSIMDLowerCarrylessMulWidenLow
+	goALLCSIMDLowerCarrylessMul
 	goALLCSIMDLowerMulSign
 	goALLCSIMDLowerMulAddInteger
 	goALLCSIMDLowerFMA

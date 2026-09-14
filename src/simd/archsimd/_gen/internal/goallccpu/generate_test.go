@@ -34,7 +34,7 @@ func TestRuntimeBitABI(t *testing.T) {
 }
 
 func TestPredicateAndCapabilities(t *testing.T) {
-	r, err := resolve(features)
+	r, err := resolve(features, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

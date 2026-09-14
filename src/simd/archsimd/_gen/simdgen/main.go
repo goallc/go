@@ -139,6 +139,12 @@ const simdPackage = "simd/archsimd"
 
 func main() {
 	flag.Parse()
+	if *flagO == "goallccpu" {
+		if err := generateGoALLCCPUProfiles(*flagGoDefRoot); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	if *flagCPUProfile != "" {
 		f, err := os.Create(*flagCPUProfile)

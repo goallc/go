@@ -144,6 +144,7 @@ var goALLCLoweringArity = map[string]int{
 	"mul-high": 2, "mul-sign": 2,
 	"mul-widen-even": 2, "mul-widen-low": 2,
 	"carryless-mul-widen-low": 2,
+	"carryless-mul":           2,
 	"extend-integer":          1, "truncate-integer": 1,
 	"saturate-integer": 1, "saturate-integer-pack128": 2,
 	"convert-float":       1,
@@ -179,7 +180,7 @@ func validateGoALLCLowering(op, genericOp Operation, lowering string, genericIn 
 	switch lowering {
 	case "extract-element":
 		wantOut, wantImm = OneGregOut, VarImm
-	case "insert-element", "funnel-all-left", "funnel-all-right":
+	case "insert-element", "funnel-all-left", "funnel-all-right", "carryless-mul":
 		wantImm = VarImm
 	}
 	validIn := genericIn == PureVregIn || (lowering == "lookup-or-zero" && genericIn == VlistIn)

@@ -2065,16 +2065,23 @@ func TestLLVMX86CPUFeatureGuard(t *testing.T) {
 }
 
 func TestLLVMSIMDFeatureFloor(t *testing.T) {
+	v128 := llvmTestSIMDType("floor128", types.Types[types.TINT8], 16)
+	v256 := llvmTestSIMDType("floor256", types.Types[types.TINT8], 32)
+	v512 := llvmTestSIMDType("floor512", types.Types[types.TINT8], 64)
 	for _, test := range []struct {
-		name     string
-		arch     string
-		features CPUfeatures
-		funcName string
-		want     string
+		name          string
+		arch          string
+		features      CPUfeatures
+		funcName      string
+		want          string
+		param, result *types.Type
 	}{
-		{name: "amd64-avx", arch: "amd64", features: CPUavx, want: goCPUProfileX86AVX},
-		{name: "amd64-avx2", arch: "amd64", features: CPUavx | CPUavx2, want: goCPUProfileX86AVX2},
-		{name: "amd64-avx512", arch: "amd64", features: CPUavx | CPUavx2 | CPUavx512, want: goCPUProfileX86AVX512},
+		{name: "local-avx", arch: "amd64", features: CPUavx},
+		{name: "local-avx512", arch: "amd64", features: CPUavx | CPUavx2 | CPUavx512},
+		{name: "param128", arch: "amd64", param: v128, want: goCPUProfileX86AVX},
+		{name: "param256-local512", arch: "amd64", param: v256, features: CPUavx | CPUavx512, want: goCPUProfileX86AVX},
+		{name: "result512", arch: "amd64", result: v512, want: goCPUProfileX86AVX512},
+		{name: "pointer512", arch: "amd64", param: types.NewPtr(v512)},
 		{name: "amd64-midway-128", arch: "amd64", funcName: "simd.Int8s.Add@simd128", want: goCPUProfileX86AVX},
 		{name: "amd64-midway-256", arch: "amd64", features: CPUavx, funcName: "simd.Int8s.Add@simd256", want: goCPUProfileX86AVX2},
 		{name: "amd64-midway-512", arch: "amd64", features: CPUavx, funcName: "simd.Int8s.Add@simd512", want: goCPUProfileX86AVX512},
@@ -2087,6 +2094,14 @@ func TestLLVMSIMDFeatureFloor(t *testing.T) {
 				Entry:  &Block{CPUfeatures: test.features},
 				Name:   test.funcName,
 			}
+			var params, results []*types.Field
+			if test.param != nil {
+				params = append(params, types.NewField(src.NoXPos, nil, test.param))
+			}
+			if test.result != nil {
+				results = append(results, types.NewField(src.NoXPos, nil, test.result))
+			}
+			f.Type = types.NewSignature(nil, params, results)
 			if test.funcName != "" {
 				f.OwnAux = &AuxCall{Fn: &obj.LSym{Name: test.funcName}}
 			}

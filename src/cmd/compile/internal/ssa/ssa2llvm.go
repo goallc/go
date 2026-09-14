@@ -2180,6 +2180,11 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		sig := llvm.FunctionType(llvm.VectorType(GlobalCtxt.Int8Type(), 16), []llvm.Type{laneType, laneType}, false)
 		fn := getOrInsertLLVMIntrinsic("llvm.aarch64.neon.pmull64", sig)
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(sig, fn, []llvm.Value{x, y}, v.String()+".product")))
+	case goALLCSIMDLowerCarrylessMul:
+		x, y := lfc.simdLaneOperands(v, laneType, lanes)
+		imm := llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(v.AuxInt), false)
+		fn := getLLVMIntrinsicDeclaration("llvm.x86.pclmulqdq")
+		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{x, y, imm}, v.String()+".product")))
 	case goALLCSIMDLowerMulAddInteger:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
 		z := lfc.simdValueAs(v, v.Args[2], x.Type(), ".z")

@@ -43,6 +43,9 @@ var features = []feature{
 	{Name: "AVX512VBMI", Bit: 13, Arch: "amd64", Field: "HasAVX512VBMI", Provides: []string{"AVX512"}, LLVM: []string{"avx512vbmi"}},
 	{Name: "ARM64PMULL", Bit: 14, Arch: "arm64", Field: "HasPMULL", LLVM: []string{"aes"}},
 	{Name: "AVX512VBMI2", Bit: 15, Arch: "amd64", Field: "HasAVX512VBMI2", Provides: []string{"AVX512"}, LLVM: []string{"avx512vbmi2"}},
+	{Name: "AES", Bit: 16, Arch: "amd64", Field: "HasAES", LLVM: []string{"aes"}},
+	{Name: "PCLMULQDQ", Bit: 17, Arch: "amd64", Field: "HasPCLMULQDQ", LLVM: []string{"pclmul"}},
+	{Name: "VAES", Bit: 18, Arch: "amd64", Field: "HasVAES", Provides: []string{"AVX"}, LLVM: []string{"vaes"}},
 }
 
 // Preserve the existing FMV subset order, suffixes and target-feature order.
@@ -51,7 +54,7 @@ var features = []feature{
 // mapping; implementing a new lowering still requires its own ISA audit.
 var profiles = []profile{
 	{Name: "x86.sse41", Feature: "SSE41", RuntimeGuard: "runtime.x86HasSSE41"},
-	{Name: "x86.avx", Feature: "AVX", SIMDAliases: []string{"AVX", "AVXAES", "VAES"}},
+	{Name: "x86.avx", Feature: "AVX", SIMDAliases: []string{"AVX"}},
 	{Name: "x86.avx2", Feature: "AVX2", SIMDAliases: []string{"AVX2", "AVXVNNI"}},
 	{Name: "x86.avx512", Feature: "AVX512", SIMDAliases: []string{"AVX512", "AVX512F", "AVX512CD", "AVX512BW", "AVX512DQ", "AVX512VL", "AVX512GFNI", "AVX512VNNI", "AVX512VAES"}},
 	{Name: "x86.avx512bitalg", Feature: "AVX512BITALG", SIMDAliases: []string{"AVX512BITALG"}},
@@ -62,6 +65,13 @@ var profiles = []profile{
 	{Name: "x86.avx512vbmi", Feature: "AVX512VBMI", SIMDAliases: []string{"AVX512VBMI"}},
 	{Name: "arm64.pmull", Feature: "ARM64PMULL", SIMDAliases: []string{"PMULL"}},
 	{Name: "x86.avx512vbmi2", Feature: "AVX512VBMI2", SIMDAliases: []string{"AVX512VBMI2"}},
+	{Name: "x86.aes", Feature: "AES"},
+	{Name: "x86.pclmulqdq", Feature: "PCLMULQDQ"},
+	{Name: "x86.vaes", Feature: "VAES", SIMDAliases: []string{"VAES"}},
+	// Virtual features expand using the upstream definitions. They have no
+	// runtime bit or field; FMV specializes their constituent predicates.
+	{Name: "x86.avxaes", Feature: "AVXAES", SIMDAliases: []string{"AVXAES"}},
+	{Name: "x86.avxpclmulqdq", Feature: "AVXPCLMULQDQ", SIMDAliases: []string{"AVXPCLMULQDQ"}},
 }
 
 var unprofiledSIMDAliases = []string{"", "SHA"}

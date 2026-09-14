@@ -12,6 +12,7 @@ import (
 func TestGoALLCCPUProfileAliases(t *testing.T) {
 	for _, test := range []struct{ feature, want string }{
 		{"AVX", "x86.avx"}, {"AVX2", "x86.avx2"}, {"AVX512", "x86.avx512"},
+		{"AVXAES", "x86.avxaes"}, {"AVXPCLMULQDQ", "x86.avxpclmulqdq"}, {"VAES", "x86.vaes"},
 		{"AVX512VBMI", "x86.avx512vbmi"}, {"AVX512BITALG", "x86.avx512bitalg"},
 		{"AVX512VPOPCNTDQ", "x86.avx512vpopcntdq"}, {"FMA", "x86.fma"}, {"SHA", ""}, {"", ""},
 	} {
