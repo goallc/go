@@ -290,7 +290,7 @@ jobs:
           swapon --show
           df -h "$RUNNER_TEMP"
 
-      - name: Test SIMD packages with LLVM
+      - name: Test SIMD packages and direct standard library consumers with LLVM
         if: matrix.task == 'simd'
         shell: bash
         env:
@@ -301,9 +301,10 @@ jobs:
           GOFLAGS: -gcflags=all=-enablellvm
         run: |
           set -euo pipefail
-          ./bin/go test -p=1 -short -count=1 -v simd/...
+          # internal/runtime/maps directly uses archsimd for amd64 AES hashing.
+          ./bin/go test -p=1 -short -count=1 -v simd/... internal/runtime/maps
 
-      - name: Test SIMD standard library, runtime and upstream testdir with LLVM
+      - name: Test runtime with SIMD and LLVM
         if: matrix.task == 'simd'
         shell: bash
         env:
@@ -313,10 +314,30 @@ jobs:
           GOEXPERIMENT: simd
         run: |
           set -euo pipefail
-          # SIMD is used by runtime/maps, so indirect consumers span std.
-          # Reuse the complete policy instead of maintaining an import list.
+          # Reuse the runtime capability skips, but not the full stdlib suite.
+          # The final empty component excludes runtime/* packages.
           ./bin/go test -short cmd/internal/testdir \
-            -run '^TestLLVM$' -count=1 -timeout=100m -v
+            -run '^TestLLVM$/^stdlib$/^runtime$/^$' -count=1 -timeout=40m -v
+
+      - name: Test SIMD testdir cases with LLVM
+        if: matrix.task == 'simd'
+        shell: bash
+        env:
+          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
+          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
+          GOEXPERIMENT: simd
+        run: |
+          set -euo pipefail
+          ./bin/go test -short cmd/internal/testdir \
+            -run '^TestLLVM$/^testdir$/^(llvm_simd.*\.go|simd)$' \
+            -count=1 -timeout=30m -v
+          ./bin/go test -short cmd/internal/testdir \
+            -run '^TestLLVM$/^testdir$/^codegen$/^(llvm_)?simd' \
+            -count=1 -timeout=30m -v
+          # These upstream tests assert native compiler diagnostics and use
+          # the ordinary errorcheck runner, not LLVM code generation.
+          ./bin/go test -short cmd/internal/testdir \
+            -run '^Test$/^simd(_inline)?\.go$' -count=1 -timeout=10m -v
 
       - name: Test LLVM standard library package policy
         if: matrix.task == 'stdlib'
