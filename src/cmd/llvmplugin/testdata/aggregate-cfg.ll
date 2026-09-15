@@ -2,12 +2,12 @@ target triple = "x86_64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_diamond_call_skip(
 ; IR: i64 -4232994149196383034
-; IR: phi ptr [ %value.leaf.0.relocated, %call.statepoint.cont ], [ %value.leaf.0, %skip ]
+; IR: phi ptr [ %value.leaf.0, %skip ], [ %value.leaf.0.relocated, %call.statepoint.cont ]
 ; IR: insertvalue %pair poison, ptr %value.leaf.0.relocated.merge
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_branch_safepoints(
 ; IR-COUNT-2: @llvm.experimental.gc.statepoint
-; IR: phi ptr [ %value.leaf.0.relocated{{[0-9]*}}, %left.statepoint.cont ], [ %value.leaf.0.relocated{{[0-9]*}}, %right.statepoint.cont ]
+; IR: phi ptr [ %value.leaf.0.relocated{{[0-9]*}}, %right.statepoint.cont ], [ %value.leaf.0.relocated{{[0-9]*}}, %left.statepoint.cont ]
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_sequential_conditional(
 ; IR: "gc-live"(ptr %value.leaf.0.relocated.merge

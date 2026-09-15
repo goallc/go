@@ -40,11 +40,11 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: %field.derived.remat{{.*}} = getelementptr i8, ptr %field.base.relocated{{.*}}, i64 64
 
 ; IR-LABEL: define goabiinternal ptr @loop_derived_pointer(
-; IR: %heap.relocated.merge.0 = phi ptr [ %heap, %entry ], [ %heap.relocated, %backedge ]
+; IR: %heap.relocated.merge = phi ptr [ %heap.relocated, %backedge ], [ %heap, %entry ]
 ; IR: %field.offset = phi i64 [ 8, %entry ], [ %next.offset, %backedge ]
-; IR: %field.derived = getelementptr i8, ptr %heap.relocated.merge.0, i64 %field.offset
+; IR: %field.derived = getelementptr i8, ptr %heap.relocated.merge, i64 %field.offset
 ; IR: @llvm.experimental.gc.statepoint{{.*}}@safepoint
-; IR-SAME: "gc-live"(ptr %heap.relocated.merge.0)
+; IR-SAME: "gc-live"(ptr %heap.relocated.merge)
 ; IR: %heap.relocated{{.*}} = call {{.*}}ptr @llvm.experimental.gc.relocate
 ; IR: %field.derived.remat{{.*}} = getelementptr i8, ptr %heap.relocated{{.*}}, i64 %field.offset
 

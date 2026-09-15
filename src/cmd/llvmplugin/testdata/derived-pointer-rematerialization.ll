@@ -12,7 +12,7 @@ target triple = "aarch64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal i8 @conditional_derived(
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %base)
-; IR: %derived.relocated.merge{{.*}} = phi ptr [ %derived.remat, %call.statepoint.cont ], [ %derived, %skip ]
+; IR: %derived.relocated.merge{{.*}} = phi ptr [ %derived, %skip ], [ %derived.remat, %call.statepoint.cont ]
 
 ; IR-LABEL: define goabiinternal <2 x ptr> @derived_vector(
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(<2 x ptr> %base)
@@ -94,4 +94,37 @@ entry:
       <2 x i64> <i64 16, i64 32>
   call goabiinternal void @callee()
   ret <2 x ptr> %derived
+}
+
+; Each safepoint rebuilds the shared prefix exactly once. The second point
+; must use its own relocated base rather than the first point's cached value.
+; IR-LABEL: define goabiinternal i8 @shared_derived_prefix(
+; IR: [[BASE1:%[^ ]+]] = call {{.*}}ptr @llvm.experimental.gc.relocate
+; IR: [[PREFIX1:%[^ ]+]] = getelementptr i8, ptr [[BASE1]], i64 16
+; IR-DAG: getelementptr i8, ptr [[PREFIX1]], i64 8
+; IR-DAG: getelementptr i8, ptr [[PREFIX1]], i64 24
+; IR-NOT: getelementptr i8, ptr [[BASE1]], i64 16
+; IR: @llvm.experimental.gc.statepoint
+; IR: [[BASE2:%[^ ]+]] = call {{.*}}ptr @llvm.experimental.gc.relocate
+; IR: [[PREFIX2:%[^ ]+]] = getelementptr i8, ptr [[BASE2]], i64 16
+; IR-DAG: getelementptr i8, ptr [[PREFIX2]], i64 8
+; IR-DAG: getelementptr i8, ptr [[PREFIX2]], i64 24
+; IR-NOT: getelementptr i8, ptr [[BASE2]], i64 16
+; IR: ret i8
+
+define goabiinternal i8 @shared_derived_prefix(ptr %base) gc "goallc" {
+entry:
+  %prefix = getelementptr i8, ptr %base, i64 16
+  %left = getelementptr i8, ptr %prefix, i64 8
+  %right = getelementptr i8, ptr %prefix, i64 24
+  call goabiinternal void @callee()
+  %a = load i8, ptr %left
+  %b = load i8, ptr %right
+  call goabiinternal void @callee()
+  %c = load i8, ptr %left
+  %d = load i8, ptr %right
+  %ab = add i8 %a, %b
+  %cd = add i8 %c, %d
+  %sum = add i8 %ab, %cd
+  ret i8 %sum
 }

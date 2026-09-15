@@ -14,8 +14,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: store %slice %scratch, ptr %scratch.statepoint.home
 ; IR: %left.method = add i64 %left.leaf.0, 24
 ; IR: %right.method = add i64 %right.leaf.0, 24
-; IR: %[[LEFT_MERGE:left\.leaf\.1\.relocated\.merge\.[0-9]+]] = phi ptr
-; IR: %[[RIGHT_MERGE:right\.leaf\.1\.relocated\.merge\.[0-9]+]] = phi ptr
+; IR: %[[LEFT_MERGE:left\.leaf\.1\.relocated\.merge[.0-9]*]] = phi ptr
+; IR: %[[RIGHT_MERGE:right\.leaf\.1\.relocated\.merge[.0-9]*]] = phi ptr
 ; IR: inttoptr i64 %left.method to ptr
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[RIGHT_MERGE]], ptr %[[LEFT_MERGE]], ptr %scratch.statepoint.home)
 ; IR: %[[RIGHT_RELOC:right\.leaf\.1\.relocated[0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate

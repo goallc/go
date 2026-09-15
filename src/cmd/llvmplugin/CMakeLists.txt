@@ -1832,6 +1832,12 @@ if(BUILD_TESTING)
       "define goabiinternal ptr @out_of_layout_call_result"
   )
 
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.RelocationLocalDefinitions
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/relocation-local-definitions.ll"
+    IR
+  )
+
   add_test(
     NAME GoALLCStatepoints.LoopRelocationRewrite
     COMMAND
@@ -1844,7 +1850,7 @@ if(BUILD_TESTING)
   )
   set_tests_properties(GoALLCStatepoints.LoopRelocationRewrite PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "p\\.relocated\\.merge\\.1 = phi ptr"
+      "p\\.relocated\\.merge[.0-9]* = phi ptr"
   )
 
   add_test(

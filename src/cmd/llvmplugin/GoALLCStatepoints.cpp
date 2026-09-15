@@ -39,7 +39,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Transforms/Utils/PromoteMemToReg.h"
+#include "llvm/Transforms/Utils/SSAUpdaterBulk.h"
 
 #include <limits>
 #include <optional>
@@ -1036,7 +1036,8 @@ void visitFixedFrameAddressUses(Value &Base, VisitorT &&Visit,
 }
 
 Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
-                            Instruction *InsertBefore);
+                            Instruction *InsertBefore,
+                            DenseMap<Value *, Value *> &Rematerialized);
 
 struct FixedFrameAddressRecord {
   Value *Address;
@@ -3982,10 +3983,12 @@ void splitStatepointContinuations(ArrayRef<SafepointRecord> Records) {
 }
 
 Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
-                            Instruction *InsertBefore) {
+                            Instruction *InsertBefore,
+                            DenseMap<Value *, Value *> &Rematerialized) {
+  Rematerialized.try_emplace(Base, RelocatedBase);
   SmallVector<Instruction *, 4> Chain;
   Value *Current = Address;
-  while (Current != Base) {
+  while (!Rematerialized.contains(Current)) {
     auto *I = cast<Instruction>(Current);
     assert((isa<GetElementPtrInst>(I) || isa<CastInst>(I)) &&
            "unexpected rematerializable address");
@@ -3996,7 +3999,7 @@ Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
   }
 
   Value *OldOperand = Current;
-  Value *NewOperand = RelocatedBase;
+  Value *NewOperand = Rematerialized.lookup(Current);
   for (Instruction *I : llvm::reverse(Chain)) {
     auto *Clone = I->clone();
     Clone->replaceUsesOfWith(OldOperand, NewOperand);
@@ -4004,6 +4007,7 @@ Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
     Clone->insertBefore(InsertBefore->getIterator());
     OldOperand = I;
     NewOperand = Clone;
+    Rematerialized[I] = Clone;
   }
   return NewOperand;
 }
@@ -4033,6 +4037,9 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
     Instruction *InsertBefore = Record.Relocates.empty()
                                     ? Record.Statepoint->getNextNode()
                                     : Record.Relocates.back()->getNextNode();
+    // A cache belongs to one relocation point: never reuse a pointer
+    // reconstructed from an earlier statepoint's relocated base.
+    DenseMap<Value *, Value *> RematerializedAddresses;
     for (Value *Address : Record.DerivedPointers) {
       Value *Base = rematerializableDerivedBase(Address);
       auto Relocate = llvm::find_if(Record.Relocates, [&](CallInst *Call) {
@@ -4041,82 +4048,73 @@ void repairRelocationSSA(Function &F, DominatorTree &DT,
       assert(Relocate != Record.Relocates.end() &&
              "derived pointer is missing its base relocate");
       Value *Rematerialized =
-          rematerializeAddress(Address, Base, *Relocate, InsertBefore);
+          rematerializeAddress(Address, Base, *Relocate, InsertBefore,
+                               RematerializedAddresses);
       Definitions[Address].push_back(Rematerialized);
     }
   }
   if (Definitions.empty())
     return;
 
-  const DataLayout &DL = F.getDataLayout();
-  MapVector<Value *, AllocaInst *> Slots;
-  SmallVector<AllocaInst *, 16> PromotableAllocas;
-  PromotableAllocas.reserve(Definitions.size());
-  for (auto &[V, NewDefinitions] : Definitions) {
-    (void)NewDefinitions;
-    StringRef Name = V->hasName() ? V->getName() : "pointer";
-    auto *Slot = new AllocaInst(V->getType(), DL.getAllocaAddrSpace(),
-                                (Name + ".relocated.merge").str(),
-                                F.getEntryBlock().getFirstNonPHIIt());
-    Slots[V] = Slot;
-    PromotableAllocas.push_back(Slot);
-  }
+  // Snapshot uses before SSAUpdater creates PHIs. Their operands describe
+  // reaching definitions and must not themselves be treated as old uses.
+  MapVector<Value *, SmallVector<Use *, 16>> Uses;
+  for (auto &[Original, NewDefinitions] : Definitions)
+    for (Use &U : Original->uses())
+      if (isa<Instruction>(U.getUser()))
+        Uses[Original].push_back(&U);
 
+  SSAUpdaterBulk Updater;
+  // SSAUpdaterBulk keeps StringRefs until the final rewrite.
+  SmallVector<std::string, 16> Names;
+  Names.reserve(Definitions.size());
   for (auto &[Original, NewDefinitions] : Definitions) {
-    AllocaInst *Slot = Slots.lookup(Original);
-    for (Value *Definition : NewDefinitions) {
-      auto *I = cast<Instruction>(Definition);
-      new StoreInst(Definition, Slot, std::next(I->getIterator()));
-    }
-  }
-
-  // Express every old use as a load from the pointer's temporary slot, then
-  // seed that slot immediately after the original definition. PromoteMemToReg
-  // removes all of this memory traffic and constructs the required SSA PHIs
-  // for arbitrary CFGs, including loop backedges and irreducible regions.
-  for (auto [Original, Slot] : Slots) {
-    SmallVector<Instruction *, 16> Users;
-    SmallPtrSet<Instruction *, 16> Seen;
-    for (User *U : Original->users())
-      if (auto *I = dyn_cast<Instruction>(U); I && Seen.insert(I).second)
-        Users.push_back(I);
+    DenseMap<BasicBlock *, SmallVector<Value *, 2>> LocalDefinitions;
+    BasicBlock *OriginalBlock = isa<Argument>(Original)
+                                    ? &F.getEntryBlock()
+                                    : cast<Instruction>(Original)->getParent();
+    LocalDefinitions[OriginalBlock].push_back(Original);
+    for (Value *V : NewDefinitions)
+      LocalDefinitions[cast<Instruction>(V)->getParent()].push_back(V);
 
     StringRef Name = Original->hasName() ? Original->getName() : "pointer";
-    std::string LoadName = (Name + ".relocated.current").str();
-    for (Instruction *User : Users) {
-      if (auto *Phi = dyn_cast<PHINode>(User)) {
-        for (unsigned I = 0; I != Phi->getNumIncomingValues(); ++I) {
-          if (Phi->getIncomingValue(I) != Original)
-            continue;
-          auto *Load = new LoadInst(
-              Original->getType(), Slot, LoadName,
-              Phi->getIncomingBlock(I)->getTerminator()->getIterator());
-          Phi->setIncomingValue(I, Load);
-        }
-        continue;
-      }
-      auto *Load = new LoadInst(Original->getType(), Slot, LoadName,
-                                User->getIterator());
-      User->replaceUsesOfWith(Original, Load);
+    Names.push_back((Name + ".relocated.merge").str());
+    unsigned Var = Updater.AddVariable(Names.back(), Original->getType());
+    for (auto &[BB, Values] : LocalDefinitions) {
+      llvm::sort(Values, [](Value *A, Value *B) {
+        if (A == B)
+          return false;
+        if (isa<Argument>(A))
+          return true;
+        if (isa<Argument>(B))
+          return false;
+        return cast<Instruction>(A)->comesBefore(cast<Instruction>(B));
+      });
+      Updater.AddAvailableValue(Var, BB, Values.back());
     }
 
-    auto *Store = new StoreInst(Original, Slot, false,
-                                DL.getABITypeAlign(Original->getType()));
-    if (auto *Definition = dyn_cast<Instruction>(Original)) {
-      if (isa<PHINode>(Definition))
-        Store->insertBefore(Definition->getParent()->getFirstNonPHIIt());
-      else {
-        assert(!Definition->isTerminator() &&
-               "GoALLC does not support value-producing terminators");
-        Store->insertAfter(Definition->getIterator());
-      }
-    } else {
-      assert(isa<Argument>(Original) && "expected local pointer definition");
-      Store->insertAfter(Slot->getIterator());
+    for (Use *U : Uses[Original]) {
+      auto *User = cast<Instruction>(U->getUser());
+      // PHIs read the end of the incoming edge; ordinary uses read the
+      // latest preceding definition. Handle local values explicitly because
+      // SSAUpdaterBulk rewrites ordinary uses to the block's incoming value.
+      auto *Phi = dyn_cast<PHINode>(User);
+      BasicBlock *UseBlock = Phi ? Phi->getIncomingBlock(*U) : User->getParent();
+      auto It = LocalDefinitions.find(UseBlock);
+      Value *Local = nullptr;
+      if (It != LocalDefinitions.end())
+        for (Value *V : llvm::reverse(It->second))
+          if (Phi || isa<Argument>(V) || cast<Instruction>(V)->comesBefore(User)) {
+            Local = V;
+            break;
+          }
+      if (Local)
+        U->set(Local);
+      else
+        Updater.AddUse(Var, U);
     }
   }
-
-  PromoteMemToReg(PromotableAllocas, DT);
+  Updater.RewriteAndOptimizeAllUses(DT);
 }
 
 Error rewriteFunction(Function &F) {
@@ -4351,10 +4349,7 @@ Error rewriteFunction(Function &F) {
   splitStatepointContinuations(Records);
   if (Error Err = localizeFixedFrameAddresses(FixedFrameAddresses))
     return Err;
-  // splitStatepointContinuations changes the CFG after liveness and
-  // object-activity analysis.
-  // General relocation repair promotes temporary merge slots, so rebuild the
-  // tree for the new continuation blocks and localized fixed-frame uses.
+  // Continuation splitting changes the CFG after liveness analysis.
   DT.recalculate(F);
   repairRelocationSSA(F, DT, Records);
   return Error::success();
