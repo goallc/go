@@ -4818,6 +4818,11 @@ func llvmIsAtomicMemoryOp(op Op) bool {
 }
 
 func LLVMCompile(f *Func) {
+	llvmLowerNoReturnCalls(f)
+	// Match native metadata emission when SSA construction lowered no defer.
+	if len(f.OpenDeferSlots) == 0 {
+		f.OpenDeferBits = nil
+	}
 	if f.OwnAux == nil || f.OwnAux.Fn == nil || f.OwnAux.ABIInfo() == nil {
 		f.fe.Fatalf(f.Entry.Pos, "missing function ABI information in LLVM lowering for %s", f.Name)
 	}

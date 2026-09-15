@@ -39,6 +39,62 @@ func TestLLVMCPUEntryPreconditions(t *testing.T) {
 	}
 }
 
+func TestLLVMCPUFeatureGuardAfterSkip(t *testing.T) {
+	llvmCPUPlanBaselineForTest(t)
+	for _, callee := range []string{"testing.(*common).Skip", "testing.(*common).Log"} {
+		t.Run(callee, func(t *testing.T) {
+			c := testConfig(t)
+			vec := llvmTestSIMDType("Int8x32", types.Types[types.TINT8], 32)
+			pkg := types.NewPkg("internal/cpu", "cpu")
+			x86 := types.NewStruct([]*types.Field{types.NewField(src.NoXPos, pkg.Lookup("HasAVX2"), types.Types[types.TBOOL])})
+			types.CalcStructSize(x86)
+			config := abi.NewABIConfig(0, 0, 0, uint8(obj.ABIInternal))
+			aux := func(name string) *AuxCall {
+				return StaticAuxCall(&obj.LSym{Name: name}, config.ABIAnalyzeTypes(nil, nil))
+			}
+			f := c.Fun("entry",
+				Bloc("entry",
+					Valu("mem", OpInitMem, types.TypeMem, 0, nil),
+					Valu("sb", OpSB, types.Types[types.TUINTPTR], 0, nil),
+					Valu("addr", OpAddr, types.NewPtr(x86), 0, &obj.LSym{Name: "internal/cpu.X86"}, "sb"),
+					Valu("fp", OpOffPtr, types.NewPtr(types.Types[types.TBOOL]), 0, nil, "addr"),
+					Valu("feature", OpLoad, types.Types[types.TBOOL], 0, nil, "fp", "mem"),
+					Valu("x", OpArg, vec, 0, nil), Valu("y", OpArg, vec, 0, nil),
+					Valu("out", OpArg, types.NewPtr(vec), 0, nil),
+					If("feature", "body", "skip")),
+				Bloc("skip",
+					Valu("before", OpStaticCall, types.TypeMem, 0, aux("before"), "mem"),
+					Valu("call", OpStaticLECall, aux(callee).LateExpansionResultType(), 0, aux(callee), "before"),
+					Valu("callmem", OpSelectN, types.TypeMem, 0, nil, "call"),
+					Valu("after", OpStaticCall, types.TypeMem, 0, aux("after"), "callmem"),
+					Goto("body")),
+				Bloc("body",
+					Valu("join", OpPhi, types.TypeMem, 0, nil, "mem", "after"),
+					Valu("add", OpAddInt8x32, vec, 0, nil, "x", "y"),
+					Valu("store", OpStore, types.TypeMem, 0, vec, "out", "add", "join"),
+					Exit("store")))
+			if guards := llvmCPUFeatureGuardProfiles(f.f, f.values["add"], goCPUProfileX86AVX2); len(guards) != 0 {
+				t.Fatal("baseline unexpectedly recognizes the terminating branch")
+			}
+			slices.Reverse(f.blocks["skip"].Values)
+			f.f.pass = &pass{name: "llvm"}
+			llvmLowerNoReturnCalls(f.f)
+			checkFunc(f.f)
+			if got := f.blocks["skip"].Kind == BlockExit; got != (callee == "testing.(*common).Skip") {
+				t.Fatalf("terminating block=%v for %s", got, callee)
+			}
+			if callee == "testing.(*common).Skip" {
+				if len(f.blocks["body"].Preds) != 1 || f.values["before"].Op != OpStaticCall || f.values["after"].Op != OpInvalid {
+					t.Fatal("lost earlier effects or retained the false continuation")
+				}
+				if got := llvmCPUFeatureGuardProfiles(f.f, f.values["add"], goCPUProfileX86AVX2); !slices.Equal(got, []string{goCPUProfileX86AVX2}) {
+					t.Fatalf("guard after Skip=%v", got)
+				}
+			}
+		})
+	}
+}
+
 func TestLLVMCPUProfileBaselines(t *testing.T) {
 	for _, test := range []struct {
 		name, arch, profile string

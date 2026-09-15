@@ -599,12 +599,6 @@ func buildssa(fn *ir.Func, worker int, isPgoHot bool) *ssa.Func {
 
 	s.insertPhis()
 
-	// A no-return call may make every defer unreachable. Match the native
-	// metadata emission below: only describe defers actually lowered to SSA.
-	if len(s.openDefers) == 0 {
-		s.f.OpenDeferBits = nil
-	}
-
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
 
@@ -1724,7 +1718,7 @@ func (s *state) stmt(n ir.Node) {
 					(fn == "throwinit" || fn == "gopanic" || fn == "panicwrap" || fn == "block" ||
 						fn == "panicmakeslicelen" || fn == "panicmakeslicecap" || fn == "panicunsafeslicelen" ||
 						fn == "panicunsafeslicenilptr" || fn == "panicunsafestringlen" || fn == "panicunsafestringnilptr" ||
-						fn == "panicrangestate") || base.Flag.EnableLLVM && llvmNoReturnCall(n.Fun.Sym()) {
+						fn == "panicrangestate") {
 				m := s.mem()
 				b := s.endBlock()
 				b.Kind = ssa.BlockExit
