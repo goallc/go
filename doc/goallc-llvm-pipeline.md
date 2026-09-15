@@ -48,6 +48,14 @@ automatically requests FMV instead of raising the original function's feature
 floor. This also applies to unguarded operations in the entry block. The same
 Go CPU profiles and runtime resolver select the whole-function versions.
 
+Automatic requests are collected from live instructions after LLVM's noreturn
+cleanup. Compound requirements stay together instead of requesting every
+individual feature combination; independent hardware observations still get
+their own versions. Overlapping requests with the same runtime predicate share
+one version. After specialization, a version whose simplified body and ABI match
+the baseline reuses that baseline implementation, ignoring only the extra
+`target-features` during comparison and retaining its dispatch predicate.
+
 Supported versions retain the original SIMD instructions and register ABI,
 without outlining or aggregate-memory argument/result carriers. In versions
 without the required features, a source-local anchor becomes `unreachable`.

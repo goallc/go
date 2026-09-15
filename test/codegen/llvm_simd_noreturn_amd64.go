@@ -30,3 +30,12 @@ func simdAfterSkip(t *testing.T, dst, x, y *[32]int8) {
 	}
 	archsimd.LoadInt8x32Array(x).Add(archsimd.LoadInt8x32Array(y)).StoreArray(dst)
 }
+
+// The dead SIMD operation must not leave a resolver or feature versions.
+// LLVM-NM-AMD64-NOT: codegen.simdDeadAfterSkip.goallc.fmv.slot
+//
+//go:noinline
+func simdDeadAfterSkip(t *testing.T, dst, x, y *[32]int8) {
+	t.Skip()
+	archsimd.LoadInt8x32Array(x).Add(archsimd.LoadInt8x32Array(y)).StoreArray(dst)
+}
