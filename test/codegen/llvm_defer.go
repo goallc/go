@@ -68,23 +68,23 @@ func llvmDeferMayPanic()
 // LLVM-OPT-NEXT: {{.*}} = load volatile ptr, ptr [[RESULT_OPT]]
 
 // LLVM-LABEL: define goabiinternal void @codegen.llvmDeferHeap(i64 %count)
+// LLVM: call goabiinternal void @"runtime.deferproc<builtin.{{[0-9]+}}>"(
+// LLVM: callbr void @llvm.go.defer.edge()
+// LLVM-NEXT: to label %{{.*}} [label %[[HEAP_RECOVER:[A-Za-z0-9_.]+]]]
 // LLVM: [[HEAP_NORMAL_RETURN:[A-Za-z0-9_.]+]]:
 // LLVM: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM: ret void
-// LLVM: [[HEAP_RECOVER:[A-Za-z0-9_.]+]]:
+// LLVM: [[HEAP_RECOVER]]:
 // LLVM-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
-// LLVM: call goabiinternal void @"runtime.deferproc<builtin.{{[0-9]+}}>"(
-// LLVM: callbr void @llvm.go.defer.edge()
-// LLVM-NEXT: to label %{{.*}} [label %[[HEAP_RECOVER]]]
 // LLVM: define goabiinternal void @codegen.llvmDeferHeap.deferwrap1({{.*}}) {{.*}}!goobj.func.info ![[WRAPPER_INFO:[0-9]+]]
 // LLVM: define goabiinternal {{.*}} @codegen.llvmRecover(){{.*}} #[[LLVM_RECOVER_ATTRS:[0-9]+]] gc "goallc"
 // LLVM: call goabiinternal {{.*}} @"runtime.gorecover<builtin.{{[0-9]+}}>"(
 // LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmDeferHeap(i64 %count)
-// LLVM-OPT: [[HEAP_OPT_RECOVER:common.ret]]:
-// LLVM-OPT-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM-OPT: call goabiinternal void @"runtime.deferproc<builtin.{{[0-9]+}}>"(
 // LLVM-OPT: callbr void @llvm.go.defer.edge()
-// LLVM-OPT-NEXT: to label %{{.*}} [label %[[HEAP_OPT_RECOVER]]]
+// LLVM-OPT-NEXT: to label %{{.*}} [label %[[HEAP_OPT_RECOVER:[A-Za-z0-9_.]+]]]
+// LLVM-OPT: [[HEAP_OPT_RECOVER]]:
+// LLVM-OPT-NEXT: call goabiinternal void @"runtime.deferreturn<builtin.{{[0-9]+}}>"()
 // LLVM-OPT: define goabiinternal void @codegen.llvmDeferHeap.deferwrap1({{.*}}) {{.*}}!goobj.func.info ![[WRAPPER_OPT_INFO:[0-9]+]]
 // LLVM-OPT: define goabiinternal {{.*}} @codegen.llvmRecover(){{.*}} #[[LLVM_RECOVER_OPT_ATTRS:[0-9]+]] gc "goallc"
 // LLVM-OPT: call goabiinternal {{.*}} @"runtime.gorecover<builtin.{{[0-9]+}}>"(

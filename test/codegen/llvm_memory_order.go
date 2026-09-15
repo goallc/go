@@ -32,7 +32,7 @@ func llvmMemoryOrderStore(value *int) {
 // LLVM-OPT: ret ptr %[[ROOT]]
 // LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmMemoryOrderStore(
 // LLVM-OPT-SAME: #[[NOINLINE_ATTR:[0-9]+]] gc "goallc"
-// LLVM-OPT: call ptr @llvm.go.gc.write.barrier(i32 2)
+// LLVM-OPT: call void @goallc.gc.write.record(ptr %[[VALUE]], ptr {{(nonnull )?}}@codegen.llvmMemoryOrderRoot, i32 0)
 // LLVM-OPT: store ptr %[[VALUE]], ptr @codegen.llvmMemoryOrderRoot
 // LLVM-LABEL: define goabiinternal void @codegen.llvmSemanticKeepAlive(
 // LLVM: call void @llvm.donothing() [ "go.keepalive"(ptr %{{.*}}) ]
