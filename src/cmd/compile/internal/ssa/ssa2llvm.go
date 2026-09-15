@@ -1489,6 +1489,28 @@ const (
 	llvmShiftRightUnsigned
 )
 
+func (lfc *LLVMFuncContext) addPointerOffset(v *Value, pointer llvm.Value) llvm.Value {
+	offset := v.Args[1]
+	element := GlobalCtxt.Int8Type()
+	if offset.Uses == 1 && offset.Type.Size() == int64(types.PtrSize) {
+		switch offset.Op {
+		case OpLsh64x64, OpLsh64x32, OpLsh64x16, OpLsh64x8,
+			OpLsh32x64, OpLsh32x32, OpLsh32x16, OpLsh32x8:
+			count := offset.Args[1]
+			if count.isGenericIntConst() && count.AuxInt > 0 && count.AuxInt < int64(min(32, types.PtrSize*8)) {
+				// GEP scales its index modulo the pointer index width. Folding
+				// a narrower shift would lose its earlier integer wraparound.
+				// Keep shared offsets explicit and limit the scale to LLVM's
+				// unsigned 32-bit array-length API. No inbounds/no-wrap promise
+				// is implied by choosing an array element type.
+				element = llvm.ArrayType(element, 1<<uint(count.AuxInt))
+				offset = offset.Args[0]
+			}
+		}
+	}
+	return lfc.b.CreateGEP(element, pointer, []llvm.Value{lfc.GenLV(offset)}, v.String())
+}
+
 func (lfc *LLVMFuncContext) shift(v *Value, kind llvmShiftKind) llvm.Value {
 	x := lfc.GenLV(v.Args[0])
 	count := lfc.GenLV(v.Args[1])
@@ -4105,7 +4127,7 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 				lVal = lfc.materializeAddressPointer(lVal, v.Args[0].Type, getLLVMType(v.Type), v.String()+".pointer")
 			}
 		} else {
-			lVal = lfc.b.CreateGEP(GlobalCtxt.Int8Type(), base, []llvm.Value{arg1()}, v.String())
+			lVal = lfc.addPointerOffset(v, base)
 		}
 	case OpSubPtr:
 		base := arg0()
@@ -4525,6 +4547,17 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		lfc.emitTailCallReturn(BB)
 	case BlockIf:
 		cond := lfc.llvmCondition(lfc.GenLV(BB.Controls[0]), BB.String()+".cond")
+		if BB.Likely != BranchUnknown {
+			// Go predictions describe Succs[0], the true edge. Let LLVM lower
+			// the expectation to branch weights using its own likelihood policy.
+			// These are static hints, not measured execution counts.
+			expect := getLLVMIntrinsicDeclaration("llvm.expect", cond.Type())
+			expected := llvm.ConstNull(cond.Type())
+			if BB.Likely == BranchLikely {
+				expected = llvm.ConstInt(cond.Type(), 1, false)
+			}
+			cond = lfc.b.CreateCall(expect.GlobalValueType(), expect, []llvm.Value{cond, expected}, BB.String()+".expected")
+		}
 		lfc.b.CreateCondBr(cond, lfc.BBs[BB.Succs[0].Block().ID], lfc.BBs[BB.Succs[1].Block().ID])
 	case BlockDefer:
 		if len(BB.Succs) != 2 || BB.NumControls() != 1 || !BB.Controls[0].Type.IsMemory() {
