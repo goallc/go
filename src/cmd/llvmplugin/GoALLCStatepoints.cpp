@@ -41,6 +41,7 @@
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SSAUpdaterBulk.h"
 
+#include <algorithm>
 #include <limits>
 #include <optional>
 #include <string>
@@ -3180,10 +3181,10 @@ void transferPointerAllocaLiveness(const PointerAllocaRecord &Record,
 }
 
 SmallBitVector pointerAllocaLiveInBlock(const PointerAllocaRecord &Record,
-                                        const BasicBlock &BB,
+                                        ArrayRef<const Instruction *> Events,
                                         SmallBitVector Live) {
-  for (const Instruction &I : llvm::reverse(BB))
-    transferPointerAllocaLiveness(Record, I, Live);
+  for (const Instruction *I : llvm::reverse(Events))
+    transferPointerAllocaLiveness(Record, *I, Live);
   return Live;
 }
 
@@ -3215,12 +3216,36 @@ Error computePointerAllocaActivity(
     DenseMap<const BasicBlock *, SmallBitVector> LiveIn;
     SmallSetVector<const BasicBlock *, 32> Worklist;
     const size_t SlotCount = Record.Layout.Leaves.size();
-    Transfers.reserve(F.size());
+    // Every other instruction has an identity transfer for this object.
+    // Recover program order from the existing use/def and lifetime records;
+    // an instruction may appear in more than one collection.
+    DenseMap<const BasicBlock *, SmallVector<const Instruction *, 8>> Events;
+    auto AddEvent = [&](const Instruction *I) {
+      Events[I->getParent()].push_back(I);
+    };
+    for (const auto &Entry : Record.ContentUses)
+      AddEvent(Entry.first);
+    for (const auto &Entry : Record.ContentDefs)
+      AddEvent(Entry.first);
+    for (const Instruction *I : Record.LifetimeMarkers)
+      AddEvent(I);
+    for (const Instruction *I : Record.GoRetDefs)
+      AddEvent(I);
+    Transfers.reserve(Events.size());
+    for (auto &[BB, Instructions] : Events) {
+      llvm::sort(Instructions, [](const Instruction *A, const Instruction *B) {
+        return A->comesBefore(B);
+      });
+      Instructions.erase(std::unique(Instructions.begin(), Instructions.end()),
+                         Instructions.end());
+      Transfers[BB] = {
+          pointerAllocaLiveInBlock(Record, Instructions,
+                                  SmallBitVector(SlotCount)),
+          pointerAllocaLiveInBlock(Record, Instructions,
+                                  SmallBitVector(SlotCount, true))};
+    }
     LiveIn.reserve(F.size());
     for (BasicBlock &BB : F) {
-      Transfers[&BB] = {
-          pointerAllocaLiveInBlock(Record, BB, SmallBitVector(SlotCount)),
-          pointerAllocaLiveInBlock(Record, BB, SmallBitVector(SlotCount, true))};
       LiveIn[&BB] = SmallBitVector(SlotCount);
       // Seed every block, including unreachable components. Popping from the
       // back starts in the same reverse block order as the original solver.
@@ -3231,9 +3256,12 @@ Error computePointerAllocaActivity(
       SmallBitVector NewLiveIn(SlotCount);
       for (const BasicBlock *Succ : successors(BB))
         NewLiveIn |= LiveIn.find(Succ)->second;
-      const BlockTransfer &Transfer = Transfers.find(BB)->second;
-      NewLiveIn &= Transfer.Through;
-      NewLiveIn |= Transfer.Gen;
+      // Event-free blocks still propagate successor liveness, including
+      // through loops and unreachable components, but need no stored summary.
+      if (auto It = Transfers.find(BB); It != Transfers.end()) {
+        NewLiveIn &= It->second.Through;
+        NewLiveIn |= It->second.Gen;
+      }
       SmallBitVector &OldLiveIn = LiveIn.find(BB)->second;
       if (NewLiveIn != OldLiveIn) {
         OldLiveIn = std::move(NewLiveIn);

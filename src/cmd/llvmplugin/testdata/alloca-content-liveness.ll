@@ -34,6 +34,10 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-COUNT-2: @checkpoint{{.*}}ptr %left, i64 9, i64 1,{{.*}}ptr %right, i64 9, i64 1,
 ; IR-LABEL: define goabiinternal ptr @loop_partial_overwrite(
 ; IR: @checkpoint{{.*}}ptr %slot, i64 17, i64 3,
+; IR-LABEL: define goabiinternal ptr @event_free_loop_live(
+; IR-COUNT-2: @checkpoint{{.*}}ptr %slot, i64 9, i64 1,
+; IR-LABEL: define goabiinternal ptr @event_free_loop_killed(
+; IR-COUNT-2: @checkpoint{{.*}}ptr %slot, i64 8, i64 1,
 
 %pair = type { ptr, ptr }
 declare goabiinternal void @observe(ptr)
@@ -258,4 +262,44 @@ loop:
   call goabiinternal void @checkpoint()
   store ptr null, ptr %slot
   br i1 %again, label %loop, label %exit
+}
+
+; Neither loop block has a content use/def or lifetime event for slot.
+; The exit read must propagate through both identity transfers and the
+; backedge, even with the exit placed before the loop in block order.
+define goabiinternal ptr @event_free_loop_live(ptr %old, i1 %again) gc "goallc" {
+entry:
+  %slot = alloca ptr, align 8
+  store ptr %old, ptr %slot
+  call goabiinternal void @observe(ptr %slot)
+  br label %loop
+exit:
+  %result = load ptr, ptr %slot
+  ret ptr %result
+loop:
+  call goabiinternal void @checkpoint()
+  br i1 %again, label %backedge, label %exit
+backedge:
+  call goabiinternal void @checkpoint()
+  br label %loop
+}
+
+; An overwrite before the exit read kills the old contents. Identity
+; transfers must also preserve an empty live set across the same loop.
+define goabiinternal ptr @event_free_loop_killed(ptr %old, i1 %again) gc "goallc" {
+entry:
+  %slot = alloca ptr, align 8
+  store ptr %old, ptr %slot
+  call goabiinternal void @observe(ptr %slot)
+  br label %loop
+exit:
+  store ptr null, ptr %slot
+  %result = load ptr, ptr %slot
+  ret ptr %result
+loop:
+  call goabiinternal void @checkpoint()
+  br i1 %again, label %backedge, label %exit
+backedge:
+  call goabiinternal void @checkpoint()
+  br label %loop
 }
