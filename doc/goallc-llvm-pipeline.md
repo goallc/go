@@ -37,18 +37,30 @@ scheduling into a separate LLVM pipeline.
 ## SIMD CPU preconditions
 
 Go CPU features map to LLVM capabilities through the existing `archsimd`
-generator. Fixed-width ABI requirements, Midway implementation widths, and
-unguarded SIMD operations supply function `target-features`. As in native Go,
-an unguarded operation is a caller precondition: the caller must check the CPU
-before entering that function or callback. The compiler does not add a check
-or fallback on its behalf, and this contract is independent of package names.
+generator. Fixed-width ABI requirements and Midway implementation widths supply
+function `target-features`; they do not make runtime CPU predicates true.
 
-Locally guarded operations still use the early LLVM FMV pass. Entry capabilities
-do not make Go CPU predicates true; explicit checks and fallback paths retain
-their meaning, including feature disabling with `GODEBUG`. The surviving IR
-requirements are still verified against each implementation's target features.
-Derived algorithm flags such as `maps.UseAeshash` only imply CPU availability;
-a capable CPU does not imply that the algorithm has been initialized or enabled.
+Locally hardware-guarded operations use the early LLVM FMV pass. Explicit checks
+and fallback paths retain their meaning, including feature disabling with
+`GODEBUG`. If a SIMD operation or wide-register call needs features beyond the
+function's contract and has no recognized hardware guard, its requirement is
+marked for outlining instead of raising the entire function's feature floor.
+This rule also applies to unguarded operations in the entry block.
+
+After FMV specializes hardware checks, LLVM's CodeExtractor groups marked SIMD
+instructions within each basic block into internal, non-inlineable functions
+with the required `target-features`. Unrelated calls, stack allocations, and
+control-flow terminators stay in the original function. Live inputs and outputs
+cross this boundary through an aggregate in memory, avoiding an ISA-dependent
+vector register ABI. The helpers retain the Go calling convention and GC
+strategy. Surviving requirements
+are verified against each implementation's target features as before.
+
+Ordinary algorithm flags such as `maps.UseAeshash` are not interpreted by the
+compiler: their control flow remains intact. Outlining only isolates ISA use;
+it does not synthesize a hardware check or software fallback. As in native Go,
+the program must ensure the required CPU features before executing that path,
+including when the check is outside the function or callback.
 
 ## An optimization exposed by the shared pipeline
 

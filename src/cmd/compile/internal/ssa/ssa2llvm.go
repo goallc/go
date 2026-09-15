@@ -3675,6 +3675,16 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
 	lfc.setDebugLocation(v.Pos)
+	if lfc.CPUFeatures != nil && lfc.CPUFeatures.isolated[v.ID] {
+		// Materialize operands outside the outlined operation. In particular,
+		// evaluating an operand must not move an ordinary call into a new frame.
+		for _, arg := range v.Args {
+			lfc.GenLV(arg)
+		}
+		block := lfc.b.GetInsertBlock()
+		last := block.LastInstruction()
+		defer lfc.markCPUOutline(v, block, last)
+	}
 	var lVal llvm.Value
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }
 	arg1 := func() llvm.Value { return lfc.GenLV(v.Args[1]) }
@@ -4875,12 +4885,6 @@ func LLVMCompile(f *Func) {
 			features += ","
 		}
 		features += llvmCPUProfileByName(floor).targetFeatures
-	}
-	for _, profile := range FCtxt.CPUFeatures.entryProfiles {
-		if features != "" {
-			features += ","
-		}
-		features += llvmCPUProfileByName(profile).targetFeatures
 	}
 	if features != "" {
 		// GOARM64 makes LSE mandatory at v8.1 and can request it explicitly at

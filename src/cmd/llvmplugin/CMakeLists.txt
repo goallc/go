@@ -116,6 +116,18 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.Isolate
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-isolate.ll"
+    CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features
+    -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-isolate.ll"
+    -o -
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.StrongerGuards
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-stronger-guards.ll"
     CHECK

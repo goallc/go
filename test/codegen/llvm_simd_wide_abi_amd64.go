@@ -69,10 +69,18 @@ func llvmSIMDGuardedWideCall512(dst, src *[64]uint8) {
 	llvmSIMDWideIdentity512(archsimd.LoadUint8x64Array(src)).StoreArray(dst)
 }
 
-// An unguarded fixed-width call retains native Go's contract: the caller gets
-// a function floor instead of an implicit dispatcher.
+// An unguarded fixed-width call retains native Go's CPU precondition, but only
+// its outlined helper gets the ABI floor; the pointer-only caller stays baseline.
 
-// LLVM-AMD64-DAG: define goabiinternal void @codegen.llvmSIMDUnguardedWideCall256({{.*}}) #[[IDENTITY256]]
+// LLVM-AMD64-DAG: define goabiinternal void @codegen.llvmSIMDUnguardedWideCall256({{.*}}) #[[UNGUARDED:[0-9]+]]
+// LLVM-AMD64-DAG: attributes #[[UNGUARDED]] = { {{.*}}"target-cpu"="x86-64" }
+// LLVM-OPT-AMD64: define goabiinternal void @codegen.llvmSIMDUnguardedWideCall256(
+// LLVM-OPT-AMD64: call goabiinternal void @codegen.llvmSIMDUnguardedWideCall256.goallc.isa(ptr
+// LLVM-OPT-AMD64: define internal goabiinternal void @codegen.llvmSIMDUnguardedWideCall256.goallc.isa(ptr
+// LLVM-OPT-AMD64-SAME: #[[OUTLINED:[0-9]+]]
+// LLVM-OPT-AMD64: load <32 x i8>
+// LLVM-OPT-AMD64: store <32 x i8>
+// LLVM-OPT-AMD64: attributes #[[OUTLINED]] = { {{.*}}"target-features"="+avx"
 // LLVM-NM-AMD64-NOT: codegen.llvmSIMDUnguardedWideCall256.goallc.fmv.slot
 //
 //go:noinline

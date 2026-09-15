@@ -25,7 +25,6 @@ type llvmCPUProfile struct {
 	targetFeatures                  string
 	capabilities                    uint64
 	predicates                      uint64
-	guardImplies                    bool
 }
 
 func llvmCPUProfileByName(name string) *llvmCPUProfile {
@@ -316,37 +315,28 @@ func llvmCallAux(v *Value) *AuxCall {
 	return nil
 }
 
-type llvmCPURequirementKind uint8
-
-const (
-	llvmCPUGenerated llvmCPURequirementKind = iota
-	llvmCPUWideCall
-)
-
 // Entry capability assumptions are not runtime predicates.
 type llvmCPUFeaturePlan struct {
 	floor        string
 	requirements map[ID]string
+	isolated     map[ID]bool
 	guards       map[ID]string
 	profiles     []string
-	// Unguarded SIMD operations retain native Go's caller preconditions.
-	// These supply capabilities, never runtime predicates.
-	entryProfiles []string
 }
 
-func llvmCPURequirement(v *Value, arch string) (string, llvmCPURequirementKind) {
+func llvmCPURequirement(v *Value, arch string) string {
 	if info, ok := goALLCSIMDInfo(v.Op); ok {
-		return info.archInfo(arch).cpuProfile, llvmCPUGenerated
+		return info.archInfo(arch).cpuProfile
 	}
 	if arch == "amd64" {
 		if helper, ok := llvmSIMDHelperInfo(v); ok {
-			return helper.profile, llvmCPUGenerated
+			return helper.profile
 		}
 		if aux := llvmCallAux(v); aux != nil {
-			return llvmWideVectorCPUProfile(llvmWideVectorCallWidth(aux)), llvmCPUWideCall
+			return llvmWideVectorCPUProfile(llvmWideVectorCallWidth(aux))
 		}
 	}
-	return "", llvmCPUGenerated
+	return ""
 }
 
 // llvmPlanCPUFeatures is the one planning boundary for generated SIMD,
@@ -356,6 +346,7 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 	plan := &llvmCPUFeaturePlan{
 		floor:        llvmSIMDFeatureFloor(f),
 		requirements: make(map[ID]string),
+		isolated:     make(map[ID]bool),
 		guards:       make(map[ID]string),
 	}
 	type guardKey struct {
@@ -377,8 +368,6 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 	type requirement struct {
 		value   *Value
 		profile string
-		kind    llvmCPURequirementKind
-		guards  []string
 	}
 	type guardValue struct {
 		id        ID
@@ -399,47 +388,23 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 					selected[name] = true
 				}
 			}
-			profile, kind := llvmCPURequirement(v, f.Config.arch)
-			if profile == "" || llvmCPUProfileCoveredByBaseline(f.Config.arch, profile) {
+			profile := llvmCPURequirement(v, f.Config.arch)
+			if profile == "" || llvmCPUProfileCoveredByBaseline(f.Config.arch, profile) || llvmCPUProfileSupplies(plan.floor, profile) {
 				continue
 			}
-			r := requirement{value: v, profile: profile, kind: kind}
-			if kind == llvmCPUWideCall {
-				if llvmCPUProfileSupplies(plan.floor, profile) {
-					continue
-				}
-				r.guards = findGuards(v, profile)
-			}
-			pending = append(pending, r)
-		}
-	}
-	// Preserve native fixed-width calling semantics: an unguarded wide call
-	// raises the function floor, whereas a guarded call requests FMV. Finish
-	// this step before handling any operation, independent of block order.
-	for _, r := range pending {
-		if r.kind == llvmCPUWideCall && len(r.guards) == 0 && !llvmCPUProfileSupplies(plan.floor, r.profile) {
-			plan.floor = r.profile
+			pending = append(pending, requirement{value: v, profile: profile})
 		}
 	}
 	for _, r := range pending {
-		if llvmCPUProfileSupplies(plan.floor, r.profile) {
-			continue
-		}
-		guards := r.guards
-		if r.kind == llvmCPUGenerated {
-			guards = findGuards(r.value, r.profile)
-		}
-		if len(guards) == 0 {
-			// As in native Go, an out-of-line operation may rely on a caller's
-			// CPU check (including a guard outside a callback). Record that
-			// precondition as target-features, not a runtime predicate. Local
-			// guarded operations still use FMV and retain their fallback paths.
-			if !slices.Contains(plan.entryProfiles, r.profile) {
-				plan.entryProfiles = append(plan.entryProfiles, r.profile)
-			}
-			continue
-		}
 		plan.requirements[r.value.ID] = r.profile
+		guards := findGuards(r.value, r.profile)
+		if len(guards) == 0 {
+			// A caller or ordinary program condition may supply the precondition.
+			// Isolate the ISA requirement; do not promote the entire function or
+			// turn program state into a CPU predicate. This applies at entry too.
+			plan.isolated[r.value.ID] = true
+			continue
+		}
 		for _, guard := range guards {
 			selected[guard] = true
 			// A virtual Go feature is a conjunction, not a new runtime bit.
@@ -453,7 +418,6 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 			}
 		}
 	}
-	slices.Sort(plan.entryProfiles)
 	for _, guard := range guards {
 		if !guard.selective || selected[guard.profile] {
 			plan.guards[guard.id] = guard.profile
@@ -505,13 +469,7 @@ func llvmCPUFeatureGuardValue(v *Value, arch string) (profile string, selective 
 		if len(v.Args) != 0 && v.Args[0].Op == OpAddr {
 			if sym, ok := v.Args[0].Aux.(*obj.LSym); ok {
 				if profile := llvmCPUProfileByRuntimeGuard(arch, sym.Name); profile != "" {
-					p := llvmCPUProfileByName(profile)
-					// UseAeshash implies AVX only for the SIMD implementation.
-					// Unlike compiler-inserted feature guards, select derived
-					// algorithm-state loads only when an operation needs them.
-					if !p.guardImplies || buildcfg.Experiment.SIMD {
-						return profile, p.guardImplies
-					}
+					return profile, false
 				}
 			}
 		}
@@ -522,6 +480,21 @@ func llvmCPUFeatureGuardValue(v *Value, arch string) (profile string, selective 
 func (lfc *LLVMFuncContext) requireCPUFeature(v *Value, instruction llvm.Value) {
 	if profile := lfc.CPUFeatures.requirements[v.ID]; profile != "" {
 		instruction.SetMetadata(GlobalCtxt.MDKindID(goCPURequiresMD), GlobalCtxt.MDNode([]llvm.Metadata{GlobalCtxt.MDString(profile)}))
+	}
+}
+
+// Mark only the instructions emitted for this operation, not surrounding
+// business logic, calls, stack allocations, or the block's branch/return.
+// Adjacent marked operations can share one outlined memory-ABI helper.
+func (lfc *LLVMFuncContext) markCPUOutline(v *Value, block llvm.BasicBlock, last llvm.Value) {
+	first := block.FirstInstruction()
+	if !last.IsNil() {
+		first = llvm.NextInstruction(last)
+	}
+	profile := lfc.CPUFeatures.requirements[v.ID]
+	md := GlobalCtxt.MDNode([]llvm.Metadata{GlobalCtxt.MDString(profile)})
+	for instruction := first; !instruction.IsNil(); instruction = llvm.NextInstruction(instruction) {
+		instruction.SetMetadata(GlobalCtxt.MDKindID("goallc.cpu.outline"), md)
 	}
 }
 

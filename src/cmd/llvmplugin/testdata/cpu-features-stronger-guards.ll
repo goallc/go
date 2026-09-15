@@ -74,39 +74,6 @@ attributes #1 = { "target-features"="+avx" "goallc.cpu.multiversion"="x86.avx2,x
 ; CHECK: and i64 %features, 1024
 ; CHECK: and i64 %features, 1536
 
-; An algorithm-state guard only implies its feature: even an AES+AVX CPU
-; must retain the flag's false path (e.g. before initialization).
-@"internal/runtime/maps.UseAeshash" = external global i8
-define goabiinternal i32 @derived_state() #3 {
-entry:
-  %flag = load i8, ptr @"internal/runtime/maps.UseAeshash", !goallc.cpu.guard !3
-  %enabled = icmp ne i8 %flag, 0
-  br i1 %enabled, label %aes, label %fallback
-aes:
-  call void @llvm.sideeffect(), !goallc.cpu.requires !3, !goallc.cpu.require-anchor !4
-  ret i32 1
-fallback:
-  ret i32 0
-}
-declare void @llvm.sideeffect()
-attributes #3 = { "goallc.cpu.multiversion"="x86.avx,x86.aes" "target-cpu"="x86-64" }
-!3 = !{!"x86.avxaes"}
-!4 = !{}
-; CHECK-LABEL: define internal goabiinternal i32 @"derived_state<goallc.fmv.baseline>"
-; CHECK-NOT: load i8
-; CHECK: ret i32 0
-; CHECK-LABEL: define internal goabiinternal i32 @"derived_state<goallc.fmv.avx>"
-; CHECK-NOT: load i8
-; CHECK: ret i32 0
-; CHECK-LABEL: define internal goabiinternal i32 @"derived_state<goallc.fmv.aes>"
-; CHECK-NOT: load i8
-; CHECK: ret i32 0
-; CHECK-LABEL: define internal goabiinternal i32 @"derived_state<goallc.fmv.avx-aes>"
-; CHECK: load i8, ptr @"internal/runtime/maps.UseAeshash"
-; CHECK: br i1
-; CHECK: ret i32 1
-; CHECK: ret i32 0
-
 ; The ABI floor supplies instructions, not an effective Go boolean.
 define i8 @floor_boolean() #2 {
   %low = load i8, ptr @runtime.x86HasAVX2, !goallc.cpu.guard !2
