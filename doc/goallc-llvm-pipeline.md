@@ -43,24 +43,28 @@ function `target-features`; they do not make runtime CPU predicates true.
 Locally hardware-guarded operations use the early LLVM FMV pass. Explicit checks
 and fallback paths retain their meaning, including feature disabling with
 `GODEBUG`. If a SIMD operation or wide-register call needs features beyond the
-function's contract and has no recognized hardware guard, its requirement is
-marked for outlining instead of raising the entire function's feature floor.
-This rule also applies to unguarded operations in the entry block.
+function's contract and has no recognized hardware guard, its requirement
+automatically requests FMV instead of raising the original function's feature
+floor. This also applies to unguarded operations in the entry block. The same
+Go CPU profiles and runtime resolver select the whole-function versions.
 
-After FMV specializes hardware checks, LLVM's CodeExtractor groups marked SIMD
-instructions within each basic block into internal, non-inlineable functions
-with the required `target-features`. Unrelated calls, stack allocations, and
-control-flow terminators stay in the original function. Live inputs and outputs
-cross this boundary through an aggregate in memory, avoiding an ISA-dependent
-vector register ABI. The helpers retain the Go calling convention and GC
-strategy. Surviving requirements
-are verified against each implementation's target features as before.
+Supported versions retain the original SIMD instructions and register ABI,
+without outlining or aggregate-memory argument/result carriers. In versions
+without the required features, a source-local anchor becomes `unreachable`.
+The anchor precedes the operation but follows operand evaluation. Unsupported
+instructions and their now-unreachable continuation are removed before normal
+LLVM optimization.
+Surviving requirements are checked against each version's target features.
 
 Ordinary algorithm flags such as `maps.UseAeshash` are not interpreted by the
-compiler: their control flow remains intact. Outlining only isolates ISA use;
-it does not synthesize a hardware check or software fallback. As in native Go,
-the program must ensure the required CPU features before executing that path,
-including when the check is outside the function or callback.
+compiler. The program must ensure that an unsupported SIMD operation is not
+executed, including when its protection is outside the function or callback.
+Violating that precondition is undefined behavior, not a recoverable panic or
+a guaranteed trap. LLVM may
+simplify control flow using this precondition. Automatic FMV does not invent
+a software algorithm or interpret an ordinary business flag as a CPU predicate.
+The resolver still uses the effective Go CPU snapshot after `GODEBUG` overrides;
+before CPU initialization it uses baseline without caching the selection.
 
 ## An optimization exposed by the shared pipeline
 

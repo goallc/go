@@ -319,7 +319,7 @@ func llvmCallAux(v *Value) *AuxCall {
 type llvmCPUFeaturePlan struct {
 	floor        string
 	requirements map[ID]string
-	isolated     map[ID]bool
+	automatic    map[ID]bool
 	guards       map[ID]string
 	profiles     []string
 }
@@ -346,7 +346,7 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 	plan := &llvmCPUFeaturePlan{
 		floor:        llvmSIMDFeatureFloor(f),
 		requirements: make(map[ID]string),
-		isolated:     make(map[ID]bool),
+		automatic:    make(map[ID]bool),
 		guards:       make(map[ID]string),
 	}
 	type guardKey struct {
@@ -399,11 +399,11 @@ func llvmPlanCPUFeatures(f *Func) *llvmCPUFeaturePlan {
 		plan.requirements[r.value.ID] = r.profile
 		guards := findGuards(r.value, r.profile)
 		if len(guards) == 0 {
-			// A caller or ordinary program condition may supply the precondition.
-			// Isolate the ISA requirement; do not promote the entire function or
-			// turn program state into a CPU predicate. This applies at entry too.
-			plan.isolated[r.value.ID] = true
-			continue
+			// Select whole-function versions from the operation's requirements,
+			// without interpreting ordinary program state as a CPU predicate.
+			// The program guarantees this operation is unreachable in unsupported versions.
+			plan.automatic[r.value.ID] = true
+			guards = []string{r.profile}
 		}
 		for _, guard := range guards {
 			selected[guard] = true
@@ -483,19 +483,11 @@ func (lfc *LLVMFuncContext) requireCPUFeature(v *Value, instruction llvm.Value) 
 	}
 }
 
-// Mark only the instructions emitted for this operation, not surrounding
-// business logic, calls, stack allocations, or the block's branch/return.
-// Adjacent marked operations can share one outlined memory-ABI helper.
-func (lfc *LLVMFuncContext) markCPUOutline(v *Value, block llvm.BasicBlock, last llvm.Value) {
-	first := block.FirstInstruction()
-	if !last.IsNil() {
-		first = llvm.NextInstruction(last)
-	}
-	profile := lfc.CPUFeatures.requirements[v.ID]
-	md := GlobalCtxt.MDNode([]llvm.Metadata{GlobalCtxt.MDString(profile)})
-	for instruction := first; !instruction.IsNil(); instruction = llvm.NextInstruction(instruction) {
-		instruction.SetMetadata(GlobalCtxt.MDKindID("goallc.cpu.outline"), md)
-	}
+// Insert before the operation, after evaluating its operands. Unsupported FMV
+// versions make this point unreachable, relying on the program's CPU precondition.
+func (lfc *LLVMFuncContext) markCPUAutoCheck(v *Value) {
+	anchor := lfc.cpuRequirementAnchor(v)
+	anchor.SetMetadata(GlobalCtxt.MDKindID("goallc.cpu.auto"), GlobalCtxt.MDNode(nil))
 }
 
 // A SIMD operation may fold to a constant, argument, or a producer
@@ -503,13 +495,18 @@ func (lfc *LLVMFuncContext) markCPUOutline(v *Value, block llvm.BasicBlock, last
 // position instead of attaching it to that result. The early FMV pass keeps
 // the anchor through specialization and removes it after checking legality.
 func (lfc *LLVMFuncContext) requireSIMDCPUFeature(v *Value) {
-	if lfc.CPUFeatures.requirements[v.ID] == "" {
+	if lfc.CPUFeatures.requirements[v.ID] == "" || lfc.CPUFeatures.automatic[v.ID] {
 		return
 	}
+	lfc.cpuRequirementAnchor(v)
+}
+
+func (lfc *LLVMFuncContext) cpuRequirementAnchor(v *Value) llvm.Value {
 	fn := getLLVMIntrinsicDeclaration("llvm.sideeffect")
 	anchor := lfc.b.CreateCall(fn.GlobalValueType(), fn, nil, "")
 	anchor.SetMetadata(GlobalCtxt.MDKindID(goCPURequireAnchorMD), GlobalCtxt.MDNode(nil))
 	lfc.requireCPUFeature(v, anchor)
+	return anchor
 }
 
 func (lfc *LLVMFuncContext) markCPUFeatureGuard(v *Value, load llvm.Value) {

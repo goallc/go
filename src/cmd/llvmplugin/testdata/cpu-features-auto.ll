@@ -1,0 +1,71 @@
+; No business flag is interpreted as a hardware predicate by automatic FMV.
+; The program guarantees the unsupported operation is unreachable in baseline.
+target triple = "x86_64-unknown-linux-goobj"
+@algorithm.enabled = external global i1
+@runtime.goallcCPUFeatures = external global i64
+declare void @ordinary()
+declare void @llvm.sideeffect()
+declare <2 x i64> @llvm.x86.aesni.aesenc(<2 x i64>, <2 x i64>)
+
+define goabiinternal void @conditional(ptr %x, ptr %out) #0 gc "goallc" {
+entry:
+  %flag = load i1, ptr @algorithm.enabled
+  br i1 %flag, label %feature, label %fallback
+feature:
+  call void @ordinary()
+  call void @llvm.sideeffect(), !goallc.cpu.requires !1, !goallc.cpu.require-anchor !2, !goallc.cpu.auto !2
+  %a = load <32 x i8>, ptr %x, align 1
+  %sum = add <32 x i8> %a, %a
+  call void @ordinary()
+  br label %done
+fallback:
+  br label %done
+done:
+  %result = phi <32 x i8> [ %sum, %feature ], [ zeroinitializer, %fallback ]
+  store <32 x i8> %result, ptr %out, align 1
+  ret void
+}
+attributes #0 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx2" }
+
+; A composite requirement is not satisfied by either runtime predicate alone.
+define goabiinternal void @composite(ptr %x) #1 {
+entry:
+  call void @llvm.sideeffect(), !goallc.cpu.requires !3, !goallc.cpu.require-anchor !2, !goallc.cpu.auto !2
+  %a = load <2 x i64>, ptr %x, align 1
+  %r = call <2 x i64> @llvm.x86.aesni.aesenc(<2 x i64> %a, <2 x i64> %a)
+  store <2 x i64> %r, ptr %x, align 1
+  ret void
+}
+attributes #1 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx,x86.aes" }
+!goallc.cpu.config = !{!0}
+!0 = !{!"goallc.cpu.v1", !"amd64", !"v1"}
+!1 = !{!"x86.avx2"}
+!2 = !{}
+!3 = !{!"x86.avxaes"}
+
+; CHECK-LABEL: define internal goabiinternal void @"conditional<goallc.fmv.baseline>"(
+; CHECK: load i1, ptr @algorithm.enabled
+; CHECK: br i1 %flag
+; CHECK: call void @ordinary()
+; CHECK-NEXT: unreachable
+; CHECK-NOT: add <32 x i8>
+; CHECK: store <32 x i8> zeroinitializer
+; CHECK: ret void
+; CHECK-LABEL: define internal goabiinternal void @"conditional<goallc.fmv.avx2>"(
+; CHECK-SAME: #[[ISA:[0-9]+]] gc "goallc"
+; CHECK: load i1, ptr @algorithm.enabled
+; CHECK: br i1 %flag
+; CHECK: call void @ordinary()
+; CHECK: add <32 x i8>
+; CHECK: call void @ordinary()
+; CHECK: ret void
+; CHECK-LABEL: define internal goabiinternal void @"composite<goallc.fmv.baseline>"(
+; CHECK: unreachable
+; CHECK-LABEL: define internal goabiinternal void @"composite<goallc.fmv.avx>"(
+; CHECK: unreachable
+; CHECK-LABEL: define internal goabiinternal void @"composite<goallc.fmv.aes>"(
+; CHECK: unreachable
+; CHECK-LABEL: define internal goabiinternal void @"composite<goallc.fmv.avx-aes>"(
+; CHECK: call <2 x i64> @llvm.x86.aesni.aesenc(
+; CHECK: ret void
+; CHECK: attributes #[[ISA]] = { "target-cpu"="x86-64" "target-features"="+avx,+avx2" }

@@ -28,7 +28,6 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/CodeExtractor.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
@@ -47,7 +46,7 @@ constexpr StringLiteral DoneMD = "goallc.cpu.fmv.done";
 constexpr StringLiteral GuardMD = "goallc.cpu.guard";
 constexpr StringLiteral RequiresMD = "goallc.cpu.requires";
 constexpr StringLiteral RequireAnchorMD = "goallc.cpu.require-anchor";
-constexpr StringLiteral IsolateMD = "goallc.cpu.outline";
+constexpr StringLiteral AutoMD = "goallc.cpu.auto";
 constexpr StringLiteral MultiversionAttr = "goallc.cpu.multiversion";
 constexpr StringLiteral RuntimeFeatureMask = "runtime.goallcCPUFeatures";
 constexpr StringLiteral GoResultsTupleAttr = "go_results_tuple";
@@ -372,6 +371,33 @@ Error verifyRequirements(Function &F, const CPUConfig &Config) {
   if (!STI)
     return createStringError(inconvertibleErrorCode(),
                              "cannot query GoALLC CPU target features");
+  // Explicit hardware guards have already been specialized. Automatic checks
+  // mark only the unsupported operation's path unreachable, relying on the
+  // program's CPU precondition. Supported clones retain the original IR
+  // and register ABI; there are no extracted helpers or memory carriers.
+  SmallVector<Instruction *, 8> Unsupported;
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (!I.getMetadata(AutoMD))
+        continue;
+      Expected<StringRef> Name = getInstructionProfile(I, RequiresMD);
+      if (!Name)
+        return Name.takeError();
+      const Profile *P = findProfile(*Name);
+      if (!P || P->Arch != Config.Arch)
+        return createStringError(inconvertibleErrorCode(),
+                                 "invalid automatic CPU profile " + *Name);
+      if (!STI->checkFeatures(P->TargetFeature)) {
+        Unsupported.push_back(&I);
+        break;
+      }
+    }
+  }
+  if (!Unsupported.empty()) {
+    for (Instruction *I : Unsupported)
+      changeToUnreachable(I);
+    removeUnreachableBlocks(F);
+  }
   SmallVector<Instruction *, 8> Anchors;
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
@@ -544,8 +570,6 @@ Function *cloneResolver(Function &Source) {
   return Resolver;
 }
 
-Error outlineCPURequirements(Function &F, const CPUConfig &Config);
-
 Error multiversionFunction(Function &F, const CPUConfig &Config,
                            GlobalVariable &RuntimeMask) {
   const bool DuplicateOK = isGoObjDuplicateOK(F);
@@ -561,7 +585,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     return BaselineOrErr.takeError();
   Function *BaselineImpl = *BaselineOrErr;
   if (Error Err =
-          outlineCPURequirements(*BaselineImpl, Config))
+          verifyRequirements(*BaselineImpl, Config))
     return Err;
   if (Error Err = registerGoObjDebugFunction(*BaselineImpl))
     return Err;
@@ -598,7 +622,7 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
     if (!CloneOrErr)
       return CloneOrErr.takeError();
     Function *Clone = *CloneOrErr;
-    if (Error Err = outlineCPURequirements(*Clone, Config))
+    if (Error Err = verifyRequirements(*Clone, Config))
       return Err;
     if (Error Err = registerGoObjDebugFunction(*Clone))
       return Err;
@@ -725,101 +749,6 @@ Error llvm::goallc::finalizeCPUFeatureTailTransfers(Function &F) {
   return Error::success();
 }
 
-namespace {
-
-// Run after FMV guard specialization: extracting a hardware check beforehand
-// would hide it behind a call and prevent the baseline clone's branch folding.
-// Ordinary program conditions remain ordinary branches. Group marked operations
-// within a basic block, without moving unrelated calls or allocas into a new
-// frame. Use a memory ABI, including vector live-outs, so ISA-specific
-// register carriers cannot leak into the caller. This is isolation, not a new
-// runtime check: the program still has to satisfy the operation's precondition.
-Error outlineCPURequirements(Function &Source, const CPUConfig &Config) {
-  SmallVector<std::pair<Instruction *, Instruction *>, 16> Regions;
-  for (BasicBlock &BB : Source) {
-    Instruction *First = nullptr, *Last = nullptr;
-    for (Instruction &I : BB) {
-      if (I.getMetadata(IsolateMD)) {
-        if (!First)
-          First = &I;
-        Last = &I;
-      } else if (isa<CallBase, AllocaInst>(I) || I.isTerminator()) {
-        if (First)
-          Regions.emplace_back(First, Last);
-        First = Last = nullptr;
-      }
-    }
-  }
-
-  for (auto [First, Last] : Regions) {
-    SmallVector<const Profile *, 4> Required;
-    for (Instruction &I : make_range(First->getIterator(),
-                                    std::next(Last->getIterator()))) {
-      if (!I.getMetadata(IsolateMD))
-        continue;
-      Expected<StringRef> Name = getInstructionProfile(I, IsolateMD);
-      if (!Name)
-        return Name.takeError();
-      const Profile *P = findProfile(*Name);
-      if (!P)
-        return createStringError(inconvertibleErrorCode(), "unknown isolated CPU profile " + *Name);
-      if (!llvm::is_contained(Required, P))
-        Required.push_back(P);
-    }
-    BasicBlock *BB = First->getParent()->splitBasicBlock(First, "simd");
-    BB->splitBasicBlock(Last->getNextNode(), "simd.cont");
-    CodeExtractor Extractor({BB}, nullptr, /*AggregateArgs=*/true,
-                            nullptr, nullptr, nullptr, false, false, nullptr,
-                            {}, "goallc.isa");
-    if (!Extractor.isEligible())
-      return createStringError(inconvertibleErrorCode(),
-                               "cannot isolate CPU feature region in " + Source.getName());
-    CodeExtractorAnalysisCache Cache(Source);
-    Function *Helper = Extractor.extractCodeRegion(Cache);
-    if (!Helper)
-      return createStringError(inconvertibleErrorCode(),
-                               "failed to isolate CPU feature region in " + Source.getName());
-    // The GoObj FMV suffix denotes a source function's static-ABI variant and
-    // must be terminal. An outlined helper is a separate symbol, not a variant
-    // of that source function. Do not append our suffix after the reserved one.
-    StringRef SourceName = Source.getName();
-    bool WasABI0 = SourceName.consume_back(GoObj::ABI0SymbolSuffix);
-    auto [BaseName, Variant] = SourceName.split(GoObj::FMVSymbolSuffixPrefix);
-    if (!Variant.empty()) {
-      Variant.consume_back(">");
-      Helper->setName(BaseName + ".goallc.isa." + Variant);
-    } else if (WasABI0) {
-      Helper->setName(SourceName + ".goallc.isa");
-    }
-    if (DISubprogram *SP = Helper->getSubprogram())
-      SP->replaceRawLinkageName(MDString::get(Helper->getContext(), Helper->getName()));
-    Helper->setCallingConv(CallingConv::GoABIInternal);
-    if (Source.hasGC())
-      Helper->setGC(Source.getGC());
-    Helper->removeFnAttr(MultiversionAttr);
-    Helper->removeFnAttr(GoResultsTupleAttr);
-    Helper->removeFnAttr(Attribute::AlwaysInline);
-    Helper->addFnAttr(Attribute::NoInline);
-    markGoObjNonPackage(*Helper);
-    if (isGoObjDuplicateOK(Source))
-      markGoObjDuplicateOK(*Helper);
-    for (const Profile *P : Required)
-      addTargetFeature(*Helper, P->TargetFeature);
-    for (User *U : Helper->users())
-      if (auto *Call = dyn_cast<CallBase>(U))
-        Call->setCallingConv(Helper->getCallingConv());
-    for (Instruction &I : instructions(Helper))
-      I.setMetadata(IsolateMD, nullptr);
-    if (Error Err = verifyRequirements(*Helper, Config))
-      return Err;
-    if (Error Err = registerGoObjDebugFunction(*Helper))
-      return Err;
-  }
-  return verifyRequirements(Source, Config);
-}
-
-} // namespace
-
 Error llvm::goallc::runEarlyIRPipeline(Module &M) {
   if (M.getNamedMetadata(DoneMD))
     return Error::success();
@@ -843,7 +772,7 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
           return Err;
     if (F.hasFnAttribute(MultiversionAttr)) {
       Candidates.push_back(&F);
-    } else if (Error Err = outlineCPURequirements(F, *Config)) {
+    } else if (Error Err = verifyRequirements(F, *Config)) {
       return Err;
     }
   }
@@ -861,7 +790,7 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
   }
 
   // Named debug records do not keep symbols alive through GlobalDCE. Publish
-  // all roots once: rebuilding llvm.compiler.used for every outlined helper
+  // all roots once: rebuilding llvm.compiler.used for every generated version
   // retains quadratically many uniqued constants in large SIMD packages.
   if (NamedMDNode *Funcs = M.getNamedMetadata(GoObjDebugFuncsMD)) {
     SmallVector<GlobalValue *, 32> Roots;

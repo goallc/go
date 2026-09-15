@@ -69,19 +69,19 @@ func llvmSIMDGuardedWideCall512(dst, src *[64]uint8) {
 	llvmSIMDWideIdentity512(archsimd.LoadUint8x64Array(src)).StoreArray(dst)
 }
 
-// An unguarded fixed-width call retains native Go's CPU precondition, but only
-// its outlined helper gets the ABI floor; the pointer-only caller stays baseline.
+// An unguarded fixed-width call automatically requests a feature version;
+// the pointer-only caller does not acquire an unconditional ABI floor.
 
 // LLVM-AMD64-DAG: define goabiinternal void @codegen.llvmSIMDUnguardedWideCall256({{.*}}) #[[UNGUARDED:[0-9]+]]
-// LLVM-AMD64-DAG: attributes #[[UNGUARDED]] = { {{.*}}"target-cpu"="x86-64" }
-// LLVM-OPT-AMD64: define goabiinternal void @codegen.llvmSIMDUnguardedWideCall256(
-// LLVM-OPT-AMD64: call goabiinternal void @codegen.llvmSIMDUnguardedWideCall256.goallc.isa(ptr
-// LLVM-OPT-AMD64: define internal goabiinternal void @codegen.llvmSIMDUnguardedWideCall256.goallc.isa(ptr
-// LLVM-OPT-AMD64-SAME: #[[OUTLINED:[0-9]+]]
+// LLVM-AMD64-DAG: attributes #[[UNGUARDED]] = { {{.*}}"goallc.cpu.multiversion"="x86.avx"
+// LLVM-OPT-AMD64: define internal goabiinternal void @"codegen.llvmSIMDUnguardedWideCall256<goallc.fmv.baseline>"(
+// LLVM-OPT-AMD64: unreachable
+// LLVM-OPT-AMD64: define internal goabiinternal void @"codegen.llvmSIMDUnguardedWideCall256<goallc.fmv.avx>"(
+// LLVM-OPT-AMD64-SAME: #[[AUTO:[0-9]+]]
 // LLVM-OPT-AMD64: load <32 x i8>
 // LLVM-OPT-AMD64: store <32 x i8>
-// LLVM-OPT-AMD64: attributes #[[OUTLINED]] = { {{.*}}"target-features"="+avx"
-// LLVM-NM-AMD64-NOT: codegen.llvmSIMDUnguardedWideCall256.goallc.fmv.slot
+// LLVM-OPT-AMD64: attributes #[[AUTO]] = { {{.*}}"target-features"="+avx"
+// LLVM-NM-AMD64: codegen.llvmSIMDUnguardedWideCall256.goallc.fmv.slot
 //
 //go:noinline
 func llvmSIMDUnguardedWideCall256(dst, src *[32]uint8) {

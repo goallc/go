@@ -3675,15 +3675,12 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		lfc.b.SetInsertPointAtEnd(lfc.BBs[v.Block.ID])
 	}
 	lfc.setDebugLocation(v.Pos)
-	if lfc.CPUFeatures != nil && lfc.CPUFeatures.isolated[v.ID] {
-		// Materialize operands outside the outlined operation. In particular,
-		// evaluating an operand must not move an ordinary call into a new frame.
+	if lfc.CPUFeatures != nil && lfc.CPUFeatures.automatic[v.ID] {
+		// Materialize operands before the operation's automatic CPU precondition.
 		for _, arg := range v.Args {
 			lfc.GenLV(arg)
 		}
-		block := lfc.b.GetInsertBlock()
-		last := block.LastInstruction()
-		defer lfc.markCPUOutline(v, block, last)
+		lfc.markCPUAutoCheck(v)
 	}
 	var lVal llvm.Value
 	arg0 := func() llvm.Value { return lfc.GenLV(v.Args[0]) }

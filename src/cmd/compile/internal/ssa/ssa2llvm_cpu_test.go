@@ -18,35 +18,35 @@ import (
 	"testing"
 )
 
-func TestLLVMCPUOutlineAndGuards(t *testing.T) {
+func TestLLVMCPUAutomaticAndGuards(t *testing.T) {
 	llvmCPUPlanBaselineForTest(t)
 	for _, guarded := range []bool{false, true} {
 		f := llvmCPUPlanGuardedFunc(t)
 		if !guarded {
-			// An operation before the guard must be isolated, not raise the floor.
+			// An operation before the guard requests FMV, not a higher floor.
 			v := f.values["add"]
 			f.f.Entry.NewValue2(src.NoXPos, v.Op, v.Type, v.Args[0], v.Args[1])
 		}
 		p := llvmPlanCPUFeatures(f.f)
-		wantIsolated := 0
+		wantAutomatic := 0
 		if !guarded {
-			wantIsolated = 1
+			wantAutomatic = 1
 		}
-		if p.floor != goCPUProfileX86AVX || len(p.isolated) != wantIsolated {
-			t.Fatalf("guarded=%v: outline changed the ABI floor: %+v", guarded, p)
+		if p.floor != goCPUProfileX86AVX || len(p.automatic) != wantAutomatic {
+			t.Fatalf("guarded=%v: automatic FMV changed the ABI floor: %+v", guarded, p)
 		}
 		// A capability precondition never asserts a runtime CPU predicate or
 		// removes the independent, stronger guard's FMV requirement.
-		if p.guards[f.values["high"].ID] != goCPUProfileX86AVX512 || len(p.requirements) != 2+wantIsolated {
+		if p.guards[f.values["high"].ID] != goCPUProfileX86AVX512 || len(p.requirements) != 2+wantAutomatic {
 			t.Fatalf("guarded=%v: source guard or requirements lost: %+v", guarded, p)
 		}
 	}
-	// A similarly shaped ordinary flag must not become an FMV predicate or
-	// raise the entire function's feature floor after inlining SIMD code.
+	// Ordinary state does not become a hardware predicate. The operation itself
+	// requests automatic FMV without raising the caller's ABI floor.
 	f := llvmCPUPlanGuardedFunc(t)
 	f.values["addr"].Aux = &obj.LSym{Name: "example.algorithmState"}
 	p := llvmPlanCPUFeatures(f.f)
-	if len(p.profiles) != 0 || len(p.guards) != 0 || p.floor != goCPUProfileX86AVX || !p.isolated[f.values["add"].ID] {
+	if strings.Join(p.profiles, ",") != goCPUProfileX86AVX2 || len(p.guards) != 0 || p.floor != goCPUProfileX86AVX || !p.automatic[f.values["add"].ID] {
 		t.Fatalf("ordinary state was treated as a CPU guard or entry precondition: %+v", p)
 	}
 }
@@ -240,8 +240,8 @@ func TestLLVMCPUFeaturePlanWideCalls(t *testing.T) {
 			call := block.NewValue1A(src.NoXPos, OpStaticCall, aux.LateExpansionResultType(), aux, f.values["mem"])
 			p := llvmPlanCPUFeatures(f.f)
 			if test.unguarded && test.registers {
-				if p.floor != goCPUProfileX86AVX || !p.isolated[call.ID] || p.requirements[call.ID] != goCPUProfileX86AVX512 {
-					t.Fatalf("unguarded wide call was not isolated from the caller's ABI floor: %+v", p)
+				if p.floor != goCPUProfileX86AVX || !p.automatic[call.ID] || p.requirements[call.ID] != goCPUProfileX86AVX512 || strings.Join(p.profiles, ",") != goCPUProfileX86AVX512 {
+					t.Fatalf("unguarded wide call did not request automatic FMV: %+v", p)
 				}
 			} else {
 				if p.floor != goCPUProfileX86AVX || strings.Join(p.profiles, ",") != goCPUProfileX86AVX512 {
