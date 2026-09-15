@@ -42,7 +42,7 @@ void configureWriteBarrierRecords(Module &M) {
         CI->getFunction()->getGC() != "goallc" || CI->isMustTailCall())
       report_fatal_error("invalid Go write barrier record use");
     auto *Flags = dyn_cast<ConstantInt>(CI->getArgOperand(2));
-    if (!Flags || Flags->getZExtValue() > 3)
+    if (Flags && Flags->getZExtValue() > 3)
       report_fatal_error("invalid Go write barrier record flags");
   }
   // The GC is non-moving. Recording neither publishes a pointer to Go code
@@ -82,13 +82,17 @@ void lowerWriteBarrierRecords(Module &M) {
   Function *Reserve =
       Intrinsic::getOrInsertDeclaration(&M, Intrinsic::go_gc_write_barrier);
   SmallPtrSet<CallInst *, 32> Done;
-  auto needOld = [](CallInst *CI) {
-    return !(cast<ConstantInt>(CI->getArgOperand(2))->getZExtValue() & 1);
+  // SimplifyCFG can merge calls with different constant omission proofs into
+  // a call with a select/PHI argument. Without a constant proof, conservatively
+  // record both pointers. Losing an omission only adds redundant GC work.
+  auto flags = [](CallInst *CI) -> unsigned {
+    auto *C = dyn_cast<ConstantInt>(CI->getArgOperand(2));
+    return C ? C->getZExtValue() : 0;
   };
-  auto needNew = [](CallInst *CI) {
+  auto needOld = [&](CallInst *CI) { return !(flags(CI) & 1); };
+  auto needNew = [&](CallInst *CI) {
     Value *V = CI->getArgOperand(0);
-    return !(cast<ConstantInt>(CI->getArgOperand(2))->getZExtValue() & 2) &&
-           !isa<ConstantPointerNull>(V) &&
+    return !(flags(CI) & 2) && !isa<ConstantPointerNull>(V) &&
            !isa<GlobalValue>(V->stripPointerCasts());
   };
   for (CallInst *First : Writes) {

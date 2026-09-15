@@ -20,6 +20,8 @@ The frontend emits the compiler-private declaration
 This is a plugin-owned IR operation, not an upstream LLVM intrinsic or a runtime
 symbol. Flag bit 0 omits the old pointer; bit 1 omits the new pointer. Flags are
 constant operands so optimizer metadata dropping cannot change their meaning.
+If optimization merges different flags into a select or PHI, late lowering
+conservatively records both pointers instead of relying on an omission proof.
 The native Go backend and `cgocheck2` retain their existing expansion; typed
 `wbMove`/`wbZero` helpers continue to be emitted by the native Go pass.
 

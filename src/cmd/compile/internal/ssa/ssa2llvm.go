@@ -4485,13 +4485,17 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 	case OpStoreWB:
 		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
 		value := arg1()
+		// Not-in-heap pointers use integer carriers, including when Go SSA
+		// forwards one through an unsafe.Pointer conversion. Materialize the
+		// pointer only for the record, preserving the store's representation.
+		recorded := lfc.llvmAddressPointer(v, value, v.Args[1].Type, v.String()+".record")
 		// This compiler-private record is lowered by the plugin after LLVM
 		// optimization. The ordinary store exposes the publication to alias
 		// and capture analysis; only the record itself is non-capturing.
-		sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{value.Type(), address.Type(), GlobalCtxt.Int32Type()}, false)
+		sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{recorded.Type(), address.Type(), GlobalCtxt.Int32Type()}, false)
 		fn := getOrInsertLLVMIntrinsic("goallc.gc.write.record", sig)
 		flags := llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(v.Block.Func.llvmWriteBarrierFlags[v.ID]), false)
-		record := lfc.b.CreateCall(sig, fn, []llvm.Value{value, address, flags}, "")
+		record := lfc.b.CreateCall(sig, fn, []llvm.Value{recorded, address, flags}, "")
 		markLLVMGCLeafCall(record)
 		lVal = lfc.b.CreateStore(value, address)
 		lVal.SetAlignment(int(v.Args[1].Type.Alignment()))

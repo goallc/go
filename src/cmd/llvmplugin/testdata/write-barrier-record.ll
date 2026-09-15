@@ -65,7 +65,6 @@ define void @separate(ptr %dst, ptr %value, ptr %other) gc "goallc" {
   ret void
 }
 
-; OPT: attributes {{.*}}"gc-leaf-function"
 
 ; Five unrelated writes require two reservations, each within the runtime limit.
 ; LIMIT-LABEL: define void @limit(
@@ -114,3 +113,28 @@ define void @clear(ptr %dst) gc "goallc" {
   store ptr null, ptr %dst
   ret void
 }
+
+; SimplifyCFG merges calls whose omission flags differ. Dynamic flags must
+; conservatively retain both entries rather than crashing in late lowering.
+; OPT-LABEL: define {{.*}}void @merged_flags(
+; OPT: select i1 %condition, i32 0, i32 2
+; OPT: call void @goallc.gc.write.record
+; LOWER-LABEL: define {{.*}}void @merged_flags(
+; LOWER: load i64, ptr %dst
+; LOWER: call ptr @llvm.go.gc.write.barrier(i32 2)
+; LOWER: store ptr %value, ptr %dst
+; LOWER: ret void
+define void @merged_flags(ptr %dst, ptr %value, i1 %condition) gc "goallc" {
+  br i1 %condition, label %a, label %b
+a:
+  call void @goallc.gc.write.record(ptr %value, ptr %dst, i32 0)
+  br label %exit
+b:
+  call void @goallc.gc.write.record(ptr %value, ptr %dst, i32 2)
+  br label %exit
+exit:
+  store ptr %value, ptr %dst
+  ret void
+}
+
+; OPT: attributes {{.*}}"gc-leaf-function"
