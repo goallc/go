@@ -6,7 +6,10 @@
 
 package main
 
-import "math"
+import (
+	"math"
+	"sync/atomic"
+)
 
 //go:noinline
 func branch(x, y float64) int {
@@ -38,6 +41,7 @@ func merged(x, y float64, b bool) bool {
 }
 
 func main() {
+	checkBoolBoundaries()
 	nan := math.Float64frombits(0x7ff8000000000001)
 	for _, test := range []struct {
 		x, y float64
@@ -61,5 +65,62 @@ func main() {
 	}
 	if !merged(-1, -2, false) || merged(-1, 2, true) || !merged(1, -2, true) || merged(1, -2, false) {
 		panic("phi bool")
+	}
+}
+
+type boolRecord struct {
+	before byte
+	flag   bool
+	flags  [3]bool
+	after  byte
+}
+
+//go:noinline
+func boolRecordRoundtrip(r boolRecord, b bool) (boolRecord, bool) {
+	r.flag = b
+	r.flags[1] = !b
+	return r, r.flags[0] != r.flags[1]
+}
+
+//go:noinline
+func boolLoop(p *bool, n int) bool {
+	b := *p
+	for i := 0; i < n; i++ {
+		b = b != (i&1 == 0)
+	}
+	*p = b
+	return b
+}
+
+//go:noinline
+func boolDeferred(b bool) (r bool) {
+	defer func() { r = !r }()
+	return b
+}
+
+func checkBoolBoundaries() {
+	for _, b := range []bool{false, true} {
+		r := boolRecord{before: 0x35, flag: !b, flags: [3]bool{true, b, false}, after: 0xa7}
+		got, flag := boolRecordRoundtrip(r, b)
+		if got.before != 0x35 || got.after != 0xa7 || got.flag != b || got.flags != [3]bool{true, !b, false} || flag != b {
+			panic("bool aggregate boundary")
+		}
+		if boolDeferred(b) != !b {
+			panic("bool deferred return")
+		}
+		for n := 0; n < 9; n++ {
+			x := b
+			want := b
+			if ((n+1)/2)&1 != 0 {
+				want = !want
+			}
+			if boolLoop(&x, n) != want || x != want {
+				panic("bool loop phi")
+			}
+		}
+	}
+	var x uint32 = 1
+	if !atomic.CompareAndSwapUint32(&x, 1, 2) || atomic.CompareAndSwapUint32(&x, 1, 3) || x != 2 {
+		panic("bool CAS result")
 	}
 }
