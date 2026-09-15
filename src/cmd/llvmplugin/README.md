@@ -31,6 +31,8 @@ The destination read orders recording before publication, while the ordinary
 store exposes its value and escape behavior to LLVM. After optimization and
 before statepoint rewriting, the plugin expands records into the existing
 write-barrier flag diamond and `llvm.go.gc.write.barrier` buffer reservations.
+Old pointers are loaded and immediately recorded after buffer reservation,
+keeping these temporaries out of the call's live set.
 Adjacent records can share up to eight entries; unrelated memory operations and
 calls stop grouping. All old values are read before grouped stores, and repeated
 new pointers and destinations are deduplicated. The existing async-preemption

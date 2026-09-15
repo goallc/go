@@ -135,19 +135,31 @@ void lowerWriteBarrierRecords(Module &M) {
       Instruction *Then = SplitBlockAndInsertIfThen(
           Enabled, First, false, MDBuilder(C).createBranchWeights(1, 2000));
       B.SetInsertPoint(Then);
-      SmallVector<Value *, 8> Entries;
+      struct Entry {
+        Value *Pointer;
+        bool LoadOld;
+      };
+      SmallVector<Entry, 8> Entries;
       SmallPtrSet<Value *, 8> NewSeen, OldSeen;
       for (CallInst *CI : Group) {
         Value *New = CI->getArgOperand(0), *Dst = CI->getArgOperand(1);
         if (needNew(CI) && NewSeen.insert(New).second)
-          Entries.push_back(B.CreatePtrToInt(New, Word));
+          Entries.push_back({New, false});
         if (needOld(CI) && OldSeen.insert(Dst).second)
-          Entries.push_back(B.CreateLoad(Word, Dst, "wb.old"));
+          Entries.push_back({Dst, true});
       }
       Value *Buf =
           B.CreateCall(Reserve, {B.getInt32(Entries.size())}, "wb.buf");
-      for (unsigned I = 0; I < Entries.size(); ++I)
-        B.CreateStore(Entries[I], B.CreateGEP(Word, Buf, B.getInt32(I)));
+      // Reserve before reading old pointers so those temporary values do not
+      // stay live across the call. Fill each entry immediately; all target
+      // stores remain after the complete, non-preemptible buffer fill.
+      for (unsigned I = 0; I < Entries.size(); ++I) {
+        Value *Slot = B.CreateGEP(Word, Buf, B.getInt32(I));
+        const Entry &E = Entries[I];
+        Value *Pointer = E.LoadOld ? B.CreateLoad(Word, E.Pointer, "wb.old")
+                                   : B.CreatePtrToInt(E.Pointer, Word);
+        B.CreateStore(Pointer, Slot);
+      }
     }
     for (CallInst *CI : Group) {
       Done.insert(CI);

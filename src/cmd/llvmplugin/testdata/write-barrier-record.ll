@@ -11,10 +11,11 @@ declare void @safepoint()
 ; LOWER-LABEL: define {{.*}}ptr @forward(
 ; LOWER: load i32, ptr @runtime.writeBarrier
 ; LOWER: br i1
-; LOWER: %wb.old = load i64, ptr %dst
+; LOWER-NOT: load i64, ptr %dst
 ; LOWER: call ptr @llvm.go.gc.write.barrier(i32 2)
 ; LOWER: store i64
-; LOWER: store i64 %wb.old
+; LOWER: %wb.old = load i64, ptr %dst
+; LOWER-NEXT: store i64 %wb.old
 ; LOWER: store ptr %value, ptr %dst
 ; LOWER: ret ptr %value
 define ptr @forward(ptr %dst, ptr %value) gc "goallc" {
@@ -89,9 +90,11 @@ define void @limit(ptr %a, ptr %b, ptr %c, ptr %d, ptr %e,
 
 ; Repeated destinations need the original old value and both new values.
 ; LIMIT-LABEL: define void @overwrite(
-; LIMIT: %wb.old = load i64, ptr %dst
 ; LIMIT-NOT: load i64
 ; LIMIT: call ptr @llvm.go.gc.write.barrier(i32 3)
+; LIMIT: %wb.old = load i64, ptr %dst
+; LIMIT-NEXT: store i64 %wb.old
+; LIMIT-NOT: load i64
 ; LIMIT: ret void
 define void @overwrite(ptr %dst, ptr %first, ptr %second) gc "goallc" {
   call void @goallc.gc.write.record(ptr %first, ptr %dst, i32 0)
@@ -103,9 +106,10 @@ define void @overwrite(ptr %dst, ptr %first, ptr %second) gc "goallc" {
 
 ; Null stores record only the overwritten pointer, even without omission flags.
 ; LIMIT-LABEL: define void @clear(
-; LIMIT: %wb.old = load i64, ptr %dst
+; LIMIT-NOT: load i64
 ; LIMIT: call ptr @llvm.go.gc.write.barrier(i32 1)
-; LIMIT: store i64 %wb.old
+; LIMIT: %wb.old = load i64, ptr %dst
+; LIMIT-NEXT: store i64 %wb.old
 ; LIMIT: store ptr null, ptr %dst
 ; LIMIT: ret void
 define void @clear(ptr %dst) gc "goallc" {
@@ -120,8 +124,9 @@ define void @clear(ptr %dst) gc "goallc" {
 ; OPT: select i1 %condition, i32 0, i32 2
 ; OPT: call void @goallc.gc.write.record
 ; LOWER-LABEL: define {{.*}}void @merged_flags(
-; LOWER: load i64, ptr %dst
+; LOWER-NOT: load i64, ptr %dst
 ; LOWER: call ptr @llvm.go.gc.write.barrier(i32 2)
+; LOWER: load i64, ptr %dst
 ; LOWER: store ptr %value, ptr %dst
 ; LOWER: ret void
 define void @merged_flags(ptr %dst, ptr %value, i1 %condition) gc "goallc" {
