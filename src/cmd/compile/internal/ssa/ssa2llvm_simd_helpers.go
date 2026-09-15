@@ -114,7 +114,7 @@ func (lfc *LLVMFuncContext) lowerSIMDHelper(v *Value, h llvmSIMDHelper) llvm.Val
 		if h.kind == llvmSIMDIsZero {
 			fn := getLLVMIntrinsicDeclaration("llvm.vector.reduce.or", x.Type())
 			bits := lfc.b.CreateCall(fn.GlobalValueType(), fn, []llvm.Value{x}, v.String()+".bits")
-			return lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, bits, llvm.ConstNull(laneType), v.String()+".zero"), v.String())
+			return lfc.goBool(v, lfc.b.CreateICmp(llvm.IntEQ, bits, llvm.ConstNull(laneType), v.String()+".zero"), v.String())
 		}
 		if h.kind == llvmSIMDIsNaN {
 			fp := GlobalCtxt.FloatType()

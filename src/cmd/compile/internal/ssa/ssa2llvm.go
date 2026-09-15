@@ -23,6 +23,7 @@ import (
 )
 
 type LLVMFuncContext struct {
+	BranchBoolUses      map[ID]int32 // BlockIf control uses; other consumers require Go i8 bools.
 	BBs                 map[ID]llvm.BasicBlock
 	Vs                  map[ID]llvm.Value
 	AddressOnlyLoads    map[ID]bool
@@ -922,7 +923,7 @@ func (lfc *LLVMFuncContext) selectPureTuple(v, src *Value, sel int) llvm.Value {
 	// overflow flag into that bool while lowering the select. Do the same here
 	// rather than letting the carrier type escape into subsequent bool phis.
 	if sel == 1 && (src.Op == OpMul32uover || src.Op == OpMul64uover) && v.Type.IsBoolean() && result.Type().TypeKind() == llvm.IntegerTypeKind {
-		return lfc.goBool(lfc.llvmCondition(result, v.String()+".i1"), v.String())
+		return lfc.goBool(v, lfc.llvmCondition(result, v.String()+".i1"), v.String())
 	}
 	v.Fatalf("%s source %s field %d has LLVM kind %v, want %v for Go type %v", v.Op, src.Op, sel, result.Type().TypeKind(), getLLVMType(v.Type).TypeKind(), v.Type)
 	return llvm.Value{}
@@ -1424,7 +1425,27 @@ func (lfc *LLVMFuncContext) llvmSlicemask(v *Value) llvm.Value {
 	return lfc.b.CreateAShr(neg, shift, v.String())
 }
 
-func (lfc *LLVMFuncContext) goBool(cond llvm.Value, name string) llvm.Value {
+// llvmBranchBoolUses counts existing SSA control uses without changing the Go
+// bool type. PHIs, stores, calls and all other value uses retain byte bools.
+func llvmBranchBoolUses(f *Func) map[ID]int32 {
+	uses := make(map[ID]int32)
+	for _, b := range f.Blocks {
+		if b.Kind == BlockIf {
+			v := b.Controls[0]
+			if v.Type.IsBoolean() {
+				uses[v.ID]++
+			}
+		}
+	}
+	return uses
+}
+
+func (lfc *LLVMFuncContext) goBool(v *Value, cond llvm.Value, name string) llvm.Value {
+	if uses := lfc.BranchBoolUses[v.ID]; uses != 0 && uses == v.Uses && cond.Type().IntTypeWidth() == 1 {
+		// llvmCondition consumes the predicate directly. Widening here would
+		// create an unused instruction after Go's final deadcode pass.
+		return cond
+	}
 	if cond.Type().IntTypeWidth() == getLLVMType(types.Types[types.TBOOL]).IntTypeWidth() {
 		cond.SetName(name)
 		return cond
@@ -3756,7 +3777,7 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		flag.SetAlignment(1)
 		lfc.markCPUFeatureGuard(v, flag)
 		cond := lfc.b.CreateICmp(llvm.IntNE, flag, llvm.ConstInt(flag.Type(), 0, false), v.String()+".i1")
-		lVal = lfc.goBool(cond, v.String())
+		lVal = lfc.goBool(v, cond, v.String())
 	case OpArg:
 		lVal = lfc.paramForArg(v)
 		lVal.SetName(v.Aux.(*ir.Name).Sym().Name)
@@ -3865,7 +3886,7 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		lVal = lfc.b.CreateNot(arg0(), v.String())
 	case OpNot:
 		zero := llvm.ConstInt(arg0().Type(), 0, false)
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, arg0(), zero, v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntEQ, arg0(), zero, v.String()+".i1"), v.String())
 	case OpNeg64, OpNeg32, OpNeg16, OpNeg8:
 		lVal = lfc.b.CreateNeg(arg0(), v.String())
 	case OpNeg32F, OpNeg64F:
@@ -3897,15 +3918,15 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 	case OpFMA:
 		lVal = lfc.llvmTernaryIntrinsic(v, "llvm.fma.f64")
 	case OpEq64, OpEq32, OpEq16, OpEq8, OpEqB:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntEQ, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpEqPtr:
 		x, y := lfc.pointerComparisonOperands(v)
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntEQ, x, y, v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntEQ, x, y, v.String()+".i1"), v.String())
 	case OpNeq64, OpNeq32, OpNeq16, OpNeq8, OpNeqB:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntNE, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntNE, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpNeqPtr:
 		x, y := lfc.pointerComparisonOperands(v)
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntNE, x, y, v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntNE, x, y, v.String()+".i1"), v.String())
 	case OpEqInter, OpNeqInter:
 		x := lfc.b.CreateExtractValue(arg0(), 0, v.String()+".x")
 		y := lfc.b.CreateExtractValue(arg1(), 0, v.String()+".y")
@@ -3914,29 +3935,29 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		if v.Op == OpNeqInter {
 			pred = llvm.IntNE
 		}
-		lVal = lfc.goBool(lfc.b.CreateICmp(pred, x, y, v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(pred, x, y, v.String()+".i1"), v.String())
 	case OpLess64, OpLess32, OpLess16, OpLess8:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntSLT, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntSLT, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpLess64U, OpLess32U, OpLess16U, OpLess8U:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntULT, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntULT, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpLeq64, OpLeq32, OpLeq16, OpLeq8:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntSLE, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntSLE, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpLeq64U, OpLeq32U, OpLeq16U, OpLeq8U:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntULE, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntULE, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpEq32F, OpEq64F:
-		lVal = lfc.goBool(lfc.b.CreateFCmp(llvm.FloatOEQ, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateFCmp(llvm.FloatOEQ, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpNeq32F, OpNeq64F:
-		lVal = lfc.goBool(lfc.b.CreateFCmp(llvm.FloatUNE, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateFCmp(llvm.FloatUNE, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpLess32F, OpLess64F:
-		lVal = lfc.goBool(lfc.b.CreateFCmp(llvm.FloatOLT, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateFCmp(llvm.FloatOLT, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpLeq32F, OpLeq64F:
-		lVal = lfc.goBool(lfc.b.CreateFCmp(llvm.FloatOLE, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateFCmp(llvm.FloatOLE, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpIsInBounds:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntULT, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntULT, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpIsSliceInBounds:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntULE, arg0(), arg1(), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntULE, arg0(), arg1(), v.String()+".i1"), v.String())
 	case OpIsNonNil:
-		lVal = lfc.goBool(lfc.b.CreateICmp(llvm.IntNE, arg0(), llvm.ConstNull(arg0().Type()), v.String()+".i1"), v.String())
+		lVal = lfc.goBool(v, lfc.b.CreateICmp(llvm.IntNE, arg0(), llvm.ConstNull(arg0().Type()), v.String()+".i1"), v.String())
 	case OpLsh64x64, OpLsh64x32, OpLsh64x16, OpLsh64x8,
 		OpLsh32x64, OpLsh32x32, OpLsh32x16, OpLsh32x8,
 		OpLsh16x64, OpLsh16x32, OpLsh16x16, OpLsh16x8,
@@ -4805,6 +4826,7 @@ func LLVMCompile(f *Func) {
 	}
 	cc := llvmCallConv(f.OwnAux.ABI().Which())
 	FCtxt := &LLVMFuncContext{
+		BranchBoolUses:   llvmBranchBoolUses(f),
 		BBs:              map[ID]llvm.BasicBlock{},
 		Vs:               map[ID]llvm.Value{},
 		Locals:           map[llvmLocalKey]llvmStackSlot{},

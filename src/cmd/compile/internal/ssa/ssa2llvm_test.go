@@ -615,6 +615,40 @@ func TestLLVMNamedAggregateConversionReshapesValue(t *testing.T) {
 	}
 }
 
+func TestLLVMBranchOnlyBoolRepresentation(t *testing.T) {
+	for _, extraUses := range []int32{0, 1} {
+		t.Run(fmt.Sprint(extraUses), func(t *testing.T) {
+			module := GlobalCtxt.NewModule("branch_bool")
+			builder := GlobalCtxt.NewBuilder()
+			t.Cleanup(module.Dispose)
+			t.Cleanup(builder.Dispose)
+			i64 := GlobalCtxt.Int64Type()
+			function := llvm.AddFunction(module, "compare", llvm.FunctionType(i64, []llvm.Type{i64}, false))
+			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(function, "entry"))
+			value := &Value{ID: 1, Type: types.Types[types.TBOOL], Uses: extraUses}
+			left := &Block{Kind: BlockIf}
+			right := &Block{Kind: BlockIf}
+			left.SetControl(value)
+			right.SetControl(value)
+			context := &LLVMFuncContext{
+				b:              builder,
+				BranchBoolUses: llvmBranchBoolUses(&Func{Blocks: []*Block{left, right}}),
+			}
+			predicate := builder.CreateICmp(llvm.IntSLT, function.Param(0), llvm.ConstInt(i64, 0, false), "predicate")
+			got := context.goBool(value, predicate, "go.bool")
+			if extraUses == 0 && got != predicate {
+				t.Fatal("branch-only bool was widened")
+			}
+			if extraUses != 0 && (got.Type().IntTypeWidth() != 8 || got.IsAZExtInst().IsNil()) {
+				t.Fatal("mixed-use bool lost its Go byte representation")
+			}
+			if context.llvmCondition(got, "condition") != predicate {
+				t.Fatal("branch did not reuse its original predicate")
+			}
+		})
+	}
+}
+
 func TestLLVMOrderedEmissionRestoresRecursiveBlock(t *testing.T) {
 	module := GlobalCtxt.NewModule("recursive_value_blocks")
 	builder := GlobalCtxt.NewBuilder()
