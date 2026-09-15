@@ -8,6 +8,7 @@ package ssa
 
 import (
 	"cmd/compile/internal/base"
+	"cmd/compile/internal/types"
 	"cmd/internal/goobj"
 	"cmd/internal/obj"
 
@@ -24,6 +25,61 @@ import (
 type llvmFunctionModel struct {
 	noReturn bool
 	gcLeaf   bool
+
+	// Additional ABIInternal contracts are applied only to an exact signature.
+	// A late builtin can initially have a provisional void() declaration.
+	attributes []string
+	result     llvmModelType
+	parameters []llvmParameterModel
+}
+
+type llvmModelType uint8
+
+const (
+	llvmModelVoid llvmModelType = iota
+	llvmModelPointer
+	llvmModelUintptr
+	llvmModelBool
+)
+
+type llvmParameterModel struct {
+	typ        llvmModelType
+	attributes []string
+}
+
+func (t llvmModelType) matches(actual llvm.Type) bool {
+	switch t {
+	case llvmModelVoid:
+		return actual.TypeKind() == llvm.VoidTypeKind
+	case llvmModelPointer:
+		return actual.TypeKind() == llvm.PointerTypeKind
+	case llvmModelUintptr:
+		return actual.TypeKind() == llvm.IntegerTypeKind && actual.IntTypeWidth() == int(types.PtrSize*8)
+	case llvmModelBool:
+		return actual.TypeKind() == llvm.IntegerTypeKind && actual.IntTypeWidth() == 8
+	}
+	return false
+}
+
+func (m llvmFunctionModel) matches(sig llvmFuncSignature) bool {
+	if sig.HasClosureContext || sig.Type.IsFunctionVarArg() || !m.result.matches(sig.Type.ReturnType()) {
+		return false
+	}
+	params := sig.Type.ParamTypes()
+	if len(params) != len(m.parameters) {
+		return false
+	}
+	for i, p := range params {
+		if !m.parameters[i].typ.matches(p) {
+			return false
+		}
+	}
+	for _, p := range sig.Params {
+		if p.ByVal {
+			return false
+		}
+	}
+	return true
 }
 
 // llvmFunctionManager owns the association between exact LLVM function names,
@@ -37,13 +93,32 @@ type llvmFunctionManager struct {
 var llvmFunctions = newLLVMFunctionManager()
 
 func newLLVMFunctionManager() llvmFunctionManager {
+	// The raw assembly helpers in runtime/memmove_*.s, memclr_*.s and
+	// internal/bytealg/equal_*.s neither capture argument pointers, free memory,
+	// call back into Go, nor unwind through LLVM EH. Their implementations may
+	// read CPU flags, and arm64 memclr updates its cached ZVA block size, so
+	// parameter access modes do not imply an argmem-only function effect.
+	rawMemory := []string{"nofree", "nocallback", "nounwind"}
+	readPointer := llvmParameterModel{llvmModelPointer, []string{"captures", "readonly"}}
+	writePointer := llvmParameterModel{llvmModelPointer, []string{"captures", "writeonly"}}
+	size := llvmParameterModel{typ: llvmModelUintptr}
 	models := map[string]llvmFunctionModel{
 		// These raw helpers already have a GC-leaf call contract in both the SSA
 		// static-call path and the dedicated memory-operation lowering paths.
-		"runtime.memmove":  {gcLeaf: true},
-		"runtime.memequal": {gcLeaf: true},
-		"runtime.wbMove":   {gcLeaf: true},
-		"runtime.wbZero":   {gcLeaf: true},
+		"runtime.memmove": {
+			gcLeaf: true, attributes: rawMemory, result: llvmModelVoid,
+			parameters: []llvmParameterModel{writePointer, readPointer, size},
+		},
+		"runtime.memequal": {
+			gcLeaf: true, attributes: rawMemory, result: llvmModelBool,
+			parameters: []llvmParameterModel{readPointer, readPointer, size},
+		},
+		"runtime.memclrNoHeapPointers": {
+			gcLeaf: true, attributes: rawMemory, result: llvmModelVoid,
+			parameters: []llvmParameterModel{writePointer, size},
+		},
+		"runtime.wbMove": {gcLeaf: true},
+		"runtime.wbZero": {gcLeaf: true},
 
 		// These APIs terminate the goroutine or process. Do not use the inliner's
 		// NeverReturns heuristic: a callee can recover its own panic and return.
@@ -100,12 +175,32 @@ func (m *llvmFunctionManager) getOrInsert(name string, sig llvmFuncSignature, cc
 		fn = replacement
 	}
 	configureLLVMFunction(fn, sig, cc)
-	if m.models[fn.Name()].noReturn {
+	model := m.models[fn.Name()]
+	if model.noReturn {
 		fn.AddFunctionAttr(GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
 	}
 	// The leaf contract belongs to the ABIInternal entry, not its ABI0 wrapper.
-	if m.models[fn.Name()].gcLeaf && cc == goABIInternalCallConv {
+	if model.gcLeaf && cc == goABIInternalCallConv {
 		fn.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goGCLeafFunctionAttr, ""))
 	}
+	if cc == goABIInternalCallConv && len(model.attributes) != 0 && model.matches(sig) {
+		for _, name := range model.attributes {
+			fn.AddFunctionAttr(llvmModelAttribute(name))
+		}
+		for i, parameter := range model.parameters {
+			for _, name := range parameter.attributes {
+				fn.AddAttributeAtIndex(i+1, llvmModelAttribute(name))
+			}
+		}
+	}
 	return fn
+}
+
+func llvmModelAttribute(name string) llvm.Attribute {
+	kind := llvm.AttributeKindID(name)
+	if kind == 0 {
+		base.Fatalf("unknown LLVM runtime model attribute %q", name)
+	}
+	// captures is an integer-valued attribute; zero is captures(none).
+	return GlobalCtxt.CreateEnumAttribute(kind, 0)
 }

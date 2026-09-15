@@ -108,6 +108,6 @@ func llvmSlicemask(a []byte, i int) []byte {
 }
 
 // GC-leaf contracts belong to the runtime declarations, not individual calls.
-// LLVM-DAG: declare goabiinternal i8 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr, ptr, i64) #[[GC_LEAF:[0-9]+]]
-// LLVM-DAG: declare goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr, ptr, i64) #[[GC_LEAF]]
-// LLVM-DAG: attributes #[[GC_LEAF]] = { "gc-leaf-function" }
+// LLVM-DAG: declare goabiinternal i8 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr readonly captures(none), ptr readonly captures(none), i64) #[[RAW_MEMORY:[0-9]+]]
+// LLVM-DAG: declare goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr writeonly captures(none), ptr readonly captures(none), i64) #[[RAW_MEMORY]]
+// LLVM-DAG: attributes #[[RAW_MEMORY]] = { nocallback nofree nounwind "gc-leaf-function" }

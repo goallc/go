@@ -264,7 +264,7 @@ jobs:
           ./bin/go test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
           ./bin/go -C src/simd/archsimd/_gen test ./internal/goallccpu ./simdgen/... ./sgutil/...
           GOEXPERIMENT=simd ./bin/go test -tags=llvm23,dynamicllvm cmd/compile/internal/ssa \
-            -run 'TestLLVM(CPU|SIMDFeatureFloor|X86CPU|BranchLikelihood|ScaledPointerOffset|FunctionModel|BuiltinDeclaration)|TestCPUGeneratedFilesUpToDate'
+            -run 'TestLLVM(CPU|SIMDFeatureFloor|X86CPU|BranchLikelihood|ScaledPointerOffset|Function|BuiltinDeclaration)|TestCPUGeneratedFilesUpToDate'
 
       - name: Test linker DWARF with LLVM fixtures
         if: matrix.task == 'testdir'
