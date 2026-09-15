@@ -8,8 +8,11 @@ package codegen
 
 // LLVM-LABEL: define goabiinternal ptr @codegen.f(
 // LLVM-DAG: icmp ult i64 %x, 4
-// LLVM-DAG: shl i64 %x, 4
-// LLVM-DAG: getelementptr i8, ptr %p
+// LLVM-DAG: getelementptr [16 x i8], ptr %p, i64 %x
+// LLVM-OPT-LABEL: define goabiinternal ptr @codegen.f(
+// LLVM-OPT-NOT: shl i64
+// LLVM-OPT: [[ADDR:%[^ ]+]] = getelementptr [16 x i8], ptr %p, i64 %x
+// LLVM-OPT-NEXT: ret ptr [[ADDR]]
 
 // Make sure we use ADDQ instead of LEAQ when we can.
 

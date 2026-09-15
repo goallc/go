@@ -6,7 +6,10 @@ package codegen
 // LLVM-DAG: define goabiinternal { i64, ptr } @codegen.booliface()
 // LLVM-DAG: define goabiinternal { i64, ptr } @codegen.smallint8iface()
 // LLVM-DAG: define goabiinternal { i64, ptr } @codegen.smalluint8iface()
-// LLVM-DAG: getelementptr i8, ptr @runtime.staticuint64s, i64
+// LLVM-DAG: getelementptr [8 x i8], ptr @runtime.staticuint64s, i64
+// LLVM-OPT-DAG: ret { i64, ptr } {{.*}}ptr getelementptr (i8, ptr @runtime.staticuint64s, i64 8)
+// LLVM-OPT-DAG: ret { i64, ptr } {{.*}}ptr getelementptr (i8, ptr @runtime.staticuint64s, i64 2024)
+// LLVM-OPT-DAG: ret { i64, ptr } {{.*}}ptr getelementptr (i8, ptr @runtime.staticuint64s, i64 24)
 
 // Copyright 2020 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
