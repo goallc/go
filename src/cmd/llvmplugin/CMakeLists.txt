@@ -28,6 +28,7 @@ set(GOALLC_STATEPOINT_SOURCES
   GoALLCPreCodeGen.cpp
   GoALLCStatepoints.cpp
   GoALLCStatepointPlugin.cpp
+  GoALLCWriteBarriers.cpp
 )
 
 add_llvm_pass_plugin(GoALLCStatepoints ${GOALLC_STATEPOINT_SOURCES})
@@ -102,6 +103,39 @@ if(BUILD_TESTING)
       "${INPUT}"
     )
   endfunction()
+
+  foreach(STAGE IN ITEMS OPT LOWER)
+    set(WB_PIPELINE "goallc-cpu-features,default<O2>")
+    if(STAGE STREQUAL "LOWER")
+      string(APPEND WB_PIPELINE ",goallc-write-barriers")
+    endif()
+    goallc_add_filecheck_test(
+      "GoALLCWriteBarriers.${STAGE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record.ll"
+      "${STAGE}"
+      "${GOALLC_OPT_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      "-passes=${WB_PIPELINE}" -verify-each -S
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record.ll"
+    )
+  endforeach()
+
+  goallc_add_filecheck_test(
+    GoALLCWriteBarriers.Limit
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record.ll" LIMIT
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-write-barriers -verify-each -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record.ll"
+  )
+  goallc_add_filecheck_test(
+    GoALLCWriteBarriers.InvalidFlags
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record-invalid.ll" CHECK
+    "${GOALLC_NOT_EXECUTABLE}" --crash "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-write-barriers -disable-output
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record-invalid.ll"
+  )
 
   goallc_add_filecheck_test(
     GoALLCCPUFeatures.SSE41

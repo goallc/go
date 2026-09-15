@@ -14,6 +14,27 @@ the module from the Go toolchain's `pkg/goallc-llvmplugin/lib` directory; static
 LLVM builds call the linked implementation directly. Both artifacts are built
 against the selected LLVM payload, but neither is installed in it.
 
+Scalar write barriers retain Go SSA's `needwb` selection and zero-value proofs.
+The frontend emits the compiler-private declaration
+`goallc.gc.write.record(new, destination, flags)` followed by an ordinary store.
+This is a plugin-owned IR operation, not an upstream LLVM intrinsic or a runtime
+symbol. Flag bit 0 omits the old pointer; bit 1 omits the new pointer. Flags are
+constant operands so optimizer metadata dropping cannot change their meaning.
+The native Go backend and `cgocheck2` retain their existing expansion; typed
+`wbMove`/`wbZero` helpers continue to be emitted by the native Go pass.
+
+`GoALLCWriteBarriers.cpp` configures the record before optimization as GC-leaf,
+non-capturing, reading argument memory and modifying inaccessible GC memory.
+The destination read orders recording before publication, while the ordinary
+store exposes its value and escape behavior to LLVM. After optimization and
+before statepoint rewriting, the plugin expands records into the existing
+write-barrier flag diamond and `llvm.go.gc.write.barrier` buffer reservations.
+Adjacent records can share up to eight entries; unrelated memory operations and
+calls stop grouping. All old values are read before grouped stores, and repeated
+new pointers and destinations are deduplicated. The existing async-preemption
+analysis protects the flag, buffer fill, and publication region. Runtime ABI,
+vector-register clobbers, and caller spills are unchanged.
+
 The SSA-to-LLVM lowering owns the function-level contract: Go ABI definitions
 carry `gc "goallc"`, and only source-level exceptions to the native Go stack
 policy need target attributes such as `go-nosplit` or `go-systemstack`. Loading

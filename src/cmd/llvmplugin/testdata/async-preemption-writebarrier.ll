@@ -136,3 +136,30 @@ tail:
 ; OBJVIEW: "value": -2
 ; OBJVIEW-NOT: "kind":
 ; OBJVIEW: "value": -1
+
+; Deferred scalar recording must produce the same bounded unsafe protocol.
+declare void @goallc.gc.write.record(ptr, ptr, i32)
+define goabiinternal i64 @deferred_write_barrier(ptr %dst, ptr %value) #0 gc "goallc" {
+entry:
+  call void @goallc.gc.write.record(ptr %value, ptr %dst, i32 0)
+  store ptr %value, ptr %dst
+  br label %tail
+tail:
+  %result = load atomic i64, ptr @counter monotonic, align 8
+  ret i64 %result
+}
+
+; OBJVIEW-LABEL: "name": "deferred_write_barrier"
+; OBJVIEW: "kind": "unsafe_point"
+; OBJVIEW: "start": 0
+; OBJVIEW-NEXT: "end": [[#DEFERRED_PREFIX:]]
+; OBJVIEW-NEXT: "value": -2
+; OBJVIEW: "start": [[#DEFERRED_PREFIX]]
+; OBJVIEW-NEXT: "end": [[#DEFERRED_BEGIN:]]
+; OBJVIEW-NEXT: "value": -1
+; OBJVIEW: "start": [[#DEFERRED_BEGIN]]
+; OBJVIEW-NEXT: "end": [[#DEFERRED_END:]]
+; OBJVIEW-NEXT: "value": -2
+; OBJVIEW: "start": [[#DEFERRED_END]]
+; OBJVIEW-NEXT: "end":
+; OBJVIEW-NEXT: "value": -1

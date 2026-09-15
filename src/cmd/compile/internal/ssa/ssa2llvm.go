@@ -4482,6 +4482,19 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
 			lVal.SetVolatile(true)
 		}
+	case OpStoreWB:
+		address := lfc.llvmAddressPointer(v, arg0(), v.Args[0].Type, v.String()+".address")
+		value := arg1()
+		// This compiler-private record is lowered by the plugin after LLVM
+		// optimization. The ordinary store exposes the publication to alias
+		// and capture analysis; only the record itself is non-capturing.
+		sig := llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{value.Type(), address.Type(), GlobalCtxt.Int32Type()}, false)
+		fn := getOrInsertLLVMIntrinsic("goallc.gc.write.record", sig)
+		flags := llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(v.Block.Func.llvmWriteBarrierFlags[v.ID]), false)
+		record := lfc.b.CreateCall(sig, fn, []llvm.Value{value, address, flags}, "")
+		markLLVMGCLeafCall(record)
+		lVal = lfc.b.CreateStore(value, address)
+		lVal.SetAlignment(int(v.Args[1].Type.Alignment()))
 	case OpZero:
 		lVal = lfc.llvmZero(v)
 	case OpMove:

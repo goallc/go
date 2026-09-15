@@ -5,6 +5,7 @@
 package ssa
 
 import (
+	"cmd/compile/internal/base"
 	"cmd/compile/internal/reflectdata"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
@@ -162,6 +163,10 @@ func needWBdst(ptr, mem *Value, zeroes map[ID]ZeroRegion) bool {
 // A sequence of WB stores for many pointer fields of a single type will
 // be emitted together, with a single branch.
 func writebarrier(f *Func) {
+	// Keep Go's barrier selection and zero proofs. LLVM expands scalar records
+	// after optimization, while bulk operations retain their typed helpers.
+	// CgoCheck2 retains the native expansion, including pointer-write checks.
+	deferScalarWB := base.Flag.EnableLLVM && !buildcfg.Experiment.CgoCheck2
 	if !f.fe.UseWriteBarrier() {
 		return
 	}
@@ -205,6 +210,21 @@ func writebarrier(f *Func) {
 					switch v.Op {
 					case OpStore:
 						v.Op = OpStoreWB
+						if deferScalarWB {
+							if f.llvmWriteBarrierFlags == nil {
+								f.llvmWriteBarrierFlags = make(map[ID]uint8)
+							}
+							var flags uint8
+							if !needWBdst(v.Args[0], v.Args[2], zeroes) {
+								flags |= 1
+							}
+							if !needWBsrc(v.Args[1]) {
+								flags |= 2
+							}
+							f.llvmWriteBarrierFlags[v.ID] = flags
+							f.fe.Func().SetWBPos(v.Pos)
+							continue
+						}
 					case OpMove:
 						v.Op = OpMoveWB
 					case OpZero:
@@ -256,6 +276,14 @@ func writebarrier(f *Func) {
 	FindSeq:
 		for i := len(values) - 1; i >= 0; i-- {
 			w := values[i]
+			// A deferred scalar store is a memory boundary for bulk barriers.
+			// In particular, a move may consume a pointer written by this store.
+			if deferScalarWB && w.Op == OpStoreWB {
+				if last != nil {
+					break FindSeq
+				}
+				continue
+			}
 			switch w.Op {
 			case OpStoreWB, OpMoveWB, OpZeroWB:
 				start = i

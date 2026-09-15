@@ -5,6 +5,7 @@
 #include "GoALLCPreCodeGen.h"
 #include "GoALLCCPUFeatures.h"
 #include "GoALLCStatepoints.h"
+#include "GoALLCWriteBarriers.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Error.h"
 #include "llvm-c/TargetMachine.h"
@@ -45,11 +46,31 @@ cl::opt<bool>
 
 void registerGoALLCTargetPasses();
 
+struct ConfigureWriteBarrierRecordsPass
+    : PassInfoMixin<ConfigureWriteBarrierRecordsPass> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    goallc::configureWriteBarrierRecords(M);
+    return PreservedAnalyses::none();
+  }
+};
+
+struct LowerWriteBarrierRecordsPass : PassInfoMixin<LowerWriteBarrierRecordsPass> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    goallc::lowerWriteBarrierRecords(M);
+    return PreservedAnalyses::none();
+  }
+};
+
 void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
          ArrayRef<PassBuilder::PipelineElement>) {
+        if (Name == "goallc-write-barriers") {
+          MPM.addPass(LowerWriteBarrierRecordsPass());
+          return true;
+        }
         if (Name == "goallc-cpu-features") {
+          MPM.addPass(ConfigureWriteBarrierRecordsPass());
           MPM.addPass(goallc::CPUFeaturesPass());
           return true;
         }
@@ -68,6 +89,8 @@ bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
   // before LLVM has initialized its callback registry. Register lazily from
   // the common callback so both linkage modes observe the same lifetime.
   registerGoALLCTargetPasses();
+
+  goallc::lowerWriteBarrierRecords(M);
 
   if (Error Err = goallc::runEarlyIRPipeline(M)) {
     M.getContext().emitError(toString(std::move(Err)));
@@ -161,6 +184,7 @@ void registerGoALLCTargetPasses() {
 
 extern "C" LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef ModuleRef) {
   Module &M = *unwrap(ModuleRef);
+  goallc::configureWriteBarrierRecords(M);
   if (Error Err = goallc::runEarlyIRPipeline(M)) {
     std::string Message = toString(std::move(Err));
     return LLVMCreateStringError(Message.c_str());

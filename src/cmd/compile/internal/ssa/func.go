@@ -21,6 +21,8 @@ import (
 // This package compiles each Func independently.
 // Funcs are single-use; a new Func must be created for every compiled function.
 type Func struct {
+	llvmWriteBarrierFlags map[ID]uint8 // Go proofs: bit 0 omits old, bit 1 omits new
+
 	Config *Config     // architecture information
 	Cache  *Cache      // re-usable cache
 	fe     Frontend    // frontend state associated with this Func, callbacks into compiler frontend
