@@ -1833,6 +1833,29 @@ if(BUILD_TESTING)
   )
 
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.EmptyStatepointContinuation
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/empty-statepoint-continuation.ll"
+    IR
+  )
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.EmptyStatepointContinuationAArch64
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/empty-statepoint-continuation.ll"
+    IR
+    -mtriple=aarch64-unknown-linux-goobj
+  )
+  foreach(ARCH x86_64 aarch64)
+    add_test(
+      NAME "GoALLCStatepoints.EmptyStatepointContinuationCodegen.${ARCH}"
+      COMMAND "${GOALLC_LLC_EXECUTABLE}"
+        "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+        "-mtriple=${ARCH}-unknown-linux-goobj"
+        -frame-pointer=all -verify-machineinstrs -filetype=obj
+        -o "${CMAKE_CURRENT_BINARY_DIR}/empty-continuation-${ARCH}.goobj"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/empty-statepoint-continuation.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.RelocationLocalDefinitions
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/relocation-local-definitions.ll"
     IR

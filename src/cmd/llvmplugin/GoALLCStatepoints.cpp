@@ -3973,6 +3973,12 @@ void splitStatepointContinuations(ArrayRef<SafepointRecord> Records) {
   // blocks: SelectionDAG performs local CSE while lowering one block, and the
   // explicit edge puts gc.result and gc.relocate in a fresh local CSE scope.
   for (const SafepointRecord &Record : Records) {
+    // Empty statepoints need no fresh SelectionDAG scope. Fixed-frame
+    // addresses remain a separate condition: a goret call can define its
+    // carrier without gc-live roots, but its address still crosses the call.
+    if (Record.Statepoint->use_empty() && Record.Live.empty() &&
+        Record.FixedFrameAddresses.empty())
+      continue;
     Instruction *Continuation = Record.Statepoint->getNextNode();
     assert(Continuation && "statepoint must have a continuation instruction");
     BasicBlock *StatepointBlock = Record.Statepoint->getParent();

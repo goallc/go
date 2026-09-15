@@ -61,7 +61,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; REWRITE-NOT: "gc-live"
 ; REWRITE: %[[DIRECT_STATEPOINT:[^ ]+]] = call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint
 ; REWRITE-NOT: "gc-live"
-; REWRITE: statepoint.cont:
+; REWRITE-NOT: statepoint.cont:
 ; REWRITE-NEXT: %value = load i64, ptr %[[DIRECT_POINTER]]
 ; REWRITE-NOT: llvm.experimental.gc.relocate
 ; REWRITE: ret i64
@@ -72,7 +72,7 @@ target triple = "aarch64-apple-darwin-goobj"
 ; REWRITE-NOT: "gc-live"
 ; REWRITE: call goabiinternal token {{.*}}@llvm.experimental.gc.statepoint
 ; REWRITE-NOT: "gc-live"
-; REWRITE: statepoint.cont:
+; REWRITE-NOT: statepoint.cont:
 ; REWRITE-NOT: llvm.experimental.gc.relocate
 ; REWRITE: load i64, ptr
 ; REWRITE: ret i64
