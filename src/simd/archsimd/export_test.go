@@ -62,3 +62,16 @@ const (
 	LHHH = _LHHH
 	HHHH = _HHHH
 )
+
+//go:noinline
+func (x Uint64x2) ExportTestCarrylessMultiply(imm uint8, y Uint64x2) Uint64x2 {
+	return x.carrylessMultiply(imm, y)
+}
+
+func (x Uint64x2) ExportTestCarrylessMultiply80(y Uint64x2) Uint64x2 {
+	return x.carrylessMultiply(0x80, y)
+}
+
+func (x Uint64x2) ExportTestCarrylessMultiplyFF(y Uint64x2) Uint64x2 {
+	return x.carrylessMultiply(0xff, y)
+}

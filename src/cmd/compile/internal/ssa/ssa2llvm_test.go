@@ -1490,6 +1490,52 @@ func TestLLVMGenericVec128Lowering(t *testing.T) {
 	})
 }
 
+func TestLLVMCarrylessMultiplyImmediate(t *testing.T) {
+	oldTypes, oldModule := type2lTypes, CurrentModule
+	type2lTypes = make(map[*types.Type]llvm.Type)
+	defer func() { type2lTypes, CurrentModule = oldTypes, oldModule }()
+	for _, test := range []struct {
+		lanes int64
+		op    Op
+	}{
+		{2, OpcarrylessMultiplyUint64x2},
+		{4, OpcarrylessMultiplyUint64x4},
+		{8, OpcarrylessMultiplyUint64x8},
+	} {
+		t.Run(fmt.Sprint(test.lanes), func(t *testing.T) {
+			typ := llvmTestSIMDType("clmul", types.Types[types.TUINT64], test.lanes)
+			vec := getLLVMType(typ)
+			module := GlobalCtxt.NewModule("clmul_immediate")
+			CurrentModule = module
+			builder := GlobalCtxt.NewBuilder()
+			t.Cleanup(module.Dispose)
+			t.Cleanup(builder.Dispose)
+			fn := llvm.AddFunction(module, "clmul", llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{vec, vec}, false))
+			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(fn, "entry"))
+			context := &LLVMFuncContext{F: &Func{Config: &Config{arch: "amd64"}, Entry: &Block{CPUfeatures: ^CPUfeatures(0)}}, Vs: make(map[ID]llvm.Value), b: builder}
+			context.CPUFeatures = llvmPlanCPUFeatures(context.F)
+			x, y := &Value{ID: 1, Op: OpArg, Type: typ}, &Value{ID: 2, Op: OpArg, Type: typ}
+			context.Vs[x.ID], context.Vs[y.ID] = fn.Param(0), fn.Param(1)
+			// Go's imm8 jump table encodes all 256 cases as signed int8 AuxInt.
+			for imm := 0; imm < 256; imm++ {
+				v := &Value{ID: ID(imm + 3), Op: test.op, Type: typ, AuxInt: int64(int8(imm)), Args: []*Value{x, y}}
+				got, ok := context.lowerGeneratedSIMD(v)
+				if !ok || got.IsACallInst().IsNil() {
+					t.Fatalf("immediate %d did not lower to an intrinsic call", imm)
+				}
+				operand := got.Operand(2)
+				if operand.Type() != GlobalCtxt.Int8Type() || operand.ZExtValue() != uint64(imm) {
+					t.Fatalf("immediate %d lost its byte representation", imm)
+				}
+			}
+			builder.CreateRetVoid()
+			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestLLVMGenericSIMDElementLowering(t *testing.T) {
 	oldTypes := type2lTypes
 	oldModule := CurrentModule

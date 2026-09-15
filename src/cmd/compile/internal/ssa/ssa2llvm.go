@@ -2268,7 +2268,9 @@ func (lfc *LLVMFuncContext) lowerGeneratedSIMD(v *Value) (llvm.Value, bool) {
 		return finish(lfc.simdLaneResult(v, lfc.b.CreateCall(sig, fn, []llvm.Value{x, y}, v.String()+".product")))
 	case goALLCSIMDLowerCarrylessMul:
 		x, y := lfc.simdLaneOperands(v, laneType, lanes)
-		imm := llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(v.AuxInt), false)
+		// Go stores imm8 AuxInt values sign-extended from int8. Restore the
+		// byte bit pattern before constructing LLVM's unsigned i8 constant.
+		imm := llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(uint8(v.AuxInt)), false)
 		name := "llvm.x86.pclmulqdq"
 		if lanes > 2 {
 			name += fmt.Sprintf(".%d", lanes*laneBits)
