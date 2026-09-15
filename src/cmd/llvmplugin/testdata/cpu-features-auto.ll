@@ -4,6 +4,7 @@ target triple = "x86_64-unknown-linux-goobj"
 @algorithm.enabled = external global i1
 @runtime.goallcCPUFeatures = external global i64
 declare void @ordinary()
+declare void @stop() noreturn
 declare void @llvm.sideeffect()
 declare <2 x i64> @llvm.x86.aesni.aesenc(<2 x i64>, <2 x i64>)
 
@@ -43,6 +44,12 @@ attributes #1 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx,x86.a
 !2 = !{}
 !3 = !{!"x86.avxaes"}
 
+; CHECK-LABEL: define goabiinternal i32 @after_stop(
+; CHECK: call void @ordinary()
+; CHECK-NEXT: call void @stop()
+; CHECK-NEXT: unreachable
+; CHECK-NOT: call void @ordinary()
+; CHECK: ret i32 1
 ; CHECK-LABEL: define internal goabiinternal void @"conditional<goallc.fmv.baseline>"(
 ; CHECK: load i1, ptr @algorithm.enabled
 ; CHECK: br i1 %flag
@@ -68,4 +75,20 @@ attributes #1 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx,x86.a
 ; CHECK-LABEL: define internal goabiinternal void @"composite<goallc.fmv.avx-aes>"(
 ; CHECK: call <2 x i64> @llvm.x86.aesni.aesenc(
 ; CHECK: ret void
+
+; LLVM's noreturn cleanup must run before checking even non-FMV requirements.
+; Preserve preceding effects, remove the dead tail, and repair the join's PHI.
+define goabiinternal i32 @after_stop(i1 %exit) {
+entry:
+  br i1 %exit, label %stop, label %done
+stop:
+  call void @ordinary()
+  call void @stop()
+  call void @ordinary()
+  call void @llvm.sideeffect(), !goallc.cpu.requires !1, !goallc.cpu.require-anchor !2
+  br label %done
+done:
+  %result = phi i32 [ 1, %entry ], [ 2, %stop ]
+  ret i32 %result
+}
 ; CHECK: attributes #[[ISA]] = { "target-cpu"="x86-64" "target-features"="+avx,+avx2" }

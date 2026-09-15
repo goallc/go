@@ -66,6 +66,10 @@ a software algorithm or interpret an ordinary business flag as a CPU predicate.
 The resolver still uses the effective Go CPU snapshot after `GODEBUG` overrides;
 before CPU initialization it uses baseline without caching the selection.
 
+Known terminating Go APIs, including `testing.T.Skip`, receive LLVM's standard
+`noreturn` attribute. LLVM removes their unreachable continuations before CPU
+requirement checks; this does not rewrite Go SSA control flow.
+
 ## An optimization exposed by the shared pipeline
 
 Before builtin decomposition, an interface data word can remain hidden behind

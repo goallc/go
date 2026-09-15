@@ -438,6 +438,14 @@ func getOrInsertLLVMFunction(name string, sig llvmFuncSignature, cc llvm.CallCon
 		fn = replacement
 	}
 	configureLLVMFunction(fn, sig, cc)
+	// These APIs terminate the goroutine or process. Do not use the inliner's
+	// NeverReturns heuristic: a callee can recover its own panic and return.
+	switch name {
+	case "runtime.Goexit", "os.Exit",
+		"testing.(*common).Skip", "testing.(*common).Skipf", "testing.(*common).SkipNow",
+		"testing.(*common).Fatal", "testing.(*common).Fatalf", "testing.(*common).FailNow":
+		fn.AddFunctionAttr(GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
+	}
 	return fn
 }
 
@@ -4825,7 +4833,6 @@ func llvmIsAtomicMemoryOp(op Op) bool {
 }
 
 func LLVMCompile(f *Func) {
-	llvmLowerNoReturnCalls(f)
 	// Match native metadata emission when SSA construction lowered no defer.
 	if len(f.OpenDeferSlots) == 0 {
 		f.OpenDeferBits = nil

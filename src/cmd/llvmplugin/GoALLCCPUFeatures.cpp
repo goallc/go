@@ -346,6 +346,9 @@ Error verifyRequirements(Function &F, const CPUConfig &Config) {
         return I.getMetadata(RequiresMD) != nullptr;
       }))
     return Error::success();
+  // LLVM also removes continuations after noreturn calls and repairs PHIs.
+  // Discard their dead requirements before validating surviving operations.
+  removeUnreachableBlocks(F);
   // LLVM owns CPU defaults, feature implication and ordered +/- overrides.
   // Query that effective target instead of maintaining another ISA model.
   std::string ErrorMessage;
