@@ -22,9 +22,9 @@ func llvmMakeSmallMap() map[int]int         { return make(map[int]int) }
 func llvmBoxDynamic(typ, src unsafe.Pointer) unsafe.Pointer
 func llvmBoxUnknownType(typ, src unsafe.Pointer) unsafe.Pointer { return llvmBoxDynamic(typ, src) }
 
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convTnoptr<builtin.{{[0-9]+}}>"
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT<builtin.{{[0-9]+}}>"(ptr @"type:codegen.llvmBoxPointer"
+// LLVM-DAG: call goabiinternal noalias align 8 dereferenceable(24) ptr @"runtime.convTnoptr<builtin.{{[0-9]+}}>"
+// LLVM-DAG: call goabiinternal noalias align 16 dereferenceable(16) ptr @"runtime.convT<builtin.{{[0-9]+}}>"(ptr @"type:codegen.llvmBoxPointer"
 // LLVM-DAG: call goabiinternal ptr @"runtime.convT<builtin.{{[0-9]+}}>"(ptr %typ, ptr %src)
-// LLVM-DAG: declare goabiinternal noalias nonnull ptr @"runtime.makemap_small<builtin.{{[0-9]+}}>"()
+// LLVM-DAG: declare goabiinternal noalias nonnull align 8 ptr @"runtime.makemap_small<builtin.{{[0-9]+}}>"()
 // LLVM-DAG: declare goabiinternal nonnull ptr @"runtime.convT<builtin.{{[0-9]+}}>"
 // LLVM-DAG: declare goabiinternal nonnull ptr @"runtime.convTnoptr<builtin.{{[0-9]+}}>"

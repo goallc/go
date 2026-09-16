@@ -305,3 +305,42 @@ No blanket pointer-parameter `noalias` is added: memmove and typed copies may
 legitimately overlap, and read-only comparison operands may be identical.
 Map lookup/assignment and assertion results may be shared. Parameter capture
 restrictions must also account for instrumentation and failure diagnostics.
+
+## Allocation alignment and readable extents
+
+Known allocation sizes use `internal/runtime/gc.AllocationAlignment`, sharing
+the runtime size-class tables rather than assuming word alignment. A span is
+heap-page aligned; the slot stride supplies its power-of-two alignment, capped
+at the heap page. Inline malloc headers reduce the user-pointer alignment.
+The header threshold uses the target pointer width, including cross builds.
+
+Examples on a 64-bit target without ASan:
+
+| Requested bytes | Pointer-free alignment | Scanning alignment |
+| --- | --- | --- |
+| 25 | 32 | 32 |
+| 80 | 16 | 16 |
+| 128 | 128 | 128 |
+| 512 | 512 | 512 |
+| 1024 | 1024 | 8 |
+| 32768 | 8192 | 8192 |
+
+Tiny suballocations retain only the alignment guaranteed by their offsets,
+including race-mode tail placement. ASan redzones can select a different class;
+the compiler intersects the normal and redzone-expanded guarantees. The
+allocator build mode is retained even for packages excluded from instrumentation.
+The `sbrk` debug allocator now aligns its actual returned address to the same
+contract, including when the OS page is smaller than a Go heap page.
+
+Positive constant `mallocgc` sizes receive call-site alignment; unknown type
+metadata uses the weaker of the scanning and pointer-free guarantees. Static
+typed allocations, boxes and slices receive both alignment and the requested
+readable extent. Rounded class padding is not marked dereferenceable. Zero and
+dynamic sizes do not acquire these conditional attributes. String/slice header
+boxes have unconditional readable header extents, including shared empty boxes;
+only proven fresh headers receive word alignment. Scalar box declarations retain
+the alignment common to fresh storage and the static integer cache.
+
+Tests cover LLVM address-mask folding with negative controls, readable extent
+boundaries, target-width header thresholds, ASan class changes, emitted IR, and
+actual allocation addresses observed separately from attributed call sites.

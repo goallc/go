@@ -36,7 +36,7 @@ func llvmFreshSliceBox() any { return llvmBoxArray[:0] }
 // LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT64<builtin.{{[0-9]+}}>"(i64 256)
 // LLVM-DAG: call goabiinternal ptr @"runtime.convT64<builtin.{{[0-9]+}}>"(i64 255)
 // LLVM-DAG: call goabiinternal ptr @"runtime.convT64<builtin.{{[0-9]+}}>"(i64 %n)
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.makemap<builtin.{{[0-9]+}}>"
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.makeslice<builtin.{{[0-9]+}}>"
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convTstring<builtin.{{[0-9]+}}>"
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convTslice<builtin.{{[0-9]+}}>"
+// LLVM-DAG: call goabiinternal noalias align 8 ptr @"runtime.makemap<builtin.{{[0-9]+}}>"
+// LLVM-DAG: call goabiinternal noalias align 32 dereferenceable(32) ptr @"runtime.makeslice<builtin.{{[0-9]+}}>"
+// LLVM-DAG: call goabiinternal noalias align 8 ptr @"runtime.convTstring<builtin.{{[0-9]+}}>"
+// LLVM-DAG: call goabiinternal noalias align 8 ptr @"runtime.convTslice<builtin.{{[0-9]+}}>"

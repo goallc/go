@@ -1813,7 +1813,16 @@ func preMallocgcDebug(size uintptr, typ *_type) unsafe.Pointer {
 				align = 1
 			}
 		}
-		return persistentalloc(size, align, &memstats.other_sys)
+		// Compiler return-alignment contracts also apply in sbrk mode.
+		align = max(align, uintptr(gc.AllocationAlignment(uint64(size), typ == nil || !typ.Pointers(), goarch.PtrSize)))
+		// persistentalloc may obtain OS-page-aligned storage, which need
+		// not be aligned to a larger Go heap page. Align the actual address,
+		// not just an offset within its chunk. This is a debug-only path.
+		if size > ^uintptr(0)-(align-1) {
+			throw("out of memory")
+		}
+		p := persistentalloc(size+align-1, 0, &memstats.other_sys)
+		return unsafe.Pointer(alignUp(uintptr(p), align))
 	}
 	if inittrace.active && inittrace.id == getg().goid {
 		// Init functions are executed sequentially in a single goroutine.
@@ -2464,22 +2473,5 @@ func (p *notInHeap) add(bytes uintptr) *notInHeap {
 // redZoneSize computes the size of the redzone for a given allocation.
 // Refer to the implementation of the compiler-rt.
 func redZoneSize(userSize uintptr) uintptr {
-	switch {
-	case userSize <= (64 - 16):
-		return 16 << 0
-	case userSize <= (128 - 32):
-		return 16 << 1
-	case userSize <= (512 - 64):
-		return 16 << 2
-	case userSize <= (4096 - 128):
-		return 16 << 3
-	case userSize <= (1<<14)-256:
-		return 16 << 4
-	case userSize <= (1<<15)-512:
-		return 16 << 5
-	case userSize <= (1<<16)-1024:
-		return 16 << 6
-	default:
-		return 16 << 7
-	}
+	return uintptr(gc.ASanRedZoneSize(uint64(userSize)))
 }

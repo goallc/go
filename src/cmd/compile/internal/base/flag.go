@@ -145,6 +145,8 @@ type CmdFlags struct {
 		// Whether we are adding any sort of code instrumentation, such as
 		// when the race detector is enabled.
 		Instrumenting bool
+		// Preserve the allocator build mode even in NoInstrument packages.
+		ASan bool
 	}
 }
 
