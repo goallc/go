@@ -105,11 +105,13 @@ func llvmGoObjReferenceName(s *obj.LSym) string {
 	if base.Ctxt.Flag_linkshared {
 		return s.Name
 	}
-	if name, ok := goobj.BuiltinSymbolName(s.Name, int(s.ABI())); ok {
-		return name
-	}
+	// An explicit pull remains a linkname even if its target is a compiler
+	// builtin. Encoding it as a builtin would bypass linker validation.
 	if llvmGoObjLinknameReference(s) {
 		return s.Name + goobj.LinknameSymbolSuffix
+	}
+	if name, ok := goobj.BuiltinSymbolName(s.Name, int(s.ABI())); ok {
+		return name
 	}
 	return s.Name
 }
@@ -602,6 +604,10 @@ func llvmDataFields(s *obj.LSym, contents []byte, globals map[*obj.LSym]llvm.Val
 	}
 	if dataSize64 < 0 || uint64(dataSize64) > uint64(^uint(0)>>1) {
 		base.Fatalf("invalid LLVM data symbol size %d for %s", dataSize64, s.Name)
+	}
+	if dataSize64 > obj.MaxSymSize {
+		base.Errorf("%s: symbol too large (%d bytes > %d bytes)", s.Name, dataSize64, obj.MaxSymSize)
+		base.ErrorExit()
 	}
 	dataSize := int(dataSize64)
 	bytes := make([]byte, dataSize)

@@ -13,6 +13,7 @@ import (
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
+	"encoding/hex"
 	"fmt"
 	"internal/buildcfg"
 	"slices"
@@ -5814,6 +5815,7 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 		GlobalCtxt.MDString(shared),
 		GlobalCtxt.MDString(std),
 		GlobalCtxt.MDNode(experimentMetadata),
+		GlobalCtxt.MDString(hex.EncodeToString(base.Ctxt.Fingerprint[:])),
 	})
 	CurrentModule.AddNamedMetadataOperand("goobj.config", config)
 	CurrentModule.AddNamedMetadataOperand(goCPUConfigMD, GlobalCtxt.MDNode([]llvm.Metadata{
