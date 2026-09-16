@@ -343,3 +343,13 @@ the alignment common to fresh storage and the static integer cache.
 Tests cover LLVM address-mask folding with negative controls, readable extent
 boundaries, target-width header thresholds, ASan alignment exclusion, emitted IR, and
 actual allocation addresses observed separately from attributed call sites.
+
+A source-level SIMD regression (`test/codegen/llvm_allocation_alignment_amd64.go`)
+keeps a new `[16]uint64` allocation observable and stores one `Uint64x2` into it.
+Its optimized vector store has `align 128` rather than `align 8`; on amd64 the
+observed store changes from `VMOVUPS` to `VMOVAPS`. A `[3]uint64` allocation is
+a negative control: its 24-byte class still guarantees only 8-byte alignment
+and retains the unaligned vector store. This demonstrates instruction selection,
+not a measured performance improvement. Ordinary array copies still call
+`runtime.memmove`, and pointer-to-integer alignment checks currently pass through
+`llvm.go.pointer.address`, which did not fold in the tested source-level probe.
