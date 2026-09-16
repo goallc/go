@@ -35,3 +35,14 @@ func TestLLVMVersionEnabled(t *testing.T) {
 		}
 	}
 }
+
+func TestLLVMVersionBuildIDUsesContent(t *testing.T) {
+	got := llvmVersionBuildID("action1/main1/pkg/content", "backend")
+	if got != llvmVersionBuildID("action2/main2/pkg/content", "backend") {
+		t.Fatal("action IDs changed the compiler content identity")
+	}
+	if got == llvmVersionBuildID("action1/main1/pkg/changed", "backend") ||
+		got == llvmVersionBuildID("action1/main1/pkg/content", "changed") {
+		t.Fatal("compiler or backend content did not change the identity")
+	}
+}

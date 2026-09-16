@@ -129,7 +129,7 @@ type CmdFlags struct {
 	PgoProfile         string       "help:\"read profile or pre-process profile from `file`\""
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
 	EnableLLVM         bool         "help:\"compile with the in-process LLVM backend\""
-	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep pre-optimization and optimized LLVM IR beside the output archive\""
+	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep pre-optimization, optimized, and pre-codegen LLVM IR beside the output archive\""
 	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline used by the in-process backend\""
 	// Configuration derived from flags; not a flag itself.
 	Cfg struct {

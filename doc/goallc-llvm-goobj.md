@@ -26,7 +26,7 @@ go build -gcflags=all=-enablellvm
 `_go_.o`。`-linkobj` 拆分输出也沿用原 compiler 语义。
 
 `-llvm-keep-ir` 只控制诊断输出：进程内 backend 仍完整生成 GoObj，同时保留
-`<archive>.ll` 和 `<archive>.opt.ll`。原生 backend 对照使用一次不带
+`<archive>.ll`、`<archive>.opt.ll` 和 `<archive>.precodegen.ll`。原生 backend 对照使用一次不带
 `-enablellvm` 的独立构建，不在同一 compiler invocation 中同时生成 native
 object 和 LLVM IR。
 
@@ -370,7 +370,7 @@ cd /path/to/simple-main-package
 | --- | --- |
 | `-enablellvm` | 选择进程内 LLVM backend |
 | `-llvm-opt-passes` | 默认 `default<O2>`；`none` 跳过 IR 优化 |
-| `-llvm-keep-ir` | 保留 `<archive>.ll` 和 `<archive>.opt.ll` |
+| `-llvm-keep-ir` | 保留 `<archive>.ll`、`<archive>.opt.ll` 和 `<archive>.precodegen.ll` |
 | `-gcflags` package pattern | 精确选择需要 LLVM 的 package；`all=` 覆盖完整闭包 |
 
 例如保留进程内优化前后的 IR：

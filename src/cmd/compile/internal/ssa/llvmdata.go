@@ -76,6 +76,21 @@ func llvmGoObjImportedReference(s *obj.LSym) bool {
 		s.Pkg != "" && s.Pkg != `""` && s.Pkg != "_" && s.Pkg != localPkg
 }
 
+// llvmGoObjHasReferenceSuffix reports encoded reference identity, not marker
+// text embedded in an ordinary symbol (for example a quoted Go string).
+func llvmGoObjHasReferenceSuffix(name string) bool {
+	name = strings.TrimSuffix(name, goABI0SymbolSuffix)
+	if !strings.HasSuffix(name, ">") {
+		return false
+	}
+	i := strings.LastIndexByte(name, '<')
+	if i < 0 {
+		return false
+	}
+	suffix := name[i:]
+	return strings.HasPrefix(suffix, goobj.BuiltinSymbolSuffixPrefix) || suffix == goobj.LinknameSymbolSuffix
+}
+
 // llvmGoObjReferenceName is the single naming boundary for undefined Go
 // symbols in LLVM IR. Go's symbol model remains unchanged; the LLVM-only name
 // records whether the GoObj writer must serialize a surviving relocation as a
@@ -84,8 +99,7 @@ func llvmGoObjReferenceName(s *obj.LSym) string {
 	if s == nil {
 		base.Fatalf("nil GoObj symbol reference")
 	}
-	if strings.Contains(s.Name, goobj.BuiltinSymbolSuffixPrefix) ||
-		strings.Contains(s.Name, goobj.LinknameSymbolSuffix) {
+	if llvmGoObjHasReferenceSuffix(s.Name) {
 		base.Fatalf("Go symbol name %q uses reserved LLVM reference suffix", s.Name)
 	}
 	if base.Ctxt.Flag_linkshared {
@@ -158,8 +172,7 @@ func attachGoObjSymbolRef(value llvm.Value, s *obj.LSym) {
 		base.Fatalf("invalid LLVM value in GoObj symbol reference")
 	}
 
-	if strings.Contains(value.Name(), goobj.BuiltinSymbolSuffixPrefix) ||
-		strings.Contains(value.Name(), goobj.LinknameSymbolSuffix) {
+	if llvmGoObjHasReferenceSuffix(value.Name()) {
 		return
 	}
 	if !llvmGoObjImportedReference(s) {
@@ -561,7 +574,7 @@ func (l *llvmDataLowerer) globalName(s *obj.LSym) string {
 func llvmDataSymbolKindSupported(kind objabi.SymKind) bool {
 	switch kind {
 	case objabi.SRODATA, objabi.SRODATAFIPS, objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS,
-		objabi.SDATA, objabi.SDATAFIPS, objabi.SBSS, objabi.SNOPTRBSS:
+		objabi.SDATA, objabi.SDATAFIPS, objabi.SBSS, objabi.SNOPTRBSS, objabi.SCOVERAGE_COUNTER:
 		return true
 	default:
 		return false
@@ -782,6 +795,8 @@ func llvmDataSection(s *obj.LSym) string {
 		return ".bss"
 	case objabi.SNOPTRBSS:
 		return ".noptrbss"
+	case objabi.SCOVERAGE_COUNTER:
+		return ".noptrbss.coverage_counter"
 	default:
 		base.Fatalf("unsupported Go data symbol kind %s for %s", s.Type, s.Name)
 		return ""

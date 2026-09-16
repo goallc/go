@@ -30,6 +30,16 @@ func compileVersionFlagFullSuffix(buildID string) string {
 		fmt.Fprintf(os.Stderr, "compile: resolving in-process LLVM backend identity: %v\n", err)
 		os.Exit(2)
 	}
+	return llvmVersionBuildID(buildID, identity)
+}
+
+func llvmVersionBuildID(buildID, identity string) string {
+	// Like cmd/go's tool identity, use only the content ID. Action IDs encode
+	// the compiler that built this compiler and change during bootstrap even
+	// when the resulting tool has identical contents.
+	if i := strings.LastIndexByte(buildID, '/'); i >= 0 {
+		buildID = buildID[i+1:]
+	}
 	h := sha256.New()
 	h.Write([]byte(buildID))
 	h.Write([]byte{0})

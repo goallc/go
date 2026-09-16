@@ -1570,8 +1570,39 @@ if(BUILD_TESTING)
     endif()
   endforeach()
 
+  foreach(GOALLC_COLORED_TARGET IN ITEMS X86 AArch64)
+    if(GOALLC_COLORED_TARGET STREQUAL "X86")
+      set(GOALLC_COLORED_TRIPLE x86_64-unknown-linux-goobj)
+    else()
+      set(GOALLC_COLORED_TRIPLE aarch64-unknown-linux-goobj)
+    endif()
+    add_test(
+      NAME GoALLCStatepoints.ColoredAllocaLayouts${GOALLC_COLORED_TARGET}GoObj
+      COMMAND "${GOALLC_LLC_EXECUTABLE}"
+        "-mtriple=${GOALLC_COLORED_TRIPLE}" -frame-pointer=all
+        "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+        -verify-machineinstrs -filetype=obj
+        -o "${CMAKE_CURRENT_BINARY_DIR}/colored-allocas-${GOALLC_COLORED_TARGET}.goobj"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-colored-layouts.ll"
+    )
+    if(GOALLC_OBJVIEW_EXECUTABLE)
+      goallc_add_filecheck_test(
+        GoALLCStatepoints.ColoredAllocaLayouts${GOALLC_COLORED_TARGET}ObjView
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-colored-layouts.ll"
+        "OBJVIEW,OBJVIEW-${GOALLC_COLORED_TARGET}"
+        "${GOALLC_OBJVIEW_EXECUTABLE}" -json
+        "${CMAKE_CURRENT_BINARY_DIR}/colored-allocas-${GOALLC_COLORED_TARGET}.goobj"
+      )
+      set_tests_properties(
+        GoALLCStatepoints.ColoredAllocaLayouts${GOALLC_COLORED_TARGET}ObjView
+        PROPERTIES
+        DEPENDS GoALLCStatepoints.ColoredAllocaLayouts${GOALLC_COLORED_TARGET}GoObj
+      )
+    endif()
+  endforeach()
+
   foreach(GOALLC_MALFORMED_PTRMAP_CASE IN ITEMS
-      bad-size truncated bad-length duplicate overlap padding non-direct)
+      bad-size truncated bad-length duplicate overlap padding non-direct changing-layout)
     set(GOALLC_MALFORMED_PTRMAP_INPUT
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-ptrmap-malformed-${GOALLC_MALFORMED_PTRMAP_CASE}.ll")
     goallc_add_filecheck_test(

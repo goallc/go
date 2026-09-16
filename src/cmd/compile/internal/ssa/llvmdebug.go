@@ -429,7 +429,7 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 		typ = llvmDebugFunctionType(f, file)
 	}
 	sp := llvmDIBuilder.CreateFunction(llvmDICompileUnit, llvm.DIFunction{
-		Name:         sym.Name,
+		Name:         obj.TrimInlineHash(sym.Name),
 		LinkageName:  llvmFunctionStorageName(sym.Name, llvmCallConv(sym.ABI())),
 		File:         file,
 		Line:         line,

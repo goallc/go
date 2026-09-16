@@ -84,6 +84,11 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
 		return nil, fmt.Errorf("verify LLVM module after pre-codegen: %w", err)
 	}
+	if base.Flag.LLVMKeepIR {
+		if err := llvm.LLVMPrintModuleToFile(CurrentModule, outputFile+".precodegen.ll"); err != nil {
+			return nil, fmt.Errorf("write pre-codegen LLVM IR: %w", err)
+		}
+	}
 
 	buffer, err := tm.EmitToMemoryBuffer(CurrentModule, llvm.ObjectFile)
 	if err != nil {

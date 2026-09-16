@@ -4795,7 +4795,11 @@ func (lfc *LLVMFuncContext) emitTailCallReturn(b *Block) {
 }
 
 func (lfc *LLVMFuncContext) MappingName() {
-	for s, vs := range lfc.F.NamedValues {
+	// Several source names can refer to one argument. Visit the stable slot
+	// order, not the map, so renaming cannot depend on map iteration order.
+	for _, slot := range lfc.F.Names {
+		s := *slot
+		vs := lfc.F.NamedValues[s]
 		for _, v := range vs {
 			if v.Op != OpArg {
 				continue

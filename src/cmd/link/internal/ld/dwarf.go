@@ -2154,7 +2154,11 @@ func (d *dwctxt) writedebugaddr(unit *sym.CompilationUnit, debugaddr loader.Sym)
 		// collect relocations corresponding to indirect function
 		// references via .debug_addr.
 		dsyms = dsyms[:0]
-		dsyms = append(dsyms, infosym)
+		// Synthetic functions can have no subprogram DIE. As in
+		// dwarfVisitFunction, only scan auxiliary symbols that exist.
+		if infosym != 0 {
+			dsyms = append(dsyms, infosym)
+		}
 		if rangessym != 0 {
 			dsyms = append(dsyms, rangessym)
 		}
