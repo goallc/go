@@ -118,6 +118,9 @@ func TestLLVMFunctionHeaderResultExtent(t *testing.T) {
 					extent = 8
 					align = uint64(word)
 				}
+				if base.Flag.Cfg.ASan {
+					align = 0
+				}
 				result := ptr
 				if cc == goABI0CallConv {
 					param = ptr
@@ -151,20 +154,27 @@ func TestLLVMFunctionASanAllocationAlignment(t *testing.T) {
 	defer func() { base.Flag.Cfg.ASan = old; types.PtrSize = word }()
 	types.PtrSize = 8
 	for _, tc := range []struct {
-		size         uint64
-		noscan       bool
-		normal, asan uint64
+		size   uint64
+		noscan bool
+		normal uint64
 	}{
-		{32, true, 32, 16}, {128, true, 128, 64}, {512, true, 512, 128},
-		{512, false, 512, 8}, {520, false, 8, 8}, {32768, true, 8192, 8192},
+		{32, true, 32}, {128, true, 128}, {512, true, 512},
+		{512, false, 512}, {520, false, 8}, {32768, true, 8192},
 	} {
 		base.Flag.Cfg.ASan = false
 		if got := llvmHeapAlignment(tc.size, tc.noscan); got != tc.normal {
 			t.Fatalf("normal size=%d got=%d want=%d", tc.size, got, tc.normal)
 		}
 		base.Flag.Cfg.ASan = true
-		if got := llvmHeapAlignment(tc.size, tc.noscan); got != tc.asan {
-			t.Fatalf("asan size=%d got=%d want=%d", tc.size, got, tc.asan)
+		if got := llvmHeapAlignment(tc.size, tc.noscan); got != 1 {
+			t.Fatalf("asan size=%d got=%d want=%d", tc.size, got, 1)
 		}
 	}
+}
+
+func TestLLVMFunctionASanHeaderResultExtent(t *testing.T) {
+	old := base.Flag.Cfg.ASan
+	defer func() { base.Flag.Cfg.ASan = old }()
+	base.Flag.Cfg.ASan = true
+	TestLLVMFunctionHeaderResultExtent(t)
 }

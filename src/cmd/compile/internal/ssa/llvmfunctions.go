@@ -444,7 +444,7 @@ func (m *llvmFunctionManager) getOrInsert(name string, sig llvmFuncSignature, cc
 		if model.resultWords != 0 {
 			fn.AddAttributeAtIndex(0, m.dereferenceableAttribute(model.resultWords*uint64(types.PtrSize)))
 		}
-		if model.resultAlignment != 0 {
+		if model.resultAlignment != 0 && !base.Flag.Cfg.ASan {
 			fn.AddAttributeAtIndex(0, llvmAlignmentAttributes[min(model.resultAlignment, uint64(types.PtrSize))])
 		}
 		for _, attribute := range model.result {
@@ -486,7 +486,9 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 	switch {
 	case model.mapAllocation:
 		if args[2].IsNull() {
-			call.AddCallSiteAttribute(0, llvmAlignmentAttributes[uint64(types.PtrSize)])
+			if !base.Flag.Cfg.ASan {
+				call.AddCallSiteAttribute(0, llvmAlignmentAttributes[uint64(types.PtrSize)])
+			}
 			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 		}
 		return
@@ -515,7 +517,9 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 			fresh = pointer.Op == OpAddr || pointer.Op == OpLocalAddr
 		}
 		if fresh {
-			call.AddCallSiteAttribute(0, llvmAlignmentAttributes[uint64(types.PtrSize)])
+			if !base.Flag.Cfg.ASan {
+				call.AddCallSiteAttribute(0, llvmAlignmentAttributes[uint64(types.PtrSize)])
+			}
 			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 		}
 		return
@@ -605,17 +609,10 @@ func (m *llvmFunctionManager) dereferenceableAttribute(size uint64) llvm.Attribu
 	return attr
 }
 
-// The runtime's shared size-class calculation includes user-pointer offsets.
-// In ASan builds the redzone may select another class. The debug allocator
-// runs before redzone expansion, so retain the intersection of both paths.
+// ASan allocation alignment is deliberately left unmodeled.
 func llvmHeapAlignment(size uint64, noscan bool) uint64 {
-	alignment := gc.AllocationAlignment(size, noscan, uint64(types.PtrSize))
 	if base.Flag.Cfg.ASan {
-		redzone := gc.ASanRedZoneSize(size)
-		if size > ^uint64(0)-redzone {
-			return 1
-		}
-		alignment = min(alignment, gc.AllocationAlignment(size+redzone, noscan, uint64(types.PtrSize)))
+		return 1
 	}
-	return alignment
+	return gc.AllocationAlignment(size, noscan, uint64(types.PtrSize))
 }

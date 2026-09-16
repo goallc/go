@@ -36,26 +36,3 @@ func AllocationAlignment(size uint64, noscan bool, ptrSize uint64) uint64 {
 	}
 	return alignment
 }
-
-// ASanRedZoneSize matches compiler-rt's allocation redzone sizes. Both the
-// runtime allocator and compiler alignment model must use the same rounding.
-func ASanRedZoneSize(size uint64) uint64 {
-	switch {
-	case size <= 64-16:
-		return 16
-	case size <= 128-32:
-		return 32
-	case size <= 512-64:
-		return 64
-	case size <= 4096-128:
-		return 128
-	case size <= (1<<14)-256:
-		return 256
-	case size <= (1<<15)-512:
-		return 512
-	case size <= (1<<16)-1024:
-		return 1024
-	default:
-		return 2048
-	}
-}

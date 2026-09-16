@@ -326,8 +326,7 @@ Examples on a 64-bit target without ASan:
 | 32768 | 8192 | 8192 |
 
 Tiny suballocations retain only the alignment guaranteed by their offsets,
-including race-mode tail placement. ASan redzones can select a different class;
-the compiler intersects the normal and redzone-expanded guarantees. The
+including race-mode tail placement. ASan builds omit allocation return-alignment attributes entirely. The
 allocator build mode is retained even for packages excluded from instrumentation.
 The `sbrk` debug allocator now aligns its actual returned address to the same
 contract, including when the OS page is smaller than a Go heap page.
@@ -342,5 +341,5 @@ only proven fresh headers receive word alignment. Scalar box declarations retain
 the alignment common to fresh storage and the static integer cache.
 
 Tests cover LLVM address-mask folding with negative controls, readable extent
-boundaries, target-width header thresholds, ASan class changes, emitted IR, and
+boundaries, target-width header thresholds, ASan alignment exclusion, emitted IR, and
 actual allocation addresses observed separately from attributed call sites.
