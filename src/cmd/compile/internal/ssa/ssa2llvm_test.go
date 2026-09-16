@@ -2295,3 +2295,25 @@ func TestLLVMRuntimeGorecoverUsesLinkSymbolName(t *testing.T) {
 		t.Fatal("direct gorecover caller was incorrectly identified as gorecover itself")
 	}
 }
+
+func TestLLVMReferenceSuffixBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{`go:string."<builtin."`, false},
+		{`go:string."<builtin.42>"`, false},
+		{`go:string."<linkname>"`, false},
+		{`pkg.<builtin.42>.data`, false},
+		{`pkg.<linkname>.data`, false},
+		{`runtime.f<builtin.42>`, true},
+		{`runtime.f<builtin.42><ABI0>`, true},
+		{`runtime.f<linkname>`, true},
+		{`runtime.f<linkname><ABI0>`, true},
+		{`runtime.f<builtin.invalid>`, true},
+	} {
+		if got := llvmGoObjHasReferenceSuffix(tc.name); got != tc.want {
+			t.Errorf("reference suffix in %q = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
