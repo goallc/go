@@ -7,12 +7,13 @@ package llvmbackend
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestPassPluginFromGoToolchain(t *testing.T) {
 	goRoot := t.TempDir()
-	lib := filepath.Join(goRoot, "pkg", "goallc-llvmplugin", "lib")
+	lib := filepath.Join(goRoot, "pkg", "tool", runtime.GOOS+"_"+runtime.GOARCH, "lib")
 	if err := os.MkdirAll(lib, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +42,12 @@ func TestPassPluginFromGoToolchain(t *testing.T) {
 	if got != plugin {
 		t.Fatalf("PassPlugin() = %q, want %q", got, plugin)
 	}
+
+	// An incomplete selected toolchain must not fall back to another plugin.
+	t.Setenv("GOROOT", t.TempDir())
+	if plugin, err := PassPlugin(); err == nil {
+		t.Fatalf("PassPlugin() = %q, want an error for an incomplete toolchain", plugin)
+	}
 }
 
 func TestPassPluginDoesNotSearchLLVMPayload(t *testing.T) {
@@ -65,7 +72,7 @@ func TestPassPluginDoesNotSearchLLVMPayload(t *testing.T) {
 
 func TestIdentityTracksRuntimeFiles(t *testing.T) {
 	goRoot := t.TempDir()
-	pluginLib := filepath.Join(goRoot, "pkg", "goallc-llvmplugin", "lib")
+	pluginLib := filepath.Join(goRoot, "pkg", "tool", runtime.GOOS+"_"+runtime.GOARCH, "lib")
 	if err := os.MkdirAll(pluginLib, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,17 +84,14 @@ func TestIdentityTracksRuntimeFiles(t *testing.T) {
 	if err := os.WriteFile(plugin, []byte("plugin one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	payloadRoot := t.TempDir()
-	lib := filepath.Join(payloadRoot, "lib")
-	if err := os.Mkdir(lib, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	llvm := filepath.Join(lib, "libLLVM.test.dylib")
+	llvm := filepath.Join(pluginLib, "libLLVM.test.dylib")
 	if err := os.WriteFile(llvm, []byte("llvm one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GOROOT", goRoot)
-	t.Setenv("GOALLC_LLVM_DIR", payloadRoot)
+	// A build-time payload selection must not redirect runtime identity away
+	// from the libraries installed with this compiler.
+	t.Setenv("GOALLC_LLVM_DIR", t.TempDir())
 
 	first, err := Identity()
 	if err != nil {

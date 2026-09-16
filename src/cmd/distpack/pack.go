@@ -168,6 +168,10 @@ func main() {
 			if !strings.HasPrefix(name, "pkg/tool/"+goosUnderGoarch+"/") {
 				return false
 			}
+			// Compiler runtime libraries travel with the host tools.
+			if strings.HasPrefix(name, "pkg/tool/"+goosUnderGoarch+"/lib/") {
+				return true
+			}
 			// Inside pkg/tool/$GOOS_$GOARCH, keep only tools needed for build actions.
 			switch strings.TrimSuffix(path.Base(name), ".exe") {
 			default:

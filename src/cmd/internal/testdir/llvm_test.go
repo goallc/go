@@ -812,10 +812,9 @@ func configureLLVMTestToolchain(t *testing.T) {
 		t.Fatalf("selected LLVM payload prefix mismatch: root %q, llvm-config --prefix %q", root, prefix)
 	}
 
-	// Freeze the compiler to the validated payload. Individual tests do not
-	// select opt, llc, or a pass plugin; cmd/compile owns the complete
-	// optimization and code-generation pipeline. Codegen IR assertions resolve
-	// FileCheck lazily from this same payload.
+	// Keep test tools on the validated payload. Codegen IR assertions resolve
+	// FileCheck lazily from it; cmd/compile uses its bundled runtime libraries
+	// and owns the complete optimization and code-generation pipeline.
 	t.Setenv("GOALLC_LLVM_DIR", root)
 	t.Logf("LLVM test toolchain: go=%s payload=%s in-process-pipeline=default<O2>",
 		goTool, root)

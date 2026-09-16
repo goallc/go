@@ -20,14 +20,15 @@ import (
 
 // PassPlugin resolves the GoALLC pre-codegen plugin from the Go toolchain.
 // LLVM payload directories are deliberately not searched: the payload provides
-// LLVM itself, while the Go-owned plugin is installed below GOROOT/pkg.
+// LLVM itself, while the Go-owned plugin is installed below the toolchain
+// root's host tool directory.
 func PassPlugin() (string, error) {
 	name, err := passPluginFilename()
 	if err != nil {
 		return "", err
 	}
 	for _, root := range goRoots() {
-		candidate := filepath.Join(root, "pkg", "goallc-llvmplugin", "lib", name)
+		candidate := filepath.Join(root, "pkg", "tool", runtime.GOOS+"_"+runtime.GOARCH, "lib", name)
 		if requireRegularFile(candidate) == nil {
 			return candidate, nil
 		}
@@ -46,17 +47,12 @@ func Identity() (string, error) {
 	paths := []string{plugin}
 
 	var candidates []string
-	for _, root := range payloadRoots() {
-		for _, pattern := range []string{"libLLVM*.dylib", "libLLVM*.so", "libLLVM*.so.*"} {
-			matches, err := filepath.Glob(filepath.Join(root, "lib", pattern))
-			if err != nil {
-				return "", err
-			}
-			candidates = append(candidates, matches...)
+	for _, pattern := range []string{"libLLVM*.dylib", "libLLVM*.so", "libLLVM*.so.*"} {
+		matches, err := filepath.Glob(filepath.Join(filepath.Dir(plugin), pattern))
+		if err != nil {
+			return "", err
 		}
-		if len(candidates) != 0 {
-			break
-		}
+		candidates = append(candidates, matches...)
 	}
 	sort.Strings(candidates)
 	seen := make(map[string]bool)
@@ -89,34 +85,6 @@ func Identity() (string, error) {
 		}
 	}
 	return "goallc-" + hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func payloadRoots() []string {
-	var roots []string
-	if root := strings.TrimSpace(os.Getenv("GOALLC_LLVM_DIR")); root != "" {
-		roots = append(roots, root)
-	}
-	if executable, err := os.Executable(); err == nil {
-		toolDir := filepath.Dir(executable)
-		goroot := filepath.Dir(filepath.Dir(filepath.Dir(toolDir)))
-		if data, err := os.ReadFile(filepath.Join(goroot, "pkg", "goallc-llvm-payload")); err == nil {
-			if payload := strings.TrimSpace(string(data)); payload != "" {
-				roots = append(roots, payload)
-			}
-		}
-		roots = append(roots, filepath.Join(goroot, "llvm"))
-	}
-	seen := make(map[string]bool)
-	unique := roots[:0]
-	for _, root := range roots {
-		path, err := filepath.Abs(root)
-		if err != nil || seen[path] {
-			continue
-		}
-		seen[path] = true
-		unique = append(unique, path)
-	}
-	return unique
 }
 
 func goRoots() []string {

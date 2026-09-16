@@ -187,7 +187,8 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 `cmd/internal/testdir` 的 LLVM 测试在开始运行测试策略前只选择一次 payload，顺序为
 显式的 `GOALLC_LLVM_DIR`、`make.bash` 写入的
 `$GOROOT/pkg/goallc-llvm-payload`，最后才是兼容入口 `$GOROOT/llvm`。测试框架只把
-该根目录交给 compiler，不再解析或注入 `llc`、`opt`、pass plugin 或 toolexec。
+该根目录用于定位 `FileCheck` 等构建测试工具；compiler 的运行库随 host tools 安装，
+不通过这个路径选择运行库，也不再解析或注入 `llc`、`opt`、pass plugin 或 toolexec。
 
 测试启动日志只打印 Go、payload 和进程内优化 pipeline。testdir 启用用例和标准库
 runtime 用例只通过 `-gcflags=all=-enablellvm` 选择 LLVM；codegen 用例也运行完整
@@ -202,10 +203,17 @@ LLVM 工具只用于 LLVM 项目自身的格式级测试，不参与 Go 测试�
 toolchain 自己的目录：
 
 ```text
-$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.dylib # Darwin
-$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.so    # Linux
+$GOROOT/pkg/tool/<host>/lib/GoALLCStatepoints.dylib # Darwin
+$GOROOT/pkg/tool/<host>/lib/GoALLCStatepoints.so    # Linux
+$GOROOT/pkg/tool/<host>/lib/libLLVM*               # 动态 LLVM 运行库
 $GOROOT/pkg/goallc-llvmplugin/lib/libGoALLCStatepointsStatic.a
 ```
+
+`<host>` 为 `linux_amd64`、`linux_arm64`、`darwin_amd64` 或 `darwin_arm64`。
+运行目录中的库和库别名均为独立文件，临时 GOROOT 使用原生工具目录的链接/复制
+机制即可携带它们。动态编译器优先通过相对加载路径查找旁边的 `lib`；测试程序
+在工具目录外构建时使用链接时记录的工具库目录。无需额外的工具链路径环境变量。
+`pkg/goallc-llvmplugin` 仍保存 plugin 的构建缓存和静态链接 archive。
 
 LLVM payload 只提供 LLVM headers、CMake package、库和工具；构建过程不向其中
 安装 plugin，compiler 运行时也不会去 payload 的 `lib`/`lib64` 中查找 plugin。

@@ -1,0 +1,14 @@
+# Compiler runtime files follow the host tools into the temporary GOROOT,
+# including when compile is replaced by the compiler test executable.
+exists $GOROOT/pkg/tool/${GOOS}_${GOARCH}/lib
+! exists $GOROOT/pkg/goallc-llvmplugin
+! exists $GOROOT/pkg/goallc-llvm-payload
+env GOALLC_LLVM_DIR=
+go tool compile -enablellvm -V=full
+stdout 'buildID=goallc-'
+go tool compile -enablellvm -llvm-keep-ir -p=p -o p.a p.go
+exists p.a p.a.ll
+
+-- p.go --
+package p
+func F(x int) int { return x + 1 }
