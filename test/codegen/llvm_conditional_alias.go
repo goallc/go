@@ -31,11 +31,11 @@ var llvmBoxArray [8]byte
 
 func llvmFreshSliceBox() any { return llvmBoxArray[:0] }
 
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT16<builtin.{{[0-9]+}}>"(i16 256)
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT32<builtin.{{[0-9]+}}>"(i32 256)
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT64<builtin.{{[0-9]+}}>"(i64 256)
-// LLVM-DAG: call goabiinternal ptr @"runtime.convT64<builtin.{{[0-9]+}}>"(i64 255)
-// LLVM-DAG: call goabiinternal ptr @"runtime.convT64<builtin.{{[0-9]+}}>"(i64 %n)
+// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT16<linkname>"(i16 256)
+// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT32<linkname>"(i32 256)
+// LLVM-DAG: call goabiinternal noalias ptr @"runtime.convT64<linkname>"(i64 256)
+// LLVM-DAG: call goabiinternal ptr @"runtime.convT64<linkname>"(i64 255)
+// LLVM-DAG: call goabiinternal ptr @"runtime.convT64<linkname>"(i64 %n)
 // LLVM-DAG: call goabiinternal noalias ptr @"runtime.makemap<builtin.{{[0-9]+}}>"
 // LLVM-DAG: call goabiinternal noalias ptr @"runtime.makeslice<builtin.{{[0-9]+}}>"
 // LLVM-DAG: call goabiinternal noalias ptr @"runtime.convTstring<builtin.{{[0-9]+}}>"
