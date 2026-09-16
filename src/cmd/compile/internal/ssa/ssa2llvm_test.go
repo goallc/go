@@ -897,14 +897,19 @@ func TestLLVMGoObjReferenceNames(t *testing.T) {
 		t.Fatalf("builtin reference name = %q, want %q", got, wantBuiltin)
 	}
 
-	// Builtin and linkname are mutually exclusive reference encodings. The
-	// builtin table wins when an implementation also carries a linkname bit.
+	// A source linkname pull must not acquire the trusted builtin identity.
+	// A local implementation carrying a push linkname still uses the builtin.
 	oldBuiltinLinkname := builtin.IsLinkname()
 	builtin.Set(obj.AttrLinkname, true)
 	t.Cleanup(func() { builtin.Set(obj.AttrLinkname, oldBuiltinLinkname) })
-	if got := llvmGoObjReferenceName(builtin); got != wantBuiltin {
-		t.Fatalf("linknamed builtin reference name = %q, want %q", got, wantBuiltin)
+	if got, want := llvmGoObjReferenceName(builtin), builtin.Name+goobj.LinknameSymbolSuffix; got != want {
+		t.Fatalf("linknamed builtin reference name = %q, want %q", got, want)
 	}
+	llvmGoObjLocalDefinitions[llvmGoObjSymbolKeyFor(builtin)] = true
+	if got := llvmGoObjReferenceName(builtin); got != wantBuiltin {
+		t.Fatalf("local builtin reference name = %q, want %q", got, wantBuiltin)
+	}
+	delete(llvmGoObjLocalDefinitions, llvmGoObjSymbolKeyFor(builtin))
 
 	linkname := base.Ctxt.LookupABI("runtime.llvmLinknamePull", obj.ABIInternal)
 	oldLinkname := linkname.IsLinkname()

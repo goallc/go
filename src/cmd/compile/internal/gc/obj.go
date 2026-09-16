@@ -43,20 +43,6 @@ const (
 )
 
 func dumpobj() {
-	if base.Flag.EnableLLVM {
-		linkerObj, err := ssa.EmitLLVMGoObj(base.Flag.LowerO)
-		if err != nil {
-			fmt.Printf("error generating LLVM GoObj: %v\n", err)
-			base.ErrorExit()
-		}
-		if base.Flag.LinkObj == "" {
-			dumpobjWithLLVM(base.Flag.LowerO, modeCompilerObj|modeLinkerObj, linkerObj)
-			return
-		}
-		dumpobj1(base.Flag.LowerO, modeCompilerObj)
-		dumpobjWithLLVM(base.Flag.LinkObj, modeLinkerObj, linkerObj)
-		return
-	}
 	if base.Flag.LinkObj == "" {
 		dumpobj1(base.Flag.LowerO, modeCompilerObj|modeLinkerObj)
 		return
@@ -66,10 +52,6 @@ func dumpobj() {
 }
 
 func dumpobj1(outfile string, mode int) {
-	dumpobjWithLLVM(outfile, mode, nil)
-}
-
-func dumpobjWithLLVM(outfile string, mode int, llvmLinkerObj []byte) {
 	bout, err := bio.Create(outfile)
 	if err != nil {
 		base.FlushErrors()
@@ -86,8 +68,16 @@ func dumpobjWithLLVM(outfile string, mode int, llvmLinkerObj []byte) {
 	}
 	if mode&modeLinkerObj != 0 {
 		start := startArchiveEntry(bout)
-		if llvmLinkerObj != nil {
-			bout.Write(llvmLinkerObj)
+		if base.Flag.EnableLLVM {
+			// Export writing computes the package fingerprint. Emit LLVM only
+			// afterwards so the linker object records the same identity, also
+			// when -linkobj puts the two objects in separate files.
+			linkerObj, err := ssa.EmitLLVMGoObj(base.Flag.LowerO)
+			if err != nil {
+				fmt.Printf("error generating LLVM GoObj: %v\n", err)
+				base.ErrorExit()
+			}
+			bout.Write(linkerObj)
 		} else {
 			dumpLinkerObj(bout)
 		}
