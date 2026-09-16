@@ -458,6 +458,24 @@ func (st *loadState) addSym(name string, ver int, r *oReader, li uint32, kind in
 	sz := int64(r.Sym(li).Siz())
 	oldr, oldli := l.toLocal(oldi)
 	oldsym := oldr.Sym(oldli)
+	oldtyp := sym.AbiSymKindToSymKind[objabi.SymKind(oldsym.Type())]
+	newtyp := sym.AbiSymKindToSymKind[objabi.SymKind(osym.Type())]
+	newIsText := newtyp.IsText()
+	oldHasContent := oldr.DataSize(oldli) != 0
+	newHasContent := r.DataSize(li) != 0
+	oldIsBSS := oldtyp.IsData() && !oldHasContent
+	newIsBSS := newtyp.IsData() && !newHasContent
+	// A linknamed BSS variable may take a function's address. Resolve it to
+	// the real TEXT definition before applying Dupok precedence: ABI wrappers
+	// are Dupok, but an empty variable declaration must not replace their
+	// function identity or their linkname permissions. Handle either order.
+	if oldtyp.IsText() && newIsBSS {
+		return oldi
+	}
+	if newIsText && oldIsBSS {
+		l.objSyms[oldi] = objSym{r.objidx, li}
+		return oldi
+	}
 	if osym.Dupok() {
 		if oldsym.Dupok() {
 			if l.flags&FlagStrictDups != 0 {
@@ -502,16 +520,8 @@ func (st *loadState) addSym(name string, ver int, r *oReader, li uint32, kind in
 	// BSS  large    BSS  small    new wins
 	// BSS  sm/eq    D/B  lg/eq    old wins
 	// BSS           TEXT          old wins
-	oldtyp := sym.AbiSymKindToSymKind[objabi.SymKind(oldsym.Type())]
-	newtyp := sym.AbiSymKindToSymKind[objabi.SymKind(osym.Type())]
-	newIsText := newtyp.IsText()
-	oldHasContent := oldr.DataSize(oldli) != 0
-	newHasContent := r.DataSize(li) != 0
-	oldIsBSS := oldtyp.IsData() && !oldHasContent
-	newIsBSS := newtyp.IsData() && !newHasContent
 	switch {
-	case newIsText && oldIsBSS,
-		newHasContent && oldIsBSS,
+	case newHasContent && oldIsBSS,
 		newIsBSS && oldIsBSS && sz > oldsz:
 		// new symbol overwrites old symbol.
 		l.objSyms[oldi] = objSym{r.objidx, li}
