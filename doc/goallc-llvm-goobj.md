@@ -242,6 +242,14 @@ header。进程内 binding 会在建立 code-generation pipeline 前读取并严
 
 ## 集成与调试边界
 
+GoObj variable locations are emitted from final machine-frame offsets and
+LLVM debug-value histories as Go linker-native DWARF4/5 location lists.
+Heap-promoted variables with a canonical heap-pointer home use an additional
+dereference. Register clobbers, unavailable values, and fragment boundaries
+limit each location's PC range. Variables without a frontend location,
+inlined-variable instances, and unsupported expressions remain unavailable;
+the backend does not infer locations from source names or ABI offsets.
+
 package 选择完全由 cmd/go 已有的 `-gcflags` 规则完成。无 pattern 的
 `-gcflags='-enablellvm'` 只作用于命令行 package；需要选择依赖时使用精确
 pattern，需要证明完整编译闭包时使用 `-gcflags=all=-enablellvm`。

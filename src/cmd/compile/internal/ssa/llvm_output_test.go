@@ -104,3 +104,40 @@ func Identity(x int) int { y := x + 1; return y - 1 }
 		})
 	}
 }
+
+// Heap results must describe the source variable through its canonical heap
+// pointer home, rather than only describing the compiler's &result temporary.
+func TestLLVMHeapDebugLocation(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	dir := t.TempDir()
+	source := filepath.Join(dir, "p.go")
+	code := `package p
+var Escaped *int
+//go:noinline
+func HeapResult() (result int) {
+	Escaped = &result
+	result = 42
+	return
+}
+`
+	if err := os.WriteFile(source, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "p.a")
+	cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-N", "-l", "-llvm-keep-ir", "-p=p", "-o", archive, source)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	ir, err := os.ReadFile(archive + ".ll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := regexp.MustCompile(`(?m)^(![0-9]+) = !DILocalVariable\(name: "result",`).FindSubmatch(ir)
+	if id == nil {
+		t.Fatal("missing result variable metadata")
+	}
+	declare := regexp.MustCompile(`#dbg_declare\(ptr %[^,]+, ` + string(id[1]) + `, !DIExpression\(DW_OP_deref\),`)
+	if !declare.Match(ir) {
+		t.Fatalf("heap result has no indirect location:\n%s", ir)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"cmd/compile/internal/reflectdata"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
+	"cmd/internal/dwarf"
 	"cmd/internal/obj"
 	"cmd/internal/src"
 	"fmt"
@@ -515,11 +516,18 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(name.DictIndex), false).ConstantAsMetadata(),
 			}))
 
-		// Declare only a real canonical memory home. SSA-only, split,
-		// heap-promoted, captured, and inlined variables remain explicitly
-		// unavailable until a final-machine location can be proven exact.
-		if slot, ok := lfc.Locals[llvmLocalKeyForName(name)]; ok && inlIndex < 0 {
-			llvmDIBuilder.InsertDeclareAtEnd(slot.Value, diVar, expr,
+		// Describe a real canonical home. A heap-promoted variable lives at
+		// the address stored in its Heapaddr home, not in its original ABI
+		// slot. LLVM tracks the extra dereference through later optimization.
+		// SSA-only, split, and inlined variables remain unavailable here.
+		slot, ok := lfc.Locals[llvmLocalKeyForName(name)]
+		locationExpr := expr
+		if name.Esc() == ir.EscHeap && name.Heapaddr != nil {
+			slot, ok = lfc.Locals[llvmLocalKeyForName(name.Heapaddr)]
+			locationExpr = llvmDIBuilder.CreateExpression([]uint64{dwarf.DW_OP_deref})
+		}
+		if ok && inlIndex < 0 {
+			llvmDIBuilder.InsertDeclareAtEnd(slot.Value, diVar, locationExpr,
 				llvm.DebugLoc{Line: uint(line), Scope: lfc.DISubprogram},
 				lfc.Prologue)
 		}
