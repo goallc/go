@@ -14,8 +14,11 @@ import "sync/atomic"
 // LLVM-DAG: store atomic i64 %value, ptr %p seq_cst, align 8
 // LLVM-DAG: cmpxchg ptr %p, i32 %old, i32 %new seq_cst seq_cst
 // LLVM-DAG: cmpxchg ptr %p, i64 %old, i64 %new seq_cst seq_cst
-// LLVM-DAG: [[CAS32:%[^ ]+]] = extractvalue { i32, i1 } {{%[^,]+}}, 1
-// LLVM-DAG: ret i1 [[CAS32]]
+// ARM64 may merge feature-guarded CAS paths with a phi before returning.
+// LLVM-DAG: define goabiinternal i1 @codegen.llvmAtomicCompareAndSwap32(
+// LLVM-DAG: define goabiinternal i1 @codegen.llvmAtomicCompareAndSwap64(
+// LLVM-DAG: extractvalue { i32, i1 } {{%[^,]+}}, 1
+// LLVM-DAG: ret i1 {{%[^,]+}},
 // LLVM-DAG: atomicrmw add ptr %p, i32 %delta seq_cst
 // LLVM-DAG: atomicrmw add ptr %p, i64 %delta seq_cst
 // LLVM-DAG: atomicrmw xchg ptr %p, i32 %value seq_cst
