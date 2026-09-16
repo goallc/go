@@ -6,7 +6,7 @@
 
 package codegen
 
-// LLVM-DAG: define goabiinternal { i64, i8 } @codegen.div_ndivis6_int64
+// LLVM-DAG: define goabiinternal { i64, i1 } @codegen.div_ndivis6_int64
 // LLVM-DAG: sext i64 {{%.*}} to i128
 // LLVM-DAG: mul i128
 // LLVM-DAG: lshr i128 {{%.*}}, 64

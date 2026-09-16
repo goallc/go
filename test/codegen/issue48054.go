@@ -6,10 +6,10 @@
 
 package codegen
 
-// LLVM-DAG: define goabiinternal i8 @codegen.a3({ ptr, i64, i64 } %n)
+// LLVM-DAG: define goabiinternal i1 @codegen.a3({ ptr, i64, i64 } %n)
 // LLVM-DAG: extractvalue { ptr, i64, i64 } %n, 1
 // LLVM-DAG: icmp eq i64 0, {{%.*}}
-// LLVM-DAG: define goabiinternal i8 @codegen.a({ ptr, i64 } %n)
+// LLVM-DAG: define goabiinternal i1 @codegen.a({ ptr, i64 } %n)
 // LLVM-DAG: extractvalue { ptr, i64 } %n, 1
 // LLVM-DAG: icmp ne i64 0, {{%.*}}
 

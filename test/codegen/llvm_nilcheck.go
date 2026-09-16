@@ -10,7 +10,7 @@ package codegen
 // Go SSA join block. LLVM verification therefore also checks the rewritten
 // predecessor used by the join phi.
 //
-// LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckPhi(ptr %p, i8 %take)
+// LLVM-LABEL: define goabiinternal i64 @codegen.llvmExplicitNilcheckPhi(ptr %p, i1 %take)
 // LLVM-NOT: llvm.goallc.nilcheck
 // LLVM: phi i64
 // LLVM: icmp eq ptr %p, null

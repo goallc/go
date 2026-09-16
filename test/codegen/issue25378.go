@@ -7,11 +7,11 @@
 package codegen
 
 // LLVM-DAG: @codegen.wsp = global <{ [256 x i8] }> {{.*}}, section ".noptrdata"
-// LLVM-DAG: define goabiinternal i8 @codegen.zeroExtArgUint16(ptr byval([2 x i16]) align 2
+// LLVM-DAG: define goabiinternal i1 @codegen.zeroExtArgUint16(ptr byval([2 x i16]) align 2
 // LLVM-DAG: zext i16 {{%.*}} to i64
 // LLVM-DAG: icmp ult i64 {{%.*}}, 256
 // LLVM-DAG: getelementptr i8, ptr @codegen.wsp, i64
-// LLVM-DAG: define goabiinternal i8 @codegen.zeroExtArgByte(ptr byval([2 x i8]) align 1
+// LLVM-DAG: define goabiinternal i1 @codegen.zeroExtArgByte(ptr byval([2 x i8]) align 1
 // LLVM-DAG: zext i8 {{%.*}} to i64
 
 var wsp = [256]bool{

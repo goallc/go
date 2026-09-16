@@ -6,11 +6,11 @@
 
 package codegen
 
-// LLVM-DAG: define goabiinternal i64 @codegen.knownBitsXorToggle(i8 %a, i8 %b, i8 %c)
+// LLVM-DAG: define goabiinternal i64 @codegen.knownBitsXorToggle(i1 %a, i1 %b, i1 %c)
 // LLVM-DAG: ret i64 1
-// LLVM-DAG: define goabiinternal i64 @codegen.knownBitsDeferPattern(i8 %a, i8 %b)
+// LLVM-DAG: define goabiinternal i64 @codegen.knownBitsDeferPattern(i1 %a, i1 %b)
 // LLVM-DAG: ret i64 5
-// LLVM-DAG: define goabiinternal i64 @codegen.knownBitsPhiAnd(i8 %cond)
+// LLVM-DAG: define goabiinternal i64 @codegen.knownBitsPhiAnd(i1 %cond)
 // LLVM-DAG: ret i64 1
 
 func knownBitsPhiAnd(cond bool) int {
