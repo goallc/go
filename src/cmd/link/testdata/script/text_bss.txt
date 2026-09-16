@@ -1,0 +1,58 @@
+# Use amd64 assembly and ELF symbol sizes; Mach-O and PE infer sizes
+# from the distance to the next symbol.
+[!GOARCH:amd64] skip
+[!GOOS:linux] skip
+
+# A BSS declaration must not replace Dupok TEXT, in either object order.
+cp testdata/text.s a.s
+cp testdata/bss.s b.s
+go build -o main.exe
+go tool nm -size main.exe
+stdout ' 1 T target$'
+cp testdata/bss.s a.s
+cp testdata/text.s b.s
+go build -o main.exe
+go tool nm -size main.exe
+stdout ' 1 T target$'
+
+# Non-Dupok TEXT must also keep its size, not the larger BSS size.
+replace 'DUPOK|' '' b.s
+go build -o main.exe
+go tool nm -size main.exe
+stdout ' 1 T target$'
+
+# When both definitions are Dupok, strict checking still diagnoses them.
+cp testdata/text.s b.s
+replace 'NOPTR' 'DUPOK|NOPTR' a.s
+! go build -ldflags=-strictdups=2
+stderr 'duplicate symbol .*target.*mismatched payload'
+! stderr 'non-function sym|panic:'
+
+-- go.mod --
+module textbss
+
+go 1.20
+-- main.go --
+package main
+
+func addr() uintptr
+
+func main() {
+	println(addr())
+}
+-- addr_amd64.s --
+#include "textflag.h"
+
+TEXT ·addr(SB),NOSPLIT,$0-8
+	LEAQ target(SB), AX
+	MOVQ AX, ret+0(FP)
+	RET
+-- testdata/text.s --
+#include "textflag.h"
+
+TEXT target(SB),DUPOK|NOSPLIT,$0-0
+	RET
+-- testdata/bss.s --
+#include "textflag.h"
+
+GLOBL target(SB),NOPTR,$64

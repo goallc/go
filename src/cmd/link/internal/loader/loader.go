@@ -458,6 +458,11 @@ func (st *loadState) addSym(name string, ver int, r *oReader, li uint32, kind in
 	sz := int64(r.Sym(li).Siz())
 	oldr, oldli := l.toLocal(oldi)
 	oldsym := oldr.Sym(oldli)
+	// Preserve strict duplicate diagnostics even when a BSS declaration is
+	// resolved to a TEXT definition below.
+	if osym.Dupok() && oldsym.Dupok() && l.flags&FlagStrictDups != 0 {
+		l.checkdup(name, r, li, oldi)
+	}
 	oldtyp := sym.AbiSymKindToSymKind[objabi.SymKind(oldsym.Type())]
 	newtyp := sym.AbiSymKindToSymKind[objabi.SymKind(osym.Type())]
 	newIsText := newtyp.IsText()
@@ -465,10 +470,17 @@ func (st *loadState) addSym(name string, ver int, r *oReader, li uint32, kind in
 	newHasContent := r.DataSize(li) != 0
 	oldIsBSS := oldtyp.IsData() && !oldHasContent
 	newIsBSS := newtyp.IsData() && !newHasContent
-	// A linknamed BSS variable may take a function's address. Resolve it to
-	// the real TEXT definition before applying Dupok precedence: ABI wrappers
-	// are Dupok, but an empty variable declaration must not replace their
-	// function identity or their linkname permissions. Handle either order.
+	// A BSS declaration can be used to take the address of a function:
+	//
+	//	//go:linkname fn
+	//	var fn uintptr
+	//	var fnAddr = uintptr(unsafe.Pointer(&fn))
+	//
+	// TODO: maybe limit this case to just pointer sized variable?
+	//
+	// Keep the TEXT definition, including its size and linkname permissions,
+	// regardless of load order or Dupok. In particular, an ABI wrapper is
+	// Dupok, but must not be replaced by a non-Dupok BSS declaration.
 	if oldtyp.IsText() && newIsBSS {
 		return oldi
 	}
@@ -478,9 +490,6 @@ func (st *loadState) addSym(name string, ver int, r *oReader, li uint32, kind in
 	}
 	if osym.Dupok() {
 		if oldsym.Dupok() {
-			if l.flags&FlagStrictDups != 0 {
-				l.checkdup(name, r, li, oldi)
-			}
 			if oldsz < sz {
 				// new symbol overwrites old symbol.
 				l.objSyms[oldi] = objSym{r.objidx, li}
@@ -498,28 +507,16 @@ func (st *loadState) addSym(name string, ver int, r *oReader, li uint32, kind in
 	// including RODATA) and the other is BSS, the one with content wins.
 	// If both are BSS, the one with larger size wins.
 	//
-	// For a special case, we allow a TEXT symbol overwrites a BSS symbol
-	// even if the BSS symbol has larger size. This is because there is
-	// code like below to take the address of a function
-	//
-	//	//go:linkname fn
-	//	var fn uintptr
-	//	var fnAddr = uintptr(unsafe.Pointer(&fn))
-	//
-	// TODO: maybe limit this case to just pointer sized variable?
-	//
 	// In summary, the "overwrite" variable and the final result are
 	//
 	// new sym       old sym       result
 	// -------------------------------------------------------
-	// TEXT          BSS           new wins
 	// DATA          DATA          ERROR
 	// DATA lg/eq    BSS  sm/eq    new wins
 	// DATA small    BSS  large    merge: new with larger size
 	// BSS  large    DATA small    merge: old with larger size
 	// BSS  large    BSS  small    new wins
 	// BSS  sm/eq    D/B  lg/eq    old wins
-	// BSS           TEXT          old wins
 	switch {
 	case newHasContent && oldIsBSS,
 		newIsBSS && oldIsBSS && sz > oldsz:
