@@ -283,6 +283,7 @@ func compileFixture(t *testing.T) string {
 func compileFixtureFor(t *testing.T, goos, goarch string) string {
 	t.Helper()
 	testenv.MustHaveGoBuild(t)
+	testenv.SkipIfLLVM(t, "requires native Go object metadata fixtures")
 	out := filepath.Join(t.TempDir(), "fixture.a")
 	cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile",
 		"-pack", "-p", "example.com/fixture", "-o", out,

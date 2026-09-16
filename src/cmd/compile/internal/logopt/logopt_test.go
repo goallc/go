@@ -123,6 +123,7 @@ func TestLogOpt(t *testing.T) {
 	// Ensure that <128 byte copies are not reported and that 128-byte copies are.
 	// Check at both 1 and 8-byte alignments.
 	t.Run("Copy", func(t *testing.T) {
+		testenv.SkipIfLLVM(t, "requires native optimization diagnostics")
 		const copyCode = `package x
 func s128a1(x *[128]int8) [128]int8 {
 	return *x
@@ -181,6 +182,7 @@ func s15a8(x *[15]int64) [15]int64 {
 	}
 
 	t.Run("Success", func(t *testing.T) {
+		testenv.SkipIfLLVM(t, "requires native optimization diagnostics")
 		// This test is supposed to succeed
 
 		// Note 'file://' is the I-Know-What-I-Am-Doing way of specifying a file, also to deal with corner cases for Windows.

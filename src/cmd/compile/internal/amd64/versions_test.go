@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"debug/elf"
 	"debug/macho"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"go/build"
@@ -97,7 +98,8 @@ func TestGoAMD64v1(t *testing.T) {
 }
 
 // Clobber copies the binary src to dst, replacing all the instructions in opcodes with
-// faulting instructions.
+// faulting instructions, except for TZCNT encodings, which are rewritten
+// to their baseline BSF interpretation.
 func clobber(t *testing.T, src string, dst *os.File, opcodes map[string]bool) {
 	// Run objdump to get disassembly.
 	var re *regexp.Regexp
@@ -144,7 +146,7 @@ func clobber(t *testing.T, src string, dst *os.File, opcodes map[string]bool) {
 	}
 
 	// Find all the instruction addresses we need to edit.
-	virtualEdits := map[uint64]bool{}
+	virtualEdits := map[uint64]byte{}
 	scanner := bufio.NewScanner(disasm)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -160,25 +162,53 @@ func clobber(t *testing.T, src string, dst *os.File, opcodes map[string]bool) {
 		if !opcodes[opcode] {
 			continue
 		}
+		if opcode == "tzcnt" || opcode == "tzcntl" || opcode == "tzcntq" {
+			// LLVM may encode BSF with REP to use TZCNT on newer CPUs.
+			// Exercise the pre-BMI1 interpretation rather than trapping or
+			// leaving TZCNT active. Move any prefixes before REP past a NOP,
+			// preserving operand size, instruction end and RIP-relative data.
+			code, err := hex.DecodeString(strings.ReplaceAll(parts[2], " ", ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			prefix := -1
+			for i, b := range code {
+				if b == 0x0f {
+					break
+				}
+				if b == 0xf3 {
+					prefix = i
+					break
+				}
+			}
+			if prefix < 0 {
+				t.Fatalf("TZCNT has no REP prefix: %s", line)
+			}
+			virtualEdits[addr] = 0x90 // NOP
+			for i := 0; i < prefix; i++ {
+				virtualEdits[addr+uint64(i)+1] = code[i]
+			}
+			continue
+		}
 		t.Logf("clobbering instruction %s", line)
 		n := (len(parts[2]) - strings.Count(parts[2], " ")) / 2 // number of bytes in instruction encoding
 		for i := 0; i < n; i++ {
 			// Only really need to make the first byte faulting, but might
 			// as well make all the bytes faulting.
-			virtualEdits[addr+uint64(i)] = true
+			virtualEdits[addr+uint64(i)] = 0xcc // INT3
 		}
 	}
 
 	// Figure out where in the binary the edits must be done.
-	physicalEdits := map[uint64]bool{}
+	physicalEdits := map[uint64]byte{}
 	if e, err := elf.Open(src); err == nil {
 		for _, sec := range e.Sections {
 			vaddr := sec.Addr
 			paddr := sec.Offset
 			size := sec.Size
-			for a := range virtualEdits {
+			for a, replacement := range virtualEdits {
 				if a >= vaddr && a < vaddr+size {
-					physicalEdits[paddr+(a-vaddr)] = true
+					physicalEdits[paddr+(a-vaddr)] = replacement
 				}
 			}
 		}
@@ -187,9 +217,9 @@ func clobber(t *testing.T, src string, dst *os.File, opcodes map[string]bool) {
 			vaddr := sec.Addr
 			paddr := uint64(sec.Offset)
 			size := sec.Size
-			for a := range virtualEdits {
+			for a, replacement := range virtualEdits {
 				if a >= vaddr && a < vaddr+size {
-					physicalEdits[paddr+(a-vaddr)] = true
+					physicalEdits[paddr+(a-vaddr)] = replacement
 				}
 			}
 		}
@@ -219,8 +249,8 @@ func clobber(t *testing.T, src string, dst *os.File, opcodes map[string]bool) {
 		if err != nil {
 			t.Fatal("can't read")
 		}
-		if physicalEdits[a] {
-			b = 0xcc // INT3 opcode
+		if replacement, ok := physicalEdits[a]; ok {
+			b = replacement
 			done++
 		}
 		err = w.WriteByte(b)

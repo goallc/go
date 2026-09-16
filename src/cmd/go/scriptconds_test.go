@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"internal/buildcfg"
+	"internal/testenv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ func scriptConditions(t *testing.T) map[string]script.Cond {
 		return script.OnceCondition(summary, func() (bool, error) { return f(), nil })
 	}
 
+	add("llvm", lazyBool("compiler uses the LLVM backend by default", func() bool { return testenv.GoCompilerUsesLLVM(t) }))
 	add("abscc", script.Condition("default $CC path is absolute and exists", defaultCCIsAbsolute))
 	add("case-sensitive", script.OnceCondition("$WORK filesystem is case-sensitive", isCaseSensitive))
 	add("cc", script.PrefixCondition("go env CC = <suffix> (ignoring the go/env file)", ccIs))

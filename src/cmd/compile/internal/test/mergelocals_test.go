@@ -111,6 +111,7 @@ func TestMergeLocalState(t *testing.T) {
 
 func TestMergeLocalsIntegration(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
+	testenv.SkipIfLLVM(t, "requires native stack-slot merging diagnostics")
 
 	// This test does a build of a specific canned package to
 	// check whether merging of stack slots is taking place.
