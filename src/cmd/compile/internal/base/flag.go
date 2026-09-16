@@ -130,7 +130,7 @@ type CmdFlags struct {
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
 	EnableLLVM         bool         "help:\"compile with the in-process LLVM backend\""
 	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep pre-optimization and optimized LLVM IR beside the output archive\""
-	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline used by the in-process backend\""
+	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline (auto selects O0 with -N, O2 otherwise)\""
 	// Configuration derived from flags; not a flag itself.
 	Cfg struct {
 		Embed struct { // set by -embedcfg
@@ -179,7 +179,7 @@ func ParseFlags() {
 	Flag.Shared = &Ctxt.Flag_shared
 	Flag.WB = true
 	Flag.EnableLLVM = false
-	Flag.LLVMOptPasses = "default<O2>"
+	Flag.LLVMOptPasses = "auto"
 
 	Debug.ConcurrentOk = true
 	Debug.CompressInstructions = 1

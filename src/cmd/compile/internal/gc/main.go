@@ -84,7 +84,7 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 
 	base.DebugSSA = ssa.PhaseOption
 	base.ParseFlags()
-	if !base.Flag.EnableLLVM && (base.Flag.LLVMKeepIR || base.Flag.LLVMOptPasses != "default<O2>") {
+	if !base.Flag.EnableLLVM && (base.Flag.LLVMKeepIR || base.Flag.LLVMOptPasses != "auto") {
 		base.Fatalf("LLVM backend options require -enablellvm")
 	}
 

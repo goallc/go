@@ -369,9 +369,11 @@ cd /path/to/simple-main-package
 | 参数 | 行为 |
 | --- | --- |
 | `-enablellvm` | 选择进程内 LLVM backend |
-| `-llvm-opt-passes` | 默认 `default<O2>`；`none` 跳过 IR 优化 |
+| `-llvm-opt-passes` | Default `auto`: `default<O0>` with `-N`, otherwise `default<O2>`. An explicit pipeline overrides IR optimization selection; `none` skips IR optimization. |
 | `-llvm-keep-ir` | 保留 `<archive>.ll` 和 `<archive>.opt.ll` |
 | `-gcflags` package pattern | 精确选择需要 LLVM 的 package；`all=` 覆盖完整闭包 |
+
+`-N` also disables machine-code optimization, independently of an explicit IR pipeline. `-l` disables both Go and LLVM inlining. Required ABI, GC/statepoint, and object emission passes still run at O0. The runtime package retains Go's existing exception to `-N`.
 
 例如保留进程内优化前后的 IR：
 

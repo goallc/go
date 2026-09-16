@@ -4978,7 +4978,9 @@ func LLVMCompile(f *Func) {
 	// before it walks the remaining physical and inline frames. Preserve that
 	// one physical boundary. Direct callers may be represented by Go's inline
 	// tree and are deliberately left available to LLVM's inliner.
-	if frontendNoInline || llvmIsRuntimeGorecover(f) {
+	// LowerL has been normalized by gc.Main: zero means -l disabled
+	// inlining. The LLVM inliner must honor the same choice.
+	if base.Flag.LowerL == 0 || frontendNoInline || llvmIsRuntimeGorecover(f) {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
 	if f.OpenDeferBits != nil {
