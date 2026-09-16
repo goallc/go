@@ -9,6 +9,10 @@ import (
 	"unsafe"
 )
 
+// StaticUint64sCount is the number of cached scalar interface boxes in runtime.
+// Compiler allocation contracts must use the same boundary as convT16/32/64.
+const StaticUint64sCount = 256
+
 // The first word of every non-empty interface type contains an *ITab.
 // It records the underlying concrete type (Type), the interface type it
 // is implementing (Inter), and some ancillary information.

@@ -712,13 +712,13 @@ func iterate_itabs(fn func(*itab)) {
 // staticuint64s is used to avoid allocating in convTx for small integer values.
 // staticuint64s[0] == 0, staticuint64s[1] == 1, and so forth.
 // It is defined in assembler code so that it is read-only.
-var staticuint64s [256]uint64
+var staticuint64s [abi.StaticUint64sCount]uint64
 
 // getStaticuint64s is called by the reflect package to get a pointer
 // to the read-only array.
 //
 //go:linkname getStaticuint64s
-func getStaticuint64s() *[256]uint64 {
+func getStaticuint64s() *[abi.StaticUint64sCount]uint64 {
 	return &staticuint64s
 }
 

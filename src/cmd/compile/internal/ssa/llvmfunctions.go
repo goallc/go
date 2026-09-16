@@ -11,6 +11,7 @@ import (
 	"cmd/compile/internal/types"
 	"cmd/internal/goobj"
 	"cmd/internal/obj"
+	"internal/abi"
 
 	"github.com/goallc/go-llvm"
 )
@@ -43,6 +44,14 @@ type llvmFunctionModel struct {
 	// Audited mallocgc-family call contract: (byte size, type, needzero).
 	allocation bool
 	newObject  bool
+	// Typed boxing copies into a new allocation unless the type has zero size.
+	copiedObject    bool
+	mapAllocation   bool
+	sliceAllocation bool
+	sliceCopy       bool
+	scalarBox       bool
+	stringBox       bool
+	sliceBox        bool
 }
 
 // llvmFunctionManager owns the association between exact LLVM function names,
@@ -87,6 +96,7 @@ func newLLVMFunctionManager() llvmFunctionManager {
 	writePointer := []llvm.Attribute{llvmCapturesNoneAttribute, llvmWriteOnlyAttribute}
 	nonnull := llvmModelAttribute("nonnull")
 	nonnullResult := []llvm.Attribute{nonnull}
+	freshResult := []llvm.Attribute{nonnull, llvmNoAliasAttribute}
 	boxedResult := func(bytes uint64) []llvm.Attribute {
 		return []llvm.Attribute{nonnull, GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("dereferenceable"), bytes)}
 	}
@@ -148,26 +158,27 @@ func newLLVMFunctionManager() llvmFunctionManager {
 		"runtime.mallocgcSmallScanNoHeaderSC7": mallocModel,
 
 		"runtime.newobject":     {result: nonnullResult, newObject: true},
-		"runtime.makeslice":     {result: nonnullResult},
-		"runtime.makeslice64":   {result: nonnullResult},
-		"runtime.makeslicecopy": {result: nonnullResult},
-		"runtime.convT":         {result: nonnullResult},
-		"runtime.convTnoptr":    {result: nonnullResult},
+		"runtime.makeslice":     {result: nonnullResult, sliceAllocation: true},
+		"runtime.makeslice64":   {result: nonnullResult, sliceAllocation: true},
+		"runtime.makeslicecopy": {result: nonnullResult, sliceCopy: true},
+		"runtime.convT":         {result: nonnullResult, copiedObject: true},
+		"runtime.convTnoptr":    {result: nonnullResult, copiedObject: true},
 		// Small values can use staticuint64s: readable, but not fresh/noalias.
-		"runtime.convT16":     {result: boxedResult(2)},
-		"runtime.convT32":     {result: boxedResult(4)},
-		"runtime.convT64":     {result: boxedResult(8)},
-		"runtime.convTstring": {result: nonnullResult},
-		"runtime.convTslice":  {result: nonnullResult},
+		"runtime.convT16":     {result: boxedResult(2), scalarBox: true},
+		"runtime.convT32":     {result: boxedResult(4), scalarBox: true},
+		"runtime.convT64":     {result: boxedResult(8), scalarBox: true},
+		"runtime.convTstring": {result: nonnullResult, stringBox: true},
+		"runtime.convTslice":  {result: nonnullResult, sliceBox: true},
 
 		// Normal returns are non-null, including zero-capacity channels and
 		// missing map keys (zeroVal). Map constructors may reuse the caller
 		// header; access/assignment returns shared slots, not fresh allocations.
-		"runtime.makechan":            {result: nonnullResult},
-		"runtime.makechan64":          {result: nonnullResult},
-		"runtime.makemap":             {result: nonnullResult},
-		"runtime.makemap64":           {result: nonnullResult},
-		"runtime.makemap_small":       {result: nonnullResult},
+		// Channel headers and makemap_small always allocate nonzero fresh objects.
+		"runtime.makechan":            {result: freshResult},
+		"runtime.makechan64":          {result: freshResult},
+		"runtime.makemap":             {result: nonnullResult, mapAllocation: true},
+		"runtime.makemap64":           {result: nonnullResult, mapAllocation: true},
+		"runtime.makemap_small":       {result: freshResult},
 		"runtime.mapaccess1":          {result: nonnullResult},
 		"runtime.mapaccess1_fast32":   {result: nonnullResult},
 		"runtime.mapaccess1_fast64":   {result: nonnullResult},
@@ -456,6 +467,39 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 	model := m.models[fn.Name()]
 	kind := llvmAllocAttribute
 	switch {
+	case model.mapAllocation:
+		if args[2].IsNull() {
+			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
+		}
+		return
+	case model.scalarBox:
+		if !args[0].IsAConstantInt().IsNil() && args[0].ZExtValue() >= abi.StaticUint64sCount {
+			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
+		}
+		return
+	case model.stringBox || model.sliceBox:
+		if source == nil || len(source.Args) == 0 {
+			return
+		}
+		value := source.Args[0]
+		fresh := false
+		if model.stringBox {
+			switch value.Op {
+			case OpConstString:
+				fresh = auxToString(value.Aux) != ""
+			case OpStringMake:
+				length := value.Args[1]
+				fresh = (length.Op == OpConst64 || length.Op == OpConst32) && length.AuxInt > 0
+			}
+		} else if value.Op == OpSliceMake {
+			// Length alone is insufficient: convTslice tests the data pointer.
+			pointer := value.Args[0]
+			fresh = pointer.Op == OpAddr || pointer.Op == OpLocalAddr
+		}
+		if fresh {
+			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
+		}
+		return
 	case model.allocation:
 		size := args[0]
 		if size.IsAConstantInt().IsNil() || size.ZExtValue() == 0 {
@@ -464,7 +508,7 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 		if zero := args[2]; !zero.IsAConstantInt().IsNil() && zero.ZExtValue() != 0 {
 			kind = llvmZeroAllocAttribute
 		}
-	case model.newObject:
+	case model.newObject || model.copiedObject || model.sliceAllocation || model.sliceCopy:
 		// Use the same static type-symbol information as Go's fixed-load
 		// rewriting. A pointer result type alone does not prove allocation size.
 		if source == nil || len(source.Args) == 0 || source.Args[0].Op != OpAddr {
@@ -476,6 +520,29 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 		}
 		typ := sym.TypeInfo().Type.(*types.Type)
 		if typ.Size() <= 0 {
+			return
+		}
+		if model.sliceAllocation || model.sliceCopy {
+			index := 2 // makeslice capacity, not length
+			if model.sliceCopy {
+				index = 1 // makeslicecopy destination length
+			}
+			count := args[index]
+			if count.IsAConstantInt().IsNil() || count.SExtValue() <= 0 {
+				return
+			}
+			// Avoid both target-int truncation and a wrapped zero byte count.
+			maxInt := uint64(1)<<(uint(types.PtrSize)*8-1) - 1
+			if count.ZExtValue() > maxInt/uint64(typ.Size()) {
+				return
+			}
+			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
+			return
+		}
+		if model.copiedObject {
+			// Only the box is fresh; pointer fields still alias their original
+			// pointees. Copying and instrumentation effects remain unrestricted.
+			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 			return
 		}
 		if m.dereferenceable == nil {

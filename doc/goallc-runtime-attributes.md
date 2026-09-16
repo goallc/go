@@ -137,6 +137,11 @@ existing or newly allocated slots. All receive return `nonnull`, without
 restrictions on memory, synchronization, callbacks or termination.
 The `return nil` after `fatal` in fast map access is unreachable.
 `mapaccess1_fat` is excluded: its miss result is a caller-provided zero pointer.
+`makechan`, `makechan64`, and `makemap_small` additionally have return
+`noalias`: each creates a nonzero fresh header, including unbuffered or
+zero-element channels. This does not promise allocation-only effects or
+elidability. `makemap`/`makemap64` can reuse a supplied header and remain
+unrestricted for aliasing.
 The mandatory `assertE2I` similarly returns a non-null itab or panics;
 `assertE2I2` and `typeAssert` can legitimately return null.
 
@@ -256,3 +261,47 @@ The morestack entries switch and resume stacks through backend-specific control 
 `throwinit` remains in the compiler builtin declarations, but has no runtime implementation in this tree; do not assign an implementation-derived contract.
 
 `throwinit`.
+
+## Alias audit follow-up
+
+A `convT` or `convTnoptr` call with a static type descriptor of known positive
+size receives return `noalias`. This reuses the newobject type-symbol proof.
+Zero-sized types and dynamic descriptors retain the existing contract. The
+attribute describes only the new box storage: copied pointer fields still
+refer to their original pointees. Neither helper gets `allockind`, `memory`,
+or new capture promises; copying, instrumentation and GC effects remain.
+Optimizer tests prove forwarding across a store through the fresh result and
+retain an unmodeled control and the effectful call.
+
+The following additional calls now receive return `noalias` when the stated
+condition is proven. No new allocation-elision, memory-effect, or capture
+contract is implied.
+
+| Helpers | Call-site proof |
+| --- | --- |
+| `makemap`, `makemap64` | The supplied-header argument is null. Non-null/dynamic headers remain unannotated. |
+| `makeslice`, `makeslice64` | A static element type has positive size and capacity is a positive constant whose byte count fits target `int`. Length may be zero. |
+| `makeslicecopy` | The same static type proof with positive constant destination length and a byte count fitting target `int`. Source reads, copying and zero-tail initialization remain observable. |
+| `convT16`, `convT32`, `convT64` | A constant unsigned value is at least `abi.StaticUint64sCount`, shared with the runtime cache declaration. Values inside the cache or unknown values retain the existing contract. |
+| `convTstring` | SSA carries a nonempty constant string or a string construction with a positive constant length. Only the header box is fresh. |
+| `convTslice` | SSA constructs the slice from a known global/local address. A positive length alone does not establish this, since the runtime branches on the data pointer. A non-nil zero-length slice still gets a fresh header box. |
+
+For slices, signed/target-width checks also exclude negative counts, integer
+truncation and wrapped byte counts. There is no guessed dynamic range. These
+contracts apply only to ABIInternal calls; shared declarations remain unchanged.
+Alias regressions verify load forwarding with and without each model and retain
+calls with observable effects. Executable checks retain scalar-cache identity,
+independent maps/slices, copied slice contents and zero tails, shared boxed
+pointer/backing-store aliases, and live objects across GC.
+
+Remaining candidates include dynamically provable positive lengths and scalar
+values outside the cache. They need existing range information rather than a
+new ad-hoc value analysis. String/slice conversions and concatenation may return
+caller scratch storage, input storage, a one-byte string cache, or empty
+storage. Several helpers return aggregates, for which a pointer return
+attribute cannot directly annotate only the data field.
+
+No blanket pointer-parameter `noalias` is added: memmove and typed copies may
+legitimately overlap, and read-only comparison operands may be identical.
+Map lookup/assignment and assertion results may be shared. Parameter capture
+restrictions must also account for instrumentation and failure diagnostics.
