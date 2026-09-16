@@ -20,19 +20,19 @@ func llvmAllocDynamicSize(size uintptr) unsafe.Pointer { return llvmAllocate(siz
 func llvmAllocUnused()          { _ = llvmAllocate(8, nil, true) }
 func llvmAllocReadZero() uint64 { return *(*uint64)(llvmAllocate(8, nil, true)) }
 
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 8, ptr null, i8 1) #[[ZERO:[0-9]+]]
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 8, ptr null, i8 0) #[[ALLOC:[0-9]+]]
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 8, ptr null, i8 %{{[^)]+}}) #[[ALLOC]]
-// LLVM-DAG: call goabiinternal ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 0, ptr null, i8 1), !dbg
-// LLVM-DAG: call goabiinternal ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 %size, ptr null, i8 1), !dbg
-// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcTinySC2(i64 1, ptr {{.*}}, i8 1) #[[ZERO]]
-// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcSmallNoScanSC7(i64 80, ptr {{.*}}, i8 1) #[[ZERO]]
-// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcSmallScanNoHeaderSC7(i64 80, ptr {{.*}}, i8 1) #[[ZERO]]
+// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 8, ptr null, i1 true) #[[ZERO:[0-9]+]]
+// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 8, ptr null, i1 false) #[[ALLOC:[0-9]+]]
+// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 8, ptr null, i1 %{{[^)]+}}) #[[ALLOC]]
+// LLVM-DAG: call goabiinternal ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 0, ptr null, i1 true), !dbg
+// LLVM-DAG: call goabiinternal ptr @"runtime.mallocgc<builtin.{{[0-9]+}}>"(i64 %size, ptr null, i1 true), !dbg
+// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcTinySC2(i64 1, ptr {{.*}}, i1 true) #[[ZERO]]
+// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcSmallNoScanSC7(i64 80, ptr {{.*}}, i1 true) #[[ZERO]]
+// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcSmallScanNoHeaderSC7(i64 80, ptr {{.*}}, i1 true) #[[ZERO]]
 // LLVM-DAG: call goabiinternal noalias dereferenceable(128) ptr @"runtime.newobject<builtin.{{[0-9]+}}>"(ptr @"type:[128]uint8") #[[ZERO]]
 // LLVM-DAG: call goabiinternal ptr @"runtime.newobject<builtin.{{[0-9]+}}>"(ptr %typ), !dbg
-// LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcTinySC2(i64, ptr, i8) #[[SIZE:[0-9]+]]
-// LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcSmallNoScanSC7(i64, ptr, i8) #[[SIZE]]
-// LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcSmallScanNoHeaderSC7(i64, ptr, i8) #[[SIZE]]
+// LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcTinySC2(i64, ptr, i1) #[[SIZE:[0-9]+]]
+// LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcSmallNoScanSC7(i64, ptr, i1) #[[SIZE]]
+// LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcSmallScanNoHeaderSC7(i64, ptr, i1) #[[SIZE]]
 // LLVM-DAG: attributes #[[SIZE]] = { allocsize(0) }
 // LLVM-DAG: attributes #[[ZERO]] = { allockind("alloc,zeroed") "alloc-family"="runtime.mallocgc" }
 // LLVM-DAG: attributes #[[ALLOC]] = { allockind("alloc") "alloc-family"="runtime.mallocgc" }

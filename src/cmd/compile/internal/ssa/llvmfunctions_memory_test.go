@@ -31,11 +31,11 @@ func TestLLVMFunctionMemoryModelAttributes(t *testing.T) {
 		raw    bool
 	}{
 		{"runtime.memmove", GlobalCtxt.VoidType(), []llvm.Type{ptr, ptr, size}, []string{"writeonly", "readonly"}, true, true},
-		{"runtime.memequal", GlobalCtxt.Int8Type(), []llvm.Type{ptr, ptr, size}, []string{"readonly", "readonly"}, true, true},
+		{"runtime.memequal", GlobalCtxt.Int1Type(), []llvm.Type{ptr, ptr, size}, []string{"readonly", "readonly"}, true, true},
 		{"runtime.memclrNoHeapPointers", GlobalCtxt.VoidType(), []llvm.Type{ptr, size}, []string{"writeonly"}, true, true},
-		{"runtime.memequal_varlen", GlobalCtxt.Int8Type(), []llvm.Type{ptr, ptr}, []string{"readonly", "readonly"}, true, true},
+		{"runtime.memequal_varlen", GlobalCtxt.Int1Type(), []llvm.Type{ptr, ptr}, []string{"readonly", "readonly"}, true, true},
 		{"runtime.cmpstring", size, []llvm.Type{str, str}, nil, true, true},
-		{"runtime.memequal64", GlobalCtxt.Int8Type(), []llvm.Type{ptr, ptr}, []string{"readonly", "readonly"}, false, false},
+		{"runtime.memequal64", GlobalCtxt.Int1Type(), []llvm.Type{ptr, ptr}, []string{"readonly", "readonly"}, false, false},
 		{"runtime.fint32to32", GlobalCtxt.Int32Type(), []llvm.Type{GlobalCtxt.Int32Type()}, nil, false, false},
 		{"runtime.memhash", size, []llvm.Type{ptr, size, size}, []string{"readonly"}, false, false},
 		{"runtime.f64hash", size, []llvm.Type{ptr, size}, []string{"readonly"}, false, false},

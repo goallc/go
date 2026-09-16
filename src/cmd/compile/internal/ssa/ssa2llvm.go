@@ -221,8 +221,12 @@ func llvmNaturalSIMDType(typ *types.Type) (llvm.Type, bool) {
 
 // getLLVMABIType selects the physical call-boundary carrier. A top-level
 // zero-sized boundary gets a non-empty carrier so DataLayout can preserve its
-// Go alignment.
+// Go alignment. Scalar register booleans use i1; memory assignments below
+// retain the byte-sized Go storage type.
 func getLLVMABIType(typ *types.Type) llvm.Type {
+	if typ.IsBoolean() {
+		return GlobalCtxt.Int1Type()
+	}
 	storage := getLLVMType(typ)
 	if typ.Size() == 0 {
 		return llvm.StructType([]llvm.Type{storage, getLLVMABIPadType()}, false)
@@ -247,6 +251,8 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 			if goType.Alignment() <= 0 {
 				base.Fatalf("invalid alignment %d for stack argument %d of type %v", goType.Alignment(), i, goType)
 			}
+			// Stack slots retain Go storage types, including byte-sized bools.
+			param.ValueType = getLLVMType(goType)
 			param.ByVal = true
 			param.Alignment = int(goType.Alignment())
 			paramType = GlobalCtxt.PointerType(0)
@@ -269,6 +275,7 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 			if goType.Alignment() <= 0 {
 				base.Fatalf("invalid alignment %d for stack result %d of type %v", goType.Alignment(), i, goType)
 			}
+			result.ValueType = getLLVMType(goType)
 			result.InMemory = true
 			result.Alignment = int(goType.Alignment())
 			result.ParamIndex = len(params)
@@ -1365,8 +1372,8 @@ func (lfc *LLVMFuncContext) llvmMemEq(v *Value) llvm.Value {
 	if size.Type() != uintptrType {
 		v.Fatalf("MemEq size has incompatible LLVM type")
 	}
-	boolType := getLLVMType(types.Types[types.TBOOL])
-	if getLLVMType(v.Type) != boolType {
+	boolType := getLLVMValueType(types.Types[types.TBOOL])
+	if getLLVMValueType(v.Type) != boolType {
 		v.Fatalf("MemEq result has incompatible LLVM type")
 	}
 	sig := llvmFuncSignature{
@@ -3284,6 +3291,9 @@ func (lfc *LLVMFuncContext) reshapeLLVMValueToType(value llvm.Value, target llvm
 	}
 
 	source := value.Type()
+	if source == GlobalCtxt.Int8Type() && target == GlobalCtxt.Int1Type() {
+		return lfc.llvmCondition(value, name)
+	}
 	if source == GlobalCtxt.Int1Type() && target == GlobalCtxt.Int8Type() {
 		return lfc.b.CreateZExt(value, target, name)
 	}
@@ -3357,6 +3367,9 @@ func (lfc *LLVMFuncContext) reshapeLLVMValueToType(value llvm.Value, target llvm
 }
 
 func (lfc *LLVMFuncContext) llvmValueToABI(v *Value, value llvm.Value, from, logical *types.Type, abiType llvm.Type, name string) llvm.Value {
+	if from.IsBoolean() && logical.IsBoolean() {
+		return lfc.reshapeLLVMValueToType(value, abiType, name)
+	}
 	if logical.Size() == 0 {
 		if from.Size() != 0 || !llvmTypeContainsABIPad(abiType) {
 			v.Fatalf("zero-sized Go ABI value has incompatible pad carrier")
@@ -3368,6 +3381,9 @@ func (lfc *LLVMFuncContext) llvmValueToABI(v *Value, value llvm.Value, from, log
 }
 
 func (lfc *LLVMFuncContext) llvmValueFromABI(v *Value, value llvm.Value, logical, to *types.Type, name string) llvm.Value {
+	if logical.IsBoolean() && to.IsBoolean() {
+		return lfc.llvmCondition(value, name)
+	}
 	if logical.Size() == 0 {
 		if to.Size() != 0 || !llvmTypeContainsABIPad(value.Type()) {
 			v.Fatalf("zero-sized Go ABI pad carrier has incompatible type")
@@ -3537,6 +3553,7 @@ func (lfc *LLVMFuncContext) materializeAddressedResults(v *Value, call llvm.Valu
 			value = lfc.b.CreateExtractValue(call, resultSig.ReturnIndex, result.Owner.String()+".value")
 		}
 		value = lfc.llvmValueFromABI(result.Owner, value, aux.TypeOfResult(result.Index), result.Slot.Type, result.Owner.String()+".reshape")
+		value = lfc.reshapeLLVMValueToType(value, getLLVMType(result.Slot.Type), result.Owner.String()+".storage")
 		if got, want := value.Type(), getLLVMType(result.Slot.Type); got != want {
 			result.Owner.Fatalf("addressed call result has incompatible LLVM type")
 		}
@@ -5490,7 +5507,12 @@ func LLVMCompile(f *Func) {
 		key := llvmLocalKeyForName(name)
 		slot := FCtxt.Locals[key]
 		param, paramType := FCtxt.paramForArgNameAndType(name)
-		if paramType.Size() != slot.Type.Size() || param.Type() != getLLVMABIType(slot.Type) {
+		want := getLLVMABIType(slot.Type)
+		if slot.Type.IsBoolean() {
+			want = getLLVMType(slot.Type)
+			param = FCtxt.reshapeLLVMValueToType(param, want, "arg.bool.home")
+		}
+		if paramType.Size() != slot.Type.Size() || param.Type() != want {
 			f.fe.Fatalf(name.Pos(), "parameter home has incompatible physical ABI carrier")
 		}
 		init := FCtxt.b.CreateStore(param, slot.Value)

@@ -21,3 +21,9 @@ func llvmBoolValue(p *bool, n int) bool {
 	*p = b
 	return b
 }
+
+// LLVM-LABEL: define goabiinternal i1 @codegen.llvmBoolIdentity(i1 %b)
+// LLVM-NOT: icmp
+// LLVM-NOT: zext
+// LLVM: ret i1 %b
+func llvmBoolIdentity(b bool) bool { return b }

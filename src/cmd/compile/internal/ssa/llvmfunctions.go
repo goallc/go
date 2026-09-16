@@ -160,6 +160,28 @@ func newLLVMFunctionManager() llvmFunctionManager {
 		"runtime.convTstring": {result: nonnullResult},
 		"runtime.convTslice":  {result: nonnullResult},
 
+		// Normal returns are non-null, including zero-capacity channels and
+		// missing map keys (zeroVal). Map constructors may reuse the caller
+		// header; access/assignment returns shared slots, not fresh allocations.
+		"runtime.makechan":            {result: nonnullResult},
+		"runtime.makechan64":          {result: nonnullResult},
+		"runtime.makemap":             {result: nonnullResult},
+		"runtime.makemap64":           {result: nonnullResult},
+		"runtime.makemap_small":       {result: nonnullResult},
+		"runtime.mapaccess1":          {result: nonnullResult},
+		"runtime.mapaccess1_fast32":   {result: nonnullResult},
+		"runtime.mapaccess1_fast64":   {result: nonnullResult},
+		"runtime.mapaccess1_faststr":  {result: nonnullResult},
+		"runtime.mapassign":           {result: nonnullResult},
+		"runtime.mapassign_fast32":    {result: nonnullResult},
+		"runtime.mapassign_fast32ptr": {result: nonnullResult},
+		"runtime.mapassign_fast64":    {result: nonnullResult},
+		"runtime.mapassign_fast64ptr": {result: nonnullResult},
+		"runtime.mapassign_faststr":   {result: nonnullResult},
+
+		// The mandatory assertion either returns a cached/new itab or panics.
+		"runtime.assertE2I": {result: nonnullResult},
+
 		// These contracts describe logical memory effects. Stack relocation is
 		// handled by statepoints; these Go helpers are deliberately not GC leaf.
 		"runtime.memequal0":   {noUnwind: true, willReturn: true, noMemory: true, parameters: [][]llvm.Attribute{readPointer, readPointer}},

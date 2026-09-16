@@ -94,8 +94,8 @@ func llvmMoveLarge(dst *[128]byte, src [128]byte) {
 	*dst = src
 }
 
-// LLVM-DAG: define goabiinternal i8 @codegen.llvmMemEq(
-// LLVM-DAG: call goabiinternal i8 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}}){{$|,}}
+// LLVM-DAG: define goabiinternal i1 @codegen.llvmMemEq(
+// LLVM-DAG: call goabiinternal i1 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}}){{$|,}}
 func llvmMemEq(a, b string) bool {
 	return a == b
 }
@@ -107,14 +107,14 @@ func llvmSlicemask(a []byte, i int) []byte {
 	return a[i:]
 }
 
-// LLVM-DAG: define goabiinternal i8 @codegen.llvmStringLess(
+// LLVM-DAG: define goabiinternal i1 @codegen.llvmStringLess(
 // LLVM-DAG: call goabiinternal i64 @"runtime.cmpstring<builtin.{{[0-9]+}}>"(
 func llvmStringLess(a, b string) bool {
 	return a < b
 }
 
 // GC-leaf contracts belong to the runtime declarations, not individual calls.
-// LLVM-DAG: declare goabiinternal i8 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr readonly captures(none), ptr readonly captures(none), i64) #[[COMPARE:[0-9]+]]
+// LLVM-DAG: declare goabiinternal i1 @"runtime.memequal<builtin.{{[0-9]+}}>"(ptr readonly captures(none), ptr readonly captures(none), i64) #[[COMPARE:[0-9]+]]
 // LLVM-DAG: declare goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr writeonly captures(none), ptr readonly captures(none), i64) #[[RAW_MEMORY:[0-9]+]]
 // LLVM-DAG: declare goabiinternal range(i64 -1, 2) i64 @"runtime.cmpstring<builtin.{{[0-9]+}}>"({ ptr, i64 }, { ptr, i64 }) #[[COMPARE]]
 // LLVM-DAG: attributes #[[RAW_MEMORY]] = { nocallback nofree nounwind "gc-leaf-function" }

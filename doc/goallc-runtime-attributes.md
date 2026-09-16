@@ -6,12 +6,12 @@ parameter and result attributes. It does not classify names by prefix at lookup 
 
 ## Audit scope
 
-The current audit covers the 285 distinct function names declared in
+The current audit covers the 287 distinct function names declared in
 `src/cmd/compile/internal/typecheck/_builtin/runtime.go` or referenced by literal
-`LookupRuntimeFunc` calls in `src/cmd/compile/internal/ssagen/ssa.go`, plus the
+`LookupRuntime`/`LookupRuntimeFunc` calls across `src/cmd/compile/internal`, plus the
 function entries in `src/cmd/internal/goobj/mkbuiltin.go` (excluding the TLS variable).
-137 have an explicit model; the remaining 148 are listed below.
-Also modeled are `Goexit`, `memequal_varlen`, `memhash_varlen`, `panicmem`, `panicmemAddr`, `throw`, plus the existing
+155 have an explicit model; the remaining 132 are listed below.
+Also modeled are `Goexit`, `panicmem`, `panicmemAddr`, `throw`, plus the existing
 `os.Exit` and testing termination methods. The fourteen generated `mallocgcSmallNoScanSC1..7` and
 `mallocgcSmallScanNoHeaderSC1..7` entries also have allocation models.
 LLVM intrinsics and the private write-barrier record intrinsic retain their
@@ -126,6 +126,46 @@ The LLVM definitions of these attributes are in the
 `nounwind` does not mean that a function has no runtime side effects or that
 asynchronous faults cannot occur.
 
+### Container and boolean results
+
+`makechan` and `makechan64` return non-null channel headers even for zero
+capacity. `makemap`, `makemap64` and `makemap_small` return non-null map headers;
+`makemap` may reuse the caller's header, so it is not a noalias allocator.
+`mapaccess1` and its fast32/fast64/faststr variants return a slot or the shared
+`zeroVal` on a miss, never null. `mapassign` and its five fast variants return
+existing or newly allocated slots. All receive return `nonnull`, without
+restrictions on memory, synchronization, callbacks or termination.
+The `return nil` after `fatal` in fast map access is unreachable.
+`mapaccess1_fat` is excluded: its miss result is a caller-provided zero pointer.
+The mandatory `assertE2I` similarly returns a non-null itab or panics;
+`assertE2I2` and `typeAssert` can legitimately return null.
+
+Scalar bools in register arguments/results now use LLVM `i1`, including tuple
+result components. They need no per-function range model. Storage, aggregate
+fields, ABI0 slots and register-exhaustion stack slots retain Go's byte layout.
+The existing Go backend lowers the register carrier to the native Go ABI.
+Dynamic equality can still panic and channel operations can synchronize or
+block; their scalar type does not imply memory or termination attributes.
+
+### Remaining opportunities requiring caller facts
+
+The census includes literal lookups throughout the compiler, algorithm helper
+selection in reflectdata, builtin declarations and GoObj extras. The fourteen
+size-class names selected by formatted lookups are explicitly modeled above.
+Existing modeled functions were also reviewed for stronger contracts, not just
+previously unmodeled names.
+
+Further extents for slice allocation or boxing need the element type, a known
+length, or target layout at the call. No positive extent applies uniformly to
+zero-sized allocations. `slicecopy` and `typedslicecopy` cannot unconditionally
+promise a nonnegative result based on their bodies: negative raw length
+arguments can yield a negative result. Such facts need caller preconditions.
+Pointer parameter `nonnull`/`dereferenceable` cannot be inferred merely from a
+load if doing so would remove a Go nil panic. Cgo failure diagnostics observe
+pointer addresses, so successful-path behavior alone does not prove
+`captures(none)`. Map hash/equality dispatch, sanitizer hooks and panic defers
+also prevent a blanket memory or callback contract for the remaining helpers.
+
 ## Entries left without a new model
 
 Each row lists exact runtime names (with the `runtime.` prefix omitted).
@@ -155,13 +195,13 @@ Race, MSan, ASan and fuzzing hooks call external runtimes and can have callbacks
 
 `iface.go` performs cache updates, allocations and possible assertion panics. Metadata can be retained in itabs/caches.
 
-`assertE2I`, `assertE2I2`, `interfaceSwitch`, `typeAssert`.
+`assertE2I2`, `interfaceSwitch`, `typeAssert`.
 
 ### Channels and select
 
 `chan.go` and `select.go` can park, synchronize with other goroutines, retain element addresses in sudogs, invoke timer machinery or panic. Nonblocking variants share these paths.
 
-`chanrecv1`, `chanrecv2`, `chansend1`, `closechan`, `makechan`, `makechan64`, `selectgo`, `selectnbrecv`, `selectnbsend`.
+`chanrecv1`, `chanrecv2`, `chansend1`, `closechan`, `selectgo`, `selectnbrecv`, `selectnbsend`.
 
 ### Pointer validation
 
@@ -197,7 +237,7 @@ Zero divisors reach panic handling and user defers. Unlike software floating poi
 
 Map operations can allocate, synchronize, retain keys/types, call generated hash/equality functions, or panic. Type metadata and caches do not have a uniform read-only/non-capturing contract.
 
-`makemap`, `makemap64`, `makemap_small`, `mapIterNext`, `mapIterStart`, `mapaccess1`, `mapaccess1_fast32`, `mapaccess1_fast64`, `mapaccess1_faststr`, `mapaccess1_fat`, `mapaccess2`, `mapaccess2_fast32`, `mapaccess2_fast64`, `mapaccess2_faststr`, `mapaccess2_fat`, `mapassign`, `mapassign_fast32`, `mapassign_fast32ptr`, `mapassign_fast64`, `mapassign_fast64ptr`, `mapassign_faststr`, `mapclear`, `mapdelete`, `mapdelete_fast32`, `mapdelete_fast64`, `mapdelete_faststr`.
+`mapIterNext`, `mapIterStart`, `mapaccess1_fat`, `mapaccess2`, `mapaccess2_fast32`, `mapaccess2_fast64`, `mapaccess2_faststr`, `mapaccess2_fat`, `mapclear`, `mapdelete`, `mapdelete_fast32`, `mapdelete_fast64`, `mapdelete_faststr`.
 
 ### Stack and indirect-call trampolines
 

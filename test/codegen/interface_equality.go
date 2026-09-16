@@ -16,14 +16,14 @@ func (v llvmEqualityValue) Value() int {
 	return int(v)
 }
 
-// LLVM-DAG: define goabiinternal i8 @codegen.equalLLVMEmpty(
-// LLVM-DAG: call goabiinternal i8 @"runtime.efaceeq<builtin.{{[0-9]+}}>"(ptr
+// LLVM-DAG: define goabiinternal i1 @codegen.equalLLVMEmpty(
+// LLVM-DAG: call goabiinternal i1 @"runtime.efaceeq<builtin.{{[0-9]+}}>"(ptr
 func equalLLVMEmpty(a, b any) bool {
 	return a == b
 }
 
-// LLVM-DAG: define goabiinternal i8 @codegen.equalLLVMNonEmpty(
-// LLVM-DAG: call goabiinternal i8 @"runtime.ifaceeq<builtin.{{[0-9]+}}>"(ptr
+// LLVM-DAG: define goabiinternal i1 @codegen.equalLLVMNonEmpty(
+// LLVM-DAG: call goabiinternal i1 @"runtime.ifaceeq<builtin.{{[0-9]+}}>"(ptr
 func equalLLVMNonEmpty(a, b llvmEqualityInterface) bool {
 	return a == b
 }

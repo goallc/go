@@ -21,9 +21,9 @@ package codegen
 // LLVM-LABEL: define goabiinternal void @codegen.parameterAcrossSafepoints(
 // LLVM-SAME: ptr byval(%codegen.pointerLocal) align 8 %value)
 // LLVM-NOT: alloca %codegen.pointerLocal
-// LLVM: call goabiinternal void @codegen.mutateLocal(ptr %value, i8 0)
+// LLVM: call goabiinternal void @codegen.mutateLocal(ptr %value, i1 false)
 // LLVM: call goabiinternal void @codegen.safepoint()
-// LLVM: call goabiinternal void @codegen.mutateLocal(ptr %value, i8 1)
+// LLVM: call goabiinternal void @codegen.mutateLocal(ptr %value, i1 true)
 
 type pointerLocal struct {
 	first  *int
