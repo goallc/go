@@ -2917,9 +2917,8 @@ func (lfc *LLVMFuncContext) FinishPhi() {
 						v.Fatalf("phi input %s produced no LLVM value", incoming.LongString())
 					}
 				}
-				if v.Type.IsBoolean() {
-					incomingLVal = lfc.llvmCondition(incomingLVal, v.String()+".incoming")
-				} else {
+				// Scalar bool inputs are already i1 at their definitions.
+				if !v.Type.IsBoolean() {
 					incomingLVal = lfc.reshapeLLVMValue(v, incomingLVal, incoming.Type, v.Type, v.String()+".incoming")
 				}
 				if got, want := incomingLVal.Type(), lfc.Vs[v.ID].Type(); got != want {
@@ -3998,14 +3997,14 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		x, y := arg0(), arg1()
 		if v.Type.IsSIMD() && x.Type().TypeKind() == llvm.VectorTypeKind {
 			y = lfc.simdValueAs(v, v.Args[1], x.Type(), ".y")
-			cond := lfc.llvmCondition(lfc.GenLV(v.Args[2]), v.String()+".cond")
+			cond := lfc.GenLV(v.Args[2])
 			lVal = lfc.b.CreateSelect(cond, x, y, v.String())
 			break
 		}
 		if x.Type() != y.Type() || x.Type() != getLLVMValueType(v.Type) {
 			v.Fatalf("%s has incompatible LLVM value types", v.Op)
 		}
-		cond := lfc.llvmCondition(lfc.GenLV(v.Args[2]), v.String()+".cond")
+		cond := lfc.GenLV(v.Args[2])
 		lVal = lfc.b.CreateSelect(cond, x, y, v.String())
 	case OpSignExt8to16, OpSignExt8to32, OpSignExt8to64,
 		OpSignExt16to32, OpSignExt16to64, OpSignExt32to64:
@@ -4509,9 +4508,9 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 	default:
 		v.Fatalf("unsupported SSA operation in LLVM lowering: %s (%s)", v.Op, v.LongString())
 	}
-	// Loads, calls and aggregate extraction retain their storage/ABI type
-	// while being emitted. Normalize scalar bools before exposing them to
-	// any SSA consumer, including copies and PHIs.
+	// Byte-valued loads, stack ABI results and aggregate extraction still
+	// need storage-to-value conversion. Normalize here so all SSA consumers,
+	// including branches, selects and PHIs, can directly use i1 predicates.
 	if v.Type.IsBoolean() {
 		lVal = lfc.llvmCondition(lVal, v.String()+".bool")
 	}
@@ -4550,7 +4549,7 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 	case BlockRetJmp:
 		lfc.emitTailCallReturn(BB)
 	case BlockIf:
-		cond := lfc.llvmCondition(lfc.GenLV(BB.Controls[0]), BB.String()+".cond")
+		cond := lfc.GenLV(BB.Controls[0])
 		if BB.Likely != BranchUnknown {
 			// Go predictions describe Succs[0], the true edge. Let LLVM lower
 			// the expectation to branch weights using its own likelihood policy.
