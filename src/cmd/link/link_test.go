@@ -1702,8 +1702,6 @@ func TestCheckLinkname(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 	t.Parallel()
 
-	tmpdir := t.TempDir()
-
 	tests := []struct {
 		src string
 		ok  bool
@@ -1718,6 +1716,7 @@ func TestCheckLinkname(t *testing.T) {
 		// pull linkname of blocked symbol is not ok
 		{"coro.go", false},
 		{"coro_var.go", false},
+		{"coro_var_unused.go", false},
 		// assembly reference is not ok
 		{"coro_asm", false},
 		// pull-only linkname is not ok
@@ -1735,19 +1734,23 @@ func TestCheckLinkname(t *testing.T) {
 		{"badlinkname.go", true},
 	}
 	for _, test := range tests {
-		t.Run(test.src, func(t *testing.T) {
-			t.Parallel()
-			src := "./testdata/linkname/" + test.src
-			exe := filepath.Join(tmpdir, test.src+".exe")
-			cmd := goCmd(t, "build", "-o", exe, src)
-			out, err := cmd.CombinedOutput()
-			if test.ok && err != nil {
-				t.Errorf("build failed unexpectedly: %v:\n%s", err, out)
-			}
-			if !test.ok && err == nil {
-				t.Errorf("build succeeded unexpectedly: %v:\n%s", err, out)
-			}
-		})
+		// Invalid linknames must be rejected with and without DWARF. A later
+		// DWARF error or pclntab panic is not a valid rejection.
+		for _, ldflags := range []string{"", "-w"} {
+			t.Run(test.src+"/ldflags="+ldflags, func(t *testing.T) {
+				t.Parallel()
+				src := "./testdata/linkname/" + test.src
+				exe := filepath.Join(t.TempDir(), "main.exe")
+				cmd := goCmd(t, "build", "-ldflags="+ldflags, "-o", exe, src)
+				out, err := cmd.CombinedOutput()
+				if test.ok && err != nil {
+					t.Errorf("build failed unexpectedly: %v:\n%s", err, out)
+				}
+				if !test.ok && (err == nil || !bytes.Contains(out, []byte("invalid reference to"))) {
+					t.Errorf("want invalid linkname reference, got %v:\n%s", err, out)
+				}
+			})
+		}
 	}
 }
 
