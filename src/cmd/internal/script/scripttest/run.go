@@ -141,10 +141,6 @@ func NewEngine(t *testing.T, repls []ToolReplacement) (*script.Engine, []string)
 	// Environment setup.
 	env := os.Environ()
 	prependToPath(env, filepath.Join(tgr, "bin"))
-	// GOROOT below selects the test sources and replacement tools. Keep LLVM
-	// runtime components tied to the original toolchain, including when compile
-	// is a test executable outside that toolchain.
-	env = setenv(env, "GOALLC_TOOLCHAIN_ROOT", goroot)
 	env = setenv(env, "GOROOT", tgr)
 	// GOOS and GOARCH are expected to be set by the toolchain script conditions.
 	env = setenv(env, "GOOS", runtime.GOOS)

@@ -1536,6 +1536,7 @@ func cmdbootstrap() {
 	}
 
 	setup()
+	installGoallcRuntime()
 
 	timelog("build", "toolchain1")
 	checkCC()

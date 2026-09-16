@@ -249,7 +249,7 @@ pattern，需要证明完整编译闭包时使用 `-gcflags=all=-enablellvm`。
 compiler 所使用的 LLVM binding、动态 `libLLVM`（动态模式）和静态 archive
 （静态模式）必须来自 `make.bash` 记录的同一 payload；pass plugin 必须由
 `make.bash` 使用该 payload 的 headers/CMake package 构建，并安装在 Go
-toolchain 自己的 `pkg/goallc-llvmplugin/lib` 中。
+toolchain 自己的 `pkg/tool/<host>/lib` 中，动态 `libLLVM` 也安装在同一目录。
 `-llvm-keep-ir` 提供优化前后 IR；GoObj、链接器和机器码检查由统一 testdir 的
 `test/codegen` 驱动完成。外部 `opt`/`llc` 仍可用于 LLVM 仓库自身的格式级测试，
 但不再是 Go toolchain 的集成入口，也不参与 Go action cache identity。
@@ -345,9 +345,9 @@ cd "$GOROOT/src"
 ```
 
 安装结果为 Darwin 上的
-`$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.dylib` 或 Linux 上的
-`$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.so`，静态 archive 也位于该
-`lib` 目录。LLVM payload 内不安装、不查找 plugin。不要用其他 LLVM 安装构建后
+`$GOROOT/pkg/tool/<host>/lib/GoALLCStatepoints.dylib` 或 Linux 上的
+`$GOROOT/pkg/tool/<host>/lib/GoALLCStatepoints.so`，动态 `libLLVM` 同目录安装。
+静态 archive 保留在 `pkg/goallc-llvmplugin/lib`。LLVM payload 内不安装、不查找 plugin。不要用其他 LLVM 安装构建后
 再复制产物；pass plugin 的 C++ ABI 必须和 compiler 所链接及 `llc` 所使用的
 LLVM payload 精确匹配。
 

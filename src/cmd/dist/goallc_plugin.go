@@ -52,6 +52,31 @@ func writeGoallcLLVMPayloadConfig() {
 	}
 }
 
+// installGoallcRuntime keeps the compiler's runtime dependencies beside the
+// host tools. The standard test GOROOT setup carries this directory with them.
+func installGoallcRuntime() {
+	lib := pathf("%s/lib", tooldir)
+	plugin := goallcPassPluginFilename(gohostos)
+	files := []string{pathf("%s/pkg/goallc-llvmplugin/lib/%s", goroot, plugin)}
+	for _, pattern := range []string{"libLLVM*.dylib", "libLLVM*.so", "libLLVM*.so.*"} {
+		matches, err := filepath.Glob(pathf("%s/lib/%s", goallcLLVMDir, pattern))
+		if err != nil {
+			fatalf("finding LLVM runtime libraries: %v", err)
+		}
+		files = append(files, matches...)
+	}
+	// Discard old SONAMEs when changing the LLVM payload.
+	xremoveall(lib)
+	xmkdirall(lib)
+	// Materialize library aliases too: the test harness's directory-copy
+	// fallback must work without symlinks or access to the build payload.
+	for _, source := range files {
+		if err := installGoallcPluginAtomically(source, filepath.Join(lib, filepath.Base(source))); err != nil {
+			fatalf("installing compiler runtime: %v", err)
+		}
+	}
+}
+
 // ensureGoallcPassPlugin keeps the shared and static forms of the Go-owned pass
 // plugin synchronized with the LLVM payload used to build the Go toolchain.
 func ensureGoallcPassPlugin() {

@@ -1,5 +1,6 @@
-# The script harness replaces compile with the test binary in a temporary
-# GOROOT. LLVM runtime components must come from the original toolchain.
+# Compiler runtime files follow the host tools into the temporary GOROOT,
+# including when compile is replaced by the compiler test executable.
+exists $GOROOT/pkg/tool/${GOOS}_${GOARCH}/lib
 ! exists $GOROOT/pkg/goallc-llvmplugin
 ! exists $GOROOT/pkg/goallc-llvm-payload
 env GOALLC_LLVM_DIR=
