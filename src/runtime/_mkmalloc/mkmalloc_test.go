@@ -14,6 +14,24 @@ func TestNoChange(t *testing.T) {
 	classes := makeClasses()
 	sizeToSizeClass := makeSizeToSizeClass(classes)
 
+	sizeClassesFile := "../../internal/runtime/gc/sizeclasses.go"
+	wantClasses, err := os.ReadFile(sizeClassesFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustFormat(generateSizeClasses(classes)); !bytes.Equal(wantClasses, got) {
+		t.Fatalf("%s is stale; regenerate size classes", sizeClassesFile)
+	}
+
+	alignmentFile := "../../internal/runtime/gc/allocation_alignment.go"
+	wantAlignments, err := os.ReadFile(alignmentFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustFormat(generateAllocationAlignments(classes)); !bytes.Equal(wantAlignments, got) {
+		t.Fatalf("%s is stale; regenerate allocation alignments", alignmentFile)
+	}
+
 	outfile := "../malloc_generated.go"
 	want, err := os.ReadFile(outfile)
 	if err != nil {

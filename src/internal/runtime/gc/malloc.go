@@ -10,12 +10,6 @@ const (
 	// PageWords is the number of pointer-words per page.
 	PageWords = PageSize / goarch.PtrSize
 
-	// A malloc header is functionally a single type pointer, but
-	// we need to use 8 here to ensure 8-byte alignment of allocations
-	// on 32-bit platforms. It's wasteful, but a lot of code relies on
-	// 8-byte alignment for 8-byte atomics.
-	MallocHeaderSize = 8
-
 	// The minimum object size that has a malloc header, exclusive.
 	//
 	// The size of this value controls overheads from the malloc header.

@@ -12,6 +12,7 @@ import (
 	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"internal/abi"
+	"internal/runtime/gc"
 
 	"github.com/goallc/go-llvm"
 )
@@ -38,6 +39,9 @@ type llvmFunctionModel struct {
 	// zero-based argument positions; the binding below uses LLVM's 1-based indices.
 	parameters [][]llvm.Attribute
 	result     []llvm.Attribute
+	// Target-sized header extents and conservative scalar-box alignment.
+	resultWords     uint64
+	resultAlignment uint64
 	// Go int result ranges are precreated for each supported integer width.
 	resultRange map[int]llvm.Attribute
 	allocSize   llvm.Attribute
@@ -83,7 +87,14 @@ var (
 	llvmAllocAttribute          = GlobalCtxt.CreateAllocKindAttribute(false)
 	llvmZeroAllocAttribute      = GlobalCtxt.CreateAllocKindAttribute(true)
 	llvmAllocFamilyAttribute    = GlobalCtxt.CreateStringAttribute("alloc-family", "runtime.mallocgc")
-	llvmFunctions               = newLLVMFunctionManager()
+	llvmAlignmentAttributes     = func() map[uint64]llvm.Attribute {
+		attributes := make(map[uint64]llvm.Attribute)
+		for alignment := uint64(2); alignment <= gc.PageSize; alignment *= 2 {
+			attributes[alignment] = GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("align"), alignment)
+		}
+		return attributes
+	}()
+	llvmFunctions = newLLVMFunctionManager()
 )
 
 func newLLVMFunctionManager() llvmFunctionManager {
@@ -164,21 +175,21 @@ func newLLVMFunctionManager() llvmFunctionManager {
 		"runtime.convT":         {result: nonnullResult, copiedObject: true},
 		"runtime.convTnoptr":    {result: nonnullResult, copiedObject: true},
 		// Small values can use staticuint64s: readable, but not fresh/noalias.
-		"runtime.convT16":     {result: boxedResult(2), scalarBox: true},
-		"runtime.convT32":     {result: boxedResult(4), scalarBox: true},
-		"runtime.convT64":     {result: boxedResult(8), scalarBox: true},
-		"runtime.convTstring": {result: nonnullResult, stringBox: true},
-		"runtime.convTslice":  {result: nonnullResult, sliceBox: true},
+		"runtime.convT16":     {result: boxedResult(2), resultAlignment: 2, scalarBox: true},
+		"runtime.convT32":     {result: boxedResult(4), resultAlignment: 4, scalarBox: true},
+		"runtime.convT64":     {result: boxedResult(8), resultAlignment: 8, scalarBox: true},
+		"runtime.convTstring": {result: nonnullResult, resultWords: 2, stringBox: true},
+		"runtime.convTslice":  {result: nonnullResult, resultWords: 3, sliceBox: true},
 
 		// Normal returns are non-null, including zero-capacity channels and
 		// missing map keys (zeroVal). Map constructors may reuse the caller
 		// header; access/assignment returns shared slots, not fresh allocations.
 		// Channel headers and makemap_small always allocate nonzero fresh objects.
-		"runtime.makechan":            {result: freshResult},
-		"runtime.makechan64":          {result: freshResult},
+		"runtime.makechan":            {result: freshResult, resultAlignment: 8},
+		"runtime.makechan64":          {result: freshResult, resultAlignment: 8},
 		"runtime.makemap":             {result: nonnullResult, mapAllocation: true},
 		"runtime.makemap64":           {result: nonnullResult, mapAllocation: true},
-		"runtime.makemap_small":       {result: freshResult},
+		"runtime.makemap_small":       {result: freshResult, resultAlignment: 8},
 		"runtime.mapaccess1":          {result: nonnullResult},
 		"runtime.mapaccess1_fast32":   {result: nonnullResult},
 		"runtime.mapaccess1_fast64":   {result: nonnullResult},
@@ -430,6 +441,12 @@ func (m *llvmFunctionManager) getOrInsert(name string, sig llvmFuncSignature, cc
 	// ABI0 pointer parameters denote byval argument slots, not the original
 	// pointees. Only ABIInternal uses the parameter contracts below.
 	if cc == goABIInternalCallConv {
+		if model.resultWords != 0 {
+			fn.AddAttributeAtIndex(0, m.dereferenceableAttribute(model.resultWords*uint64(types.PtrSize)))
+		}
+		if model.resultAlignment != 0 && !base.Flag.Cfg.ASan {
+			fn.AddAttributeAtIndex(0, llvmAlignmentAttributes[min(model.resultAlignment, uint64(types.PtrSize))])
+		}
 		for _, attribute := range model.result {
 			fn.AddAttributeAtIndex(0, attribute)
 		}
@@ -469,6 +486,9 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 	switch {
 	case model.mapAllocation:
 		if args[2].IsNull() {
+			if !base.Flag.Cfg.ASan {
+				call.AddCallSiteAttribute(0, llvmAlignmentAttributes[uint64(types.PtrSize)])
+			}
 			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 		}
 		return
@@ -497,6 +517,9 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 			fresh = pointer.Op == OpAddr || pointer.Op == OpLocalAddr
 		}
 		if fresh {
+			if !base.Flag.Cfg.ASan {
+				call.AddCallSiteAttribute(0, llvmAlignmentAttributes[uint64(types.PtrSize)])
+			}
 			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 		}
 		return
@@ -504,6 +527,20 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 		size := args[0]
 		if size.IsAConstantInt().IsNil() || size.ZExtValue() == 0 {
 			return
+		}
+		// Unknown type metadata must satisfy both scanning and noscan paths.
+		bytes := size.ZExtValue()
+		alignment := min(llvmHeapAlignment(bytes, false), llvmHeapAlignment(bytes, true))
+		if args[1].IsNull() {
+			alignment = llvmHeapAlignment(bytes, true)
+		} else if source != nil && len(source.Args) > 1 && source.Args[1].Op == OpAddr {
+			if sym, ok := source.Args[1].Aux.(*obj.LSym); ok && sym.TypeInfo() != nil {
+				typ := sym.TypeInfo().Type.(*types.Type)
+				alignment = llvmHeapAlignment(bytes, !typ.HasPointers())
+			}
+		}
+		if alignment > 1 {
+			call.AddCallSiteAttribute(0, llvmAlignmentAttributes[alignment])
 		}
 		if zero := args[2]; !zero.IsAConstantInt().IsNil() && zero.ZExtValue() != 0 {
 			kind = llvmZeroAllocAttribute
@@ -522,6 +559,7 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 		if typ.Size() <= 0 {
 			return
 		}
+		size := uint64(typ.Size())
 		if model.sliceAllocation || model.sliceCopy {
 			index := 2 // makeslice capacity, not length
 			if model.sliceCopy {
@@ -536,25 +574,19 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 			if count.ZExtValue() > maxInt/uint64(typ.Size()) {
 				return
 			}
+			size *= count.ZExtValue()
+		}
+		call.AddCallSiteAttribute(0, m.dereferenceableAttribute(size))
+		alignment := llvmHeapAlignment(size, !typ.HasPointers())
+		if alignment > 1 {
+			call.AddCallSiteAttribute(0, llvmAlignmentAttributes[alignment])
+		}
+		if !model.newObject {
+			// Copies initialize new storage but retain source reads and hooks.
+			// No allocation-elision or zero-initialization contract follows.
 			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 			return
 		}
-		if model.copiedObject {
-			// Only the box is fresh; pointer fields still alias their original
-			// pointees. Copying and instrumentation effects remain unrestricted.
-			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
-			return
-		}
-		if m.dereferenceable == nil {
-			m.dereferenceable = make(map[uint64]llvm.Attribute)
-		}
-		size := uint64(typ.Size())
-		attribute, ok := m.dereferenceable[size]
-		if !ok {
-			attribute = GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("dereferenceable"), size)
-			m.dereferenceable[size] = attribute
-		}
-		call.AddCallSiteAttribute(0, attribute)
 		kind = llvmZeroAllocAttribute
 	default:
 		return
@@ -562,4 +594,25 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 	call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, kind)
 	call.AddCallSiteAttribute(llvmAttributeFunctionIndex, llvmAllocFamilyAttribute)
+}
+
+// Attributes are context-owned and reused by declarations and call sites.
+func (m *llvmFunctionManager) dereferenceableAttribute(size uint64) llvm.Attribute {
+	if m.dereferenceable == nil {
+		m.dereferenceable = make(map[uint64]llvm.Attribute)
+	}
+	if attr, ok := m.dereferenceable[size]; ok {
+		return attr
+	}
+	attr := GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("dereferenceable"), size)
+	m.dereferenceable[size] = attr
+	return attr
+}
+
+// ASan allocation alignment is deliberately left unmodeled.
+func llvmHeapAlignment(size uint64, noscan bool) uint64 {
+	if base.Flag.Cfg.ASan {
+		return 1
+	}
+	return gc.AllocationAlignment(size, noscan, uint64(types.PtrSize))
 }

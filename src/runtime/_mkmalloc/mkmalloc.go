@@ -54,6 +54,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	alignmentFile := "../../internal/runtime/gc/allocation_alignment.go"
+	if err := os.WriteFile(alignmentFile, mustFormat(generateAllocationAlignments(classes)), 0666); err != nil {
+		log.Fatal(err)
+	}
+
 	outfile := "../malloc_generated.go"
 	if err := os.WriteFile(outfile, mustFormat(inline(specializedMallocConfig(classes, sizeToSizeClass))), 0666); err != nil {
 		log.Fatal(err)

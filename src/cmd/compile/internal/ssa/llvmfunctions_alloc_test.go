@@ -162,53 +162,71 @@ func TestLLVMFunctionNewObjectCalls(t *testing.T) {
 // past its end. Run only SimplifyCFG so zero-initialization folding does not
 // obscure which property made the read safe to speculate.
 func TestLLVMFunctionNewObjectReadableExtent(t *testing.T) {
-	for _, modeled := range []bool{false, true} {
-		for _, offset := range []uint64{120, 128} {
-			func() {
-				old := CurrentModule
-				m := GlobalCtxt.NewModule("allocation_extent")
-				CurrentModule = m
-				defer func() { CurrentModule = old; m.Dispose() }()
-				ptr, i1, i8, i64 := GlobalCtxt.PointerType(0), GlobalCtxt.Int1Type(), GlobalCtxt.Int8Type(), GlobalCtxt.Int64Type()
-				sig := llvmFuncSignature{Type: llvm.FunctionType(ptr, []llvm.Type{ptr}, false), ClosureContextIndex: -1}
-				callee := getOrInsertLLVMFunction("runtime.newobject", sig, goABIInternalCallConv)
-				fn := llvm.AddFunction(m, "probe", llvm.FunctionType(i64, []llvm.Type{ptr, i1}, false))
-				entry, yes, end := llvm.AddBasicBlock(fn, "entry"), llvm.AddBasicBlock(fn, "yes"), llvm.AddBasicBlock(fn, "end")
-				b := GlobalCtxt.NewBuilder()
-				defer b.Dispose()
-				b.SetInsertPointAtEnd(entry)
-				args := []llvm.Value{fn.Param(0)}
-				call := b.CreateCall(sig.Type, callee, args, "p")
-				call.SetInstructionCallConv(goABIInternalCallConv)
-				if modeled {
-					typ := types.NewArray(types.Types[types.TUINT8], 128)
-					types.CalcSize(typ)
-					sym := &obj.LSym{Name: "type:extent-test"}
-					sym.NewTypeInfo().Type = typ
-					source := &Value{Args: []*Value{{Op: OpAddr, Aux: sym}}}
-					llvmFunctions.bindCall(call, callee, args, goABIInternalCallConv, source)
-				}
-				q := b.CreateGEP(i8, call, []llvm.Value{llvm.ConstInt(i64, offset, false)}, "q")
-				b.CreateCondBr(fn.Param(1), yes, end)
-				b.SetInsertPointAtEnd(yes)
-				x := b.CreateLoad(i64, q, "x")
-				x.SetAlignment(1)
-				b.CreateBr(end)
-				b.SetInsertPointAtEnd(end)
-				r := b.CreatePHI(i64, "r")
-				r.AddIncoming([]llvm.Value{x, llvm.ConstInt(i64, 0, false)}, []llvm.BasicBlock{yes, entry})
-				b.CreateRet(r)
-				opts := llvm.NewPassBuilderOptions()
-				defer opts.Dispose()
-				opts.SetVerifyEach(true)
-				if err := m.RunPasses("function(simplifycfg)", llvm.TargetMachine{}, opts); err != nil {
-					t.Fatal(err)
-				}
-				want := modeled && offset == 120
-				if got := strings.Contains(fn.String(), "select i1"); got != want {
-					t.Fatalf("modeled=%v offset=%d: speculative load=%v want=%v\n%s", modeled, offset, got, want, m.String())
-				}
-			}()
+	for _, helper := range []string{"newobject", "convT", "convTnoptr", "makeslice", "makeslice64", "makeslicecopy"} {
+		for _, modeled := range []bool{false, true} {
+			for _, offset := range []uint64{120, 128} {
+				func() {
+					old := CurrentModule
+					m := GlobalCtxt.NewModule("allocation_extent")
+					CurrentModule = m
+					defer func() { CurrentModule = old; m.Dispose() }()
+					ptr, i1, i8, i64 := GlobalCtxt.PointerType(0), GlobalCtxt.Int1Type(), GlobalCtxt.Int8Type(), GlobalCtxt.Int64Type()
+					params := []llvm.Type{ptr}
+					switch helper {
+					case "convT", "convTnoptr":
+						params = append(params, ptr)
+					case "makeslice", "makeslice64":
+						params = append(params, i64, i64)
+					case "makeslicecopy":
+						params = append(params, i64, i64, ptr)
+					}
+					sig := llvmFuncSignature{Type: llvm.FunctionType(ptr, params, false), ClosureContextIndex: -1}
+					callee := getOrInsertLLVMFunction("runtime."+helper, sig, goABIInternalCallConv)
+					fn := llvm.AddFunction(m, "probe", llvm.FunctionType(i64, []llvm.Type{ptr, i1}, false))
+					entry, yes, end := llvm.AddBasicBlock(fn, "entry"), llvm.AddBasicBlock(fn, "yes"), llvm.AddBasicBlock(fn, "end")
+					b := GlobalCtxt.NewBuilder()
+					defer b.Dispose()
+					b.SetInsertPointAtEnd(entry)
+					args := []llvm.Value{fn.Param(0)}
+					for _, param := range params[1:] {
+						if param == ptr {
+							args = append(args, fn.Param(0))
+						} else {
+							args = append(args, llvm.ConstInt(i64, 1, false))
+						}
+					}
+					call := b.CreateCall(sig.Type, callee, args, "p")
+					call.SetInstructionCallConv(goABIInternalCallConv)
+					if modeled {
+						typ := types.NewArray(types.Types[types.TUINT8], 128)
+						types.CalcSize(typ)
+						sym := &obj.LSym{Name: "type:extent-test"}
+						sym.NewTypeInfo().Type = typ
+						source := &Value{Args: []*Value{{Op: OpAddr, Aux: sym}}}
+						llvmFunctions.bindCall(call, callee, args, goABIInternalCallConv, source)
+					}
+					q := b.CreateGEP(i8, call, []llvm.Value{llvm.ConstInt(i64, offset, false)}, "q")
+					b.CreateCondBr(fn.Param(1), yes, end)
+					b.SetInsertPointAtEnd(yes)
+					x := b.CreateLoad(i64, q, "x")
+					x.SetAlignment(1)
+					b.CreateBr(end)
+					b.SetInsertPointAtEnd(end)
+					r := b.CreatePHI(i64, "r")
+					r.AddIncoming([]llvm.Value{x, llvm.ConstInt(i64, 0, false)}, []llvm.BasicBlock{yes, entry})
+					b.CreateRet(r)
+					opts := llvm.NewPassBuilderOptions()
+					defer opts.Dispose()
+					opts.SetVerifyEach(true)
+					if err := m.RunPasses("function(simplifycfg)", llvm.TargetMachine{}, opts); err != nil {
+						t.Fatal(err)
+					}
+					want := modeled && offset == 120
+					if got := strings.Contains(fn.String(), "select i1"); got != want {
+						t.Fatalf("modeled=%v offset=%d: speculative load=%v want=%v\n%s", modeled, offset, got, want, m.String())
+					}
+				}()
+			}
 		}
 	}
 }
