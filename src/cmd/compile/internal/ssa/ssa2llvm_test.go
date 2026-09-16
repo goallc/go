@@ -2317,3 +2317,41 @@ func TestLLVMReferenceSuffixBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestLLVMStaticCallCgoCheckSignatures(t *testing.T) {
+	config := abi.NewABIConfig(16, 16, 0, uint8(obj.ABIInternal))
+	for _, tc := range []struct {
+		name string
+		args int
+	}{
+		{"runtime.cgoCheckPtrWrite", 2},
+		{"runtime.cgoCheckMemmove", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fn := &obj.LSym{Name: tc.name}
+			words := make([]*types.Type, tc.args)
+			pointers := make([]*types.Type, tc.args)
+			for i := range words {
+				words[i] = types.Types[types.TUINTPTR]
+				pointers[i] = types.Types[types.TUNSAFEPTR]
+			}
+			generated := StaticAuxCall(fn, config.ABIAnalyzeTypes(words, nil))
+			source := StaticAuxCall(fn, config.ABIAnalyzeTypes(pointers, nil))
+			want := llvmSignature(source).Type
+			for _, call := range []*AuxCall{generated, source} {
+				if got := llvmStaticCallSignature(call, llvmSignature(call)).Type; got != want {
+					t.Fatal("call signature conflicts with the pointer-typed runtime definition")
+				}
+			}
+			if !generated.TypeOfArg(0).IsUintptr() {
+				t.Fatal("semantic LLVM signature changed the physical Go ABI types")
+			}
+			// An unrelated function's uintptr parameters are real integers.
+			other := StaticAuxCall(&obj.LSym{Name: "example.cgoCheckPtrWrite"}, config.ABIAnalyzeTypes(words, nil))
+			original := llvmSignature(other)
+			if got := llvmStaticCallSignature(other, original).Type; got != original.Type {
+				t.Fatal("unrelated uintptr signature changed")
+			}
+		})
+	}
+}

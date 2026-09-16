@@ -3396,7 +3396,17 @@ func llvmStaticCallSignature(aux *AuxCall, sig llvmFuncSignature) llvmFuncSignat
 	case ir.Syms.WBMove:
 		pointerArgs = 3
 	default:
-		return sig
+		// writebarrier.wbcall also uses uintptr ABI carriers for the cgo
+		// pointer checks. Their runtime definitions take semantic pointers,
+		// just like wbZero and wbMove above.
+		switch aux.Fn.Name {
+		case "runtime.cgoCheckPtrWrite":
+			pointerArgs = 2
+		case "runtime.cgoCheckMemmove":
+			pointerArgs = 3
+		default:
+			return sig
+		}
 	}
 	params := append([]llvm.Type(nil), sig.Type.ParamTypes()...)
 	for i := int64(0); i < pointerArgs; i++ {
