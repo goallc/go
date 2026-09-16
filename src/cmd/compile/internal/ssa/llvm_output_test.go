@@ -141,3 +141,64 @@ func HeapResult() (result int) {
 		t.Fatalf("heap result has no indirect location:\n%s", ir)
 	}
 }
+
+// Source SSA descriptions must survive ABI copy elision without asking the
+// backend to reconstruct variables from temporary stack addresses.
+func TestLLVMSSADebugValues(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	dir := t.TempDir()
+	source := filepath.Join(dir, "p.go")
+	code := `package p
+//go:noinline
+func Callee(x int) int { return x + 1 }
+//go:noinline
+func Scalar(x int) int {
+	value := x + 7
+	callResult := Callee(value)
+	return callResult + value
+}
+type Pair struct { A, B int }
+//go:noinline
+func Pieces(x int) int {
+	pair := Pair{x+3, x*5}
+	return Callee(pair.A) + pair.B
+}
+//go:noinline
+func Source(x int) (int, int, int, int, int, int, int, int, int, int) {
+	return x, x, x, x, x, x, x, x, x, x+1
+}
+//go:noinline
+func MemoryResult(x int) int {
+	_, _, _, _, _, _, _, _, _, memoryResult := Source(x)
+	return Callee(memoryResult)
+}
+`
+	if err := os.WriteFile(source, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "p.a")
+	cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-l", "-llvm-keep-ir", "-p=p", "-o", archive, source)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	for _, suffix := range []string{".ll", ".opt.ll"} {
+		data, err := os.ReadFile(archive + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct{ name, expression string }{
+			{"value", ""}, {"callResult", ""}, {"memoryResult", ""},
+			{"pair", "DW_OP_LLVM_fragment, 0, 64"},
+			{"pair", "DW_OP_LLVM_fragment, 64, 64"},
+		} {
+			id := regexp.MustCompile(`(?m)^(![0-9]+) = !DILocalVariable\(name: "` + tc.name + `",`).FindSubmatch(data)
+			if id == nil {
+				t.Fatalf("%s: missing %s metadata", suffix, tc.name)
+			}
+			value := regexp.MustCompile(`#dbg_value\(i64 %[^,]+, ` + string(id[1]) + `, !DIExpression\(` + tc.expression + `\),`)
+			if !value.Match(data) {
+				t.Errorf("%s: missing SSA description for %s (%s)\n%s", suffix, tc.name, tc.expression, data)
+			}
+		}
+	}
+}

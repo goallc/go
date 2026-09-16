@@ -45,6 +45,7 @@ type LLVMFuncContext struct {
 	LF                  llvm.Value
 	DISubprogram        llvm.Metadata
 	DebugLocations      map[src.XPos]llvm.Metadata
+	DebugValues         map[ID][]llvmDebugValue
 	Prologue            llvm.BasicBlock
 	OpenDeferRecovery   llvm.BasicBlock
 	ClosureContext      llvm.Value
@@ -4541,7 +4542,8 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		}
 		// Each new value sets its own insertion block and source location.
 		// No caller instructions need the previous value's builder state.
-		lfc.genLV(v, false)
+		value := lfc.genLV(v, false)
+		lfc.emitDebugValue(v, value)
 	}
 	lfc.setDebugLocation(BB.Pos)
 	defer lfc.b.ClearCurrentDebugLocation()
