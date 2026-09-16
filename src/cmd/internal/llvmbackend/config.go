@@ -20,7 +20,8 @@ import (
 
 // PassPlugin resolves the GoALLC pre-codegen plugin from the Go toolchain.
 // LLVM payload directories are deliberately not searched: the payload provides
-// LLVM itself, while the Go-owned plugin is installed below GOROOT/pkg.
+// LLVM itself, while the Go-owned plugin is installed below the toolchain
+// root's pkg directory.
 func PassPlugin() (string, error) {
 	name, err := passPluginFilename()
 	if err != nil {
@@ -96,15 +97,13 @@ func payloadRoots() []string {
 	if root := strings.TrimSpace(os.Getenv("GOALLC_LLVM_DIR")); root != "" {
 		roots = append(roots, root)
 	}
-	if executable, err := os.Executable(); err == nil {
-		toolDir := filepath.Dir(executable)
-		goroot := filepath.Dir(filepath.Dir(filepath.Dir(toolDir)))
-		if data, err := os.ReadFile(filepath.Join(goroot, "pkg", "goallc-llvm-payload")); err == nil {
+	for _, root := range goRoots() {
+		if data, err := os.ReadFile(filepath.Join(root, "pkg", "goallc-llvm-payload")); err == nil {
 			if payload := strings.TrimSpace(string(data)); payload != "" {
 				roots = append(roots, payload)
 			}
 		}
-		roots = append(roots, filepath.Join(goroot, "llvm"))
+		roots = append(roots, filepath.Join(root, "llvm"))
 	}
 	seen := make(map[string]bool)
 	unique := roots[:0]
@@ -120,11 +119,17 @@ func payloadRoots() []string {
 }
 
 func goRoots() []string {
-	if root := strings.TrimSpace(os.Getenv("GOROOT")); root != "" {
-		if path, err := filepath.Abs(root); err == nil {
-			return []string{path}
+	// Script tests use a synthetic GOROOT and may replace compile with a test
+	// executable. Neither path identifies the toolchain that owns the plugin.
+	// An explicit toolchain root keeps runtime components independent of the
+	// source GOROOT and is authoritative, just like an explicit GOROOT.
+	for _, key := range []string{"GOALLC_TOOLCHAIN_ROOT", "GOROOT"} {
+		if root := strings.TrimSpace(os.Getenv(key)); root != "" {
+			if path, err := filepath.Abs(root); err == nil {
+				return []string{path}
+			}
+			return nil
 		}
-		return nil
 	}
 
 	var roots []string

@@ -5,12 +5,14 @@
 package llvmbackend
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestPassPluginFromGoToolchain(t *testing.T) {
+	t.Setenv("GOALLC_TOOLCHAIN_ROOT", "")
 	goRoot := t.TempDir()
 	lib := filepath.Join(goRoot, "pkg", "goallc-llvmplugin", "lib")
 	if err := os.MkdirAll(lib, 0o755); err != nil {
@@ -41,9 +43,17 @@ func TestPassPluginFromGoToolchain(t *testing.T) {
 	if got != plugin {
 		t.Fatalf("PassPlugin() = %q, want %q", got, plugin)
 	}
+
+	// An explicit toolchain root must not fall back to a different GOROOT's
+	// plugin when the selected toolchain is incomplete.
+	t.Setenv("GOALLC_TOOLCHAIN_ROOT", t.TempDir())
+	if plugin, err := PassPlugin(); err == nil {
+		t.Fatalf("PassPlugin() = %q, want an error for an incomplete toolchain", plugin)
+	}
 }
 
 func TestPassPluginDoesNotSearchLLVMPayload(t *testing.T) {
+	t.Setenv("GOALLC_TOOLCHAIN_ROOT", "")
 	name, err := passPluginFilename()
 	if err != nil {
 		t.Skip(err)
@@ -64,6 +74,16 @@ func TestPassPluginDoesNotSearchLLVMPayload(t *testing.T) {
 }
 
 func TestIdentityTracksRuntimeFiles(t *testing.T) {
+	for _, separateRoot := range []bool{false, true} {
+		for _, explicitPayload := range []bool{false, true} {
+			t.Run(fmt.Sprintf("toolchainRoot=%t/explicitPayload=%t", separateRoot, explicitPayload), func(t *testing.T) {
+				testIdentityTracksRuntimeFiles(t, separateRoot, explicitPayload)
+			})
+		}
+	}
+}
+
+func testIdentityTracksRuntimeFiles(t *testing.T, separateRoot, explicit bool) {
 	goRoot := t.TempDir()
 	pluginLib := filepath.Join(goRoot, "pkg", "goallc-llvmplugin", "lib")
 	if err := os.MkdirAll(pluginLib, 0o755); err != nil {
@@ -86,8 +106,20 @@ func TestIdentityTracksRuntimeFiles(t *testing.T) {
 	if err := os.WriteFile(llvm, []byte("llvm one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("GOALLC_TOOLCHAIN_ROOT", "")
 	t.Setenv("GOROOT", goRoot)
-	t.Setenv("GOALLC_LLVM_DIR", payloadRoot)
+	if separateRoot {
+		t.Setenv("GOROOT", t.TempDir())
+		t.Setenv("GOALLC_TOOLCHAIN_ROOT", goRoot)
+	}
+	if explicit {
+		t.Setenv("GOALLC_LLVM_DIR", payloadRoot)
+	} else {
+		t.Setenv("GOALLC_LLVM_DIR", "")
+		if err := os.WriteFile(filepath.Join(goRoot, "pkg", "goallc-llvm-payload"), []byte(payloadRoot), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	first, err := Identity()
 	if err != nil {
