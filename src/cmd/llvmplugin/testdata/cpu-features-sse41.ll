@@ -13,6 +13,8 @@ target triple = "x86_64-unknown-linux-gnu"
 
 declare double @fallback(double)
 declare double @llvm.floor.f64(double)
+declare i1 @llvm.expect.i1(i1, i1)
+declare i1 @llvm.expect.with.probability.i1(i1, i1, double)
 
 ; CHECK-LABEL: define double @round(
 ; CHECK-SAME: #[[EARLY_DISPATCH:[0-9]+]]
@@ -71,7 +73,11 @@ entry:
   #dbg_label(!18, !14)
   %flag = load i8, ptr @runtime.goallcCPUFeatures, align 1, !goallc.cpu.guard !1, !dbg !10
   %enabled = icmp ne i8 %flag, 0, !dbg !10
-  br i1 %enabled, label %feature, label %fallback, !dbg !10
+  ; Branch hints must not keep an unsupported path alive until an optional
+  ; optimization pipeline. In particular O0 does not lower these before FMV.
+  %hint = call i1 @llvm.expect.i1(i1 %enabled, i1 true), !dbg !10
+  %likely = call i1 @llvm.expect.with.probability.i1(i1 %hint, i1 true, double 0.9), !dbg !10
+  br i1 %likely, label %feature, label %fallback, !dbg !10
 
 feature:
   %rounded = call double @llvm.floor.f64(double %x), !goallc.cpu.requires !1, !dbg !10

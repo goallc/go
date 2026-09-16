@@ -36,7 +36,11 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve LLVM target %q: %w", triple, err)
 	}
-	tm := target.CreateTargetMachine(triple, "", "", llvm.CodeGenLevelDefault, llvm.RelocDefault, llvm.CodeModelDefault)
+	level := llvm.CodeGenLevelDefault
+	if base.Flag.N != 0 {
+		level = llvm.CodeGenLevelNone
+	}
+	tm := target.CreateTargetMachine(triple, "", "", level, llvm.RelocDefault, llvm.CodeModelDefault)
 	defer tm.Dispose()
 	td := tm.CreateTargetData()
 	CurrentModule.SetDataLayout(td.String())
@@ -65,6 +69,12 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	// Its no-op paths leave the module verified above unchanged.
 
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
+	if pipeline == "auto" {
+		pipeline = "default<O2>"
+		if base.Flag.N != 0 {
+			pipeline = "default<O0>"
+		}
+	}
 	if pipeline != "" && pipeline != "none" {
 		options := llvm.NewPassBuilderOptions()
 		defer options.Dispose()

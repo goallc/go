@@ -45,6 +45,7 @@ type LLVMFuncContext struct {
 	LF                  llvm.Value
 	DISubprogram        llvm.Metadata
 	DebugLocations      map[src.XPos]llvm.Metadata
+	DebugValues         map[ID][]llvmDebugValue
 	Prologue            llvm.BasicBlock
 	OpenDeferRecovery   llvm.BasicBlock
 	ClosureContext      llvm.Value
@@ -4541,7 +4542,8 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		}
 		// Each new value sets its own insertion block and source location.
 		// No caller instructions need the previous value's builder state.
-		lfc.genLV(v, false)
+		value := lfc.genLV(v, false)
+		lfc.emitDebugValue(v, value)
 	}
 	lfc.setDebugLocation(BB.Pos)
 	defer lfc.b.ClearCurrentDebugLocation()
@@ -4978,7 +4980,9 @@ func LLVMCompile(f *Func) {
 	// before it walks the remaining physical and inline frames. Preserve that
 	// one physical boundary. Direct callers may be represented by Go's inline
 	// tree and are deliberately left available to LLVM's inliner.
-	if frontendNoInline || llvmIsRuntimeGorecover(f) {
+	// LowerL has been normalized by gc.Main: zero means -l disabled
+	// inlining. The LLVM inliner must honor the same choice.
+	if base.Flag.LowerL == 0 || frontendNoInline || llvmIsRuntimeGorecover(f) {
 		FCtxt.LF.AddFunctionAttr(llvmNoInlineAttribute())
 	}
 	if f.OpenDeferBits != nil {

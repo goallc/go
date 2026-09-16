@@ -12,6 +12,7 @@ import (
 	"cmd/compile/internal/reflectdata"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
+	"cmd/internal/dwarf"
 	"cmd/internal/obj"
 	"cmd/internal/src"
 	"fmt"
@@ -442,12 +443,39 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 	return sp
 }
 
+// LLVM follows these existing SSA values through optimization. Debug records
+// must never materialize an otherwise unused load or aggregate extraction.
+type llvmDebugValue struct {
+	variable, expression llvm.Metadata
+	location             llvm.DebugLoc
+}
+
+func (lfc *LLVMFuncContext) emitDebugValue(v *Value, value llvm.Value) {
+	for _, d := range lfc.DebugValues[v.ID] {
+		if pos := llvmSourcePos(v.Pos); pos.IsKnown() && pos.RelLine() != 0 {
+			d.location.Line = uint(pos.RelLine())
+		}
+		llvmDIBuilder.InsertValueAtEnd(value, d.variable, d.expression,
+			d.location, lfc.BBs[v.Block.ID])
+	}
+}
+
 func (lfc *LLVMFuncContext) emitDebugVariables() {
 	fn := lfc.F.Frontend().Func()
 	if fn == nil {
 		return
 	}
 	argNos := make(map[int]int)
+	namedSlots := make(map[llvmLocalKey][]*LocalSlot)
+	for _, slot := range lfc.F.Names {
+		root := slot
+		for root.SplitOf != nil {
+			root = root.SplitOf
+		}
+		key := llvmLocalKeyForName(root.N)
+		namedSlots[key] = append(namedSlots[key], slot)
+	}
+	lfc.DebugValues = make(map[ID][]llvmDebugValue)
 	expr := llvmDIBuilder.CreateExpression(nil)
 	for _, name := range fn.Dcl {
 		if name == nil || name.Sym() == nil || name.Type() == nil ||
@@ -515,11 +543,49 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(name.DictIndex), false).ConstantAsMetadata(),
 			}))
 
-		// Declare only a real canonical memory home. SSA-only, split,
-		// heap-promoted, captured, and inlined variables remain explicitly
-		// unavailable until a final-machine location can be proven exact.
-		if slot, ok := lfc.Locals[llvmLocalKeyForName(name)]; ok && inlIndex < 0 {
-			llvmDIBuilder.InsertDeclareAtEnd(slot.Value, diVar, expr,
+		// NamedValues already maps source variables (including split pieces) to
+		// SSA values. Describe these directly instead of an optional ABI home
+		// whose contents the backend would have to rediscover after copy elision.
+		if inlIndex < 0 && !name.Addrtaken() && name.Esc() != ir.EscHeap {
+			hasValues := false
+			for _, slot := range namedSlots[llvmLocalKeyForName(name)] {
+				offset, size := varOffset(*slot), slot.Type.Size()
+				if offset < 0 || size <= 0 || offset+size > name.Type().Size() {
+					continue
+				}
+				valueExpr := expr
+				if offset != 0 || size != name.Type().Size() {
+					valueExpr = llvmDIBuilder.CreateExpression([]uint64{
+						0x1000, uint64(offset) * 8, uint64(size) * 8, // DW_OP_LLVM_fragment
+					})
+				}
+				for _, v := range lfc.F.NamedValues[*slot] {
+					if v.Type.IsMemory() || v.Type.IsTuple() || lfc.AddressOnlyLoads[v.ID] {
+						continue
+					}
+					lfc.DebugValues[v.ID] = append(lfc.DebugValues[v.ID], llvmDebugValue{
+						diVar, valueExpr, llvm.DebugLoc{Line: uint(line), Scope: lfc.DISubprogram},
+					})
+					hasValues = true
+				}
+			}
+			if hasValues {
+				continue
+			}
+		}
+
+		// Describe a real canonical home. A heap-promoted variable lives at
+		// the address stored in its Heapaddr home, not in its original ABI
+		// slot. LLVM tracks the extra dereference through later optimization.
+		// Inlined variables remain unavailable here.
+		slot, ok := lfc.Locals[llvmLocalKeyForName(name)]
+		locationExpr := expr
+		if name.Esc() == ir.EscHeap && name.Heapaddr != nil {
+			slot, ok = lfc.Locals[llvmLocalKeyForName(name.Heapaddr)]
+			locationExpr = llvmDIBuilder.CreateExpression([]uint64{dwarf.DW_OP_deref})
+		}
+		if ok && inlIndex < 0 {
+			llvmDIBuilder.InsertDeclareAtEnd(slot.Value, diVar, locationExpr,
 				llvm.DebugLoc{Line: uint(line), Scope: lfc.DISubprogram},
 				lfc.Prologue)
 		}

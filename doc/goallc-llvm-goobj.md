@@ -242,6 +242,14 @@ header。进程内 binding 会在建立 code-generation pipeline 前读取并严
 
 ## 集成与调试边界
 
+GoObj variable locations are emitted from final machine-frame offsets and
+LLVM debug-value histories as Go linker-native DWARF4/5 location lists.
+Heap-promoted variables with a canonical heap-pointer home use an additional
+dereference. Register clobbers, unavailable values, and fragment boundaries
+limit each location's PC range. Variables without a frontend location,
+inlined-variable instances, and unsupported expressions remain unavailable;
+the backend does not infer locations from source names or ABI offsets.
+
 package 选择完全由 cmd/go 已有的 `-gcflags` 规则完成。无 pattern 的
 `-gcflags='-enablellvm'` 只作用于命令行 package；需要选择依赖时使用精确
 pattern，需要证明完整编译闭包时使用 `-gcflags=all=-enablellvm`。
@@ -369,9 +377,11 @@ cd /path/to/simple-main-package
 | 参数 | 行为 |
 | --- | --- |
 | `-enablellvm` | 选择进程内 LLVM backend |
-| `-llvm-opt-passes` | 默认 `default<O2>`；`none` 跳过 IR 优化 |
+| `-llvm-opt-passes` | Default `auto`: `default<O0>` with `-N`, otherwise `default<O2>`. An explicit pipeline overrides IR optimization selection; `none` skips IR optimization. |
 | `-llvm-keep-ir` | 保留 `<archive>.ll` 和 `<archive>.opt.ll` |
 | `-gcflags` package pattern | 精确选择需要 LLVM 的 package；`all=` 覆盖完整闭包 |
+
+`-N` also disables machine-code optimization, independently of an explicit IR pipeline. `-l` disables both Go and LLVM inlining. Required ABI, GC/statepoint, and object emission passes still run at O0. The runtime package retains Go's existing exception to `-N`.
 
 例如保留进程内优化前后的 IR：
 
