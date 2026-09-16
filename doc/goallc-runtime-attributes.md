@@ -273,22 +273,33 @@ or new capture promises; copying, instrumentation and GC effects remain.
 Optimizer tests prove forwarding across a store through the fresh result and
 retain an unmodeled control and the effectful call.
 
-Other candidates require additional call-site proofs:
+The following additional calls now receive return `noalias` when the stated
+condition is proven. No new allocation-elision, memory-effect, or capture
+contract is implied.
 
-- `makeslice`/`makeslice64`: positive element size and capacity. `makeslicecopy`
-  additionally needs a non-overflowing byte count; its fast path trusts the
-  source length. Zero-sized elements and zero capacity can use zerobase.
-- `makemap`/`makemap64`: a null supplied-header argument would prove fresh
-  header storage, whereas a non-null argument may be returned directly.
-- `convT16`/`convT32`/`convT64`: arguments outside the staticuint64s cache.
-  The cache boundary is a runtime implementation detail that needs a shared
-  contract before binding a numeric threshold in compiler code.
-- `convTstring`/`convTslice`: exclude their shared empty/nil boxes; freshness
-  would apply only to the box, never the string/slice backing storage.
-- String/slice conversions and concatenation may return the caller's scratch
-  buffer, input storage, a one-byte string cache, or empty storage. Several
-  helpers return aggregates, for which a pointer return attribute cannot
-  directly annotate only the data field.
+| Helpers | Call-site proof |
+| --- | --- |
+| `makemap`, `makemap64` | The supplied-header argument is null. Non-null/dynamic headers remain unannotated. |
+| `makeslice`, `makeslice64` | A static element type has positive size and capacity is a positive constant whose byte count fits target `int`. Length may be zero. |
+| `makeslicecopy` | The same static type proof with positive constant destination length and a byte count fitting target `int`. Source reads, copying and zero-tail initialization remain observable. |
+| `convT16`, `convT32`, `convT64` | A constant unsigned value is at least `abi.StaticUint64sCount`, shared with the runtime cache declaration. Values inside the cache or unknown values retain the existing contract. |
+| `convTstring` | SSA carries a nonempty constant string or a string construction with a positive constant length. Only the header box is fresh. |
+| `convTslice` | SSA constructs the slice from a known global/local address. A positive length alone does not establish this, since the runtime branches on the data pointer. A non-nil zero-length slice still gets a fresh header box. |
+
+For slices, signed/target-width checks also exclude negative counts, integer
+truncation and wrapped byte counts. There is no guessed dynamic range. These
+contracts apply only to ABIInternal calls; shared declarations remain unchanged.
+Alias regressions verify load forwarding with and without each model and retain
+calls with observable effects. Executable checks retain scalar-cache identity,
+independent maps/slices, copied slice contents and zero tails, shared boxed
+pointer/backing-store aliases, and live objects across GC.
+
+Remaining candidates include dynamically provable positive lengths and scalar
+values outside the cache. They need existing range information rather than a
+new ad-hoc value analysis. String/slice conversions and concatenation may return
+caller scratch storage, input storage, a one-byte string cache, or empty
+storage. Several helpers return aggregates, for which a pointer return
+attribute cannot directly annotate only the data field.
 
 No blanket pointer-parameter `noalias` is added: memmove and typed copies may
 legitimately overlap, and read-only comparison operands may be identical.
