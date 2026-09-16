@@ -310,8 +310,22 @@ Expected<bool> specializeGuards(Function &F, uint64_t Predicates) {
   // Only the guard-specialized constant path needs folding here. Keep this
   // local and analysis-free: the enclosing module pass runs before the normal
   // PassBuilder pipeline has established cross-analysis proxies.
-  for (BasicBlock &BB : F)
+  for (BasicBlock &BB : F) {
     SimplifyInstructionsInBlock(&BB);
+    // llvm.expect is an identity with a branch prediction hint. Its constant
+    // operand must reach the terminator before removing unsupported feature
+    // paths, even when no optimizing pipeline follows specialization (O0).
+    for (Instruction &I : make_early_inc_range(BB)) {
+      auto *II = dyn_cast<IntrinsicInst>(&I);
+      if (!II || (II->getIntrinsicID() != Intrinsic::expect &&
+                  II->getIntrinsicID() != Intrinsic::expect_with_probability) ||
+          !isa<ConstantInt>(II->getArgOperand(0)))
+        continue;
+      II->replaceAllUsesWith(II->getArgOperand(0));
+      II->eraseFromParent();
+    }
+    SimplifyInstructionsInBlock(&BB);
+  }
   for (BasicBlock &BB : F)
     ConstantFoldTerminator(&BB, true);
   removeUnreachableBlocks(F);
