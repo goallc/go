@@ -1813,7 +1813,16 @@ func preMallocgcDebug(size uintptr, typ *_type) unsafe.Pointer {
 				align = 1
 			}
 		}
-		return persistentalloc(size, align, &memstats.other_sys)
+		// Compiler return-alignment contracts also apply in sbrk mode.
+		align = max(align, uintptr(gc.AllocationAlignment(uint64(size), typ == nil || !typ.Pointers(), goarch.PtrSize)))
+		// persistentalloc may obtain OS-page-aligned storage, which need
+		// not be aligned to a larger Go heap page. Align the actual address,
+		// not just an offset within its chunk. This is a debug-only path.
+		if size > ^uintptr(0)-(align-1) {
+			throw("out of memory")
+		}
+		p := persistentalloc(size+align-1, 0, &memstats.other_sys)
+		return unsafe.Pointer(alignUp(uintptr(p), align))
 	}
 	if inittrace.active && inittrace.id == getg().goid {
 		// Init functions are executed sequentially in a single goroutine.

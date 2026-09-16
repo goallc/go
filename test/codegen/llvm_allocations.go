@@ -20,15 +20,15 @@ func llvmAllocDynamicSize(size uintptr) unsafe.Pointer { return llvmAllocate(siz
 func llvmAllocUnused()          { _ = llvmAllocate(8, nil, true) }
 func llvmAllocReadZero() uint64 { return *(*uint64)(llvmAllocate(8, nil, true)) }
 
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<linkname>"(i64 8, ptr null, i1 true) #[[ZERO:[0-9]+]]
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<linkname>"(i64 8, ptr null, i1 false) #[[ALLOC:[0-9]+]]
-// LLVM-DAG: call goabiinternal noalias ptr @"runtime.mallocgc<linkname>"(i64 8, ptr null, i1 %{{[^)]+}}) #[[ALLOC]]
+// LLVM-DAG: call goabiinternal noalias align 8 ptr @"runtime.mallocgc<linkname>"(i64 8, ptr null, i1 true) #[[ZERO:[0-9]+]]
+// LLVM-DAG: call goabiinternal noalias align 8 ptr @"runtime.mallocgc<linkname>"(i64 8, ptr null, i1 false) #[[ALLOC:[0-9]+]]
+// LLVM-DAG: call goabiinternal noalias align 8 ptr @"runtime.mallocgc<linkname>"(i64 8, ptr null, i1 %{{[^)]+}}) #[[ALLOC]]
 // LLVM-DAG: call goabiinternal ptr @"runtime.mallocgc<linkname>"(i64 0, ptr null, i1 true), !dbg
 // LLVM-DAG: call goabiinternal ptr @"runtime.mallocgc<linkname>"(i64 %size, ptr null, i1 true), !dbg
 // LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcTinySC2(i64 1, ptr {{.*}}, i1 true) #[[ZERO]]
-// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcSmallNoScanSC7(i64 80, ptr {{.*}}, i1 true) #[[ZERO]]
-// LLVM-DAG: call goabiinternal noalias ptr @runtime.mallocgcSmallScanNoHeaderSC7(i64 80, ptr {{.*}}, i1 true) #[[ZERO]]
-// LLVM-DAG: call goabiinternal noalias dereferenceable(128) ptr @"runtime.newobject<linkname>"(ptr @"type:[128]uint8") #[[ZERO]]
+// LLVM-DAG: call goabiinternal noalias align 16 ptr @runtime.mallocgcSmallNoScanSC7(i64 80, ptr {{.*}}, i1 true) #[[ZERO]]
+// LLVM-DAG: call goabiinternal noalias align 16 ptr @runtime.mallocgcSmallScanNoHeaderSC7(i64 80, ptr {{.*}}, i1 true) #[[ZERO]]
+// LLVM-DAG: call goabiinternal noalias align 128 dereferenceable(128) ptr @"runtime.newobject<linkname>"(ptr @"type:[128]uint8") #[[ZERO]]
 // LLVM-DAG: call goabiinternal ptr @"runtime.newobject<linkname>"(ptr %typ), !dbg
 // LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcTinySC2(i64, ptr, i1) #[[SIZE:[0-9]+]]
 // LLVM-DAG: declare goabiinternal nonnull ptr @runtime.mallocgcSmallNoScanSC7(i64, ptr, i1) #[[SIZE]]
