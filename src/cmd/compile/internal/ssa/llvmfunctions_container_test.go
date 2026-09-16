@@ -87,8 +87,9 @@ func TestLLVMFunctionContainerResults(t *testing.T) {
 								t.Fatalf("unexpected %s", attr)
 							}
 						}
-						if callee.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("noalias")).C != nil {
-							t.Fatal("shared result marked noalias")
+						fresh := tc.name == "makechan" || tc.name == "makechan64" || tc.name == "makemap_small"
+						if got := callee.GetEnumAttributeAtIndex(0, llvm.AttributeKindID("noalias")).C != nil; got != fresh {
+							t.Fatalf("noalias=%v want=%v", got, fresh)
 						}
 						abi0 := getOrInsertLLVMFunction(name+".abi0", llvmFuncSignature{Type: llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{ptr, ptr, ptr, ptr}, false), ClosureContextIndex: -1}, goABI0CallConv)
 						for _, attr := range []string{"nonnull", "range"} {
