@@ -43,6 +43,8 @@ type llvmFunctionModel struct {
 	// Audited mallocgc-family call contract: (byte size, type, needzero).
 	allocation bool
 	newObject  bool
+	// Typed boxing copies into a new allocation unless the type has zero size.
+	copiedObject bool
 }
 
 // llvmFunctionManager owns the association between exact LLVM function names,
@@ -87,6 +89,7 @@ func newLLVMFunctionManager() llvmFunctionManager {
 	writePointer := []llvm.Attribute{llvmCapturesNoneAttribute, llvmWriteOnlyAttribute}
 	nonnull := llvmModelAttribute("nonnull")
 	nonnullResult := []llvm.Attribute{nonnull}
+	freshResult := []llvm.Attribute{nonnull, llvmNoAliasAttribute}
 	boxedResult := func(bytes uint64) []llvm.Attribute {
 		return []llvm.Attribute{nonnull, GlobalCtxt.CreateEnumAttribute(llvm.AttributeKindID("dereferenceable"), bytes)}
 	}
@@ -151,8 +154,8 @@ func newLLVMFunctionManager() llvmFunctionManager {
 		"runtime.makeslice":     {result: nonnullResult},
 		"runtime.makeslice64":   {result: nonnullResult},
 		"runtime.makeslicecopy": {result: nonnullResult},
-		"runtime.convT":         {result: nonnullResult},
-		"runtime.convTnoptr":    {result: nonnullResult},
+		"runtime.convT":         {result: nonnullResult, copiedObject: true},
+		"runtime.convTnoptr":    {result: nonnullResult, copiedObject: true},
 		// Small values can use staticuint64s: readable, but not fresh/noalias.
 		"runtime.convT16":     {result: boxedResult(2)},
 		"runtime.convT32":     {result: boxedResult(4)},
@@ -163,11 +166,12 @@ func newLLVMFunctionManager() llvmFunctionManager {
 		// Normal returns are non-null, including zero-capacity channels and
 		// missing map keys (zeroVal). Map constructors may reuse the caller
 		// header; access/assignment returns shared slots, not fresh allocations.
-		"runtime.makechan":            {result: nonnullResult},
-		"runtime.makechan64":          {result: nonnullResult},
+		// Channel headers and makemap_small always allocate nonzero fresh objects.
+		"runtime.makechan":            {result: freshResult},
+		"runtime.makechan64":          {result: freshResult},
 		"runtime.makemap":             {result: nonnullResult},
 		"runtime.makemap64":           {result: nonnullResult},
-		"runtime.makemap_small":       {result: nonnullResult},
+		"runtime.makemap_small":       {result: freshResult},
 		"runtime.mapaccess1":          {result: nonnullResult},
 		"runtime.mapaccess1_fast32":   {result: nonnullResult},
 		"runtime.mapaccess1_fast64":   {result: nonnullResult},
@@ -464,7 +468,7 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 		if zero := args[2]; !zero.IsAConstantInt().IsNil() && zero.ZExtValue() != 0 {
 			kind = llvmZeroAllocAttribute
 		}
-	case model.newObject:
+	case model.newObject || model.copiedObject:
 		// Use the same static type-symbol information as Go's fixed-load
 		// rewriting. A pointer result type alone does not prove allocation size.
 		if source == nil || len(source.Args) == 0 || source.Args[0].Op != OpAddr {
@@ -476,6 +480,12 @@ func (m *llvmFunctionManager) bindCall(call, fn llvm.Value, args []llvm.Value, c
 		}
 		typ := sym.TypeInfo().Type.(*types.Type)
 		if typ.Size() <= 0 {
+			return
+		}
+		if model.copiedObject {
+			// Only the box is fresh; pointer fields still alias their original
+			// pointees. Copying and instrumentation effects remain unrestricted.
+			call.AddCallSiteAttribute(0, llvmNoAliasAttribute)
 			return
 		}
 		if m.dereferenceable == nil {

@@ -21,7 +21,7 @@ func llvmTrySend(c chan int, v int) bool {
 }
 func llvmInterfaceEqual(x, y any) bool { return x == y }
 
-// LLVM-DAG: declare goabiinternal nonnull ptr @"runtime.makechan<builtin.{{[0-9]+}}>"
+// LLVM-DAG: declare goabiinternal noalias nonnull ptr @"runtime.makechan<builtin.{{[0-9]+}}>"
 // LLVM-DAG: declare goabiinternal nonnull ptr @"runtime.makemap<builtin.{{[0-9]+}}>"
 // LLVM-DAG: declare goabiinternal nonnull ptr @"runtime.mapaccess1_faststr<builtin.{{[0-9]+}}>"
 // LLVM-DAG: declare goabiinternal nonnull ptr @"runtime.mapassign_faststr<builtin.{{[0-9]+}}>"

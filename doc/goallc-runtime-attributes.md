@@ -137,6 +137,11 @@ existing or newly allocated slots. All receive return `nonnull`, without
 restrictions on memory, synchronization, callbacks or termination.
 The `return nil` after `fatal` in fast map access is unreachable.
 `mapaccess1_fat` is excluded: its miss result is a caller-provided zero pointer.
+`makechan`, `makechan64`, and `makemap_small` additionally have return
+`noalias`: each creates a nonzero fresh header, including unbuffered or
+zero-element channels. This does not promise allocation-only effects or
+elidability. `makemap`/`makemap64` can reuse a supplied header and remain
+unrestricted for aliasing.
 The mandatory `assertE2I` similarly returns a non-null itab or panics;
 `assertE2I2` and `typeAssert` can legitimately return null.
 
@@ -256,3 +261,36 @@ The morestack entries switch and resume stacks through backend-specific control 
 `throwinit` remains in the compiler builtin declarations, but has no runtime implementation in this tree; do not assign an implementation-derived contract.
 
 `throwinit`.
+
+## Alias audit follow-up
+
+A `convT` or `convTnoptr` call with a static type descriptor of known positive
+size receives return `noalias`. This reuses the newobject type-symbol proof.
+Zero-sized types and dynamic descriptors retain the existing contract. The
+attribute describes only the new box storage: copied pointer fields still
+refer to their original pointees. Neither helper gets `allockind`, `memory`,
+or new capture promises; copying, instrumentation and GC effects remain.
+Optimizer tests prove forwarding across a store through the fresh result and
+retain an unmodeled control and the effectful call.
+
+Other candidates require additional call-site proofs:
+
+- `makeslice`/`makeslice64`: positive element size and capacity. `makeslicecopy`
+  additionally needs a non-overflowing byte count; its fast path trusts the
+  source length. Zero-sized elements and zero capacity can use zerobase.
+- `makemap`/`makemap64`: a null supplied-header argument would prove fresh
+  header storage, whereas a non-null argument may be returned directly.
+- `convT16`/`convT32`/`convT64`: arguments outside the staticuint64s cache.
+  The cache boundary is a runtime implementation detail that needs a shared
+  contract before binding a numeric threshold in compiler code.
+- `convTstring`/`convTslice`: exclude their shared empty/nil boxes; freshness
+  would apply only to the box, never the string/slice backing storage.
+- String/slice conversions and concatenation may return the caller's scratch
+  buffer, input storage, a one-byte string cache, or empty storage. Several
+  helpers return aggregates, for which a pointer return attribute cannot
+  directly annotate only the data field.
+
+No blanket pointer-parameter `noalias` is added: memmove and typed copies may
+legitimately overlap, and read-only comparison operands may be identical.
+Map lookup/assignment and assertion results may be shared. Parameter capture
+restrictions must also account for instrumentation and failure diagnostics.
