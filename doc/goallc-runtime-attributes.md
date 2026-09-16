@@ -309,9 +309,11 @@ restrictions must also account for instrumentation and failure diagnostics.
 ## Allocation alignment and readable extents
 
 Known allocation sizes use `internal/runtime/gc.AllocationAlignment`, sharing
-the runtime size-class tables rather than assuming word alignment. A span is
-heap-page aligned; the slot stride supplies its power-of-two alignment, capped
-at the heap page. Inline malloc headers reduce the user-pointer alignment.
+the generated `SizeClassToAlignment` table rather than calculating alignment
+from the slot stride in the compiler. The size-class generator calculates
+slot alignment once, capped at the heap page; compilation uses the existing
+size-to-class tables followed by this alignment lookup. Inline malloc headers
+reduce the user-pointer alignment to 8 bytes.
 The header threshold uses the target pointer width, including cross builds.
 
 Examples on a 64-bit target without ASan:

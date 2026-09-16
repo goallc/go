@@ -18,21 +18,13 @@ func AllocationAlignment(size uint64, noscan bool, ptrSize uint64) uint64 {
 	if size > MaxSmallSize-MallocHeaderSize {
 		return PageSize
 	}
-	header := uint64(0)
 	if !noscan && size > ptrSize*ptrSize*8 {
-		header = MallocHeaderSize
+		// Slots are at least 8-byte aligned; the 8-byte header preserves
+		// that guarantee but prevents any stronger user-pointer alignment.
+		return MallocHeaderSize
 	}
-	slotSize := size + header
-	var class uint8
-	if slotSize <= SmallSizeMax-8 {
-		class = SizeToSizeClass8[(slotSize+SmallSizeDiv-1)/SmallSizeDiv]
-	} else {
-		class = SizeToSizeClass128[(slotSize-SmallSizeMax+LargeSizeDiv-1)/LargeSizeDiv]
+	if size <= SmallSizeMax-8 {
+		return uint64(SizeClassToAlignment[SizeToSizeClass8[(size+SmallSizeDiv-1)/SmallSizeDiv]])
 	}
-	slotSize = uint64(SizeClassToSize[class])
-	alignment := min(slotSize&-slotSize, PageSize)
-	if header != 0 {
-		alignment = min(alignment, header&-header)
-	}
-	return alignment
+	return uint64(SizeClassToAlignment[SizeToSizeClass128[(size-SmallSizeMax+LargeSizeDiv-1)/LargeSizeDiv]])
 }

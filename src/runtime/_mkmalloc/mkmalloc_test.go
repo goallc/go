@@ -14,6 +14,15 @@ func TestNoChange(t *testing.T) {
 	classes := makeClasses()
 	sizeToSizeClass := makeSizeToSizeClass(classes)
 
+	sizeClassesFile := "../../internal/runtime/gc/sizeclasses.go"
+	wantClasses, err := os.ReadFile(sizeClassesFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustFormat(generateSizeClasses(classes)); !bytes.Equal(wantClasses, got) {
+		t.Fatalf("%s is stale; regenerate size classes", sizeClassesFile)
+	}
+
 	outfile := "../malloc_generated.go"
 	want, err := os.ReadFile(outfile)
 	if err != nil {
