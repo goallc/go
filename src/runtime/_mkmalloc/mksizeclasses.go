@@ -284,19 +284,14 @@ func printClasses(w io.Writer, classes []class) {
 	fmt.Fprintf(w, "MaxObjsPerSpan = %d\n", maxObjsPerSpan(classes))
 	fmt.Fprintf(w, "MaxSizeClassNPages = %d\n", maxNPages(classes))
 	fmt.Fprintf(w, "TinySize = %d\n", tinySize)
+	fmt.Fprintln(w, "// Malloc headers remain 8-byte aligned even on 32-bit targets.")
+	fmt.Fprintf(w, "MallocHeaderSize = %d\n", mallocHeaderSize)
 	fmt.Fprintf(w, "TinySizeClass = %d\n", sizeToSizeClass(tinySize))
 	fmt.Fprintln(w, ")")
 
 	fmt.Fprint(w, "var SizeClassToSize = [NumSizeClasses]uint16 {")
 	for _, c := range classes {
 		fmt.Fprintf(w, "%d,", c.size)
-	}
-	fmt.Fprintln(w, "}")
-
-	fmt.Fprintln(w, "// SizeClassToAlignment gives slot alignment before tiny suballocation or malloc headers.")
-	fmt.Fprint(w, "var SizeClassToAlignment = [NumSizeClasses]uint16 {")
-	for _, c := range classes {
-		fmt.Fprintf(w, "%d,", min(c.size&-c.size, 1<<pageShift))
 	}
 	fmt.Fprintln(w, "}")
 

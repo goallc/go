@@ -308,13 +308,14 @@ restrictions must also account for instrumentation and failure diagnostics.
 
 ## Allocation alignment and readable extents
 
-Known allocation sizes use `internal/runtime/gc.AllocationAlignment`, sharing
-the generated `SizeClassToAlignment` table rather than calculating alignment
-from the slot stride in the compiler. The size-class generator calculates
-slot alignment once, capped at the heap page; compilation uses the existing
-size-to-class tables followed by this alignment lookup. Inline malloc headers
-reduce the user-pointer alignment to 8 bytes.
-The header threshold uses the target pointer width, including cross builds.
+Known allocation sizes use `internal/runtime/gc.AllocationAlignment`. The
+size-class generator computes the final user-pointer guarantee, including tiny
+placement, race-mode tail placement, inline malloc headers and large allocations.
+It emits a compact range table with four columns: scanning and pointer-free
+allocations on 32-bit and 64-bit targets. Adjacent sizes with identical guarantees
+share a row. The compiler and the `sbrk` debug allocator only look up the requested
+size and select the target column; neither independently derives alignment or
+reconstructs allocation-path rules.
 
 Examples on a 64-bit target without ASan:
 

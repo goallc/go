@@ -13,6 +13,8 @@ const (
 	largeSizeDiv = 128
 	pageShift    = 13
 	tinySize     = 16
+	// Preserve 8-byte alignment for atomic fields on 32-bit targets too.
+	mallocHeaderSize = 8
 
 	// Derived constants.
 	pageSize = 1 << pageShift
