@@ -6,6 +6,10 @@ package main
 
 func undefined()
 
+// Keep references in their original functions so diagnostics test the
+// linker's per-symbol deduplication independently of backend inlining.
+//
+//go:noinline
 func defined1() int {
 	// To check multiple errors for a single symbol,
 	// reference undefined more than once.
@@ -14,6 +18,7 @@ func defined1() int {
 	return 0
 }
 
+//go:noinline
 func defined2() {
 	undefined()
 	undefined()

@@ -61,6 +61,7 @@ func main() {
 // Make sure -S prints assembly code. See issue 14515.
 func TestDashS(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
+	testenv.SkipIfLLVM(t, "requires native assembly pseudo-ops")
 	t.Parallel()
 
 	// Make a directory to work in.

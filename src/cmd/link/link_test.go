@@ -589,6 +589,7 @@ func Blah(i int) int {
 
 func TestIssue34788Android386TLSSequence(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
+	testenv.SkipIfLLVM(t, "android/386 is not a supported LLVM GoObj target")
 
 	// This is a cross-compilation test, so it doesn't make
 	// sense to run it on every GOOS/GOARCH combination. Limit
@@ -814,18 +815,25 @@ const testFuncAlignOptionSrc = `
 package main
 //go:noinline
 func foo() {
+	alignSink++
 }
 //go:noinline
 func bar() {
+	alignSink += 2
 }
 //go:noinline
 func baz() {
+	alignSink += 3
 }
 func main() {
 	foo()
 	bar()
 	baz()
+	if alignSink != 6 {
+		panic("incorrect calls")
+	}
 }
+var alignSink int
 `
 
 // TestFuncAlignOption verifies that the -funcalign option changes the function alignment

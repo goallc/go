@@ -121,6 +121,7 @@ var target = flag.String("target", "", "test disassembly of `goos/goarch` binary
 
 func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool, flags ...string) {
 	mustHaveDisasm(t)
+	testenv.SkipIfLLVM(t, "requires native instruction and source-line layout")
 	goarch := runtime.GOARCH
 	if *target != "" {
 		f := strings.Split(*target, "/")

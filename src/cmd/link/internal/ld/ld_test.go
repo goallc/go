@@ -419,6 +419,7 @@ func main() {
 
 func TestRISCVTrampolines(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
+	testenv.SkipIfLLVM(t, "linux/riscv64 is not a supported LLVM GoObj target")
 	t.Parallel()
 
 	tmpDir := t.TempDir()

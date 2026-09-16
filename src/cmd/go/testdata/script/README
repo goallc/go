@@ -405,6 +405,8 @@ The available conditions are:
 	GO_BUILDER_NAME is non-empty
 [link]
 	testenv.HasLink()
+[llvm]
+	compiler uses the LLVM backend by default
 [msan]
 	GOOS/GOARCH supports -msan
 [mustlinkext]
