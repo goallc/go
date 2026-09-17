@@ -1,307 +1,37 @@
-name: GoALLC
-
+name: GoALLC runner diagnostics
 on:
-  push:
-    branches:
-      - go1.27.master
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - edited
   workflow_dispatch:
-    inputs:
-      llvm-pr:
-        description: Optional goallc/llvm-project PR number
-        required: false
-        type: string
-
 permissions:
   contents: read
-
-concurrency:
-  group: goallc-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  PINNED_LLVM_RELEASE: goallc-llvm23.1.0-20260916T234022Z
-  PINNED_LLVM_REVISION: aae253ef449bf4ebecab42fcb0840d19cbf4f99b
-
+  actions: read
 jobs:
-  llvm-payload:
-    name: select LLVM payload
-    runs-on: ubuntu-22.04
-    timeout-minutes: 220
-    outputs:
-      mode: ${{ steps.resolve.outputs.mode }}
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
-      asset_prefix: ${{ steps.resolve.outputs.asset_prefix }}
-      revision: ${{ steps.resolve.outputs.revision }}
-      source: ${{ steps.resolve.outputs.source }}
-
-    steps:
-      - name: Check out Go
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Resolve LLVM payload
-        id: resolve
-        run: |
-          .github/scripts/resolve-llvm-payload.py \
-            --event="$GITHUB_EVENT_PATH" \
-            --github-output="$GITHUB_OUTPUT" \
-            --pinned-release="$PINNED_LLVM_RELEASE" \
-            --pinned-revision="$PINNED_LLVM_REVISION"
-
-      - name: Summarize LLVM payload
-        env:
-          LLVM_PAYLOAD_MODE: ${{ steps.resolve.outputs.mode }}
-          LLVM_PAYLOAD_SOURCE: ${{ steps.resolve.outputs.source }}
-        run: |
-          {
-            echo '## LLVM payload selection'
-            echo
-            echo "- mode: $LLVM_PAYLOAD_MODE"
-            echo "- source: $LLVM_PAYLOAD_SOURCE"
-          } >>"$GITHUB_STEP_SUMMARY"
-
-  build:
-    name: build-${{ matrix.name }}
-    needs: llvm-payload
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-22.04
-            name: linux-amd64
-          - arch: arm64
-            runner: ubuntu-22.04-arm
-            name: linux-arm64
-    env:
-      LLVM_RELEASE: ${{ needs.llvm-payload.outputs.release_tag }}
-      LLVM_REVISION: ${{ needs.llvm-payload.outputs.revision }}
-      LLVM_ARCHIVE: ${{ needs.llvm-payload.outputs.asset_prefix }}-linux-${{ matrix.arch }}.tar.zst
-      LLVM_ROOT: ${{ github.workspace }}/.goallc/llvm
-      GOCACHE: ${{ github.workspace }}/.go-build
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 5G
-
-    steps:
-      - name: Check out Go
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install bootstrap Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: 1.26.5
-          cache: false
-
-      - name: Install LLVM runtime and build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ccache \
-            libedit-dev \
-            libxml2-dev \
-            libzstd-dev \
-            ninja-build \
-            zlib1g-dev
-
-      - name: Restore ccache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: goallc-go-linux-${{ matrix.arch }}-${{ env.LLVM_REVISION }}-${{ github.sha }}
-          restore-keys: |
-            goallc-go-linux-${{ matrix.arch }}-
-
-      - name: Download selected LLVM payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          url="https://github.com/goallc/llvm-project/releases/download/$LLVM_RELEASE/$LLVM_ARCHIVE"
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output "$RUNNER_TEMP/$LLVM_ARCHIVE" "$url"
-          curl --fail --location --retry 5 --retry-all-errors \
-            --output "$RUNNER_TEMP/$LLVM_ARCHIVE.sha256" "$url.sha256"
-          (
-            cd "$RUNNER_TEMP"
-            sha256sum --check --strict "$LLVM_ARCHIVE.sha256"
-          )
-          mkdir -p "$LLVM_ROOT"
-          tar --zstd -xf "$RUNNER_TEMP/$LLVM_ARCHIVE" \
-            -C "$LLVM_ROOT" --strip-components=1
-
-      - name: Summarize selected LLVM payload
-        env:
-          LLVM_PAYLOAD_MODE: ${{ needs.llvm-payload.outputs.mode }}
-          LLVM_PAYLOAD_SOURCE: ${{ needs.llvm-payload.outputs.source }}
-        run: |
-          {
-            echo '## LLVM payload'
-            echo
-            echo "- mode: $LLVM_PAYLOAD_MODE"
-            echo "- source: $LLVM_PAYLOAD_SOURCE"
-            echo "- archive: $LLVM_ARCHIVE"
-          } >>"$GITHUB_STEP_SUMMARY"
-
-      - name: Validate LLVM payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          llvm_version="$("$LLVM_ROOT/bin/llvm-config" --version)"
-          test "$("$LLVM_ROOT/bin/llvm-config" --prefix)" = "$LLVM_ROOT"
-          [[ "$llvm_version" == 23.1.0* ]]
-          test "$("$LLVM_ROOT/bin/llvm-config" --build-mode)" = Release
-          grep -Fx "llvm_revision=$LLVM_REVISION" "$LLVM_ROOT/share/goallc/build-manifest"
-          grep -Fx "llvm_version=$llvm_version" "$LLVM_ROOT/share/goallc/build-manifest"
-          grep -Fx 'llvm_dirty=false' "$LLVM_ROOT/share/goallc/build-manifest"
-          grep -Fx 'build_type=Release' "$LLVM_ROOT/share/goallc/build-manifest"
-          for target in X86 AArch64; do
-            "$LLVM_ROOT/bin/llvm-config" --targets-built | tr ' ' '\n' | grep -Fx "$target"
-          done
-          for tool in FileCheck llc llvm-ar llvm-config opt; do
-            test -x "$LLVM_ROOT/bin/$tool"
-          done
-          test -f "$LLVM_ROOT/include/llvm-c/Core.h"
-          test -f "$LLVM_ROOT/include/llvm/Config/llvm-config.h"
-          test -f "$LLVM_ROOT/lib/cmake/llvm/LLVMConfig.cmake"
-          test -f "$LLVM_ROOT/lib/libLLVMCore.a"
-          find "$LLVM_ROOT/lib" -maxdepth 1 -name 'libLLVM.so*' -print -quit | grep .
-          if ldd "$LLVM_ROOT/bin/llc" | grep 'not found'; then
-            exit 1
-          fi
-          "$LLVM_ROOT/bin/llc" --version
-
-      - name: Provision swap for LLVM compilation
-        run: |
-          swap_file="$RUNNER_TEMP/goallc.swap"
-          sudo fallocate -l 4G "$swap_file"
-          sudo chmod 600 "$swap_file"
-          sudo mkswap "$swap_file"
-          sudo swapon "$swap_file"
-
-      - name: Build the shared SDK (all.bash build stage)
-        working-directory: src
-        shell: bash
-        env:
-          GOALLC_CCACHE: /usr/bin/ccache
-        run: |
-          set -o pipefail
-          bash ./make.bash -llvm-dir="$LLVM_ROOT" -llvm-version=23 -llvm-link=dynamic \
-            2>&1 | tee "$RUNNER_TEMP/make.log"
-
-      - name: Test pass plugin
-        run: |
-          set -euo pipefail
-          plugin_build="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin"
-          ./bin/go build -o "$plugin_build/goallc-objview" cmd/objview
-          cmake -S src/cmd/llvmplugin -B "$plugin_build" -G Ninja \
-            -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm" \
-            -DBUILD_TESTING=ON \
-            -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
-            -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
-          cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
-          ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
-
-      - name: Package shared SDK and test tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Keep generated sources, executable modes, symlinks, and the compiler's
-          # bundled plugin/libraries. The CMake build tree is not relocatable.
-          ./bin/go env GOVERSION > VERSION
-          tar --zstd -cf "$RUNNER_TEMP/goallc-sdk.tar.zst" \
-            --exclude=./.git --exclude=./.ccache --exclude=./.go-build --exclude=./.goallc \
-            --exclude=./pkg/goallc-llvmplugin --exclude=./pkg/obj .
-          tar --zstd -cf "$RUNNER_TEMP/llvm-test-tools.tar.zst" \
-            -C "$LLVM_ROOT" bin/FileCheck bin/llvm-config include share/goallc/build-manifest
-          tar --zstd -cf "$RUNNER_TEMP/go-build-cache.tar.zst" -C "$GOCACHE" .
-
-      - name: Publish shared SDK
-        uses: actions/upload-artifact@v4
-        with:
-          name: goallc-sdk-${{ matrix.arch }}
-          compression-level: 0
-          retention-days: 3
-          path: |
-            ${{ runner.temp }}/goallc-sdk.tar.zst
-            ${{ runner.temp }}/llvm-test-tools.tar.zst
-            ${{ runner.temp }}/go-build-cache.tar.zst
-
-      - name: Publish build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: make-${{ matrix.arch }}
-          path: ${{ runner.temp }}/make.log
-
-      - name: Remove LLVM qualification test swap
-        if: always()
-        shell: bash
-        run: |
-          swap_file="$RUNNER_TEMP/goallc.swap"
-          if [[ -e "$swap_file" ]]; then
-            sudo swapoff "$swap_file" || true
-            sudo rm -f "$swap_file"
-          fi
-
-      - name: Report ccache
-        if: always()
-        run: ccache -s
-
-  test:
-    name: test-linux-${{ matrix.arch }}-${{ matrix.group }}
-    needs: build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        group: [stdlib-0, stdlib-1, cmd-compile, cmd-cgo, cmd-tools, testdir-0, testdir-1, modes-crypto, modes-experiments, runtime]
-        include:
-          - arch: amd64
-            runner: ubuntu-22.04
-          - arch: arm64
-            runner: ubuntu-22.04-arm
+  reproduce:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 25
     env:
       GOROOT: ${{ github.workspace }}
       GOCACHE: ${{ github.workspace }}/.go-build
-      GO_BUILDER_NAME: goallc-linux-${{ matrix.arch }}
+      GO_BUILDER_NAME: goallc-linux-arm64
       GO_TEST_SHARDS: "2"
+      GO_TEST_SHORT: "true"
       GO_TEST_TIMEOUT_SCALE: "4"
       GOENV: "off"
-
     steps:
-      - name: Check out Go
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-
       - name: Install test dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libedit-dev libxml2-dev libzstd-dev zlib1g-dev
-
-      - name: Download shared SDK
-        uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v5
         with:
-          name: goallc-sdk-${{ matrix.arch }}
+          name: goallc-sdk-arm64
+          run-id: 35175515343
+          github-token: ${{ github.token }}
           path: ${{ runner.temp }}/sdk
-
-      - name: Restore shared SDK
-        shell: bash
+      - name: Restore exact failed SDK
         run: |
-          set -euo pipefail
           mkdir -p "$GOCACHE"
           tar --zstd -xf "$RUNNER_TEMP/sdk/go-build-cache.tar.zst" -C "$GOCACHE"
           tar --zstd -xf "$RUNNER_TEMP/sdk/goallc-sdk.tar.zst"
@@ -311,48 +41,21 @@ jobs:
           printf '%s\n' "$GITHUB_WORKSPACE/.goallc/llvm" > pkg/goallc-llvm-payload
           echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
           ./bin/go tool compile -V=full
-          .goallc/llvm/bin/FileCheck --version
-
-      - name: Select dist tests
-        env:
-          TEST_GROUP: ${{ matrix.group }}
-        run: |
-          ./bin/go tool dist test -list > "$RUNNER_TEMP/dist-tests.txt"
-          python3 .github/scripts/goallc-test-shard.py \
-            "$RUNNER_TEMP/dist-tests.txt" "$TEST_GROUP" > "$RUNNER_TEMP/selected-tests.txt"
-          cat "$RUNNER_TEMP/selected-tests.txt"
-
-      - name: Run all.bash test stage without rebuilding
-        working-directory: src
+      - name: Reproduce original testdir shard with resource telemetry
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t tests < "$RUNNER_TEMP/selected-tests.txt"
-          # JSON includes test start/end events and durations even if a package
-          # later times out; use the artifact to diagnose and rebalance shards.
-          bash ./run.bash --no-rebuild -k -json "${tests[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
-
-      - name: Summarize known failures
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo '## Known LLVM failures excluded from this run'
-            echo
-            echo '```text'
-            if [[ -f "$RUNNER_TEMP/test.log" ]]; then
-              sed -n '/LLVM known failure/p' "$RUNNER_TEMP/test.log" | sort -u
-            fi
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publish test log, selection, and exclusions
+          bash .github/scripts/goallc-resource-monitor.sh > >(tee "$RUNNER_TEMP/resources.log") 2>&1 &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; sudo dmesg -T > "$RUNNER_TEMP/kernel.log" || true' EXIT
+          cd src
+          bash ./run.bash --no-rebuild -k -json cmd/internal/testdir:0_2 2>&1 | tee "$RUNNER_TEMP/test.log"
+      - name: Publish diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-${{ matrix.arch }}-${{ matrix.group }}
+          name: runner-resource-diagnostics
           path: |
+            ${{ runner.temp }}/resources.log
+            ${{ runner.temp }}/kernel.log
             ${{ runner.temp }}/test.log
-            ${{ runner.temp }}/dist-tests.txt
-            ${{ runner.temp }}/selected-tests.txt
-            test/llvm_known_failures.json
