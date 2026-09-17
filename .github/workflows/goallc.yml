@@ -335,6 +335,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Stream samples to the job log too: runner shutdown may prevent uploads.
+          bash ../.github/scripts/goallc-resource-monitor.sh > >(tee "$RUNNER_TEMP/resources.log") 2>&1 &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true; sudo -n dmesg -T > "$RUNNER_TEMP/kernel.log" || true' EXIT
           mapfile -t tests < "$RUNNER_TEMP/selected-tests.txt"
           # JSON includes test start/end events and durations even if a package
           # later times out; use the artifact to diagnose and rebalance shards.
@@ -363,4 +367,6 @@ jobs:
             ${{ runner.temp }}/test.log
             ${{ runner.temp }}/dist-tests.txt
             ${{ runner.temp }}/selected-tests.txt
+            ${{ runner.temp }}/resources.log
+            ${{ runner.temp }}/kernel.log
             test/llvm_known_failures.json

@@ -132,6 +132,16 @@
       {
         "test": "TestLLVMReflectMethodInline",
         "reason": "expectation: LLVM retains main.lookupReflected under -gcflags=-l"
+      },
+      {
+        "test": "Test/fixedbugs/issue15141.go",
+        "reason": "resource: arm64 LLVM compilation of 256 MiB array results reached 11.5 GiB RSS before a 16 GiB runner was terminated under memory pressure; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/escape_array.go",
+        "reason": "resource: arm64 LLVM compilation of four-million-element pointer arrays reached about 5 GiB RSS, overlapping issue15141 and exhausting runner memory; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
+        "goarch": "arm64"
       }
     ],
     "internal/trace": [

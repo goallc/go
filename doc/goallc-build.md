@@ -241,6 +241,9 @@ GO_GCFLAGS=-enablellvm=false ../bin/go test cmd/internal/testdir -llvm_codegen=f
 ```
 
 CI 使用 dist 的 `-json` 输出测试开始、结束和耗时，便于定位卡住的用例和继续调整分片。
+测试阶段每十秒记录可用内存、swap、OOM 计数、内存压力、占用最高的进程及
+编译器命令；资源采样同时写入 job 日志和 artifact，结束时保存内核日志。
+runner shutdown 仅表明任务被终止，必须结合这些记录判断资源耗尽或平台中断。
 完整日志、分片选择与名单作为 CI artifact 保存。禁用名单不表示 LLVM 已支持名单中的能力。
 
 ## plugin 的构建与缓存
