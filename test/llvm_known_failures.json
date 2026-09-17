@@ -26,14 +26,6 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/fixedbugs/issue56141.go",
-        "reason": "unsupported: libFuzzer counter symbol kind"
-      },
-      {
-        "test": "Test/fixedbugs/issue56105.go",
-        "reason": "unsupported: libFuzzer counter symbol kind"
-      },
-      {
         "test": "Test/fixedbugs/issue52697.go",
         "reason": "expectation: native stack-frame limit diagnostic differs"
       },
@@ -112,10 +104,6 @@
       {
         "test": "Test/maymorestack.go",
         "reason": "unsupported: maymorestack instrumentation hook is not emitted"
-      },
-      {
-        "test": "Test/fixedbugs/issue69825.go",
-        "reason": "unsupported: libFuzzer counter symbol kind"
       },
       {
         "test": "Test/fixedbugs/issue20739.go",
