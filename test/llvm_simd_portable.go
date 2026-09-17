@@ -1,6 +1,6 @@
 //go:build amd64 || arm64
 
-// run -goexperiment simd -godebug simd=+128 -llvm-package-only
+// run -goexperiment simd -godebug simd=+128
 
 // Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style

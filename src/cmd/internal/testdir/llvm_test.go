@@ -12,23 +12,17 @@ import (
 	"internal/testenv"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
-const llvmDefaultCaseTimeoutSeconds = 300
-
-const llvmBlacklistReasonRequirement = "known unsupported capability, timeout, OOM, or slow CI case"
-
-// testLLVMReflectMethodInline leaves a dynamic reflection lookup for LLVM to
+// TestLLVMReflectMethodInline leaves a dynamic reflection lookup for LLVM to
 // inline. Its linker reachability fact must follow the lookup into the caller.
-func testLLVMReflectMethodInline(t *testing.T) {
+func TestLLVMReflectMethodInline(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 	testenv.MustHaveCGO(t)
 	switch runtime.GOOS + "/" + runtime.GOARCH {
@@ -40,7 +34,7 @@ func testLLVMReflectMethodInline(t *testing.T) {
 	configureLLVMTestToolchain(t)
 	exe := filepath.Join(t.TempDir(), "reflect-method-inline")
 	source := filepath.Join(runtime.GOROOT(), "test", "llvm_reflect_method_inline.go")
-	cmd := testenv.Command(t, goTool, "build", "-gcflags=all=-enablellvm", "-gcflags=-enablellvm -l", "-o", exe, source)
+	cmd := testenv.Command(t, goTool, "build", "-gcflags=-l", "-o", exe, source)
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("LLVM reflection executable build failed: %v\n%s", err, out)
@@ -59,31 +53,9 @@ func testLLVMReflectMethodInline(t *testing.T) {
 	}
 }
 
-type llvmPolicySet struct {
-	Blacklist         map[string]string            `json:"blacklist"`
-	PlatformBlacklist map[string]map[string]string `json:"platform_blacklist,omitempty"`
-}
-
-type llvmTestPolicy struct {
-	Codegen llvmPolicySet `json:"codegen"`
-	Run     llvmPolicySet `json:"run"`
-}
-
-type llvmTestMode struct {
-	raceMu            sync.Mutex
-	platform          string
-	policy            llvmTestPolicy
-	effective         llvmTestPolicy
-	codegenCandidates map[string]bool
-	runCandidates     map[string]bool
-}
-
-// testLLVMContentAddressableClosureExternalLink verifies that two packages can
-// inline the same closure without emitting duplicate definitions into the
-// external linker's Go object. Importing plugin keeps Go text symbols global
-// on ELF, which exposes the collision before content-addressable deduplication.
-// The symbol-level asmcheck separately covers imported generic closures.
-func testLLVMContentAddressableClosureExternalLink(t *testing.T) {
+// TestLLVMContentAddressableClosureExternalLink checks that identical imported
+// closures retain a shared content identity when linked externally.
+func TestLLVMContentAddressableClosureExternalLink(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 	testenv.MustHaveCGO(t)
 	platform := runtime.GOOS + "/" + runtime.GOARCH
@@ -147,7 +119,7 @@ func main() {
 	}
 
 	exe := filepath.Join(dir, "closurelink")
-	cmd := testenv.Command(t, goTool, "build", "-gcflags=all=-enablellvm", "-ldflags=-linkmode=external", "-o", exe, ".")
+	cmd := testenv.Command(t, goTool, "build", "-ldflags=-linkmode=external", "-o", exe, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local", "GOCACHE="+filepath.Join(dir, "cache"))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -155,7 +127,7 @@ func main() {
 	}
 	const closureName = "example.com/closurelink/shared.Apply.func1"
 	closureHash := func(pkg string) string {
-		cmd := testenv.Command(t, goTool, "list", "-export", "-gcflags=all=-enablellvm", "-f={{.Export}}", pkg)
+		cmd := testenv.Command(t, goTool, "list", "-export", "-f={{.Export}}", pkg)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local", "GOCACHE="+filepath.Join(dir, "cache"))
 		out, err := cmd.CombinedOutput()
@@ -198,261 +170,6 @@ func main() {
 	if out, err := testenv.Command(t, exe).CombinedOutput(); err != nil {
 		t.Fatalf("LLVM external-link executable failed: %v\n%s", err, out)
 	}
-}
-
-func newLLVMTestMode(t *testing.T, common testCommon) *llvmTestMode {
-	t.Helper()
-	platform := goos + "/" + goarch
-	switch platform {
-	case "darwin/arm64", "linux/amd64", "linux/arm64":
-	default:
-		t.Skipf("LLVM GoObj is not configured for %s", platform)
-	}
-	if goos != runtime.GOOS || goarch != runtime.GOARCH {
-		t.Skip("LLVM execution tests do not support cross compilation")
-	}
-	configureLLVMTestToolchain(t)
-
-	policy := readLLVMTestPolicy(t, common.gorootTestDir)
-	effective := policy
-	if err := applyLLVMPlatformPolicy("codegen", platform, &effective.Codegen); err != nil {
-		t.Fatal(err)
-	}
-	if err := applyLLVMPlatformPolicy("run", platform, &effective.Run); err != nil {
-		t.Fatal(err)
-	}
-	return &llvmTestMode{
-		platform:          platform,
-		policy:            policy,
-		effective:         effective,
-		codegenCandidates: make(map[string]bool),
-		runCandidates:     make(map[string]bool),
-	}
-}
-
-func (m *llvmTestMode) selectTest(t *testing.T, test test) bool {
-	t.Helper()
-	name := path.Join(test.dir, test.goFile)
-	switch test.action(t) {
-	case "asmcheck":
-		m.codegenCandidates[name] = true
-		return !isLLVMTestBlacklisted(t, m.effective.Codegen, name)
-	case "compile":
-		// Upstream SIMD compiler regressions also live outside codegen/.
-		// Run their original recipes with the shared LLVM compiler flags.
-		if test.dir == "simd" {
-			m.codegenCandidates[name] = true
-			return !isLLVMTestBlacklisted(t, m.effective.Codegen, name)
-		}
-		return false
-	case "run", "runoutput", "rundir", "runindir", "buildrundir", "errorcheckandrundir":
-		m.runCandidates[name] = true
-		return !isLLVMTestBlacklisted(t, m.effective.Run, name)
-	default:
-		return false
-	}
-}
-
-func (m *llvmTestMode) finish(t *testing.T) {
-	t.Helper()
-	platforms := map[string]bool{m.platform: true}
-	for platform := range m.policy.Codegen.PlatformBlacklist {
-		platforms[platform] = true
-	}
-	for platform := range m.policy.Run.PlatformBlacklist {
-		platforms[platform] = true
-	}
-	for platform := range platforms {
-		policy := m.policy
-		if err := applyLLVMPlatformPolicy("codegen", platform, &policy.Codegen); err != nil {
-			t.Fatal(err)
-		}
-		if err := applyLLVMPlatformPolicy("run", platform, &policy.Run); err != nil {
-			t.Fatal(err)
-		}
-		validateLLVMTestSet(t, "codegen", m.codegenCandidates, policy.Codegen)
-		validateLLVMTestSet(t, "run", m.runCandidates, policy.Run)
-	}
-	logLLVMTestPolicy(t, "codegen", m.codegenCandidates, m.effective.Codegen)
-	logLLVMTestPolicy(t, "run", m.runCandidates, m.effective.Run)
-	logLLVMBlacklist(t, "codegen", m.codegenCandidates, m.effective.Codegen)
-	logLLVMBlacklist(t, "run", m.runCandidates, m.effective.Run)
-	warmLLVMExecutionRuntime(t, "")
-}
-
-func warmLLVMExecutionRuntime(t *testing.T, cache string) {
-	t.Helper()
-	t.Log("warming the LLVM-compiled runtime before parallel execution tests")
-	cmd := testenv.Command(t, goTool, "install",
-		"-gcflags=all=-enablellvm",
-		"runtime",
-	)
-	cmd.Env = append(os.Environ(),
-		"GOENV=off",
-		"GOFLAGS=",
-		"GOROOT="+testenv.GOROOT(t),
-	)
-	if cache != "" {
-		cmd.Env = append(cmd.Env, "GOCACHE="+cache)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("warming LLVM runtime: %v\n%s", err, out)
-	}
-}
-
-func readLLVMPolicyFile(t *testing.T, filename string, policy any) {
-	t.Helper()
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(policy); err != nil {
-		t.Fatalf("parse %s: %v", filepath.Base(filename), err)
-	}
-}
-
-func readLLVMTestPolicy(t *testing.T, gorootTestDir string) llvmTestPolicy {
-	t.Helper()
-	var policy llvmTestPolicy
-	readLLVMPolicyFile(t, filepath.Join(gorootTestDir, "llvm_tests.json"), &policy)
-	return policy
-}
-
-func effectiveLLVMBlacklist(set llvmPolicySet, platform string) map[string]string {
-	effective := make(map[string]string, len(set.Blacklist)+len(set.PlatformBlacklist[platform]))
-	for name, reason := range set.Blacklist {
-		effective[name] = reason
-	}
-	for name, reason := range set.PlatformBlacklist[platform] {
-		effective[name] = reason
-	}
-	return effective
-}
-
-func applyLLVMPlatformPolicy(name, platform string, set *llvmPolicySet) error {
-	if set.Blacklist == nil {
-		set.Blacklist = make(map[string]string)
-	}
-	for target, entries := range set.PlatformBlacklist {
-		if strings.TrimSpace(target) == "" {
-			return fmt.Errorf("LLVM %s platform blacklist has an empty platform", name)
-		}
-		for filename, reason := range entries {
-			if strings.TrimSpace(reason) == "" {
-				return fmt.Errorf("LLVM %s platform blacklist entry %q for %s has no reason", name, filename, target)
-			}
-			if !validLLVMBlacklistReason(reason) {
-				return fmt.Errorf("LLVM %s platform blacklist entry %q for %s is not a %s", name, filename, target, llvmBlacklistReasonRequirement)
-			}
-		}
-	}
-
-	set.Blacklist = effectiveLLVMBlacklist(*set, platform)
-	return nil
-}
-
-func validateLLVMTestSet(t *testing.T, name string, candidates map[string]bool, set llvmPolicySet) {
-	t.Helper()
-	failed := false
-	for pattern, reason := range set.Blacklist {
-		if strings.TrimSpace(reason) == "" {
-			t.Errorf("LLVM %s blacklist pattern %q has no reason", name, pattern)
-			failed = true
-		}
-		if !validLLVMBlacklistReason(reason) {
-			t.Errorf("LLVM %s blacklist pattern %q is not a %s", name, pattern, llvmBlacklistReasonRequirement)
-			failed = true
-		}
-		matched := false
-		for filename := range candidates {
-			if llvmPathMatch(t, pattern, filename) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			t.Errorf("LLVM %s blacklist pattern %q matches no tests", name, pattern)
-			failed = true
-		}
-	}
-	if failed {
-		t.FailNow()
-	}
-}
-
-func validLLVMBlacklistReason(reason string) bool {
-	reason = strings.ToLower(reason)
-	return strings.Contains(reason, "timeout") ||
-		strings.Contains(reason, "out of memory") ||
-		strings.Contains(reason, "oom") ||
-		strings.Contains(reason, "slow") ||
-		strings.Contains(reason, "unsupported")
-}
-
-func isLLVMTestBlacklisted(t *testing.T, set llvmPolicySet, filename string) bool {
-	t.Helper()
-	for pattern := range set.Blacklist {
-		if llvmPathMatch(t, pattern, filename) {
-			return true
-		}
-	}
-	return false
-}
-
-func logLLVMTestPolicy(t *testing.T, name string, candidates map[string]bool, set llvmPolicySet) {
-	t.Helper()
-	black := 0
-	for filename := range candidates {
-		if isLLVMTestBlacklisted(t, set, filename) {
-			black++
-		}
-	}
-	t.Logf("LLVM %s policy: %d enabled, %d blacklisted (%d files)",
-		name, len(candidates)-black, black, len(candidates))
-}
-
-func logLLVMBlacklist(t *testing.T, name string, candidates map[string]bool, set llvmPolicySet) {
-	t.Helper()
-	for _, filename := range sortedLLVMBlacklistedTests(t, candidates, set) {
-		reason := ""
-		for pattern, candidateReason := range set.Blacklist {
-			if llvmPathMatch(t, pattern, filename) {
-				reason = candidateReason
-				break
-			}
-		}
-		t.Logf("LLVM %s blacklist result: NOT RUN test=%q reason=%q", name, filename, reason)
-	}
-}
-
-func llvmPathMatch(t *testing.T, pattern, filename string) bool {
-	t.Helper()
-	matched, err := path.Match(pattern, filename)
-	if err != nil {
-		t.Fatalf("invalid LLVM test policy pattern %q: %v", pattern, err)
-	}
-	if matched || strings.Contains(pattern, "/") {
-		return matched
-	}
-	matched, err = path.Match(pattern, path.Base(filename))
-	if err != nil {
-		t.Fatalf("invalid LLVM test policy pattern %q: %v", pattern, err)
-	}
-	return matched
-}
-
-func sortedLLVMBlacklistedTests(t *testing.T, candidates map[string]bool, set llvmPolicySet) []string {
-	t.Helper()
-	names := make([]string, 0, len(candidates))
-	for name := range candidates {
-		if isLLVMTestBlacklisted(t, set, name) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
 }
 
 func runLLVMCodegenTest(t *testing.T, source string) error {
@@ -553,6 +270,7 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 				"-p=codegen",
 				"-importcfg="+stdlibImportcfgFile(),
 				"-c=16",
+				"-enablellvm=false",
 				"-o", nativeArchive,
 				source,
 			)

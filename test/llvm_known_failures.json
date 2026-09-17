@@ -1,0 +1,373 @@
+{
+  "tests": {
+    "cmd/internal/testdir": [
+      {
+        "test": "Test/abi/result_live.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/llvm_file_backed_embed.go",
+        "reason": "harness: direct compile recipe lacks embed configuration"
+      },
+      {
+        "test": "Test/live_uintptrkeepalive.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/live2.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/live_regabi.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue77534.go",
+        "reason": "compiler: LLVM type/aggregate assertion"
+      },
+      {
+        "test": "Test/fixedbugs/issue9355.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue63505.go",
+        "reason": "compiler: LLVM type/aggregate assertion"
+      },
+      {
+        "test": "Test/fixedbugs/issue61895.go",
+        "reason": "compiler: 'main': open-coded defer stack slot .autotmp_0 was not allocated"
+      },
+      {
+        "test": "Test/fixedbugs/issue56141.go",
+        "reason": "unsupported: libFuzzer counter symbol kind"
+      },
+      {
+        "test": "Test/fixedbugs/issue56105.go",
+        "reason": "unsupported: libFuzzer counter symbol kind"
+      },
+      {
+        "test": "Test/fixedbugs/issue52697.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue45344.go",
+        "reason": "compiler: LLVM type/aggregate assertion"
+      },
+      {
+        "test": "Test/fixedbugs/issue34723.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue30908.go",
+        "reason": "unsupported: strictdups=2 detects differing generic wrapper payloads"
+      },
+      {
+        "test": "Test/fixedbugs/issue26163.go",
+        "reason": "compiler: 'init': aggregate field 0 changes LLVM representation for Go type complex128"
+      },
+      {
+        "test": "Test/fixedbugs/issue22200b.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue22200.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20780.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue25507.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20529.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20250.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20014.go",
+        "reason": "unsupported: fieldtrack metadata is not emitted"
+      },
+      {
+        "test": "Test/fixedbugs/issue15747.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/writebarrier.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/uintptrescapes2.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/opt_branchlikely.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/nowritebarrier.go",
+        "reason": "unsupported: transitive nowritebarrier diagnostics are incomplete"
+      },
+      {
+        "test": "Test/fixedbugs/bug385_64.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/nilptr5.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/nilptr3.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/nilcheck.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/maymorestack.go",
+        "reason": "unsupported: maymorestack instrumentation hook is not emitted"
+      },
+      {
+        "test": "Test/fixedbugs/issue69825.go",
+        "reason": "unsupported: libFuzzer counter symbol kind"
+      },
+      {
+        "test": "Test/fixedbugs/issue20739.go",
+        "reason": "slow: nested huge zero-size arrays took over 169 seconds to compile (native 0.01 seconds)"
+      },
+      {
+        "test": "Test/rangegen.go",
+        "reason": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
+      }
+    ],
+    "internal/trace": [
+      {
+        "test": "TestTraceStacks",
+        "reason": "metadata: time.Sleep trace stack is not matched"
+      }
+    ],
+    "runtime": [
+      {
+        "test": "TestCallersNilPointerPanic",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestBadTraceback",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestGoroutineLeakProfile",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestTracebackElision",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestTracebackArgs",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestTracebackSystem/trap",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestFunctionAlignmentTraceback",
+        "reason": "expectation: LLVM function padding differs from native INT3 padding"
+      },
+      {
+        "test": "TestGdbPython",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestGdbPythonCgo",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestGdbConst",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestGdbAutotmpTypes",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      }
+    ],
+    "runtime/pprof": [
+      {
+        "test": "TestCPUProfileRecursion",
+        "reason": "metadata: recursive/generic inline profile stack differs"
+      },
+      {
+        "test": "TestGenericsInlineLocations",
+        "reason": "metadata: recursive/generic inline profile stack differs"
+      },
+      {
+        "test": "TestTryAdd/recursion_chain_inline",
+        "reason": "metadata: recursive/generic inline profile stack differs"
+      }
+    ],
+    "cmd/addr2line": [
+      {
+        "test": "TestAddr2Line",
+        "reason": "debug: function entry line differs by one"
+      }
+    ],
+    "cmd/compile": [
+      {
+        "test": "TestScript/closure_name",
+        "reason": "expectation: native -S assembly text is unavailable"
+      }
+    ],
+    "cmd/compile/internal/dwarfgen": [
+      {
+        "test": "TestIssue75249",
+        "reason": "debug: statement markers and lexical scopes differ"
+      },
+      {
+        "test": "TestScopeRanges",
+        "reason": "debug: statement markers and lexical scopes differ"
+      }
+    ],
+    "cmd/compile/internal/ssa": [
+      {
+        "test": "TestCPUGeneratedFilesUpToDate",
+        "reason": "harness: generator needs a writable module cache under run.bash"
+      },
+      {
+        "test": "TestLLVMCPUAutomaticAndGuards",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCPUFeaturePlanMidway",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCPUFeaturePlanStrongerGuard",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCPUFeaturePlanWideCalls",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCarrylessMultiplyImmediate",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDDynamicShuffles",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDFloatConversions",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDImmediateShuffles",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDIntegerConversions",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDOrdinaryShifts",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDSaturatingConversions",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDStaticShuffles",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDWidenMultiply",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGenericSIMDElementLowering",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGenericVec128Lowering",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGenericWideSIMDLowering",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMSIMDFeatureFloor",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMWideVectorTypeWidth",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      }
+    ],
+    "cmd/compile/internal/test": [
+      {
+        "test": "TestScanfRemoval",
+        "reason": "optimization: unused scanf code is retained"
+      }
+    ],
+    "cmd/link": [
+      {
+        "test": "TestDWARF",
+        "reason": "debug: function entry line differs by one"
+      }
+    ],
+    "cmd/link/internal/ld": [
+      {
+        "test": "TestInlinedRoutineArgsVars",
+        "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
+      },
+      {
+        "test": "TestStaticTmp",
+        "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
+      },
+      {
+        "test": "TestDeadcode/globalmap",
+        "reason": "optimization: main.init retains unused main.large"
+      }
+    ]
+  },
+  "modes": {
+    "internal/runtime/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
+    "reflect:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
+    "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
+    "runtime/race:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "flag:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "net:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "os:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "os/exec:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "encoding/gob:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "flag:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "os/exec:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity"
+  }
+}
