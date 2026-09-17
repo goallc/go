@@ -43,6 +43,19 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-LABEL: define goabiinternal ptr @aggregate_byval_select(
 ; IR: @checkpoint{{.*}}ptr %slot, i64 9, i64 1,
 
+; Memory contents and loaded SSA values have different roots. Do not infer a
+; unique fixed-frame origin through loads, even if a preceding store is visible.
+; IR-LABEL: define goabiinternal ptr @memory_live(
+; IR: @checkpoint{{.*}}ptr %box, i64 17, i64 1,{{.*}}"gc-live"(ptr %box)
+; IR-LABEL: define goabiinternal ptr @loaded_heap_pointer(
+; IR: @checkpoint{{.*}}ptr %box, i64 16, i64 1,{{.*}}"gc-live"(ptr %loaded.leaf.0)
+; IR: %loaded.leaf.0.relocated = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: ret ptr %loaded.leaf.0.relocated
+; IR-LABEL: define goabiinternal ptr @loaded_stack_pointer(
+; IR: @checkpoint{{.*}}ptr %target, i64 8, i64 1,{{.*}}ptr %box, i64 16, i64 1,{{.*}}"gc-live"(ptr %loaded.leaf.0)
+; IR: %loaded.leaf.0.relocated = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: %result = load ptr, ptr %loaded.leaf.0.relocated
+
 %pair = type { ptr, ptr }
 declare goabiinternal void @observe(ptr)
 declare goabiinternal void @checkpoint()
@@ -342,6 +355,46 @@ entry:
   store ptr %old, ptr %slot
   call goabiinternal void @checkpoint()
   %address = extractvalue { i64, { ptr, i64 } } %merged, 1, 0
+  %result = load ptr, ptr %address
+  ret ptr %result
+}
+
+; Volatile loads keep these memory round trips explicit. The first case
+; keeps the carrier live; the other two clear it before the checkpoint.
+define goabiinternal ptr @memory_live(ptr %p) gc "goallc" {
+entry:
+  %box = alloca { ptr, i64 }, align 8
+  %value = insertvalue { ptr, i64 } { ptr poison, i64 1 }, ptr %p, 0
+  store { ptr, i64 } %value, ptr %box
+  call goabiinternal void @checkpoint()
+  %loaded = load volatile { ptr, i64 }, ptr %box
+  %result = extractvalue { ptr, i64 } %loaded, 0
+  ret ptr %result
+}
+
+define goabiinternal ptr @loaded_heap_pointer(ptr %p) gc "goallc" {
+entry:
+  %box = alloca { ptr, i64 }, align 8
+  %value = insertvalue { ptr, i64 } { ptr poison, i64 1 }, ptr %p, 0
+  store { ptr, i64 } %value, ptr %box
+  %loaded = load volatile { ptr, i64 }, ptr %box
+  store { ptr, i64 } zeroinitializer, ptr %box
+  call goabiinternal void @checkpoint()
+  %result = extractvalue { ptr, i64 } %loaded, 0
+  ret ptr %result
+}
+
+define goabiinternal ptr @loaded_stack_pointer(ptr %p) gc "goallc" {
+entry:
+  %target = alloca ptr, align 8
+  %box = alloca { ptr, i64 }, align 8
+  %value = insertvalue { ptr, i64 } { ptr poison, i64 1 }, ptr %target, 0
+  store { ptr, i64 } %value, ptr %box
+  %loaded = load volatile { ptr, i64 }, ptr %box
+  store { ptr, i64 } zeroinitializer, ptr %box
+  store ptr %p, ptr %target
+  call goabiinternal void @checkpoint()
+  %address = extractvalue { ptr, i64 } %loaded, 0
   %result = load ptr, ptr %address
   ret ptr %result
 }

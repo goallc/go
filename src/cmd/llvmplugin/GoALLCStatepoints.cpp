@@ -996,22 +996,17 @@ FrameAddressUseKind classifyFrameAddressUse(const Use &U) {
   return FrameAddressUseKind::FirstClass;
 }
 
-// Walk the canonical pointer SSA closure for one fixed frame object. Direct
-// GEP/cast recipes and same-object PHI/select/freeze forwarding stay inside the
-// closure. Content-liveness callers can also follow loop-carried mixed-object
-// merges so a later memory access is attributed to every possible frame base.
-// Outside a loop, the merged pointer itself is the precise dynamic root for
-// the selected object. Other callers receive mixed merges as escaping or
-// ambiguous terminal uses.
+// Consume the complete address set from fixed-frame provenance analysis; do
+// not rediscover same-object forwarding from a base's direct pointer users.
+// That misses projections hidden behind aggregate SSA. Only loop-carried
+// mixed-object merges need an additional may-alias closure for content reads:
+// they cannot participate in unique-base address rematerialization. Outside a
+// loop, the selected pointer remains the precise dynamic root.
 template <typename VisitorT>
-void visitFixedFrameAddressUses(Value &Base, VisitorT &&Visit,
-                                const LoopInfo *MixedMergeLoops,
-                                ArrayRef<Value *> KnownAddresses) {
-  SmallVector<Value *, 16> Worklist{&Base};
-  // Aggregate PHIs/selects can hide pointer projections from the direct
-  // pointer-use closure. Reuse the addresses already resolved to this base
-  // for rematerialization, so their later content accesses are included too.
-  llvm::append_range(Worklist, KnownAddresses);
+void visitFixedFrameAddressUses(ArrayRef<Value *> Addresses,
+                                const LoopInfo &LI, VisitorT &&Visit) {
+  SmallPtrSet<Value *, 16> Canonical(Addresses.begin(), Addresses.end());
+  SmallVector<Value *, 16> Worklist(Addresses);
   SmallPtrSet<Value *, 16> Seen;
   while (!Worklist.empty()) {
     Value *Address = Worklist.pop_back_val();
@@ -1019,20 +1014,19 @@ void visitFixedFrameAddressUses(Value &Base, VisitorT &&Visit,
       continue;
     for (Use &U : Address->uses()) {
       auto *I = dyn_cast<Instruction>(U.getUser());
+      // Every canonical address is already in the worklist, regardless of the
+      // SSA form that connects it to this object.
+      if (Canonical.contains(I))
+        continue;
       FrameAddressUseKind Kind = classifyFrameAddressUse(U);
       bool IsPointerMerge =
           Kind == FrameAddressUseKind::FirstClass &&
           isa_and_nonnull<PHINode, SelectInst, FreezeInst>(I);
-      bool InMixedClosure = fixedFrameProvenanceBase(Address) != &Base;
       bool FollowMixed =
-          MixedMergeLoops &&
-          (InMixedClosure ||
-           (IsPointerMerge && MixedMergeLoops->getLoopFor(I->getParent())));
-      bool IsForwarding =
-          I && isRelocatablePointerType(I->getType()) &&
-          (Kind == FrameAddressUseKind::Derivation || IsPointerMerge) &&
-          (fixedFrameProvenanceBase(I) == &Base || FollowMixed);
-      if (IsForwarding) {
+          !Canonical.contains(Address) ||
+          (IsPointerMerge && LI.getLoopFor(I->getParent()));
+      if (FollowMixed && I && isRelocatablePointerType(I->getType()) &&
+          (Kind == FrameAddressUseKind::Derivation || IsPointerMerge)) {
         Worklist.push_back(I);
         continue;
       }
@@ -3144,7 +3138,7 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
         Record.WholeLifetime = true;
       };
   visitFixedFrameAddressUses(
-      *Record.Alloca,
+      FrameAddresses.lookup(Record.Alloca), LI,
       [&](Value *Address, Use &U, Instruction *I, FrameAddressUseKind Kind) {
         if (!I) {
           Record.ActivityUnclear = true;
@@ -3172,8 +3166,7 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
         }
         addAllFrameSlots(Record.ContentUses, *I, Record);
         EnsureContentUseHasInitializedStorage(U, *I);
-      },
-      &LI, FrameAddresses.lookup(Record.Alloca));
+      });
   for (CallInst *Call : CandidateGoRetDefs)
     if (!NonGoRetCallUses.contains(Call))
       Record.GoRetDefs.push_back(Call);
@@ -3627,7 +3620,7 @@ void collectFixedArgContentAccesses(PointerFixedArgRecord &Record,
                                     const LoopInfo &LI,
                                     const FixedFrameAddressMap &FrameAddresses) {
   visitFixedFrameAddressUses(
-      *Record.Base,
+      FrameAddresses.lookup(Record.Base), LI,
       [&](Value *Address, Use &U, Instruction *I, FrameAddressUseKind Kind) {
         if (!I) {
           Record.ActivityUnclear = true;
@@ -3650,8 +3643,7 @@ void collectFixedArgContentAccesses(PointerFixedArgRecord &Record,
         }
 
         collectFrameMemoryAccesses(Record, Address, U, I);
-      },
-      &LI, FrameAddresses.lookup(Record.Base));
+      });
 }
 
 void transferByValContentLiveness(const PointerFixedArgRecord &Record,
