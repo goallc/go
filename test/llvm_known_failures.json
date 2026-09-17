@@ -144,6 +144,10 @@
       {
         "test": "Test/rangegen.go",
         "reason": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
+      },
+      {
+        "test": "TestLLVMReflectMethodInline",
+        "reason": "expectation: LLVM retains main.lookupReflected under -gcflags=-l"
       }
     ],
     "internal/trace": [
