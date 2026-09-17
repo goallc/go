@@ -1410,6 +1410,23 @@ if(BUILD_TESTING)
     IR
   )
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.AllocaEmptyArray
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-empty-array.ll"
+    IR
+  )
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.AllocaEmptyArrayAArch64
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-empty-array.ll"
+    IR
+    -mtriple=aarch64-unknown-linux-goobj
+    -frame-pointer=all
+  )
+  set_tests_properties(
+    GoALLCStatepoints.AllocaEmptyArray
+    GoALLCStatepoints.AllocaEmptyArrayAArch64
+    PROPERTIES TIMEOUT 30
+  )
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.AllocaContentLivenessAArch64
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/alloca-content-liveness.ll"
     IR

@@ -106,10 +106,6 @@
         "reason": "unsupported: maymorestack instrumentation hook is not emitted"
       },
       {
-        "test": "Test/fixedbugs/issue20739.go",
-        "reason": "slow: nested huge zero-size arrays took over 169 seconds to compile (native 0.01 seconds)"
-      },
-      {
         "test": "Test/rangegen.go",
         "reason": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
       },
