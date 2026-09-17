@@ -38,6 +38,10 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-COUNT-2: @checkpoint{{.*}}ptr %slot, i64 9, i64 1,
 ; IR-LABEL: define goabiinternal ptr @event_free_loop_killed(
 ; IR-COUNT-2: @checkpoint{{.*}}ptr %slot, i64 8, i64 1,
+; IR-LABEL: define goabiinternal ptr @aggregate_alloca_phi(
+; IR: @checkpoint{{.*}}ptr %slot, i64 9, i64 1,
+; IR-LABEL: define goabiinternal ptr @aggregate_byval_select(
+; IR: @checkpoint{{.*}}ptr %slot, i64 9, i64 1,
 
 %pair = type { ptr, ptr }
 declare goabiinternal void @observe(ptr)
@@ -302,4 +306,42 @@ loop:
 backedge:
   call goabiinternal void @checkpoint()
   br label %loop
+}
+
+; Building an aggregate is not the last use of its frame pointer. The read
+; through the merged aggregate must keep contents written after the merge
+; alive across the checkpoint, even though the frame address is rematerialized.
+define goabiinternal ptr @aggregate_alloca_phi(ptr %old, i1 %cond) gc "goallc" {
+entry:
+  %slot = alloca ptr, align 8
+  br i1 %cond, label %left, label %right
+left:
+  %a = insertvalue { ptr, i64 } { ptr poison, i64 1 }, ptr %slot, 0
+  br label %join
+right:
+  %b = insertvalue { ptr, i64 } { ptr poison, i64 2 }, ptr %slot, 0
+  br label %join
+join:
+  %merged = phi { ptr, i64 } [ %a, %left ], [ %b, %right ]
+  store ptr %old, ptr %slot
+  call goabiinternal void @checkpoint()
+  %address = extractvalue { ptr, i64 } %merged, 0
+  %result = load ptr, ptr %address
+  ret ptr %result
+}
+
+; Fixed ABI homes use the same content analysis, including projections from
+; nested aggregates forwarded through select/freeze.
+define goabiinternal ptr @aggregate_byval_select(ptr byval(ptr) align 8 %slot,
+                                                ptr %old, i1 %cond) gc "goallc" {
+entry:
+  %a = insertvalue { i64, { ptr, i64 } } { i64 1, { ptr, i64 } poison }, ptr %slot, 1, 0
+  %b = insertvalue { i64, { ptr, i64 } } { i64 2, { ptr, i64 } poison }, ptr %slot, 1, 0
+  %selected = select i1 %cond, { i64, { ptr, i64 } } %a, { i64, { ptr, i64 } } %b
+  %merged = freeze { i64, { ptr, i64 } } %selected
+  store ptr %old, ptr %slot
+  call goabiinternal void @checkpoint()
+  %address = extractvalue { i64, { ptr, i64 } } %merged, 1, 0
+  %result = load ptr, ptr %address
+  ret ptr %result
 }

@@ -1005,8 +1005,13 @@ FrameAddressUseKind classifyFrameAddressUse(const Use &U) {
 // ambiguous terminal uses.
 template <typename VisitorT>
 void visitFixedFrameAddressUses(Value &Base, VisitorT &&Visit,
-                                const LoopInfo *MixedMergeLoops = nullptr) {
+                                const LoopInfo *MixedMergeLoops,
+                                ArrayRef<Value *> KnownAddresses) {
   SmallVector<Value *, 16> Worklist{&Base};
+  // Aggregate PHIs/selects can hide pointer projections from the direct
+  // pointer-use closure. Reuse the addresses already resolved to this base
+  // for rematerialization, so their later content accesses are included too.
+  llvm::append_range(Worklist, KnownAddresses);
   SmallPtrSet<Value *, 16> Seen;
   while (!Worklist.empty()) {
     Value *Address = Worklist.pop_back_val();
@@ -1049,6 +1054,8 @@ struct FixedFrameAddressRecord {
   // erased call instruction.
   WeakTrackingVH Offset;
 };
+
+using FixedFrameAddressMap = DenseMap<Value *, SmallVector<Value *, 4>>;
 
 struct FixedFrameOffsetCacheEntry {
   Value *Base;
@@ -3111,7 +3118,8 @@ void collectFrameMemoryAccesses(RecordT &Record, Value *Address, Use &U,
 
 void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
                                      const DominatorTree &DT,
-                                     const LoopInfo &LI) {
+                                     const LoopInfo &LI,
+                                     const FixedFrameAddressMap &FrameAddresses) {
   bool HasLifetimeStart =
       llvm::any_of(Record.LifetimeMarkers, [](IntrinsicInst *Marker) {
         return Marker->getIntrinsicID() == Intrinsic::lifetime_start;
@@ -3165,7 +3173,7 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
         addAllFrameSlots(Record.ContentUses, *I, Record);
         EnsureContentUseHasInitializedStorage(U, *I);
       },
-      &LI);
+      &LI, FrameAddresses.lookup(Record.Alloca));
   for (CallInst *Call : CandidateGoRetDefs)
     if (!NonGoRetCallUses.contains(Call))
       Record.GoRetDefs.push_back(Call);
@@ -3200,9 +3208,10 @@ SmallBitVector pointerAllocaLiveInBlock(const PointerAllocaRecord &Record,
 Error computePointerAllocaActivity(
     Function &F, SmallVectorImpl<PointerAllocaRecord> &PointerAllocas,
     const SmallPtrSetImpl<const CallInst *> &SafepointCalls,
-    const DominatorTree &DT, const LoopInfo &LI) {
+    const DominatorTree &DT, const LoopInfo &LI,
+    const FixedFrameAddressMap &FrameAddresses) {
   for (PointerAllocaRecord &Record : PointerAllocas) {
-    collectPointerAllocaAddressUses(Record, DT, LI);
+    collectPointerAllocaAddressUses(Record, DT, LI, FrameAddresses);
     if (Record.ActivityUnclear)
       return createStringError(
           std::errc::not_supported,
@@ -3615,7 +3624,8 @@ Error collectPointerFixedArgs(Function &F,
 }
 
 void collectFixedArgContentAccesses(PointerFixedArgRecord &Record,
-                                    const LoopInfo &LI) {
+                                    const LoopInfo &LI,
+                                    const FixedFrameAddressMap &FrameAddresses) {
   visitFixedFrameAddressUses(
       *Record.Base,
       [&](Value *Address, Use &U, Instruction *I, FrameAddressUseKind Kind) {
@@ -3641,7 +3651,7 @@ void collectFixedArgContentAccesses(PointerFixedArgRecord &Record,
 
         collectFrameMemoryAccesses(Record, Address, U, I);
       },
-      &LI);
+      &LI, FrameAddresses.lookup(Record.Base));
 }
 
 void transferByValContentLiveness(const PointerFixedArgRecord &Record,
@@ -3776,9 +3786,10 @@ void computeGoRetContentActivity(
 Error computePointerFixedArgActivity(
     Function &F, MutableArrayRef<PointerFixedArgRecord> Records,
     const SmallPtrSetImpl<const CallInst *> &SafepointCalls,
-    const DominatorTree &DT, const LoopInfo &LI) {
+    const DominatorTree &DT, const LoopInfo &LI,
+    const FixedFrameAddressMap &FrameAddresses) {
   for (PointerFixedArgRecord &Record : Records) {
-    collectFixedArgContentAccesses(Record, LI);
+    collectFixedArgContentAccesses(Record, LI, FrameAddresses);
     if (Record.ActivityUnclear)
       return createStringError(
           std::errc::not_supported,
@@ -4240,6 +4251,9 @@ Error rewriteFunction(Function &F) {
     return FixedFrameAddressesOrErr.takeError();
   SmallVector<FixedFrameAddressRecord, 32> FixedFrameAddresses =
       std::move(*FixedFrameAddressesOrErr);
+  FixedFrameAddressMap FrameAddresses;
+  for (const FixedFrameAddressRecord &Address : FixedFrameAddresses)
+    FrameAddresses[Address.Base].push_back(Address.Address);
 
   // Aggregate preservation has now been decided and materialized. Compute one
   // final SSA live set, then choose the representation-specific repair for
@@ -4289,11 +4303,12 @@ Error rewriteFunction(Function &F) {
   for (const SafepointRecord &Record : Records)
     SafepointCalls.insert(Record.Call);
   if (Error Err = computePointerFixedArgActivity(F, PointerFixedArgs,
-                                                 SafepointCalls, DT, LI))
+                                                 SafepointCalls, DT, LI,
+                                                 FrameAddresses))
     return Err;
   if (Error Err =
           computePointerAllocaActivity(F, PointerAllocas, SafepointCalls, DT,
-                                       LI))
+                                       LI, FrameAddresses))
     return Err;
   DirectPointerLeafAliasGroups DirectPointerLeafAliases =
       buildDirectPointerLeafAliasGroups(DirectPointerLeafSources);
