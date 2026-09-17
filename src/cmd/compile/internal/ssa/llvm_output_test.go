@@ -6,10 +6,12 @@ package ssa
 
 import (
 	"bytes"
+	"internal/platform"
 	"internal/testenv"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -200,5 +202,40 @@ func MemoryResult(x int) int {
 				t.Errorf("%s: missing SSA description for %s (%s)\n%s", suffix, tc.name, tc.expression, data)
 			}
 		}
+	}
+}
+
+// Lifecycle markers and race exit instrumentation can separate aggregate
+// result reads from their ABI stores. Neither path may create enormous LLVM
+// first-class values, including when optimization is disabled.
+func TestLLVMMemorySnapshot(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	source := filepath.Join(runtime.GOROOT(), "test", "llvm_memory_snapshot.go")
+	for _, mode := range []string{"plain", "race"} {
+		t.Run(mode, func(t *testing.T) {
+			if mode == "race" {
+				testenv.MustHaveCGO(t)
+				if !platform.RaceDetectorSupported(runtime.GOOS, runtime.GOARCH) {
+					t.Skip("race detector not supported")
+				}
+			}
+			for _, flags := range []string{"-enablellvm", "-enablellvm -N -l"} {
+				t.Run(flags, func(t *testing.T) {
+					exe := filepath.Join(t.TempDir(), "snapshot.exe")
+					args := []string{"build", "-gcflags=" + flags, "-o", exe}
+					if mode == "race" {
+						args = append(args, "-race")
+					}
+					args = append(args, source)
+					cmd := testenv.Command(t, testenv.GoToolPath(t), args...)
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("build: %v\n%s", err, out)
+					}
+					if out, err := testenv.Command(t, exe).CombinedOutput(); err != nil {
+						t.Fatalf("run: %v\n%s", err, out)
+					}
+				})
+			}
+		})
 	}
 }

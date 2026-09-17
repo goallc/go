@@ -27,6 +27,7 @@ type LLVMFuncContext struct {
 	BBs                 map[ID]llvm.BasicBlock
 	Vs                  map[ID]llvm.Value
 	AddressOnlyLoads    map[ID]bool
+	MemorySnapshots     map[ID]llvmStackSlot
 	Locals              map[llvmLocalKey]llvmStackSlot
 	LocalLifetimeValues map[ID]bool
 	LocalLifetimeBlocks map[ID][]llvmLocalKey
@@ -117,10 +118,6 @@ const goCPURequiresMD = "goallc.cpu.requires"
 const goCPURequireAnchorMD = "goallc.cpu.require-anchor"
 const goCPUMultiversionAttr = "goallc.cpu.multiversion"
 
-// Keep fixed-size memmoves within the store expansion limits of the supported
-// LLVM targets. Larger moves must use runtime.memmove rather than a libc symbol,
-// which the GoObj pipeline cannot resolve.
-const llvmInlineMemmoveLimit = 64
 const llvmAttributeFunctionIndex = -1
 
 type llvmFuncSignature struct {
@@ -1230,6 +1227,26 @@ func (lfc *LLVMFuncContext) llvmMemoryPointer(v *Value, arg int) llvm.Value {
 	return lfc.llvmAddressPointer(v, lfc.GenLV(v.Args[arg]), v.Args[arg].Type, fmt.Sprintf("%s.arg%d.address", v, arg))
 }
 
+func (lfc *LLVMFuncContext) llvmLoadPointer(v *Value) llvm.Value {
+	addr := lfc.GenLV(v.Args[0])
+	if v.Op == OpDereference {
+		if key, ok := lfc.DeferResultKeys[v.Args[0].ID]; ok {
+			home, ok := lfc.Locals[key]
+			if !ok {
+				v.Fatalf("named defer result has no LLVM memory home")
+			}
+			// Panic recovery resumes at this dereference without following
+			// the normal LLVM edge from the suspended call. Reload the heap
+			// result address from its stable stack home instead of relying on
+			// an SSA register value that the recovery transfer bypassed.
+			addr = lfc.b.CreateLoad(getLLVMType(home.Type), home.Value, v.String()+".defer.addr")
+			addr.SetAlignment(int(home.Type.Alignment()))
+			addr.SetVolatile(true)
+		}
+	}
+	return lfc.llvmAddressPointer(v, addr, v.Args[0].Type, v.String()+".addr")
+}
+
 func (lfc *LLVMFuncContext) isDeferResultAddress(v *Value) bool {
 	for v != nil {
 		switch v.Op {
@@ -1267,22 +1284,29 @@ func (lfc *LLVMFuncContext) isOpenDeferAddress(v *Value) bool {
 	return false
 }
 
+func (lfc *LLVMFuncContext) llvmMemoryVolatile(dst *Value) uint64 {
+	if lfc.isDeferResultAddress(dst) || lfc.isOpenDeferAddress(dst) {
+		return 1
+	}
+	return 0
+}
+
 func (lfc *LLVMFuncContext) llvmZero(v *Value) llvm.Value {
 	size, align := llvmMemoryOpInfo(v)
 	dst := lfc.llvmMemoryPointer(v, 0)
 	length := lfc.llvmMemoryLength(v, size)
-	volatile := uint64(0)
-	if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
-		volatile = 1
-	}
+	return lfc.llvmClearMemory(dst, length, align, lfc.llvmMemoryVolatile(v.Args[0]))
+}
+
+func (lfc *LLVMFuncContext) llvmClearMemory(dst, length llvm.Value, align int, volatile uint64) llvm.Value {
 	sig := llvm.FunctionType(
 		GlobalCtxt.VoidType(),
 		[]llvm.Type{dst.Type(), GlobalCtxt.Int8Type(), length.Type(), GlobalCtxt.Int1Type()},
 		false,
 	)
-	name := "llvm.memset.inline.p0.i64"
+	name := "llvm.memset.p0.i64"
 	if length.Type().IntTypeWidth() == 32 {
-		name = "llvm.memset.inline.p0.i32"
+		name = "llvm.memset.p0.i32"
 	}
 	fn := getOrInsertLLVMIntrinsic(name, sig)
 	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
@@ -1295,47 +1319,11 @@ func (lfc *LLVMFuncContext) llvmZero(v *Value) llvm.Value {
 	return call
 }
 
-func (lfc *LLVMFuncContext) llvmRuntimeMemmove(dst, src, length llvm.Value) llvm.Value {
-	sig := llvmFuncSignature{
-		Type: llvm.FunctionType(
-			GlobalCtxt.VoidType(),
-			[]llvm.Type{dst.Type(), src.Type(), length.Type()},
-			false,
-		),
-		ReturnType:          GlobalCtxt.VoidType(),
-		ClosureContextIndex: -1,
-	}
-	fn := getOrInsertLLVMABISymbolRef("runtime.memmove", obj.ABIInternal, sig, goABIInternalCallConv)
-	call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{dst, src, length}, "")
-	call.SetInstructionCallConv(goABIInternalCallConv)
-	return call
-}
-
+// Keep memory operations visible to LLVM's memory optimizations. Target
+// instruction selection chooses inline code or a Go runtime call afterwards.
 func (lfc *LLVMFuncContext) llvmCopyFixedMemory(dst, src llvm.Value, size int64, align int) llvm.Value {
-	lengthType := getLLVMType(types.Types[types.TUINTPTR])
-	length := llvm.ConstInt(lengthType, uint64(size), false)
-	if size > llvmInlineMemmoveLimit {
-		return lfc.llvmRuntimeMemmove(dst, src, length)
-	}
-	sig := llvm.FunctionType(
-		GlobalCtxt.VoidType(),
-		[]llvm.Type{dst.Type(), src.Type(), length.Type(), GlobalCtxt.Int1Type()},
-		false,
-	)
-	name := "llvm.memmove.p0.p0.i64"
-	if length.Type().IntTypeWidth() == 32 {
-		name = "llvm.memmove.p0.p0.i32"
-	}
-	fn := getOrInsertLLVMIntrinsic(name, sig)
-	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
-		dst,
-		src,
-		length,
-		llvm.ConstInt(GlobalCtxt.Int1Type(), 0, false),
-	}, "")
-	call.SetInstrParamAlignment(1, align)
-	call.SetInstrParamAlignment(2, align)
-	return call
+	length := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(size), false)
+	return lfc.llvmCopyMemory(dst, src, length, align, 0)
 }
 
 func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
@@ -1343,10 +1331,10 @@ func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
 	dst := lfc.llvmMemoryPointer(v, 0)
 	src := lfc.llvmMemoryPointer(v, 1)
 	length := lfc.llvmMemoryLength(v, size)
-	if size > llvmInlineMemmoveLimit {
-		return lfc.llvmRuntimeMemmove(dst, src, length)
-	}
+	return lfc.llvmCopyMemory(dst, src, length, align, lfc.llvmMemoryVolatile(v.Args[0]))
+}
 
+func (lfc *LLVMFuncContext) llvmCopyMemory(dst, src, length llvm.Value, align int, volatile uint64) llvm.Value {
 	sig := llvm.FunctionType(
 		GlobalCtxt.VoidType(),
 		[]llvm.Type{dst.Type(), src.Type(), length.Type(), GlobalCtxt.Int1Type()},
@@ -1357,10 +1345,6 @@ func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
 		name = "llvm.memmove.p0.p0.i32"
 	}
 	fn := getOrInsertLLVMIntrinsic(name, sig)
-	volatile := uint64(0)
-	if lfc.isDeferResultAddress(v.Args[0]) || lfc.isOpenDeferAddress(v.Args[0]) {
-		volatile = 1
-	}
 	call := lfc.b.CreateCall(sig, fn, []llvm.Value{
 		dst,
 		src,
@@ -2961,15 +2945,22 @@ func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *
 	return llvm.Value{}, nil
 }
 
-func llvmCanForwardMemorySource(v, value *Value, logical *types.Type) bool {
+func llvmIsMemorySource(value *Value, logical *types.Type) bool {
 	return types.Identical(value.Type, logical) &&
-		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0 &&
-		value.MemoryArg() == v.MemoryArg()
+		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0
+}
+
+func llvmCanForwardMemorySource(v, value *Value, logical *types.Type) bool {
+	return llvmIsMemorySource(value, logical) && value.MemoryArg() == v.MemoryArg()
 }
 
 func (lfc *LLVMFuncContext) llvmByValCallArgument(v, argValue *Value, index int, logical *types.Type, param llvmParamSignature) llvm.Value {
 	if !param.ByVal || logical.Size() == 0 {
 		v.Fatalf("argument %d is not a non-empty byval parameter", index)
+	}
+
+	if slot, ok := lfc.MemorySnapshots[argValue.ID]; ok {
+		return slot.Value
 	}
 
 	// Preserve an existing Go memory source when no memory effect separates its
@@ -3042,6 +3033,10 @@ func (lfc *LLVMFuncContext) storeMemoryResult(v, value *Value, index int) {
 	}
 	logical := lfc.F.OwnAux.TypeOfResult(int64(index))
 	dst := lfc.LF.Param(result.ParamIndex)
+	if slot, ok := lfc.MemorySnapshots[value.ID]; ok {
+		lfc.llvmCopyFixedMemory(dst, slot.Value, logical.Size(), result.Alignment)
+		return
+	}
 	if llvmCanForwardMemorySource(v, value, logical) {
 		src := lfc.GenLV(value.Args[0])
 		if src.Type().TypeKind() != llvm.PointerTypeKind {
@@ -3473,6 +3468,9 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		args = append(args, arg)
 	}
 	args = append(args, lfc.llvmMemoryResultCallArguments(v, sig, aux)...)
+	// Keep runtime.memmove and runtime.memclrNoHeapPointers as calls. Their
+	// contract includes indivisible pointer-sized writes when suitably aligned,
+	// which ordinary LLVM memory intrinsics do not guarantee.
 	name := v.String()
 	if sig.ReturnCount == 0 {
 		name = ""
@@ -4314,23 +4312,7 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 			// pointer-sized storage but expose the callable pointer to LLVM.
 			typ = GlobalCtxt.PointerType(0)
 		}
-		addr := arg0()
-		if v.Op == OpDereference {
-			if key, ok := lfc.DeferResultKeys[v.Args[0].ID]; ok {
-				home, ok := lfc.Locals[key]
-				if !ok {
-					v.Fatalf("named defer result has no LLVM memory home")
-				}
-				// Panic recovery resumes at this dereference without following
-				// the normal LLVM edge from the suspended call. Reload the heap
-				// result address from its stable stack home instead of relying on
-				// an SSA register value that the recovery transfer bypassed.
-				addr = lfc.b.CreateLoad(getLLVMType(home.Type), home.Value, v.String()+".defer.addr")
-				addr.SetAlignment(int(home.Type.Alignment()))
-				addr.SetVolatile(true)
-			}
-		}
-		addr = lfc.llvmAddressPointer(v, addr, v.Args[0].Type, v.String()+".addr")
+		addr := lfc.llvmLoadPointer(v)
 		lVal = lfc.b.CreateLoad(typ, addr, v.String())
 		if v.Op == OpLoad {
 			lfc.markCPUFeatureGuard(v, lVal)
@@ -4546,7 +4528,17 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		lfc.llvmLifetimeStart(lfc.Locals[key])
 	}
 	for _, v := range values {
-		if v.Op == OpSP || lfc.AddressOnlyLoads[v.ID] {
+		if v.Op == OpSP {
+			continue
+		}
+		if lfc.AddressOnlyLoads[v.ID] {
+			if slot, ok := lfc.MemorySnapshots[v.ID]; ok {
+				lfc.setDebugLocation(v.Pos)
+				src := lfc.llvmLoadPointer(v)
+				lfc.llvmLifetimeStart(slot)
+				length := lfc.llvmMemoryLength(v, slot.Type.Size())
+				lfc.llvmCopyMemory(slot.Value, src, length, int(slot.Type.Alignment()), lfc.llvmMemoryVolatile(v.Args[0]))
+			}
 			continue
 		}
 		// Each new value sets its own insertion block and source location.
@@ -5357,10 +5349,24 @@ func LLVMCompile(f *Func) {
 	// Reserve every destination before call emission; ordinary SelectN loads
 	// from the same object that SelectNAddr exposes by address.
 	// Count value uses replaced by source addresses in the same ABI lowering.
-	// Loads with other consumers must still be emitted at their original memory
-	// position. In particular, a later call cannot reuse a snapshot's address
-	// when its memory token differs from the load's token.
+	// Keep non-SSA-able snapshots in memory if an intervening effect prevents
+	// direct source forwarding. A first-class aggregate load can otherwise
+	// exceed SelectionDAG's result-count limit, for example across racefuncexit.
 	addressUses := make(map[*Value]int32)
+	needsSnapshot := make(map[*Value]bool)
+	var addressOrder []*Value
+	recordAddressUse := func(use, value *Value, logical *types.Type) {
+		if !llvmIsMemorySource(value, logical) {
+			return
+		}
+		if addressUses[value] == 0 {
+			addressOrder = append(addressOrder, value)
+		}
+		addressUses[value]++
+		if use.MemoryArg() != value.MemoryArg() {
+			needsSnapshot[value] = true
+		}
+	}
 	for _, BB := range f.Blocks {
 		for _, call := range BB.Values {
 			argStart := 0
@@ -5373,8 +5379,8 @@ func LLVMCompile(f *Func) {
 			case OpMakeResult:
 				for i, result := range FCtxt.Results {
 					value := call.Args[i]
-					if result.InMemory && llvmCanForwardMemorySource(call, value, f.OwnAux.TypeOfResult(int64(i))) {
-						addressUses[value]++
+					if result.InMemory {
+						recordAddressUse(call, value, f.OwnAux.TypeOfResult(int64(i)))
 					}
 				}
 				continue
@@ -5388,8 +5394,8 @@ func LLVMCompile(f *Func) {
 			callSig := llvmSignature(aux)
 			for i, param := range callSig.Params {
 				value := call.Args[argStart+i]
-				if param.ByVal && llvmCanForwardMemorySource(call, value, aux.TypeOfArg(int64(i))) {
-					addressUses[value]++
+				if param.ByVal {
+					recordAddressUse(call, value, aux.TypeOfArg(int64(i)))
 				}
 			}
 			for index, result := range callSig.Results {
@@ -5420,17 +5426,28 @@ func LLVMCompile(f *Func) {
 	}
 
 	FCtxt.AddressOnlyLoads = make(map[ID]bool, len(addressUses))
-	for value, uses := range addressUses {
-		// Defer recovery loads carry volatile/reload semantics even when ABI
-		// consumers only need an address. Preserve that existing lowering.
+	FCtxt.MemorySnapshots = make(map[ID]llvmStackSlot)
+	for _, value := range addressOrder {
+		// Recovery must still reload the result address and observe volatile
+		// storage. Use a snapshot instead of forwarding those addresses.
 		address := value.Args[0]
 		_, deferResult := FCtxt.DeferResultKeys[address.ID]
-		if deferResult || FCtxt.isDeferResultAddress(address) || FCtxt.isOpenDeferAddress(address) {
-			continue
+		reload := deferResult || FCtxt.llvmMemoryVolatile(address) != 0
+		if addressUses[value] != value.Uses {
+			continue // Other consumers still need the first-class value.
 		}
-		if uses == value.Uses {
-			FCtxt.AddressOnlyLoads[value.ID] = true
+		if needsSnapshot[value] || reload {
+			if CanSSA(value.Type) {
+				continue
+			}
+			slot := llvmStackSlot{
+				Value: FCtxt.b.CreateAlloca(getLLVMType(value.Type), value.String()+".snapshot"),
+				Type:  value.Type,
+			}
+			slot.Value.SetAlignment(int(value.Type.Alignment()))
+			FCtxt.MemorySnapshots[value.ID] = slot
 		}
+		FCtxt.AddressOnlyLoads[value.ID] = true
 	}
 
 	// SelectNAddr for a register result still needs an addressable local copy.
@@ -5485,6 +5502,15 @@ func LLVMCompile(f *Func) {
 			slot, ok := FCtxt.Locals[llvmLocalKeyForName(name)]
 			if !ok {
 				f.fe.Fatalf(f.Entry.Pos, "open-coded defer stack slot %v was not allocated", name)
+			}
+			if !CanSSA(slot.Type) {
+				length := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(slot.Type.Size()), false)
+				isVolatile := uint64(0)
+				if volatile {
+					isVolatile = 1
+				}
+				FCtxt.llvmClearMemory(slot.Value, length, int(slot.Type.Alignment()), isVolatile)
+				return
 			}
 			store := FCtxt.b.CreateStore(llvm.ConstNull(getLLVMType(slot.Type)), slot.Value)
 			store.SetAlignment(int(slot.Type.Alignment()))

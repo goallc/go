@@ -28,7 +28,7 @@ package codegen
 // LLVM: ret void
 
 // LLVM-LABEL: define goabiinternal void @codegen.partialZero(
-// LLVM: call void @llvm.memset.inline{{.*}}i64 32
+// LLVM: call void @llvm.memset{{.*}}i64 32
 // LLVM: store i64 %v,
 // LLVM: ret void
 

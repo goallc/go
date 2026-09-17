@@ -19,7 +19,7 @@ func deadAutoObserve(*[128]byte)
 // An address passed to a logical call must retain its initialized storage.
 // LLVM-LABEL: define goabiinternal void @codegen.liveAutoCall(
 // LLVM: alloca [128 x i8]
-// LLVM: call void @llvm.memset.inline
+// LLVM: call void @llvm.memset
 // LLVM: call goabiinternal void @codegen.deadAutoObserve(ptr
 // LLVM: ret void
 

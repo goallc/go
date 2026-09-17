@@ -21,7 +21,7 @@ func lifetimeSafepoint()
 // A loop-carried object's lifetime must not restart at its later uses.
 // LLVM-LABEL: define goabiinternal void @codegen.lifetimeCarried(
 // LLVM: call void @llvm.lifetime.start.p0(ptr
-// LLVM: call void @llvm.memset.inline.p0.i64(
+// LLVM: call void @llvm.memset.p0.i64(
 // LLVM: br label
 // LLVM-NOT: @llvm.lifetime.start
 // LLVM: call goabiinternal void @codegen.lifetimeObserve(
@@ -35,7 +35,7 @@ func lifetimeSafepoint()
 // LLVM: br label
 // LLVM: phi i64
 // LLVM: call void @llvm.lifetime.start.p0(ptr
-// LLVM: call void @llvm.memset.inline.p0.i64(
+// LLVM: call void @llvm.memset.p0.i64(
 // LLVM: call goabiinternal void @codegen.lifetimeObserve(
 // LLVM-NOT: @llvm.lifetime.start
 // LLVM: ret void
@@ -49,7 +49,7 @@ func lifetimeSafepoint()
 // LLVM: br i1
 // LLVM: ret void
 // LLVM: call void @llvm.lifetime.start.p0(ptr
-// LLVM: call void @llvm.memset.inline.p0.i64(
+// LLVM: call void @llvm.memset.p0.i64(
 // LLVM: call goabiinternal void @codegen.lifetimeObserve(
 // LLVM-NOT: @llvm.lifetime.start
 // LLVM: call goabiinternal void @codegen.lifetimeObserve(
@@ -63,7 +63,7 @@ func lifetimeSafepoint()
 // LLVM-OPT: call goabiinternal void @codegen.lifetimeSafepoint()
 // LLVM-OPT: br i1
 // LLVM-OPT: call void @llvm.lifetime.start.p0(ptr
-// LLVM-OPT: call void @llvm.memset.inline.p0.i64(
+// LLVM-OPT: call void @llvm.memset.p0.i64(
 // LLVM-OPT: call goabiinternal void @codegen.lifetimeObserve(
 // LLVM-OPT-NOT: @llvm.lifetime.start
 // LLVM-OPT: call goabiinternal void @codegen.lifetimeObserve(
