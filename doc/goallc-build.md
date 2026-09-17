@@ -194,8 +194,17 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 `-gcflags=all=-enablellvm=false`。vendored bindings 默认选择 LLVM 23 和动态链接，
 普通 `go test cmd/...` 无需额外的 `llvm23,dynamicllvm` build tags。
 
-CI 在 Linux amd64、arm64 上执行 `src/all.bash`，不再通过独立的 `TestLLVM`
-入口筛选 recipe 或重复运行标准库。testdir 保留原生 `Test` 入口及所有 recipe 类型；
+CI 在 Linux amd64、arm64 上分别执行一次 `make.bash`，共享 SDK 后用
+`run.bash --no-rebuild` 并行运行测试，这是 `all.bash` 的两个原有阶段。
+每个架构分为标准库、cmd、runtime、两个 testdir 分片、特殊构建模式六组。
+分组来自同一份 `dist test -list`，每个条目只分配给一组；新增测试自动参与。
+使用 `GO_BUILDER_NAME` 避免每组重复构建工具链，`GO_TEST_SHARDS=2` 使用上游
+原有 testdir 分片。SDK 包含生成的源码及 host tools 下的 LLVM 插件/动态库，
+LLVM 头文件、FileCheck 和 llvm-config 一起传递；恢复时更新头文件链接，
+CMake 构建目录不跨任务复制。
+SDK 和 Go 构建缓存按架构隔离，通过同一次 workflow 的 artifact 传递；
+复用 make 阶段的标准库缓存，测试包及不同构建模式仍按需编译。
+不再通过独立的 `TestLLVM` 入口筛选 recipe 或重复运行标准库。testdir 保留原生 `Test` 入口及所有 recipe 类型；
 `asmcheck` 使用完整 LLVM pipeline，并通过 `-llvm-keep-ir` 检查 LLVM FileCheck
 指令。原生汇编指令不会被误当作 LLVM IR 预期。
 
