@@ -576,7 +576,8 @@ func (l *llvmDataLowerer) globalName(s *obj.LSym) string {
 func llvmDataSymbolKindSupported(kind objabi.SymKind) bool {
 	switch kind {
 	case objabi.SRODATA, objabi.SRODATAFIPS, objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS,
-		objabi.SDATA, objabi.SDATAFIPS, objabi.SBSS, objabi.SNOPTRBSS, objabi.SCOVERAGE_COUNTER:
+		objabi.SDATA, objabi.SDATAFIPS, objabi.SBSS, objabi.SNOPTRBSS,
+		objabi.SLIBFUZZER_8BIT_COUNTER, objabi.SCOVERAGE_COUNTER:
 		return true
 	default:
 		return false
@@ -801,6 +802,8 @@ func llvmDataSection(s *obj.LSym) string {
 		return ".bss"
 	case objabi.SNOPTRBSS:
 		return ".noptrbss"
+	case objabi.SLIBFUZZER_8BIT_COUNTER:
+		return ".noptrbss.libfuzzer_8bit_counter"
 	case objabi.SCOVERAGE_COUNTER:
 		return ".noptrbss.coverage_counter"
 	default:
