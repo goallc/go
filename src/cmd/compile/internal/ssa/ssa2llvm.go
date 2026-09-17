@@ -27,6 +27,7 @@ type LLVMFuncContext struct {
 	BBs                 map[ID]llvm.BasicBlock
 	Vs                  map[ID]llvm.Value
 	AddressOnlyLoads    map[ID]bool
+	MemorySnapshots     map[ID]llvmStackSlot
 	Locals              map[llvmLocalKey]llvmStackSlot
 	LocalLifetimeValues map[ID]bool
 	LocalLifetimeBlocks map[ID][]llvmLocalKey
@@ -2961,15 +2962,22 @@ func (lfc *LLVMFuncContext) paramForArgNameAndType(name *ir.Name) (llvm.Value, *
 	return llvm.Value{}, nil
 }
 
-func llvmCanForwardMemorySource(v, value *Value, logical *types.Type) bool {
+func llvmIsMemorySource(value *Value, logical *types.Type) bool {
 	return types.Identical(value.Type, logical) &&
-		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0 &&
-		value.MemoryArg() == v.MemoryArg()
+		(value.Op == OpLoad || value.Op == OpDereference) && len(value.Args) != 0
+}
+
+func llvmCanForwardMemorySource(v, value *Value, logical *types.Type) bool {
+	return llvmIsMemorySource(value, logical) && value.MemoryArg() == v.MemoryArg()
 }
 
 func (lfc *LLVMFuncContext) llvmByValCallArgument(v, argValue *Value, index int, logical *types.Type, param llvmParamSignature) llvm.Value {
 	if !param.ByVal || logical.Size() == 0 {
 		v.Fatalf("argument %d is not a non-empty byval parameter", index)
+	}
+
+	if slot, ok := lfc.MemorySnapshots[argValue.ID]; ok {
+		return slot.Value
 	}
 
 	// Preserve an existing Go memory source when no memory effect separates its
@@ -3042,6 +3050,10 @@ func (lfc *LLVMFuncContext) storeMemoryResult(v, value *Value, index int) {
 	}
 	logical := lfc.F.OwnAux.TypeOfResult(int64(index))
 	dst := lfc.LF.Param(result.ParamIndex)
+	if slot, ok := lfc.MemorySnapshots[value.ID]; ok {
+		lfc.llvmCopyFixedMemory(dst, slot.Value, logical.Size(), result.Alignment)
+		return
+	}
 	if llvmCanForwardMemorySource(v, value, logical) {
 		src := lfc.GenLV(value.Args[0])
 		if src.Type().TypeKind() != llvm.PointerTypeKind {
@@ -4546,7 +4558,16 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 		lfc.llvmLifetimeStart(lfc.Locals[key])
 	}
 	for _, v := range values {
-		if v.Op == OpSP || lfc.AddressOnlyLoads[v.ID] {
+		if v.Op == OpSP {
+			continue
+		}
+		if lfc.AddressOnlyLoads[v.ID] {
+			if slot, ok := lfc.MemorySnapshots[v.ID]; ok {
+				lfc.setDebugLocation(v.Pos)
+				src := lfc.llvmMemoryPointer(v, 0)
+				lfc.llvmLifetimeStart(slot)
+				lfc.llvmCopyFixedMemory(slot.Value, src, slot.Type.Size(), int(slot.Type.Alignment()))
+			}
 			continue
 		}
 		// Each new value sets its own insertion block and source location.
@@ -5357,10 +5378,24 @@ func LLVMCompile(f *Func) {
 	// Reserve every destination before call emission; ordinary SelectN loads
 	// from the same object that SelectNAddr exposes by address.
 	// Count value uses replaced by source addresses in the same ABI lowering.
-	// Loads with other consumers must still be emitted at their original memory
-	// position. In particular, a later call cannot reuse a snapshot's address
-	// when its memory token differs from the load's token.
+	// Keep non-SSA-able snapshots in memory if an intervening effect prevents
+	// direct source forwarding. A first-class aggregate load can otherwise
+	// exceed SelectionDAG's result-count limit, for example across racefuncexit.
 	addressUses := make(map[*Value]int32)
+	needsSnapshot := make(map[*Value]bool)
+	var addressOrder []*Value
+	recordAddressUse := func(use, value *Value, logical *types.Type) {
+		if !llvmIsMemorySource(value, logical) {
+			return
+		}
+		if addressUses[value] == 0 {
+			addressOrder = append(addressOrder, value)
+		}
+		addressUses[value]++
+		if use.MemoryArg() != value.MemoryArg() {
+			needsSnapshot[value] = true
+		}
+	}
 	for _, BB := range f.Blocks {
 		for _, call := range BB.Values {
 			argStart := 0
@@ -5373,8 +5408,8 @@ func LLVMCompile(f *Func) {
 			case OpMakeResult:
 				for i, result := range FCtxt.Results {
 					value := call.Args[i]
-					if result.InMemory && llvmCanForwardMemorySource(call, value, f.OwnAux.TypeOfResult(int64(i))) {
-						addressUses[value]++
+					if result.InMemory {
+						recordAddressUse(call, value, f.OwnAux.TypeOfResult(int64(i)))
 					}
 				}
 				continue
@@ -5388,8 +5423,8 @@ func LLVMCompile(f *Func) {
 			callSig := llvmSignature(aux)
 			for i, param := range callSig.Params {
 				value := call.Args[argStart+i]
-				if param.ByVal && llvmCanForwardMemorySource(call, value, aux.TypeOfArg(int64(i))) {
-					addressUses[value]++
+				if param.ByVal {
+					recordAddressUse(call, value, aux.TypeOfArg(int64(i)))
 				}
 			}
 			for index, result := range callSig.Results {
@@ -5420,7 +5455,8 @@ func LLVMCompile(f *Func) {
 	}
 
 	FCtxt.AddressOnlyLoads = make(map[ID]bool, len(addressUses))
-	for value, uses := range addressUses {
+	FCtxt.MemorySnapshots = make(map[ID]llvmStackSlot)
+	for _, value := range addressOrder {
 		// Defer recovery loads carry volatile/reload semantics even when ABI
 		// consumers only need an address. Preserve that existing lowering.
 		address := value.Args[0]
@@ -5428,9 +5464,21 @@ func LLVMCompile(f *Func) {
 		if deferResult || FCtxt.isDeferResultAddress(address) || FCtxt.isOpenDeferAddress(address) {
 			continue
 		}
-		if uses == value.Uses {
-			FCtxt.AddressOnlyLoads[value.ID] = true
+		if addressUses[value] != value.Uses {
+			continue // Other consumers still need the first-class value.
 		}
+		if needsSnapshot[value] {
+			if CanSSA(value.Type) {
+				continue
+			}
+			slot := llvmStackSlot{
+				Value: FCtxt.b.CreateAlloca(getLLVMType(value.Type), value.String()+".snapshot"),
+				Type:  value.Type,
+			}
+			slot.Value.SetAlignment(int(value.Type.Alignment()))
+			FCtxt.MemorySnapshots[value.ID] = slot
+		}
+		FCtxt.AddressOnlyLoads[value.ID] = true
 	}
 
 	// SelectNAddr for a register result still needs an addressable local copy.

@@ -6,10 +6,12 @@ package ssa
 
 import (
 	"bytes"
+	"internal/platform"
 	"internal/testenv"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -200,5 +202,29 @@ func MemoryResult(x int) int {
 				t.Errorf("%s: missing SSA description for %s (%s)\n%s", suffix, tc.name, tc.expression, data)
 			}
 		}
+	}
+}
+
+// Race exit instrumentation separates aggregate result reads from their ABI
+// stores. Keep those reads before racefuncexit without constructing enormous
+// first-class LLVM values.
+func TestLLVMMemorySnapshotRace(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	testenv.MustHaveCGO(t)
+	if !platform.RaceDetectorSupported(runtime.GOOS, runtime.GOARCH) {
+		t.Skip("race detector not supported")
+	}
+	source := filepath.Join(runtime.GOROOT(), "test", "llvm_memory_snapshot.go")
+	for _, flags := range []string{"-enablellvm", "-enablellvm -N -l"} {
+		t.Run(flags, func(t *testing.T) {
+			exe := filepath.Join(t.TempDir(), "snapshot.exe")
+			cmd := testenv.Command(t, testenv.GoToolPath(t), "build", "-race", "-gcflags="+flags, "-o", exe, source)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build: %v\n%s", err, out)
+			}
+			if out, err := testenv.Command(t, exe).CombinedOutput(); err != nil {
+				t.Fatalf("run: %v\n%s", err, out)
+			}
+		})
 	}
 }
