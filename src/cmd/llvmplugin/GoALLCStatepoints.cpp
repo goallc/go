@@ -4442,6 +4442,7 @@ Error materializeFunctionMarkers(Module &M) {
             std::errc::invalid_argument,
             "GoALLC function marker relocation metadata is invalid");
       switch (Type->getZExtValue()) {
+      case GoObj::R_USEFIELD:
       case GoObj::R_USEIFACE:
       case GoObj::R_USEIFACEMETHOD:
       case GoObj::R_USENAMEDMETHOD:

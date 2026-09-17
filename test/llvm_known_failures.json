@@ -62,10 +62,6 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/fixedbugs/issue20014.go",
-        "reason": "unsupported: fieldtrack metadata is not emitted"
-      },
-      {
         "test": "Test/fixedbugs/issue15747.go",
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },

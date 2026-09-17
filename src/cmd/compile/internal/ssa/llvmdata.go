@@ -1079,7 +1079,7 @@ func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 	seen := make(map[markerKey]bool)
 	for _, r := range s.R {
 		switch r.Type {
-		case objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD:
+		case objabi.R_USEFIELD, objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD:
 		case objabi.R_INITORDER:
 			if r.Off != 0 || r.Siz != 0 || r.Add != 0 {
 				base.Fatalf("invalid R_INITORDER relocation in %s", s.Name)
