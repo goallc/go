@@ -828,7 +828,7 @@ func TestLLVMCanEmitMustTail(t *testing.T) {
 	oneArg := aux(internalConfig, &obj.LSym{}, []*types.Type{types.Types[types.TINT]}, nil)
 	oneResult := aux(internalConfig, &obj.LSym{}, nil, []*types.Type{types.Types[types.TINT]})
 
-	context := &LLVMFuncContext{F: &Func{OwnAux: internalZero}}
+	context := &LLVMFuncContext{F: &Func{Config: &Config{}, OwnAux: internalZero}}
 	for _, test := range []struct {
 		name string
 		call *Value
@@ -2342,9 +2342,9 @@ func TestLLVMStaticCallCgoCheckSignatures(t *testing.T) {
 			}
 			generated := StaticAuxCall(fn, config.ABIAnalyzeTypes(words, nil))
 			source := StaticAuxCall(fn, config.ABIAnalyzeTypes(pointers, nil))
-			want := llvmSignature(source).Type
+			want := llvmSignature(source, false).Type
 			for _, call := range []*AuxCall{generated, source} {
-				if got := llvmStaticCallSignature(call, llvmSignature(call)).Type; got != want {
+				if got := llvmStaticCallSignature(call, llvmSignature(call, false)).Type; got != want {
 					t.Fatal("call signature conflicts with the pointer-typed runtime definition")
 				}
 			}
@@ -2353,7 +2353,7 @@ func TestLLVMStaticCallCgoCheckSignatures(t *testing.T) {
 			}
 			// An unrelated function's uintptr parameters are real integers.
 			other := StaticAuxCall(&obj.LSym{Name: "example.cgoCheckPtrWrite"}, config.ABIAnalyzeTypes(words, nil))
-			original := llvmSignature(other)
+			original := llvmSignature(other, false)
 			if got := llvmStaticCallSignature(other, original).Type; got != original.Type {
 				t.Fatal("unrelated uintptr signature changed")
 			}
