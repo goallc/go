@@ -507,10 +507,11 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
 
 ### all.bash CI 策略
 
-LLVM 是默认后端；CI 在 amd64 和 arm64 上运行 `src/all.bash`，覆盖标准库、命令、
-dist 特殊模式及 testdir。已知失败按具体用例或模式记录在
-`test/llvm_known_failures.json`，每项附原因，dist 打印排除项并通过原生 `-skip`
-机制选择测试。未列出的失败会使 CI 失败。重新评估时设置
+LLVM 是默认后端；CI 在 amd64 和 arm64 上分别运行一次 `make.bash`，共享 SDK 后
+分片运行 `run.bash --no-rebuild`，覆盖 `all.bash` 的标准库、命令、dist 特殊模式及 testdir。
+已知失败按具体用例、模式或 TestMain 构建失败的包记录在
+`test/llvm_known_failures.json`，每项附原因；用例排除可限定架构，通过原生 `-skip`
+机制实现。未列出的失败会使 CI 失败。重新评估时设置
 `GOALLC_TEST_KNOWN_FAILURES=0`，详见 [构建说明](goallc-build.md)。
 
 ### Darwin/arm64 开发载荷阶段结果
