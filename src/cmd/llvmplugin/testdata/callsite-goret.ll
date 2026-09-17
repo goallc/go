@@ -286,6 +286,32 @@ entry:
   ret i64 %s8
 }
 
+; Soft-float is part of the callee ABI even when the caller uses hard-float.
+; Preserve both attributes inherited from a direct callee and explicit
+; indirect-call attributes when rewriting the call to a statepoint.
+; IR-LABEL: define goabiinternal i64 @direct_soft_float()
+; IR: call goabiinternal token {{.*}} @llvm.experimental.gc.statepoint
+; IR-SAME: #[[SOFT:[0-9]+]]
+define goabiinternal i64 @direct_soft_float() #0 gc "goallc" {
+  %result = alloca double, align 8
+  call goabiinternal void @soft_float_result(ptr goret(double) align 8 "goretindex"="0" %result)
+  %bits = load i64, ptr %result, align 8
+  ret i64 %bits
+}
+
+; IR-LABEL: define goabiinternal i64 @indirect_soft_float(
+; IR: call goabiinternal token {{.*}} @llvm.experimental.gc.statepoint
+; IR-SAME: #[[SOFT]]
+define goabiinternal i64 @indirect_soft_float(ptr %fn) #0 gc "goallc" {
+  %result = alloca double, align 8
+  call goabiinternal void %fn(ptr goret(double) align 8 "goretindex"="0" %result) "use-soft-float"="true"
+  %bits = load i64, ptr %result, align 8
+  ret i64 %bits
+}
+
+; IR: attributes #[[SOFT]] = { {{.*}}"use-soft-float"="true"{{.*}} }
+declare goabiinternal void @soft_float_result(ptr goret(double) align 8 "goretindex"="0") "use-soft-float"="true"
+
 declare void @llvm.lifetime.start.p0(ptr nocapture) #1
 
 attributes #0 = { "frame-pointer"="non-leaf" }

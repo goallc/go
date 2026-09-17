@@ -121,6 +121,7 @@ const goCPUMultiversionAttr = "goallc.cpu.multiversion"
 const llvmAttributeFunctionIndex = -1
 
 type llvmFuncSignature struct {
+	SoftFloat           bool
 	Type                llvm.Type
 	ReturnType          llvm.Type
 	ResultCount         int
@@ -233,7 +234,7 @@ func getLLVMABIType(typ *types.Type) llvm.Type {
 	return storage
 }
 
-func llvmSignature(aux *AuxCall) llvmFuncSignature {
+func llvmSignature(aux *AuxCall, softFloat bool) llvmFuncSignature {
 	if aux == nil || aux.ABIInfo() == nil {
 		base.Fatalf("missing ABI information in LLVM lowering")
 	}
@@ -296,6 +297,7 @@ func llvmSignature(aux *AuxCall) llvmFuncSignature {
 		ret = llvm.StructType(results, false)
 	}
 	return llvmFuncSignature{
+		SoftFloat:           softFloat,
 		Type:                llvm.FunctionType(ret, params, false),
 		ReturnType:          ret,
 		ResultCount:         len(resultSignatures),
@@ -361,6 +363,9 @@ func llvmNoInlineAttribute() llvm.Attribute {
 
 func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallConv) {
 	fn.SetFunctionCallConv(cc)
+	if sig.SoftFloat {
+		fn.AddFunctionAttr(GlobalCtxt.CreateStringAttribute("use-soft-float", "true"))
+	}
 	if sig.ReturnCount > 1 {
 		fn.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
@@ -388,6 +393,9 @@ func configureLLVMFunction(fn llvm.Value, sig llvmFuncSignature, cc llvm.CallCon
 }
 
 func configureLLVMCall(call llvm.Value, sig llvmFuncSignature) {
+	if sig.SoftFloat {
+		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute("use-soft-float", "true"))
+	}
 	if sig.ReturnCount > 1 {
 		call.AddCallSiteAttribute(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute(goResultsTupleAttr, ""))
 	}
@@ -3450,7 +3458,7 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		v.Fatalf("static call to %s has %d LLVM arguments, want %d", aux.Fn.Name, got, want)
 	}
 
-	sig := llvmStaticCallSignature(aux, llvmSignature(aux))
+	sig := llvmStaticCallSignature(aux, llvmSignature(aux, lfc.F.Config.SoftFloat))
 	cc := llvmCallConv(aux.ABI().Which())
 	fn := getOrInsertLLVMFunctionRef(aux.Fn, sig, cc)
 	args := make([]llvm.Value, 0, len(sig.Type.ParamTypes()))
@@ -3495,7 +3503,7 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 		v.Fatalf("indirect call has %d LLVM arguments, want %d", got, want)
 	}
 
-	sig := llvmSignature(aux)
+	sig := llvmSignature(aux, lfc.F.Config.SoftFloat)
 	if closureContext {
 		if argStart != 2 {
 			v.Fatalf("closure call has invalid argument start %d", argStart)
@@ -3561,7 +3569,7 @@ func (lfc *LLVMFuncContext) indirectCall(v *Value, argStart int, closureContext 
 // alignment while allowing ordinary LLVM promotion to remove unnecessary
 // homes.
 func (lfc *LLVMFuncContext) materializeAddressedResults(v *Value, call llvm.Value, aux *AuxCall) {
-	sig := llvmSignature(aux)
+	sig := llvmSignature(aux, lfc.F.Config.SoftFloat)
 	for _, result := range lfc.AddressedResults[v.ID] {
 		lfc.llvmLifetimeStart(result.Slot)
 		resultSig := sig.Results[result.Index]
@@ -4229,7 +4237,7 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 				// Selecting the trailing SSA memory dependency only forces the
 				// call to be emitted; it has no LLVM value.
 			default:
-				sig := llvmSignature(aux)
+				sig := llvmSignature(aux, lfc.F.Config.SoftFloat)
 				result := sig.Results[sel]
 				if result.InMemory {
 					slot, ok := lfc.CallResultSlots[llvmCallResultKey{Call: src.ID, Index: int64(sel)}]
@@ -4726,11 +4734,11 @@ func (lfc *LLVMFuncContext) llvmCanEmitMustTail(call *Value, aux *AuxCall) bool 
 	callerABI := lfc.F.OwnAux.ABI().Which()
 	calleeABI := aux.ABI().Which()
 	if callerABI == calleeABI {
-		callerSig := llvmSignature(lfc.F.OwnAux)
+		callerSig := llvmSignature(lfc.F.OwnAux, lfc.F.Config.SoftFloat)
 		if llvmFunctionUsesClosureContext(lfc.F) {
 			callerSig = callerSig.withClosureContext()
 		}
-		calleeSig := llvmSignature(aux)
+		calleeSig := llvmSignature(aux, lfc.F.Config.SoftFloat)
 		if call.Op == OpTailLECall {
 			calleeSig = llvmStaticCallSignature(aux, calleeSig)
 		}
@@ -4773,7 +4781,7 @@ func (lfc *LLVMFuncContext) emitTailCallReturn(b *Block) {
 		}
 		return
 	}
-	calleeSig := llvmSignature(aux)
+	calleeSig := llvmSignature(aux, lfc.F.Config.SoftFloat)
 	direct := make([]llvm.Value, lfc.ReturnCount)
 	for i, callerResult := range lfc.Results {
 		calleeResult := calleeSig.Results[i]
@@ -4885,7 +4893,7 @@ func LLVMCompile(f *Func) {
 	if f.OwnAux == nil || f.OwnAux.Fn == nil || f.OwnAux.ABIInfo() == nil {
 		f.fe.Fatalf(f.Entry.Pos, "missing function ABI information in LLVM lowering for %s", f.Name)
 	}
-	sig := llvmSignature(f.OwnAux)
+	sig := llvmSignature(f.OwnAux, f.Config.SoftFloat)
 	if llvmFunctionUsesClosureContext(f) {
 		sig = sig.withClosureContext()
 	}
@@ -5395,7 +5403,7 @@ func LLVMCompile(f *Func) {
 			if aux == nil {
 				call.Fatalf("call has no ABI information")
 			}
-			callSig := llvmSignature(aux)
+			callSig := llvmSignature(aux, f.Config.SoftFloat)
 			for i, param := range callSig.Params {
 				value := call.Args[argStart+i]
 				if param.ByVal {

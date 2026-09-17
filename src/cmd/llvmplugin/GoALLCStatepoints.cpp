@@ -3931,9 +3931,9 @@ Error rewriteCall(SafepointRecord &Record,
                     : std::optional<ArrayRef<Value *>>(ArrayRef(Deopt)),
       GCLive, "statepoint_token");
   Record.Statepoint->setCallingConv(Call->getCallingConv());
-  if (Call->hasFnAttr(GoResultsTupleAttr))
-    Record.Statepoint->addFnAttr(
-        Attribute::get(Call->getContext(), GoResultsTupleAttr));
+  for (StringRef Name : {GoResultsTupleAttr, StringLiteral("use-soft-float")})
+    if (Attribute Attr = Call->getFnAttr(Name); Attr.isValid())
+      Record.Statepoint->addFnAttr(Attr);
   for (unsigned I = 0; I != Call->arg_size(); ++I) {
     for (Attribute Attr : Call->getAttributes().getParamAttrs(I))
       Record.Statepoint->addParamAttr(GCStatepointInst::CallArgsBeginPos + I,
