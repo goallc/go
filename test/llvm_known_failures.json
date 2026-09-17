@@ -134,16 +134,6 @@
         "reason": "expectation: LLVM retains main.lookupReflected under -gcflags=-l"
       },
       {
-        "test": "Test/fixedbugs/issue15141.go",
-        "reason": "resource: arm64 LLVM compilation of 256 MiB array results reached 11.5 GiB RSS before a 16 GiB runner was terminated under memory pressure; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
-        "goarch": "arm64"
-      },
-      {
-        "test": "Test/escape_array.go",
-        "reason": "resource: arm64 LLVM compilation of four-million-element pointer arrays reached about 5 GiB RSS, overlapping issue15141 and exhausting runner memory; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
-        "goarch": "arm64"
-      },
-      {
         "test": "Test/escape2n.go",
         "reason": "compiler: arm64 -N -l aborts with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
         "goarch": "arm64"
@@ -395,11 +385,6 @@
         "test": "TestDWARFLocationList",
         "reason": "compiler: arm64 -gcflags=all=-N -l aborts compiling strconv (CallBase::getArgOperand) and crypto/internal/entropy (unsupported GoObj frame); CI 35175515343",
         "goarch": "arm64"
-      },
-      {
-        "test": "TestIssue38554",
-        "reason": "slow: arm64 compilation of a 10 MiB array return timed out after 2131 seconds; CI 35175515343",
-        "goarch": "arm64"
       }
     ],
     "cmd/link/internal/ld": [
@@ -481,15 +466,7 @@
   "modes": {
     "internal/runtime/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
     "reflect:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
-    "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
-    "runtime/race:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "flag:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "net:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "os:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "os/exec:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "encoding/gob:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "flag:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
-    "os/exec:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity"
+    "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering"
   },
   "packages": {
     "cmd/cgo/internal/testplugin": "TestMain: shared-object relocations fail (amd64 TLS local-exec; arm64 preemptible-symbol ADRP)",
