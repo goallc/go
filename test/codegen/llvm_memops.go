@@ -75,14 +75,15 @@ func llvmMovePointerToStack(src *llvmPointerStackZero) *int {
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveOverlapSized(
-// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
+// LLVM-ARM64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
+// LLVM-AMD64-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr %src, i64 32){{$|,}}
 func llvmMoveOverlapSized(dst, src *[32]byte) {
 	*dst = *src
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveAligned(
 // LLVM-ARM64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 8 %dst, ptr align 8 %src, i64 24, i1 false)
-// LLVM-AMD64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 24, i1 false)
+// LLVM-AMD64-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr %src, i64 24){{$|,}}
 func llvmMoveAligned(dst, src *[3]uint64) {
 	*dst = *src
 }
@@ -120,14 +121,20 @@ func llvmStringLess(a, b string) bool {
 
 // LLVM-DAG: attributes #[[COMPARE]] = { nocallback nofree nosync nounwind willreturn memory(read) "gc-leaf-function" }
 
+// Runtime calls have an indivisible pointer-write contract that ordinary
+// memory intrinsics cannot express. Preserve it even after optimization.
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveDynamic(
-// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 {{%.*}}, ptr align 1 {{%.*}}, i64 {{%.*}}, i1 false)
+// LLVM-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr {{%.*}}, ptr {{%.*}}, i64 {{%.*}})
+// LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmMoveDynamic(
+// LLVM-OPT: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(
 func llvmMoveDynamic(dst, src []byte) {
 	copy(dst, src)
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmClearDynamic(
-// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 1 {{%.*}}, i8 0, i64 {{%.*}}, i1 false)
+// LLVM-DAG: call goabiinternal void @"runtime.memclrNoHeapPointers<builtin.{{[0-9]+}}>"(ptr {{%.*}}, i64 {{%.*}})
+// LLVM-OPT-LABEL: define goabiinternal void @codegen.llvmClearDynamic(
+// LLVM-OPT: call goabiinternal void @"runtime.memclrNoHeapPointers<builtin.{{[0-9]+}}>"(
 func llvmClearDynamic(dst []byte) {
 	clear(dst)
 }

@@ -3468,16 +3468,9 @@ func (lfc *LLVMFuncContext) staticCall(v *Value) llvm.Value {
 		args = append(args, arg)
 	}
 	args = append(args, lfc.llvmMemoryResultCallArguments(v, sig, aux)...)
-	// Go SSA also represents copies and clears as direct runtime calls. Give
-	// these the same intrinsic representation as OpMove and OpZero.
-	if cc == goABIInternalCallConv {
-		switch aux.Fn.Name {
-		case "runtime.memmove":
-			return lfc.llvmCopyMemory(args[0], args[1], args[2], 1, lfc.llvmMemoryVolatile(v.Args[0]))
-		case "runtime.memclrNoHeapPointers":
-			return lfc.llvmClearMemory(args[0], args[1], 1, lfc.llvmMemoryVolatile(v.Args[0]))
-		}
-	}
+	// Keep runtime.memmove and runtime.memclrNoHeapPointers as calls. Their
+	// contract includes indivisible pointer-sized writes when suitably aligned,
+	// which ordinary LLVM memory intrinsics do not guarantee.
 	name := v.String()
 	if sig.ReturnCount == 0 {
 		name = ""

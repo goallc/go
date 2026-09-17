@@ -29,7 +29,7 @@ type llvmVarDefMap map[string]llvmVarDefResult
 // LLVM-NOT: @llvm.fake.use
 // LLVM: ret void
 // LLVM-OPT-LABEL: define weak goabiinternal void @"codegen.(*llvmVarDefMap).llvmVarDefZero"(
-// LLVM-OPT-NOT: undef
+// LLVM-OPT-NOT: {{(^|[^a-zA-Z0-9_])undef([^a-zA-Z0-9_]|$)}}
 // LLVM-OPT-NOT: @llvm.fake.use
 // LLVM-OPT: ret void
 func (values llvmVarDefMap) llvmVarDefZero(name string) llvmVarDefResult {
