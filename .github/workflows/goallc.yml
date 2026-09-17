@@ -67,8 +67,8 @@ jobs:
             echo "- source: $LLVM_PAYLOAD_SOURCE"
           } >>"$GITHUB_STEP_SUMMARY"
 
-  linux:
-    name: ${{ matrix.name }}
+  build:
+    name: build-${{ matrix.name }}
     needs: llvm-payload
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
@@ -87,6 +87,7 @@ jobs:
       LLVM_REVISION: ${{ needs.llvm-payload.outputs.revision }}
       LLVM_ARCHIVE: ${{ needs.llvm-payload.outputs.asset_prefix }}-linux-${{ matrix.arch }}.tar.zst
       LLVM_ROOT: ${{ github.workspace }}/.goallc/llvm
+      GOCACHE: ${{ github.workspace }}/.go-build
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 5G
 
@@ -187,17 +188,15 @@ jobs:
           sudo mkswap "$swap_file"
           sudo swapon "$swap_file"
 
-      - name: Build and test through all.bash
+      - name: Build the shared SDK (all.bash build stage)
         working-directory: src
         shell: bash
         env:
           GOALLC_CCACHE: /usr/bin/ccache
-          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
-          GO_TEST_TIMEOUT_SCALE: "4"
         run: |
           set -o pipefail
-          bash ./all.bash -llvm-dir="$LLVM_ROOT" -llvm-version=23 -llvm-link=dynamic \
-            2>&1 | tee "$RUNNER_TEMP/all.log"
+          bash ./make.bash -llvm-dir="$LLVM_ROOT" -llvm-version=23 -llvm-link=dynamic \
+            2>&1 | tee "$RUNNER_TEMP/make.log"
 
       - name: Test pass plugin
         run: |
@@ -213,28 +212,37 @@ jobs:
           cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
           ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
 
-      - name: Summarize known failures
-        if: always()
+      - name: Package shared SDK and test tools
         shell: bash
         run: |
-          {
-            echo '## Known LLVM failures excluded from this run'
-            echo
-            echo '```text'
-            if [[ -f "$RUNNER_TEMP/all.log" ]]; then
-              sed -n '/LLVM known failure/p' "$RUNNER_TEMP/all.log" | sort -u
-            fi
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          # Keep generated sources, executable modes, symlinks, and the compiler's
+          # bundled plugin/libraries. The CMake build tree is not relocatable.
+          ./bin/go env GOVERSION > VERSION
+          tar --zstd -cf "$RUNNER_TEMP/goallc-sdk.tar.zst" \
+            --exclude=./.git --exclude=./.ccache --exclude=./.go-build --exclude=./.goallc \
+            --exclude=./pkg/goallc-llvmplugin --exclude=./pkg/obj .
+          tar --zstd -cf "$RUNNER_TEMP/llvm-test-tools.tar.zst" \
+            -C "$LLVM_ROOT" bin/FileCheck bin/llvm-config include share/goallc/build-manifest
+          tar --zstd -cf "$RUNNER_TEMP/go-build-cache.tar.zst" -C "$GOCACHE" .
 
-      - name: Publish all.bash log and exclusions
+      - name: Publish shared SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: goallc-sdk-${{ matrix.arch }}
+          compression-level: 0
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/goallc-sdk.tar.zst
+            ${{ runner.temp }}/llvm-test-tools.tar.zst
+            ${{ runner.temp }}/go-build-cache.tar.zst
+
+      - name: Publish build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: all-bash-${{ matrix.arch }}
-          path: |
-            ${{ runner.temp }}/all.log
-            test/llvm_known_failures.json
+          name: make-${{ matrix.arch }}
+          path: ${{ runner.temp }}/make.log
 
       - name: Remove LLVM qualification test swap
         if: always()
@@ -249,3 +257,100 @@ jobs:
       - name: Report ccache
         if: always()
         run: ccache -s
+
+  test:
+    name: test-linux-${{ matrix.arch }}-${{ matrix.group }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        group: [stdlib, cmd, runtime, testdir-0, testdir-1, modes]
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    env:
+      GOROOT: ${{ github.workspace }}
+      GOCACHE: ${{ github.workspace }}/.go-build
+      GO_BUILDER_NAME: goallc-linux-${{ matrix.arch }}
+      GO_TEST_SHARDS: "2"
+      GO_TEST_TIMEOUT_SCALE: "4"
+      GOENV: "off"
+
+    steps:
+      - name: Check out Go
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libedit-dev libxml2-dev libzstd-dev zlib1g-dev
+
+      - name: Download shared SDK
+        uses: actions/download-artifact@v5
+        with:
+          name: goallc-sdk-${{ matrix.arch }}
+          path: ${{ runner.temp }}/sdk
+
+      - name: Restore shared SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GOCACHE"
+          tar --zstd -xf "$RUNNER_TEMP/sdk/go-build-cache.tar.zst" -C "$GOCACHE"
+          tar --zstd -xf "$RUNNER_TEMP/sdk/goallc-sdk.tar.zst"
+          mkdir -p .goallc/llvm
+          tar --zstd -xf "$RUNNER_TEMP/sdk/llvm-test-tools.tar.zst" -C .goallc/llvm
+          ln -sfn "$GITHUB_WORKSPACE/.goallc/llvm" src/cmd/vendor/github.com/goallc/go-llvm/llvm
+          printf '%s\n' "$GITHUB_WORKSPACE/.goallc/llvm" > pkg/goallc-llvm-payload
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+          ./bin/go tool compile -V=full
+          .goallc/llvm/bin/FileCheck --version
+
+      - name: Select dist tests
+        env:
+          TEST_GROUP: ${{ matrix.group }}
+        run: |
+          ./bin/go tool dist test -list > "$RUNNER_TEMP/dist-tests.txt"
+          python3 .github/scripts/goallc-test-shard.py \
+            "$RUNNER_TEMP/dist-tests.txt" "$TEST_GROUP" > "$RUNNER_TEMP/selected-tests.txt"
+          cat "$RUNNER_TEMP/selected-tests.txt"
+
+      - name: Run all.bash test stage without rebuilding
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tests < "$RUNNER_TEMP/selected-tests.txt"
+          bash ./run.bash --no-rebuild -k "${tests[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Summarize known failures
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Known LLVM failures excluded from this run'
+            echo
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/test.log" ]]; then
+              sed -n '/LLVM known failure/p' "$RUNNER_TEMP/test.log" | sort -u
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish test log, selection, and exclusions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-${{ matrix.arch }}-${{ matrix.group }}
+          path: |
+            ${{ runner.temp }}/test.log
+            ${{ runner.temp }}/dist-tests.txt
+            ${{ runner.temp }}/selected-tests.txt
+            test/llvm_known_failures.json
