@@ -5172,6 +5172,11 @@ func LLVMCompile(f *Func) {
 		FCtxt.Locals[key] = slot
 		return slot, true
 	}
+	if f.OpenDeferBits != nil {
+		// Recovery metadata still refers to this slot when dead-code
+		// elimination removes the SSA uses of unreachable defer statements.
+		preallocateLocal(f.OpenDeferBits, "open.defer.bits")
+	}
 	// A typed goret parameter is the Go ABI home of a stack-assigned result.
 	// Bind an ordinary, non-escaping PPARAMOUT directly to that caller-owned
 	// home so named-result stores, address-taking, and defer recovery all see
