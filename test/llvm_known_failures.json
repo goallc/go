@@ -142,6 +142,21 @@
         "test": "Test/escape_array.go",
         "reason": "resource: arm64 LLVM compilation of four-million-element pointer arrays reached about 5 GiB RSS, overlapping issue15141 and exhausting runner memory; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
         "goarch": "arm64"
+      },
+      {
+        "test": "Test/escape2n.go",
+        "reason": "compiler: arm64 -N -l aborts with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/fixedbugs/issue68525.go",
+        "reason": "compiler: arm64 -gcflags=all=-N -l aborts compiling syscall with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/tighten.go",
+        "reason": "expectation: LLVM does not emit the native ssa/tighten debug diagnostic MOVDload is moved; diagnostic run 35182652376",
+        "goarch": "arm64"
       }
     ],
     "internal/trace": [
