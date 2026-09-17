@@ -194,10 +194,6 @@
       {
         "test": "TestTracebackAncestors",
         "reason": "metadata: ancestor traceback omits expected recursive frames"
-      },
-      {
-        "test": "TestCgoPprofPIE",
-        "reason": "linker: PIE testprogcgo global stmp_1 lacks Go type information"
       }
     ],
     "runtime/race": [
