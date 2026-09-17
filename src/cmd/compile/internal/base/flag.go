@@ -484,7 +484,7 @@ func concurrentFlagOk() bool {
 		Flag.L == 0 &&
 		Flag.LowerJ == 0 &&
 		Flag.LowerM == 0 &&
-		Flag.LowerR == 0 && !Flag.EnableLLVM
+		Flag.LowerR == 0
 }
 
 func concurrentBackendAllowed() bool {

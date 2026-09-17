@@ -4876,6 +4876,8 @@ func llvmIsAtomicMemoryOp(op Op) bool {
 }
 
 func LLVMCompile(f *Func) {
+	defer llvmCompileOrder.enter(f.Frontend().Func())()
+
 	// Match native metadata emission when SSA construction lowered no defer.
 	if len(f.OpenDeferSlots) == 0 {
 		f.OpenDeferBits = nil

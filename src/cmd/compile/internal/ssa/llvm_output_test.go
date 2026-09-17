@@ -6,6 +6,7 @@ package ssa
 
 import (
 	"bytes"
+	"fmt"
 	"internal/platform"
 	"internal/testenv"
 	"os"
@@ -22,14 +23,44 @@ func TestLLVMDeterministicOutput(t *testing.T) {
 	source := filepath.Join(dir, "p.go")
 	// All four source names refer to the same SSA argument. Iterating
 	// NamedValues as a map used to give that argument a random LLVM name.
-	code := "package p; func F(p *int, n int) int { q := p; r := q; s := r; if n > 0 { return *s }; return *q }\n"
-	if err := os.WriteFile(source, []byte(code), 0600); err != nil {
+	var code strings.Builder
+	code.WriteString(`package p
+func F(p *int, n int) int { q := p; r := q; s := r; if n > 0 { return *s }; return *q }
+type Node struct { Next *Node; Value int }
+func (n Node) Get() int { return n.Value }
+var Method = (*Node).Get
+var Nodes = map[int]*Node{1: {Value: 42}, 2: {Value: 13}}
+var Interface interface{ Get() int } = Node{Value: 7}
+//go:noinline
+func Closures(n *Node) (func(int) func() int, func() int) {
+    return func(x int) func() int {
+        return func() int { n.Value += x; return n.Value }
+    }, func() int { return n.Value }
+}
+//go:noinline
+func Deferred(n *Node) (result int) {
+    defer func() { result += n.Value }()
+    return Interface.Get()
+}
+func Generic[T comparable](x T) func(T) bool {
+    return func(y T) bool { return x == y }
+}
+var Compare = Generic(Node{})
+`)
+	// Several roots and nested closures exercise both worker scheduling and
+	// the parent-before-closure dependency. Retain calls and pointer data so
+	// LLVM declarations, GC metadata, and debug metadata participate too.
+	for i := 0; i < 16; i++ {
+		fmt.Fprintf(&code, "//go:noinline\nfunc Work%d(n *Node, x int) int { f, g := Closures(n); for j := 0; j < x; j++ { x ^= j * %d }; return f(x)() + g() + Deferred(n) + Method(n) }\n", i, i+1)
+	}
+	if err := os.WriteFile(source, []byte(code.String()), 0600); err != nil {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(dir, "p.a")
 	want := make(map[string][]byte)
 	for i := 0; i < 16; i++ {
-		cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-p=p", "-llvm-keep-ir", "-o", archive, source)
+		workers := 1 << (i % 4)
+		cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", fmt.Sprintf("-c=%d", workers), "-p=p", "-llvm-keep-ir", "-o", archive, source)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("compile %d: %v\n%s", i, err, out)
 		}

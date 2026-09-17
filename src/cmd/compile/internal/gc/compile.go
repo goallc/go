@@ -160,6 +160,22 @@ func compileFunctions(profile *pgoir.Profile) {
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	if base.Flag.EnableLLVM {
+		// Keep LLVM module mutation in the same order as a single worker:
+		// pop the next function, then visit its closures before other roots.
+		// The workers still build and optimize Go SSA concurrently, and a
+		// closure is still scheduled only after its parent has finished.
+		queue := slices.Clone(compilequeue)
+		var order []*ir.Func
+		for len(queue) != 0 {
+			fn := queue[len(queue)-1]
+			queue = queue[:len(queue)-1]
+			order = append(order, fn)
+			queue = append(queue, fn.Closures...)
+		}
+		ssa.SetLLVMCompileOrder(order)
+		defer ssa.SetLLVMCompileOrder(nil)
+	}
 	mu.Lock()
 
 	for workerId := range base.Flag.LowerC {
@@ -192,10 +208,6 @@ func compileFunctions(profile *pgoir.Profile) {
 	mu.Unlock()
 	wg.Wait()
 	compilequeue = nil
-
-	if base.Flag.EnableLLVM {
-		// TODO Assemble
-	}
 
 	base.Ctxt.InParallel = false
 	types.CalcSizeDisabled = false
