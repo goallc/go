@@ -1,0 +1,498 @@
+{
+  "tests": {
+    "cmd/internal/testdir": [
+      {
+        "test": "Test/abi/result_live.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/llvm_file_backed_embed.go",
+        "reason": "harness: direct compile recipe lacks embed configuration"
+      },
+      {
+        "test": "Test/live_uintptrkeepalive.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/live2.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/live_regabi.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue9355.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue56141.go",
+        "reason": "unsupported: libFuzzer counter symbol kind"
+      },
+      {
+        "test": "Test/fixedbugs/issue56105.go",
+        "reason": "unsupported: libFuzzer counter symbol kind"
+      },
+      {
+        "test": "Test/fixedbugs/issue52697.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue34723.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue30908.go",
+        "reason": "unsupported: strictdups=2 detects differing generic wrapper payloads"
+      },
+      {
+        "test": "Test/fixedbugs/issue26163.go",
+        "reason": "compiler: 'init': aggregate field 0 changes LLVM representation for Go type complex128"
+      },
+      {
+        "test": "Test/fixedbugs/issue22200b.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue22200.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20780.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue25507.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20529.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20250.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/fixedbugs/issue20014.go",
+        "reason": "unsupported: fieldtrack metadata is not emitted"
+      },
+      {
+        "test": "Test/fixedbugs/issue15747.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/writebarrier.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/uintptrescapes2.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/opt_branchlikely.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/nowritebarrier.go",
+        "reason": "unsupported: transitive nowritebarrier diagnostics are incomplete"
+      },
+      {
+        "test": "Test/fixedbugs/bug385_64.go",
+        "reason": "expectation: native stack-frame limit diagnostic differs"
+      },
+      {
+        "test": "Test/nilptr5.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/nilptr3.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/nilcheck.go",
+        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
+      },
+      {
+        "test": "Test/maymorestack.go",
+        "reason": "unsupported: maymorestack instrumentation hook is not emitted"
+      },
+      {
+        "test": "Test/fixedbugs/issue69825.go",
+        "reason": "unsupported: libFuzzer counter symbol kind"
+      },
+      {
+        "test": "Test/fixedbugs/issue20739.go",
+        "reason": "slow: nested huge zero-size arrays took over 169 seconds to compile (native 0.01 seconds)"
+      },
+      {
+        "test": "Test/rangegen.go",
+        "reason": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
+      },
+      {
+        "test": "TestLLVMReflectMethodInline",
+        "reason": "expectation: LLVM retains main.lookupReflected under -gcflags=-l"
+      },
+      {
+        "test": "Test/fixedbugs/issue15141.go",
+        "reason": "resource: arm64 LLVM compilation of 256 MiB array results reached 11.5 GiB RSS before a 16 GiB runner was terminated under memory pressure; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/escape_array.go",
+        "reason": "resource: arm64 LLVM compilation of four-million-element pointer arrays reached about 5 GiB RSS, overlapping issue15141 and exhausting runner memory; diagnostic run 35182214887; candidate Go #299 / LLVM #144 removes forced inline clearing, requalify after repinning",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/escape2n.go",
+        "reason": "compiler: arm64 -N -l aborts with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/fixedbugs/issue68525.go",
+        "reason": "compiler: arm64 -gcflags=all=-N -l aborts compiling syscall with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
+        "goarch": "arm64"
+      },
+      {
+        "test": "Test/tighten.go",
+        "reason": "expectation: LLVM does not emit the native ssa/tighten debug diagnostic MOVDload is moved; diagnostic run 35182652376",
+        "goarch": "arm64"
+      }
+    ],
+    "internal/trace": [
+      {
+        "test": "TestTraceStacks",
+        "reason": "metadata: time.Sleep trace stack is not matched"
+      }
+    ],
+    "runtime": [
+      {
+        "test": "TestCallersNilPointerPanic",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestBadTraceback",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestGoroutineLeakProfile",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestTracebackElision",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestTracebackArgs",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestTracebackSystem/trap",
+        "reason": "metadata: traceback, frame layout or created-by attribution differs"
+      },
+      {
+        "test": "TestFunctionAlignmentTraceback",
+        "reason": "expectation: LLVM function padding differs from native INT3 padding"
+      },
+      {
+        "test": "TestGdbPython",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestGdbPythonCgo",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestGdbConst",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestGdbAutotmpTypes",
+        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+      },
+      {
+        "test": "TestTracebackAncestors",
+        "reason": "metadata: ancestor traceback omits expected recursive frames"
+      },
+      {
+        "test": "TestCgoPprofPIE",
+        "reason": "linker: PIE testprogcgo global stmp_1 lacks Go type information"
+      }
+    ],
+    "runtime/pprof": [
+      {
+        "test": "TestCPUProfileRecursion",
+        "reason": "metadata: recursive/generic inline profile stack differs"
+      },
+      {
+        "test": "TestGenericsInlineLocations",
+        "reason": "metadata: recursive/generic inline profile stack differs"
+      },
+      {
+        "test": "TestTryAdd/recursion_chain_inline",
+        "reason": "metadata: recursive/generic inline profile stack differs"
+      }
+    ],
+    "cmd/addr2line": [
+      {
+        "test": "TestAddr2Line",
+        "reason": "debug: function entry line differs by one"
+      }
+    ],
+    "cmd/compile": [
+      {
+        "test": "TestScript/closure_name",
+        "reason": "expectation: native -S assembly text is unavailable"
+      }
+    ],
+    "cmd/compile/internal/dwarfgen": [
+      {
+        "test": "TestIssue75249",
+        "reason": "debug: statement markers and lexical scopes differ"
+      },
+      {
+        "test": "TestScopeRanges",
+        "reason": "debug: statement markers and lexical scopes differ"
+      }
+    ],
+    "cmd/compile/internal/ssa": [
+      {
+        "test": "TestCPUGeneratedFilesUpToDate",
+        "reason": "harness: generator needs a writable module cache under run.bash"
+      },
+      {
+        "test": "TestLLVMCPUAutomaticAndGuards",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCPUFeaturePlanMidway",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCPUFeaturePlanStrongerGuard",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCPUFeaturePlanWideCalls",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMCarrylessMultiplyImmediate",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDDynamicShuffles",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDFloatConversions",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDImmediateShuffles",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDIntegerConversions",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDOrdinaryShifts",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDSaturatingConversions",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDStaticShuffles",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGeneratedSIMDWidenMultiply",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGenericSIMDElementLowering",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGenericVec128Lowering",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMGenericWideSIMDLowering",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMSIMDFeatureFloor",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestLLVMWideVectorTypeWidth",
+        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
+        "without_experiment": "simd"
+      },
+      {
+        "test": "TestDebugLinesSayHi",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLinesPushback",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLinesConvert",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestInlineLines",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLines_53456",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLines_74576",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      }
+    ],
+    "cmd/compile/internal/test": [
+      {
+        "test": "TestScanfRemoval",
+        "reason": "optimization: unused scanf code is retained"
+      },
+      {
+        "test": "TestIssue77597",
+        "reason": "compiler: race -N -l compilation of strconv hits LLVM CallBase::getArgOperand assertion",
+        "goarch": "arm64"
+      }
+    ],
+    "cmd/link": [
+      {
+        "test": "TestDWARF",
+        "reason": "debug: function entry line differs by one"
+      },
+      {
+        "test": "TestDWARFLocationList",
+        "reason": "compiler: arm64 -gcflags=all=-N -l aborts compiling strconv (CallBase::getArgOperand) and crypto/internal/entropy (unsupported GoObj frame); CI 35175515343",
+        "goarch": "arm64"
+      },
+      {
+        "test": "TestIssue38554",
+        "reason": "slow: arm64 compilation of a 10 MiB array return timed out after 2131 seconds; CI 35175515343",
+        "goarch": "arm64"
+      }
+    ],
+    "cmd/link/internal/ld": [
+      {
+        "test": "TestInlinedRoutineArgsVars",
+        "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
+      },
+      {
+        "test": "TestStaticTmp",
+        "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
+      },
+      {
+        "test": "TestDeadcode/globalmap",
+        "reason": "optimization: main.init retains unused main.large"
+      }
+    ],
+    "cmd/cgo/internal/testcshared": [
+      {
+        "test": "TestCachedInstall",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestPIE",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestExportedSymbols",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestSymbolicFunctions",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestGo2C2Go",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestExportedSymbolsWithDynamicLoad",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestSignalHandlersWithNotify",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestUnexportedSymbols",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestSignalHandlers",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      }
+    ],
+    "cmd/cgo/internal/testsanitizers": [
+      {
+        "test": "TestShared/tsan_shared",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      }
+    ],
+    "runtime/secret/...": [
+      {
+        "test": "TestGoExit",
+        "reason": "runtime: secret remains in register spill slot after Goexit on arm64",
+        "goarch": "arm64"
+      }
+    ]
+  },
+  "modes": {
+    "internal/runtime/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
+    "reflect:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
+    "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
+    "runtime/race:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "flag:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "net:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "os:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "os/exec:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "encoding/gob:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "flag:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
+    "os/exec:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity"
+  },
+  "packages": {
+    "cmd/cgo/internal/testplugin": "TestMain: shared-object relocations fail (amd64 TLS local-exec; arm64 preemptible-symbol ADRP)",
+    "cmd/cgo/internal/testshared": "TestMain: shared runtime fails to link (amd64 nosplit overflow; arm64 preemptible-symbol ADRP)"
+  }
+}

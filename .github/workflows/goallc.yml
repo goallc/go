@@ -12,6 +12,12 @@ on:
       - edited
   workflow_dispatch:
     inputs:
+      test-mode:
+        description: Test duration mode (PRs always use short)
+        required: true
+        default: short
+        type: choice
+        options: [short, long]
       llvm-pr:
         description: Optional goallc/llvm-project PR number
         required: false
@@ -67,8 +73,8 @@ jobs:
             echo "- source: $LLVM_PAYLOAD_SOURCE"
           } >>"$GITHUB_STEP_SUMMARY"
 
-  linux:
-    name: ${{ matrix.name }}
+  build:
+    name: build-${{ matrix.name }}
     needs: llvm-payload
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
@@ -79,56 +85,15 @@ jobs:
           - arch: amd64
             runner: ubuntu-22.04
             name: linux-amd64
-            task: testdir
-            shard: 0
-            shards: 1
-          - arch: amd64
-            runner: ubuntu-22.04
-            name: linux-amd64-stdlib-1-of-2
-            task: stdlib
-            shard: 0
-            shards: 2
-          - arch: amd64
-            runner: ubuntu-22.04
-            name: linux-amd64-stdlib-2-of-2
-            task: stdlib
-            shard: 1
-            shards: 2
-          - arch: amd64
-            runner: ubuntu-22.04
-            name: linux-amd64-simd
-            task: simd
-            shard: 0
-            shards: 1
           - arch: arm64
             runner: ubuntu-22.04-arm
             name: linux-arm64
-            task: testdir
-            shard: 0
-            shards: 1
-          - arch: arm64
-            runner: ubuntu-22.04-arm
-            name: linux-arm64-stdlib-1-of-2
-            task: stdlib
-            shard: 0
-            shards: 2
-          - arch: arm64
-            runner: ubuntu-22.04-arm
-            name: linux-arm64-stdlib-2-of-2
-            task: stdlib
-            shard: 1
-            shards: 2
-          - arch: arm64
-            runner: ubuntu-22.04-arm
-            name: linux-arm64-simd
-            task: simd
-            shard: 0
-            shards: 1
     env:
       LLVM_RELEASE: ${{ needs.llvm-payload.outputs.release_tag }}
       LLVM_REVISION: ${{ needs.llvm-payload.outputs.revision }}
       LLVM_ARCHIVE: ${{ needs.llvm-payload.outputs.asset_prefix }}-linux-${{ matrix.arch }}.tar.zst
       LLVM_ROOT: ${{ github.workspace }}/.goallc/llvm
+      GOCACHE: ${{ github.workspace }}/.go-build
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 5G
 
@@ -221,172 +186,69 @@ jobs:
           fi
           "$LLVM_ROOT/bin/llc" --version
 
-      - name: Build Go through make.bash
-        working-directory: src
-        env:
-          GOALLC_CCACHE: /usr/bin/ccache
+      - name: Provision swap for LLVM compilation
         run: |
-          ./make.bash \
-            -llvm-dir="$LLVM_ROOT" \
-            -llvm-version=23 \
-            -llvm-link=dynamic
-
-      - name: Test pass plugin
-        if: matrix.task == 'testdir'
-        shell: bash
-        run: |
-          set -euo pipefail
-          plugin_build="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin"
-          test -f "$plugin_build/lib/GoALLCStatepoints.so"
-          test -f "$plugin_build/lib/libGoALLCStatepointsStatic.a"
-          test ! -e "$LLVM_ROOT/lib/GoALLCStatepoints.so"
-          test ! -e "$LLVM_ROOT/lib/libGoALLCStatepointsStatic.a"
-          "$GITHUB_WORKSPACE/bin/go" build \
-            -o "$plugin_build/goallc-objview" cmd/objview
-          cmake -S "$GITHUB_WORKSPACE/src/cmd/llvmplugin" \
-            -B "$plugin_build" -G Ninja \
-            -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm" \
-            -DCMAKE_INSTALL_PREFIX="$plugin_build" \
-            -DBUILD_TESTING=ON \
-            -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
-            -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
-          cmake --build "$plugin_build" \
-            --target GoALLCStatepoints --parallel "$(nproc)"
-          ctest --test-dir "$plugin_build" \
-            --output-on-failure -j "$(nproc)"
-
-      - name: Test GoALLC infrastructure
-        if: matrix.task == 'testdir'
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./bin/go test cmd/dist cmd/distpack cmd/internal/llvmbackend cmd/go/internal/work
-          ./bin/go test -tags=llvm23,dynamicllvm cmd/compile cmd/link cmd/nm -run TestScript -count=1
-          ./bin/go -C src/simd/archsimd/_gen test ./internal/goallccpu ./simdgen/... ./sgutil/...
-          GOEXPERIMENT=simd ./bin/go test -tags=llvm23,dynamicllvm cmd/compile/internal/ssa \
-            -run 'TestLLVM(PIE|CPU|SIMDFeatureFloor|X86CPU|BranchLikelihood|ScaledPointerOffset|Function|BuiltinDeclaration|ImportFingerprint|LinknameChecks|RejectLargeSymbol|ReferenceSuffixBoundaries)|TestCPUGeneratedFilesUpToDate'
-
-      - name: Test linker DWARF with LLVM fixtures
-        if: matrix.task == 'testdir'
-        shell: bash
-        env:
-          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
-          GOALLC_RUN_LLVM_STDLIB: "1"
-        run: |
-          set -euo pipefail
-          ./bin/go test -count=1 -timeout=10m -v cmd/link/internal/ld
-
-      - name: Provision swap for LLVM qualification tests
-        shell: bash
-        run: |
-          set -euo pipefail
           swap_file="$RUNNER_TEMP/goallc.swap"
-          df -h "$RUNNER_TEMP"
           sudo fallocate -l 4G "$swap_file"
           sudo chmod 600 "$swap_file"
           sudo mkswap "$swap_file"
           sudo swapon "$swap_file"
-          free -h
-          swapon --show
-          df -h "$RUNNER_TEMP"
 
-      - name: Test SIMD packages and direct standard library consumers with LLVM
-        if: matrix.task == 'simd'
+      - name: Build the shared SDK (all.bash build stage)
+        working-directory: src
         shell: bash
         env:
-          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
-          GOEXPERIMENT: simd
-          # Also compile testdata subprocesses launched by the package tests
-          # with LLVM; a command-line -gcflags would not be inherited.
-          GOFLAGS: -gcflags=all=-enablellvm
-        run: |
-          set -euo pipefail
-          # internal/runtime/maps directly uses archsimd for amd64 AES hashing.
-          ./bin/go test -p=1 -short -count=1 -v simd/... internal/runtime/maps
-
-      - name: Test runtime with SIMD and LLVM
-        if: matrix.task == 'simd'
-        shell: bash
-        env:
-          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
-          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
-          GOALLC_RUN_LLVM_STDLIB: "1"
-          GOEXPERIMENT: simd
-        run: |
-          set -euo pipefail
-          # Reuse the runtime capability skips, but not the full stdlib suite.
-          # The final empty component excludes runtime/* packages.
-          ./bin/go test -short cmd/internal/testdir \
-            -run '^TestLLVM$/^stdlib$/^runtime$/^$' -count=1 -timeout=40m -v
-
-      - name: Test SIMD testdir cases with LLVM
-        if: matrix.task == 'simd'
-        shell: bash
-        env:
-          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
-          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
-          GOEXPERIMENT: simd
-        run: |
-          set -euo pipefail
-          ./bin/go test -short cmd/internal/testdir \
-            -run '^TestLLVM$/^testdir$/^(llvm_simd.*\.go|simd)$' \
-            -count=1 -timeout=30m -v
-          ./bin/go test -short cmd/internal/testdir \
-            -run '^TestLLVM$/^testdir$/^codegen$/^(llvm_)?simd' \
-            -count=1 -timeout=30m -v
-          # These upstream tests assert native compiler diagnostics and use
-          # the ordinary errorcheck runner, not LLVM code generation.
-          ./bin/go test -short cmd/internal/testdir \
-            -run '^Test$/^simd(_inline)?\.go$' -count=1 -timeout=10m -v
-
-      - name: Test LLVM standard library package policy
-        if: matrix.task == 'stdlib'
-        shell: bash
-        env:
-          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
-          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
-          GOALLC_RUN_LLVM_STDLIB: "1"
-          GOALLC_STDLIB_TEST_MODE: ${{ github.event_name == 'pull_request' && 'short' || 'long' }}
-        run: |
-          set -euo pipefail
-          mode_args=()
-          if [[ "$GOALLC_STDLIB_TEST_MODE" == "short" ]]; then
-            mode_args=(-short)
-          fi
-          echo "LLVM standard library test mode: $GOALLC_STDLIB_TEST_MODE"
-          ./bin/go test "${mode_args[@]}" cmd/internal/testdir \
-            -run '^TestLLVM$/^stdlib$' \
-            -count=1 \
-            -timeout=100m \
-            -shard=${{ matrix.shard }} \
-            -shards=${{ matrix.shards }} \
-            -v
-
-      - name: Test LLVM testdir
-        if: matrix.task == 'testdir'
-        shell: bash
-        env:
-          GOALLC_LLVM_DIR: ${{ env.LLVM_ROOT }}
-          GOALLC_FILECHECK: ${{ env.LLVM_ROOT }}/bin/FileCheck
+          GOALLC_CCACHE: /usr/bin/ccache
         run: |
           set -o pipefail
-          ./bin/go test cmd/internal/testdir \
-            -run '^TestLLVM$/^testdir$' \
-            -count=1 \
-            -timeout=100m \
-            -json \
-            2>&1 | tee "$RUNNER_TEMP/goallc-test-results.json" \
-              | jq --unbuffered -rj 'select(.Output != null) | .Output'
+          bash ./make.bash -llvm-dir="$LLVM_ROOT" -llvm-version=23 -llvm-link=dynamic \
+            2>&1 | tee "$RUNNER_TEMP/make.log"
 
-      - name: Publish LLVM test summary
-        if: always() && matrix.task == 'testdir'
-        env:
-          GOALLC_CI_ARCH: ${{ matrix.arch }}
+      - name: Test pass plugin
         run: |
-          .github/scripts/goallc-test-summary.py \
-            "$RUNNER_TEMP/goallc-test-results.json" \
-            "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          plugin_build="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin"
+          ./bin/go build -o "$plugin_build/goallc-objview" cmd/objview
+          cmake -S src/cmd/llvmplugin -B "$plugin_build" -G Ninja \
+            -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm" \
+            -DBUILD_TESTING=ON \
+            -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
+            -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
+          cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
+          ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
+
+      - name: Package shared SDK and test tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep generated sources, executable modes, symlinks, and the compiler's
+          # bundled plugin/libraries. The CMake build tree is not relocatable.
+          ./bin/go env GOVERSION > VERSION
+          tar --zstd -cf "$RUNNER_TEMP/goallc-sdk.tar.zst" \
+            --exclude=./.git --exclude=./.ccache --exclude=./.go-build --exclude=./.goallc \
+            --exclude=./pkg/goallc-llvmplugin --exclude=./pkg/obj .
+          tar --zstd -cf "$RUNNER_TEMP/llvm-test-tools.tar.zst" \
+            -C "$LLVM_ROOT" bin/FileCheck bin/llvm-config include share/goallc/build-manifest
+          tar --zstd -cf "$RUNNER_TEMP/go-build-cache.tar.zst" -C "$GOCACHE" .
+
+      - name: Publish shared SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: goallc-sdk-${{ matrix.arch }}
+          compression-level: 0
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/goallc-sdk.tar.zst
+            ${{ runner.temp }}/llvm-test-tools.tar.zst
+            ${{ runner.temp }}/go-build-cache.tar.zst
+
+      - name: Publish build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: make-${{ matrix.arch }}
+          path: ${{ runner.temp }}/make.log
 
       - name: Remove LLVM qualification test swap
         if: always()
@@ -401,3 +263,110 @@ jobs:
       - name: Report ccache
         if: always()
         run: ccache -s
+
+  test:
+    name: test-linux-${{ matrix.arch }}-${{ matrix.group }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        group: [stdlib, compiler, tools, runtime]
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    env:
+      GOROOT: ${{ github.workspace }}
+      GOCACHE: ${{ github.workspace }}/.go-build
+      GO_BUILDER_NAME: goallc-linux-${{ matrix.arch }}
+      GO_TEST_SHARDS: "1"
+      GO_TEST_SHORT: ${{ github.event_name == 'workflow_dispatch' && inputs.test-mode == 'long' && 'false' || 'true' }}
+      GO_TEST_TIMEOUT_SCALE: "4"
+      GOENV: "off"
+
+    steps:
+      - name: Check out Go
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libedit-dev libxml2-dev libzstd-dev zlib1g-dev
+
+      - name: Download shared SDK
+        uses: actions/download-artifact@v5
+        with:
+          name: goallc-sdk-${{ matrix.arch }}
+          path: ${{ runner.temp }}/sdk
+
+      - name: Restore shared SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GOCACHE"
+          tar --zstd -xf "$RUNNER_TEMP/sdk/go-build-cache.tar.zst" -C "$GOCACHE"
+          tar --zstd -xf "$RUNNER_TEMP/sdk/goallc-sdk.tar.zst"
+          mkdir -p .goallc/llvm
+          tar --zstd -xf "$RUNNER_TEMP/sdk/llvm-test-tools.tar.zst" -C .goallc/llvm
+          ln -sfn "$GITHUB_WORKSPACE/.goallc/llvm" src/cmd/vendor/github.com/goallc/go-llvm/llvm
+          printf '%s\n' "$GITHUB_WORKSPACE/.goallc/llvm" > pkg/goallc-llvm-payload
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+          ./bin/go tool compile -V=full
+          .goallc/llvm/bin/FileCheck --version
+
+      - name: Select dist tests
+        env:
+          TEST_GROUP: ${{ matrix.group }}
+        run: |
+          ./bin/go tool dist test -list > "$RUNNER_TEMP/dist-tests.txt"
+          python3 .github/scripts/goallc-test-shard.py \
+            "$RUNNER_TEMP/dist-tests.txt" "$TEST_GROUP" > "$RUNNER_TEMP/selected-tests.txt"
+          cat "$RUNNER_TEMP/selected-tests.txt"
+          echo "GO_TEST_SHORT=$GO_TEST_SHORT; selected $(wc -l < "$RUNNER_TEMP/selected-tests.txt") dist tests" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run all.bash test stage without rebuilding
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Stream samples to the job log too: runner shutdown may prevent uploads.
+          bash ../.github/scripts/goallc-resource-monitor.sh > >(tee "$RUNNER_TEMP/resources.log") 2>&1 &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true; sudo -n dmesg -T > "$RUNNER_TEMP/kernel.log" || true' EXIT
+          mapfile -t tests < "$RUNNER_TEMP/selected-tests.txt"
+          # JSON includes test start/end events and durations even if a package
+          # later times out; use the artifact to diagnose and rebalance shards.
+          bash ./run.bash --no-rebuild -k -json "${tests[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Summarize known failures
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Known LLVM failures excluded from this run'
+            echo
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/test.log" ]]; then
+              sed -n '/LLVM known failure/p' "$RUNNER_TEMP/test.log" | sort -u
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish test log, selection, and exclusions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-${{ matrix.arch }}-${{ matrix.group }}
+          path: |
+            ${{ runner.temp }}/test.log
+            ${{ runner.temp }}/dist-tests.txt
+            ${{ runner.temp }}/selected-tests.txt
+            ${{ runner.temp }}/resources.log
+            ${{ runner.temp }}/kernel.log
+            test/llvm_known_failures.json

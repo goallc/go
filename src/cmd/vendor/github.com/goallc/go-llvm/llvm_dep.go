@@ -6,7 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file makes selecting an LLVM API version and link mode mandatory.
+// The vendored bindings target LLVM 23 and use dynamic linking by default.
+// The staticllvm build tag selects static linking for toolchain builds.
 //
 //===----------------------------------------------------------------------===//
 

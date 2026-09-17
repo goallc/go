@@ -21,21 +21,28 @@ import (
 
 func TestBoolToolFlag(t *testing.T) {
 	tests := []struct {
-		name string
-		args []string
-		want bool
+		name     string
+		args     []string
+		want     bool
+		explicit bool
 	}{
-		{"absent", nil, false},
-		{"bare", []string{"-enablellvm"}, true},
-		{"true", []string{"-enablellvm=true"}, true},
-		{"false", []string{"-enablellvm=false"}, false},
-		{"last false", []string{"-enablellvm", "-enablellvm=false"}, false},
-		{"last true", []string{"-enablellvm=false", "-enablellvm"}, true},
+		{"absent", nil, false, false},
+		{"unrelated", []string{"-N"}, false, false},
+		{"invalid", []string{"-enablellvm=invalid"}, false, false},
+		{"bare", []string{"-enablellvm"}, true, true},
+		{"true", []string{"-enablellvm=true"}, true, true},
+		{"false", []string{"-enablellvm=false"}, false, true},
+		{"last false", []string{"-enablellvm", "-enablellvm=false"}, false, true},
+		{"last true", []string{"-enablellvm=false", "-enablellvm"}, true, true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := boolToolFlag(test.args, "-enablellvm"); got != test.want {
+			got, explicit := boolToolFlag(test.args, "-enablellvm")
+			if got != test.want {
 				t.Fatalf("boolToolFlag(%q) = %v, want %v", test.args, got, test.want)
+			}
+			if explicit != test.explicit {
+				t.Fatalf("boolToolFlag(%q) explicit = %v", test.args, explicit)
 			}
 		})
 	}

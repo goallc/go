@@ -20,7 +20,7 @@
 # and will be removed if it stops being needed. See go.dev/issue/12508.
 #
 # GO_TEST_TIMEOUT_SCALE: a non-negative integer factor to scale test timeout by.
-# Defaults to 1.
+# Defaults to 4 for LLVM compilation.
 #
 # GO_TEST_ASMFLAGS: Additional go tool asm arguments to use when running the tests.
 # This environment variable is an internal implementation detail between the
@@ -36,6 +36,7 @@ if [ ! -f ../bin/go ]; then
 	exit 1
 fi
 
+export GO_TEST_TIMEOUT_SCALE=${GO_TEST_TIMEOUT_SCALE:-4}
 export GOENV=off
 eval $(../bin/go tool dist env)
 

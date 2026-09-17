@@ -152,10 +152,12 @@ func (b *Builder) toolID(name string) string {
 // version probe carries the backend selection so cmd/compile can include its
 // LLVM and pass-plugin artifacts in the identity.
 func (b *Builder) compileToolID(gcflags []string) string {
-	if !boolToolFlag(gcflags, "-enablellvm") {
+	enabled, explicit := boolToolFlag(gcflags, "-enablellvm")
+	if !explicit {
 		return b.toolID("compile")
 	}
-	return b.toolIDWithArgs("compile", "compile\x00enablellvm", []string{"-enablellvm"})
+	flag := "-enablellvm=" + strconv.FormatBool(enabled)
+	return b.toolIDWithArgs("compile", "compile\x00"+flag, []string{flag})
 }
 
 func (b *Builder) toolIDWithArgs(name, key string, args []string) string {
@@ -198,20 +200,21 @@ func (b *Builder) toolIDWithArgs(name, key string, args []string) string {
 	})
 }
 
-func boolToolFlag(args []string, name string) bool {
-	enabled := false
+func boolToolFlag(args []string, name string) (enabled, explicit bool) {
 	for _, arg := range args {
 		switch {
 		case arg == name:
 			enabled = true
+			explicit = true
 		case strings.HasPrefix(arg, name+"="):
 			value, err := strconv.ParseBool(strings.TrimPrefix(arg, name+"="))
 			if err == nil {
 				enabled = value
+				explicit = true
 			}
 		}
 	}
-	return enabled
+	return enabled, explicit
 }
 
 // gccToolID returns the unique ID to use for a tool that is invoked

@@ -1,4 +1,4 @@
-//go:build dynamicllvm
+//go:build !staticllvm
 
 package llvm
 
