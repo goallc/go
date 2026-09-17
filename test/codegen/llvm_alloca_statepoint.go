@@ -9,7 +9,7 @@ package codegen
 // LLVM-LABEL: define goabiinternal i64 @codegen.localAcrossSafepoints(
 // LLVM: alloca %codegen.pointerLocal, align 8
 // LLVM: call void @llvm.lifetime.start.p0(ptr
-// LLVM: call void @llvm.memset.inline.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 40
+// LLVM: call void @llvm.memset.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 40
 // LLVM: call goabiinternal void @codegen.mutateLocal(
 // LLVM: call goabiinternal void @codegen.safepoint()
 // LLVM-LABEL: define goabiinternal void @codegen.stackParameterAcrossSafepoints(

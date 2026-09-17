@@ -13,13 +13,13 @@ func llvmZeroByte(dst *[1]byte) {
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmZeroBytes(
-// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 1 %dst, i8 0, i64 24, i1 false)
+// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 1 %dst, i8 0, i64 24, i1 false)
 func llvmZeroBytes(dst *[24]byte) {
 	*dst = [24]byte{}
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmZeroAligned(
-// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 8 %dst, i8 0, i64 24, i1 false)
+// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 8 %dst, i8 0, i64 24, i1 false)
 func llvmZeroAligned(dst *[3]uint64) {
 	*dst = [3]uint64{}
 }
@@ -36,7 +36,7 @@ func llvmPointerStackZeroSink(*llvmPointerStackZero)
 
 // LLVM-DAG: define goabiinternal ptr @codegen.llvmZeroFreshPointerStack(
 // LLVM-DAG: {{%.*}} = alloca [4 x ptr], align 8
-// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
+// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
 func llvmZeroFreshPointerStack(p *int) *int {
 	var local llvmPointerStackZero
 	local[3] = p
@@ -45,7 +45,7 @@ func llvmZeroFreshPointerStack(p *int) *int {
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmZeroReusedPointerStack(
-// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
+// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
 func llvmZeroReusedPointerStack(p *int) {
 	var local llvmPointerStackZero
 	local[0] = p
@@ -56,7 +56,7 @@ func llvmZeroReusedPointerStack(p *int) {
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmZeroDerivedPointerStack(
 // LLVM-DAG: getelementptr i8, ptr {{%.*}}, i64 8
-// LLVM-DAG: call void @llvm.memset.inline.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
+// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 8 {{%.*}}, i8 0, i64 32, i1 false)
 func llvmZeroDerivedPointerStack(p *int) {
 	var local llvmPointerStackContainer
 	local.values[0] = p
@@ -75,21 +75,20 @@ func llvmMovePointerToStack(src *llvmPointerStackZero) *int {
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveOverlapSized(
-// LLVM-ARM64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
-// LLVM-AMD64-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr %src, i64 32){{$|,}}
+// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 32, i1 false)
 func llvmMoveOverlapSized(dst, src *[32]byte) {
 	*dst = *src
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveAligned(
 // LLVM-ARM64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 8 %dst, ptr align 8 %src, i64 24, i1 false)
-// LLVM-AMD64-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr %src, i64 24){{$|,}}
+// LLVM-AMD64-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 %src, i64 24, i1 false)
 func llvmMoveAligned(dst, src *[3]uint64) {
 	*dst = *src
 }
 
 // LLVM-DAG: define goabiinternal void @codegen.llvmMoveLarge(
-// LLVM-DAG: call goabiinternal void @"runtime.memmove<builtin.{{[0-9]+}}>"(ptr %dst, ptr {{%.*}}, i64 128){{$|,}}
+// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 %dst, ptr align 1 {{%.*}}, i64 128, i1 false)
 func llvmMoveLarge(dst *[128]byte, src [128]byte) {
 	*dst = src
 }
@@ -120,3 +119,23 @@ func llvmStringLess(a, b string) bool {
 // LLVM-DAG: attributes #[[RAW_MEMORY]] = { nocallback nofree nounwind "gc-leaf-function" }
 
 // LLVM-DAG: attributes #[[COMPARE]] = { nocallback nofree nosync nounwind willreturn memory(read) "gc-leaf-function" }
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmMoveDynamic(
+// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 1 {{%.*}}, ptr align 1 {{%.*}}, i64 {{%.*}}, i1 false)
+func llvmMoveDynamic(dst, src []byte) {
+	copy(dst, src)
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmClearDynamic(
+// LLVM-DAG: call void @llvm.memset.p0.i64(ptr align 1 {{%.*}}, i8 0, i64 {{%.*}}, i1 false)
+func llvmClearDynamic(dst []byte) {
+	clear(dst)
+}
+
+// LLVM-DAG: define goabiinternal void @codegen.llvmMoveDeferResult(
+// LLVM-DAG: call void @llvm.memmove.p0.p0.i64({{.*}}i64 128, i1 true)
+func llvmMoveDeferResult(src *[128]byte) (r [128]byte) {
+	defer func() { r[0]++ }()
+	r = *src
+	return
+}

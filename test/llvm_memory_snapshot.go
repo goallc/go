@@ -11,6 +11,7 @@ import "runtime"
 type large [1 << 16]byte
 
 var escaped *large
+var escapedPointer **int
 
 //go:noinline
 func fill(r *large) {
@@ -33,6 +34,30 @@ func heapResult() (r large) {
 	escaped = &r
 	fill(&r)
 	return
+}
+
+// A later escaped result inserts VarDef between the aggregate read and return,
+// even without race instrumentation.
+//
+//go:noinline
+func multipleResults() (r large, p *int) {
+	escaped, escapedPointer = &r, &p
+	fill(&r)
+	p = new(int)
+	*p = 42
+	return
+}
+
+// Copies and clears of named results remain observable through recovery.
+//
+//go:noinline
+func recoveryResult(src *large, clearResult bool) (r large) {
+	defer func() { recover() }()
+	r = *src
+	if clearResult {
+		r = large{}
+	}
+	panic("return through recover")
 }
 
 //go:noinline
@@ -60,12 +85,21 @@ func pointerResult() (r [32]*int) {
 
 func main() {
 	check(stackResult())
+	multi, p := multipleResults()
+	check(multi)
+	if *p != 42 {
+		panic("second result changed")
+	}
 	r := heapResult()
 	escaped[0] = 99
 	runtime.GC()
 	check(r)
 	// A byval argument must retain the value read before mutating its source.
 	fill(escaped)
+	check(recoveryResult(escaped, false))
+	if recoveryResult(escaped, true) != (large{}) {
+		panic("clear lost during recovery")
+	}
 	snapshot := *escaped
 	mutate(escaped)
 	check(snapshot)
