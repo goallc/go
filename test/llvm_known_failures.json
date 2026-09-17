@@ -385,60 +385,6 @@
         "reason": "optimization: main.init retains unused main.large"
       }
     ],
-    "cmd/cgo/internal/testcshared": [
-      {
-        "test": "TestCachedInstall",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestPIE",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestExportedSymbols",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestSymbolicFunctions",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestGo2C2Go",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestExportedSymbolsWithDynamicLoad",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestSignalHandlersWithNotify",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestUnexportedSymbols",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestSignalHandlers",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      }
-    ],
-    "cmd/cgo/internal/testsanitizers": [
-      {
-        "test": "TestShared/tsan_shared",
-        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
-        "goarch": "amd64"
-      }
-    ],
     "runtime/secret/...": [
       {
         "test": "TestGoExit",
@@ -453,7 +399,7 @@
     "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering"
   },
   "packages": {
-    "cmd/cgo/internal/testplugin": "TestMain: shared-object relocations fail (amd64 TLS local-exec; arm64 preemptible-symbol ADRP)",
+    "cmd/cgo/internal/testplugin": "TestMain: shared-object relocations fail (amd64 preemptible-symbol PC32; arm64 preemptible-symbol ADRP)",
     "cmd/cgo/internal/testshared": "TestMain: shared runtime fails to link (amd64 nosplit overflow; arm64 preemptible-symbol ADRP)"
   }
 }
