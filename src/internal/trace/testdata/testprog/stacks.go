@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"runtime/trace"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -138,6 +139,10 @@ func syncPreemptPoint() {
 	if never {
 		syncPreemptPoint()
 	}
+	// Keep the call in the loop and prevent tail recursion elimination so
+	// this function retains the stack check used for synchronous preemption.
+	atomic.AddUint32(&preemptCounter, 1)
 }
 
 var never bool
+var preemptCounter uint32

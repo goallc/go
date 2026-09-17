@@ -40,7 +40,12 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	if base.Flag.N != 0 {
 		level = llvm.CodeGenLevelNone
 	}
-	tm := target.CreateTargetMachine(triple, "", "", level, llvm.RelocDefault, llvm.CodeModelDefault)
+	reloc := llvm.RelocDefault
+	if *base.Flag.Shared || base.Ctxt.Flag_dynlink {
+		// Honor the driver's position-independent code request for GoObj too.
+		reloc = llvm.RelocPIC
+	}
+	tm := target.CreateTargetMachine(triple, "", "", level, reloc, llvm.CodeModelDefault)
 	defer tm.Dispose()
 	td := tm.CreateTargetData()
 	CurrentModule.SetDataLayout(td.String())
