@@ -2608,6 +2608,10 @@ Error enumeratePointerFrameLeaves(Type *Ty, const DataLayout &DL,
     return Error::success();
   }
   if (auto *AT = dyn_cast<ArrayType>(Ty)) {
+    // Pointer-free elements contribute no frame-map leaves. In particular,
+    // nested zero-size arrays can have arbitrarily large element counts.
+    if (!containsPointer(AT->getElementType()))
+      return Error::success();
     if (AT->getNumElements() > std::numeric_limits<unsigned>::max())
       return createStringError(
           std::errc::value_too_large,
