@@ -1148,6 +1148,12 @@ func (lfc *LLVMFuncContext) materializeAddressPointer(address llvm.Value, addres
 // integer while it is live across calls, so stack copying cannot mistake it
 // for a movable Go stack pointer.
 func (lfc *LLVMFuncContext) llvmAddressPointer(v *Value, address llvm.Value, addressType *types.Type, name string) llvm.Value {
+	kind := address.Type().TypeKind()
+	if (kind == llvm.StructTypeKind || kind == llvm.ArrayTypeKind) && types.IsDirectIface(addressType) {
+		// SSA can forward a direct-interface aggregate to a scalar pointer
+		// store. Its write-barrier record needs the contained pointer.
+		return lfc.reshapeLLVMValueToType(address, GlobalCtxt.PointerType(0), name)
+	}
 	switch address.Type().TypeKind() {
 	case llvm.PointerTypeKind:
 		return address
@@ -3187,34 +3193,21 @@ func llvmDirectIfacePath(t llvm.Type) ([]int, llvmDirectIfaceCarrier) {
 	return nil, llvmDirectIfaceInvalid
 }
 
-func (lfc *LLVMFuncContext) insertLLVMValueAtPath(v *Value, value llvm.Value, target llvm.Type, path []int) llvm.Value {
+// insertLLVMValueAtPath rebuilds an aggregate along a path validated by
+// llvmDirectIfacePath. All other fields are zero-sized.
+func (lfc *LLVMFuncContext) insertLLVMValueAtPath(value llvm.Value, target llvm.Type, path []int, name string) llvm.Value {
 	if len(path) == 0 {
-		if value.Type() != target {
-			v.Fatalf("direct interface pointer carrier has incompatible LLVM type")
-		}
 		return value
 	}
-
 	index := path[0]
 	var element llvm.Type
-	switch target.TypeKind() {
-	case llvm.StructTypeKind:
-		elements := target.StructElementTypes()
-		if index < 0 || index >= len(elements) {
-			v.Fatalf("direct interface struct carrier index %d is out of range", index)
-		}
-		element = elements[index]
-	case llvm.ArrayTypeKind:
-		if index < 0 || index >= target.ArrayLength() {
-			v.Fatalf("direct interface array carrier index %d is out of range", index)
-		}
+	if target.TypeKind() == llvm.StructTypeKind {
+		element = target.StructElementTypes()[index]
+	} else {
 		element = target.ElementType()
-	default:
-		v.Fatalf("direct interface carrier path enters non-aggregate LLVM type")
 	}
-
-	elementValue := lfc.insertLLVMValueAtPath(v, value, element, path[1:])
-	return lfc.b.CreateInsertValue(llvm.Undef(target), elementValue, index, v.String()+".carrier")
+	elementValue := lfc.insertLLVMValueAtPath(value, element, path[1:], name)
+	return lfc.b.CreateInsertValue(llvm.Undef(target), elementValue, index, name+".carrier")
 }
 
 func (lfc *LLVMFuncContext) llvmIData(v *Value) llvm.Value {
@@ -3237,7 +3230,7 @@ func (lfc *LLVMFuncContext) llvmIData(v *Value) llvm.Value {
 	if carrier != llvmDirectIfaceHasPointer {
 		v.Fatalf("direct Go interface type %v has no unique LLVM pointer carrier", v.Type)
 	}
-	result := lfc.insertLLVMValueAtPath(v, data, want, path)
+	result := lfc.insertLLVMValueAtPath(data, want, path, v.String())
 	result.SetName(v.String())
 	return result
 }
@@ -3292,6 +3285,22 @@ func (lfc *LLVMFuncContext) reshapeLLVMValueToType(value llvm.Value, target llvm
 	}
 
 	source := value.Type()
+	// Direct-interface values have one pointer leaf, possibly surrounded by
+	// zero-sized fields. SSA may forward either the aggregate or its pointer
+	// carrier across interface and ABI boundaries.
+	if source.TypeKind() == llvm.PointerTypeKind {
+		if path, carrier := llvmDirectIfacePath(target); carrier == llvmDirectIfaceHasPointer {
+			return lfc.insertLLVMValueAtPath(value, target, path, name)
+		}
+	}
+	if target.TypeKind() == llvm.PointerTypeKind {
+		if path, carrier := llvmDirectIfacePath(source); carrier == llvmDirectIfaceHasPointer {
+			for _, index := range path {
+				value = lfc.b.CreateExtractValue(value, index, name+".carrier")
+			}
+			return value
+		}
+	}
 	if source == GlobalCtxt.Int8Type() && target == GlobalCtxt.Int1Type() {
 		return lfc.llvmCondition(value, name)
 	}
