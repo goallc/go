@@ -180,7 +180,8 @@ func ParseFlags() {
 	Flag.LinkShared = &Ctxt.Flag_linkshared
 	Flag.Shared = &Ctxt.Flag_shared
 	Flag.WB = true
-	Flag.EnableLLVM = false
+	// Toolchain1 uses the native backend to build toolchain2; later stages use LLVM.
+	Flag.EnableLLVM = !CompilerBootstrap
 	Flag.LLVMOptPasses = "auto"
 
 	Debug.ConcurrentOk = true
