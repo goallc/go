@@ -1,4 +1,4 @@
-// run
+// buildrun
 
 // Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -44,9 +44,9 @@ func main() {
 
 // Keep this checked-in fixture larger than staticdata.fileStringSym's 1 KiB
 // in-memory threshold. The embedded file is this source itself, so testdir's
-// ordinary Go command path supplies a real embed configuration while the test
-// remains a single-file run recipe. The padding is deliberately readable and
-// stable: it is part of the compiler input and lets the runtime assertion
+// buildrun recipe supplies a real embed configuration through the Go command.
+// The padding is deliberately readable and stable: it is part of the compiler
+// input and lets the runtime assertion
 // distinguish a correctly materialized LLVM constant from a zero initializer.
 //
 // LLVM file-backed data padding 01: abcdefghijklmnopqrstuvwxyz0123456789

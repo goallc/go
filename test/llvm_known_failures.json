@@ -6,10 +6,6 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/llvm_file_backed_embed.go",
-        "reason": "harness: direct compile recipe lacks embed configuration"
-      },
-      {
         "test": "Test/live_uintptrkeepalive.go",
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
@@ -215,100 +211,6 @@
       }
     ],
     "cmd/compile/internal/ssa": [
-      {
-        "test": "TestCPUGeneratedFilesUpToDate",
-        "reason": "harness: generator needs a writable module cache under run.bash"
-      },
-      {
-        "test": "TestLLVMCPUAutomaticAndGuards",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMCPUFeaturePlanMidway",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMCPUFeaturePlanStrongerGuard",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMCPUFeaturePlanWideCalls",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMCarrylessMultiplyImmediate",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDDynamicShuffles",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDFloatConversions",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDImmediateShuffles",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDIntegerConversions",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDOrdinaryShifts",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDSaturatingConversions",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDStaticShuffles",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGeneratedSIMDWidenMultiply",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGenericSIMDElementLowering",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGenericVec128Lowering",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMGenericWideSIMDLowering",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMSIMDFeatureFloor",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
-      {
-        "test": "TestLLVMWideVectorTypeWidth",
-        "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
-        "without_experiment": "simd"
-      },
       {
         "test": "TestDebugLinesSayHi",
         "reason": "expectation: test reads native genssa dump, which LLVM does not emit"

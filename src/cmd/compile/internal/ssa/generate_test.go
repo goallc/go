@@ -20,6 +20,8 @@ const expectedHeader = "// Code generated from _gen/" // this is the common part
 // contents and the set of generated files without modifying the source tree.
 func TestCPUGeneratedFilesUpToDate(t *testing.T) {
 	testenv.MustHaveGoRun(t)
+	// The SIMD generator is a separate module with external dependencies.
+	testenv.MustHaveExternalNetwork(t)
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +55,15 @@ func TestCPUGeneratedFilesUpToDate(t *testing.T) {
 	genDir := filepath.Join(root, "src/simd/archsimd/_gen")
 	args := []string{"run", "-C", genDir, ".", "-cpu-only", "-goroot", tmp}
 	t.Logf("%s %v", testenv.GoToolPath(t), args)
-	if output, err := testenv.Command(t, testenv.GoToolPath(t), args...).CombinedOutput(); err != nil {
+	cmd := testenv.Command(t, testenv.GoToolPath(t), args...)
+	// run.bash deliberately sets GOPATH to a nonexistent directory. Keep the
+	// module cache separate from the generated tree checked below, and make
+	// downloaded files writable so TempDir can remove them.
+	cmd.Env = append(os.Environ(),
+		"GOMODCACHE="+t.TempDir(),
+		"GOFLAGS="+os.Getenv("GOFLAGS")+" -modcacherw",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("CPU generation failed: %v\n%s", err, output)
 	}
 	err = filepath.WalkDir(tmp, func(path string, entry os.DirEntry, err error) error {
