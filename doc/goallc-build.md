@@ -196,14 +196,19 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 
 CI 在 Linux amd64、arm64 上分别执行一次 `make.bash`，共享 SDK 后用
 `run.bash --no-rebuild` 并行运行测试，这是 `all.bash` 的两个原有阶段。
-每个架构分为十组：两个标准库分片、compiler、cgo、其他 cmd、两个 testdir 分片、
-crypto 构建模式、实验模式，以及 runtime/剩余构建模式。标准库用稳定哈希分配，
-相关特殊构建模式放在同组复用缓存，避免原来 cmd 和 modes 单组耗时过长。
+每个架构分为四组：标准库、compiler/实验模式、其他 cmd（含 cgo）/crypto 模式，
+以及 runtime/testdir/剩余构建模式。两个架构共八个测试任务，加上两个构建任务
+和一个 LLVM payload 选择任务，共十一项。按已测耗时合并原来的十组，
+相关特殊构建模式放在同组复用缓存。
 分组来自同一份 `dist test -list`，每个条目只分配给一组；新增测试自动参与。
-使用 `GO_BUILDER_NAME` 避免每组重复构建工具链，`GO_TEST_SHARDS=2` 使用上游
-原有 testdir 分片。SDK 包含生成的源码及 host tools 下的 LLVM 插件/动态库，
+使用 `GO_BUILDER_NAME` 避免每组重复构建工具链；`GO_TEST_SHARDS=1` 让 testdir
+在 runtime 组内完整运行一次。SDK 包含生成的源码及 host tools 下的 LLVM 插件/动态库，
 LLVM 头文件、FileCheck 和 llvm-config 一起传递；恢复时更新头文件链接，
 CMake 构建目录不跨任务复制。
+PR 和 push 显式设置 `GO_TEST_SHORT=true`，沿用上游 dist 默认的 short 模式。
+手动触发工作流可选 `test-mode=long`，设置 `GO_TEST_SHORT=false`；测试清单与
+执行使用同一模式，long 模式新增的 dist 项也自动分组。long 仍应用已知失败名单，
+不等于无过滤的完整资格验证。
 SDK 和 Go 构建缓存按架构隔离，通过同一次 workflow 的 artifact 传递；
 复用 make 阶段的标准库缓存，测试包及不同构建模式仍按需编译。
 不再通过独立的 `TestLLVM` 入口筛选 recipe 或重复运行标准库。testdir 保留原生 `Test` 入口及所有 recipe 类型；
@@ -225,6 +230,8 @@ dist 用原生 `-skip` 参数排除
 ```sh
 cd src
 ./all.bash -llvm-dir=/path/to/llvm-payload
+# 同一 SDK 运行上游 long 模式。
+GO_TEST_SHORT=false ./run.bash --no-rebuild -k
 # 用同一 SDK 重新检查全部已知失败（可能很慢或触发编译器崩溃）。
 GOALLC_TEST_KNOWN_FAILURES=0 ./run.bash --no-rebuild -k
 # 单点重现不经过 dist，因此不使用失败名单。

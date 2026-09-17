@@ -12,6 +12,12 @@ on:
       - edited
   workflow_dispatch:
     inputs:
+      test-mode:
+        description: Test duration mode (PRs always use short)
+        required: true
+        default: short
+        type: choice
+        options: [short, long]
       llvm-pr:
         description: Optional goallc/llvm-project PR number
         required: false
@@ -267,7 +273,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        group: [stdlib-0, stdlib-1, cmd-compile, cmd-cgo, cmd-tools, testdir-0, testdir-1, modes-crypto, modes-experiments, runtime]
+        group: [stdlib, compiler, tools, runtime]
         include:
           - arch: amd64
             runner: ubuntu-22.04
@@ -277,7 +283,8 @@ jobs:
       GOROOT: ${{ github.workspace }}
       GOCACHE: ${{ github.workspace }}/.go-build
       GO_BUILDER_NAME: goallc-linux-${{ matrix.arch }}
-      GO_TEST_SHARDS: "2"
+      GO_TEST_SHARDS: "1"
+      GO_TEST_SHORT: ${{ github.event_name == 'workflow_dispatch' && inputs.test-mode == 'long' && 'false' || 'true' }}
       GO_TEST_TIMEOUT_SCALE: "4"
       GOENV: "off"
 
@@ -321,6 +328,7 @@ jobs:
           python3 .github/scripts/goallc-test-shard.py \
             "$RUNNER_TEMP/dist-tests.txt" "$TEST_GROUP" > "$RUNNER_TEMP/selected-tests.txt"
           cat "$RUNNER_TEMP/selected-tests.txt"
+          echo "GO_TEST_SHORT=$GO_TEST_SHORT; selected $(wc -l < "$RUNNER_TEMP/selected-tests.txt") dist tests" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run all.bash test stage without rebuilding
         working-directory: src

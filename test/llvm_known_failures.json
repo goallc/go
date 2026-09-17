@@ -22,20 +22,8 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/fixedbugs/issue77534.go",
-        "reason": "compiler: LLVM type/aggregate assertion"
-      },
-      {
         "test": "Test/fixedbugs/issue9355.go",
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
-      },
-      {
-        "test": "Test/fixedbugs/issue63505.go",
-        "reason": "compiler: LLVM type/aggregate assertion"
-      },
-      {
-        "test": "Test/fixedbugs/issue61895.go",
-        "reason": "compiler: 'main': open-coded defer stack slot .autotmp_0 was not allocated"
       },
       {
         "test": "Test/fixedbugs/issue56141.go",
@@ -48,10 +36,6 @@
       {
         "test": "Test/fixedbugs/issue52697.go",
         "reason": "expectation: native stack-frame limit diagnostic differs"
-      },
-      {
-        "test": "Test/fixedbugs/issue45344.go",
-        "reason": "compiler: LLVM type/aggregate assertion"
       },
       {
         "test": "Test/fixedbugs/issue34723.go",
@@ -381,6 +365,16 @@
       {
         "test": "TestDWARF",
         "reason": "debug: function entry line differs by one"
+      },
+      {
+        "test": "TestDWARFLocationList",
+        "reason": "compiler: arm64 -gcflags=all=-N -l aborts compiling strconv (CallBase::getArgOperand) and crypto/internal/entropy (unsupported GoObj frame); CI 35175515343",
+        "goarch": "arm64"
+      },
+      {
+        "test": "TestIssue38554",
+        "reason": "slow: arm64 compilation of a 10 MiB array return timed out after 2131 seconds; CI 35175515343",
+        "goarch": "arm64"
       }
     ],
     "cmd/link/internal/ld": [
