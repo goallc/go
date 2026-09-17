@@ -19,12 +19,15 @@ import (
 var llvmFailures struct {
 	Tests map[string][]llvmTestFailure `json:"tests"`
 	Modes map[string]string            `json:"modes"`
+	// Packages is reserved for failures in TestMain, before -skip takes effect.
+	Packages map[string]string `json:"packages"`
 }
 
 type llvmTestFailure struct {
 	Test              string `json:"test"`
 	Reason            string `json:"reason"`
 	WithoutExperiment string `json:"without_experiment,omitempty"`
+	GOARCH            string `json:"goarch,omitempty"`
 }
 
 func loadLLVMTestFailures() {
@@ -55,11 +58,19 @@ func loadLLVMTestFailures() {
 			fatalf("invalid known LLVM test mode: %q", name)
 		}
 	}
+	for pkg, reason := range llvmFailures.Packages {
+		if pkg == "" || strings.Contains(pkg, ":") || reason == "" {
+			fatalf("invalid known LLVM package failure: %q", pkg)
+		}
+	}
 }
 
 func llvmSkipPattern(pkg string) string {
 	var patterns []string
 	for _, entry := range llvmFailures.Tests[pkg] {
+		if entry.GOARCH != "" && entry.GOARCH != goarch {
+			continue
+		}
 		if entry.WithoutExperiment != "" && experimentEnabled(entry.WithoutExperiment) {
 			continue
 		}

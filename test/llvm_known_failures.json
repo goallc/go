@@ -340,12 +340,41 @@
         "test": "TestLLVMWideVectorTypeWidth",
         "reason": "harness: SIMD unit helper assumes GOEXPERIMENT=simd",
         "without_experiment": "simd"
+      },
+      {
+        "test": "TestDebugLinesSayHi",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLinesPushback",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLinesConvert",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestInlineLines",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLines_53456",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
+      },
+      {
+        "test": "TestDebugLines_74576",
+        "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
       }
     ],
     "cmd/compile/internal/test": [
       {
         "test": "TestScanfRemoval",
         "reason": "optimization: unused scanf code is retained"
+      },
+      {
+        "test": "TestIssue77597",
+        "reason": "compiler: race -N -l compilation of strconv hits LLVM CallBase::getArgOperand assertion",
+        "goarch": "arm64"
       }
     ],
     "cmd/link": [
@@ -367,6 +396,67 @@
         "test": "TestDeadcode/globalmap",
         "reason": "optimization: main.init retains unused main.large"
       }
+    ],
+    "cmd/cgo/internal/testcshared": [
+      {
+        "test": "TestCachedInstall",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestPIE",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestExportedSymbols",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestSymbolicFunctions",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestGo2C2Go",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestExportedSymbolsWithDynamicLoad",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestSignalHandlersWithNotify",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestUnexportedSymbols",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      },
+      {
+        "test": "TestSignalHandlers",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      }
+    ],
+    "cmd/cgo/internal/testsanitizers": [
+      {
+        "test": "TestShared/tsan_shared",
+        "reason": "linker: shared object rejects R_X86_64_TPOFF32 against runtime.tlsg",
+        "goarch": "amd64"
+      }
+    ],
+    "runtime/secret/...": [
+      {
+        "test": "TestGoExit",
+        "reason": "runtime: secret remains in register spill slot after Goexit on arm64",
+        "goarch": "arm64"
+      }
     ]
   },
   "modes": {
@@ -381,5 +471,9 @@
     "encoding/gob:race": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
     "flag:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity",
     "os/exec:race-external": "compiler: compress/flate race build exceeds SelectionDAG NumValues capacity"
+  },
+  "packages": {
+    "cmd/cgo/internal/testplugin": "TestMain: shared-object relocations fail (amd64 TLS local-exec; arm64 preemptible-symbol ADRP)",
+    "cmd/cgo/internal/testshared": "TestMain: shared runtime fails to link (amd64 nosplit overflow; arm64 preemptible-symbol ADRP)"
   }
 }

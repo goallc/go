@@ -267,7 +267,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        group: [stdlib, cmd, runtime, testdir-0, testdir-1, modes]
+        group: [stdlib-0, stdlib-1, cmd-compile, cmd-cgo, cmd-tools, testdir-0, testdir-1, modes-crypto, modes-experiments, runtime]
         include:
           - arch: amd64
             runner: ubuntu-22.04
@@ -328,7 +328,9 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t tests < "$RUNNER_TEMP/selected-tests.txt"
-          bash ./run.bash --no-rebuild -k "${tests[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
+          # JSON includes test start/end events and durations even if a package
+          # later times out; use the artifact to diagnose and rebalance shards.
+          bash ./run.bash --no-rebuild -k -json "${tests[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
 
       - name: Summarize known failures
         if: always()

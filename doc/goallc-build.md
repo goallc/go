@@ -196,7 +196,9 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 
 CI 在 Linux amd64、arm64 上分别执行一次 `make.bash`，共享 SDK 后用
 `run.bash --no-rebuild` 并行运行测试，这是 `all.bash` 的两个原有阶段。
-每个架构分为标准库、cmd、runtime、两个 testdir 分片、特殊构建模式六组。
+每个架构分为十组：两个标准库分片、compiler、cgo、其他 cmd、两个 testdir 分片、
+crypto 构建模式、实验模式，以及 runtime/剩余构建模式。标准库用稳定哈希分配，
+相关特殊构建模式放在同组复用缓存，避免原来 cmd 和 modes 单组耗时过长。
 分组来自同一份 `dist test -list`，每个条目只分配给一组；新增测试自动参与。
 使用 `GO_BUILDER_NAME` 避免每组重复构建工具链，`GO_TEST_SHARDS=2` 使用上游
 原有 testdir 分片。SDK 包含生成的源码及 host tools 下的 LLVM 插件/动态库，
@@ -209,7 +211,9 @@ SDK 和 Go 构建缓存按架构隔离，通过同一次 workflow 的 artifact �
 指令。原生汇编指令不会被误当作 LLVM IR 预期。
 
 已知失败集中记录在 `test/llvm_known_failures.json`：`tests` 指定包及完整测试/子测试名，
-`modes` 指定无法构建的 dist 模式，每项必须写明原因。dist 用原生 `-skip` 参数排除
+`goarch` 可将测试排除限定到失败架构；`modes` 指定无法构建的 dist 模式。
+`packages` 仅用于在 TestMain 中就失败、无法通过 `-skip` 避开的包。每项必须写明原因。
+dist 用原生 `-skip` 参数排除
 列出的测试，并逐项打印 `LLVM known failure: SKIP`；未列出的 recipe 一律参与。
 只对有排除项的包单独执行测试，其余包仍使用 dist 原有的批量测试方式。
 名单是待修问题清单，不代表已通过；修复后应删除对应条目。
@@ -229,7 +233,8 @@ GOALLC_TEST_KNOWN_FAILURES=0 ./run.bash --no-rebuild -k
 GO_GCFLAGS=-enablellvm=false ../bin/go test cmd/internal/testdir -llvm_codegen=false
 ```
 
-完整日志与名单作为 CI artifact 保存。禁用名单不表示 LLVM 已支持名单中的能力。
+CI 使用 dist 的 `-json` 输出测试开始、结束和耗时，便于定位卡住的用例和继续调整分片。
+完整日志、分片选择与名单作为 CI artifact 保存。禁用名单不表示 LLVM 已支持名单中的能力。
 
 ## plugin 的构建与缓存
 

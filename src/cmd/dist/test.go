@@ -569,6 +569,13 @@ func (t *tester) registerStdTest(pkg string) {
 	const stdTestHeading = "Testing packages." // known to addTest for a safety check
 	gcflags := gogcflags
 	name := testName(pkg, "")
+	if reason := llvmFailures.Packages[pkg]; reason != "" {
+		t.addTest(name, stdTestHeading, func(dt *distTest) error {
+			(&goTest{pkg: pkg}).printSkip(t, "LLVM known failure: SKIP "+pkg+": "+reason)
+			return nil
+		})
+		return
+	}
 	if len(llvmFailures.Tests[pkg]) != 0 {
 		// Keep package-specific exclusions out of the shared std package batch.
 		t.addTest(name, stdTestHeading, func(dt *distTest) error {
