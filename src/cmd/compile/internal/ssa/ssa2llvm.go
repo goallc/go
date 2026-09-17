@@ -3114,6 +3114,8 @@ func (lfc *LLVMFuncContext) aggregate(v *Value, args []*Value) llvm.Value {
 				elementType = v.Type.FieldType(i)
 			case types.TARRAY:
 				elementType = v.Type.Elem()
+			case types.TCOMPLEX64, types.TCOMPLEX128:
+				elementType = types.FloatForComplex(v.Type)
 			case types.TINTER:
 				// Go SSA represents an interface's itab/type word as uintptr,
 				// but OpAddr may still expose a semantic pointer. Keep the

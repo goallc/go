@@ -46,10 +46,6 @@
         "reason": "unsupported: strictdups=2 detects differing generic wrapper payloads"
       },
       {
-        "test": "Test/fixedbugs/issue26163.go",
-        "reason": "compiler: 'init': aggregate field 0 changes LLVM representation for Go type complex128"
-      },
-      {
         "test": "Test/fixedbugs/issue22200b.go",
         "reason": "expectation: native stack-frame limit diagnostic differs"
       },
@@ -198,10 +194,6 @@
       {
         "test": "TestTracebackAncestors",
         "reason": "metadata: ancestor traceback omits expected recursive frames"
-      },
-      {
-        "test": "TestCgoPprofPIE",
-        "reason": "linker: PIE testprogcgo global stmp_1 lacks Go type information"
       }
     ],
     "runtime/race": [
