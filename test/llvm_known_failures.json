@@ -204,6 +204,13 @@
         "reason": "linker: PIE testprogcgo global stmp_1 lacks Go type information"
       }
     ],
+    "runtime/race": [
+      {
+        "test": "TestOutput/external_cgo_thread",
+        "reason": "metadata: race report locates runtime.newextram in internal/runtime/atomic/types.go instead of runtime/proc.go; CI 35189324447",
+        "goarch": "arm64"
+      }
+    ],
     "runtime/pprof": [
       {
         "test": "TestCPUProfileRecursion",
