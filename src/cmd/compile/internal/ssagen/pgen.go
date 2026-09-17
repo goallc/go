@@ -301,6 +301,11 @@ const maxStackSize = 1 << 30
 // and flushes that plist to machine code.
 // worker indicates which of the backend workers is doing the processing.
 func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
+	if base.Flag.EnableLLVM {
+		// LLVM IR emission consumes the function's linker markers during
+		// buildssa; the native path adds them after assembly below.
+		fieldtrack(fn.LSym, fn.FieldTrack)
+	}
 	f := buildssa(fn, worker, inline.IsPgoHotFunc(fn, profile) || inline.HasPgoHotInline(fn))
 	if base.Flag.EnableLLVM {
 		// The in-process backend replaces native code generation. ssa.Compile
