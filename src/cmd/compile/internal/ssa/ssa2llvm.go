@@ -5874,6 +5874,11 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 		GlobalCtxt.MDString(hex.EncodeToString(base.Ctxt.Fingerprint[:])),
 	})
 	CurrentModule.AddNamedMetadataOperand("goobj.config", config)
+	// PIC alone (PIE or c-shared) still binds Go symbols locally. Dynamic Go
+	// linking also lets later LLVM passes introduce preemptible references.
+	if base.Ctxt.Flag_dynlink {
+		CurrentModule.AddNamedMetadataOperand("goobj.dynlink", GlobalCtxt.MDNode(nil))
+	}
 	CurrentModule.AddNamedMetadataOperand(goCPUConfigMD, GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString("goallc.cpu.v1"),
 		GlobalCtxt.MDString(buildcfg.GOARCH),

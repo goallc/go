@@ -399,7 +399,6 @@
     "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering"
   },
   "packages": {
-    "cmd/cgo/internal/testplugin": "TestMain: shared-object relocations fail (amd64 preemptible-symbol PC32; arm64 preemptible-symbol ADRP)",
     "cmd/cgo/internal/testshared": "TestMain: shared runtime fails to link (amd64 nosplit overflow; arm64 preemptible-symbol ADRP)"
   }
 }
