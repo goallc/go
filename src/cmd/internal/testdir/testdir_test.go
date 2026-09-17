@@ -35,6 +35,7 @@ import (
 )
 
 var (
+	llvmCodegen    = flag.Bool("llvm_codegen", true, "check LLVM codegen with FileCheck; set false with GO_GCFLAGS=-enablellvm=false for native assembly checks")
 	allCodegen     = flag.Bool("all_codegen", defaultAllCodeGen(), "run all goos/goarch for codegen")
 	runSkips       = flag.Bool("run_skips", false, "run skipped tests (ignore skip and build tags)")
 	linkshared     = flag.Bool("linkshared", false, "")
@@ -79,22 +80,6 @@ var (
 // Each .go file test case in GOROOT/test is registered as a subtest with
 // a full name like "Test/fixedbugs/bug000.go" ('/'-separated relative path).
 func Test(t *testing.T) {
-	runTestDir(t, false)
-}
-
-// TestLLVM is the single entrypoint for LLVM qualification in this package.
-// Its subtests keep standard library qualification and the shared GOROOT/test
-// runner independently selectable.
-func TestLLVM(t *testing.T) {
-	t.Run("stdlib", testLLVMStdlib)
-	t.Run("content-addressable-closure-external-link", testLLVMContentAddressableClosureExternalLink)
-	t.Run("reflect-method-inline", testLLVMReflectMethodInline)
-	t.Run("testdir", func(t *testing.T) {
-		runTestDir(t, true)
-	})
-}
-
-func runTestDir(t *testing.T, useLLVM bool) {
 	if *target != "" {
 		// When -target is set, propagate it to GOOS/GOARCH in our environment
 		// so that all commands run with the target GOOS/GOARCH.
@@ -137,10 +122,6 @@ func runTestDir(t *testing.T, useLLVM bool) {
 	goExperiment = env.GOEXPERIMENT
 	goDebug = env.GODEBUG
 	tmpDir = t.TempDir()
-	stdlibImportcfgPath = filepath.Join(tmpDir, "importcfg")
-	if err := os.WriteFile(stdlibImportcfgPath, []byte(stdlibImportcfg()), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	common := testCommon{
 		gorootTestDir: filepath.Join(testenv.GOROOT(t), "test"),
@@ -156,44 +137,25 @@ func runTestDir(t *testing.T, useLLVM bool) {
 		}
 	}
 
-	var llvmMode *llvmTestMode
-	if useLLVM {
-		llvmMode = newLLVMTestMode(t, common)
-	}
-
-	var tests []test
 	for _, dir := range dirs {
 		for _, goFile := range goFiles(t, dir) {
-			test := test{testCommon: common, dir: dir, goFile: goFile, llvm: llvmMode}
-			if llvmMode != nil && !llvmMode.selectTest(t, test) {
-				continue
-			}
-			if !shardMatch(goFile) {
-				continue
-			}
-			tests = append(tests, test)
-		}
-	}
-	if llvmMode != nil {
-		llvmMode.finish(t)
-	}
-	for _, test := range tests {
-		name := path.Join(test.dir, test.goFile)
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			test.T = t
-			testError := test.run()
-			wantError := test.expectFail() && !*force
-			if testError != nil {
-				if wantError {
-					t.Log(testError.Error() + " (expected)")
-				} else {
-					t.Fatal(testError)
+			test := test{testCommon: common, dir: dir, goFile: goFile}
+			t.Run(path.Join(dir, goFile), func(t *testing.T) {
+				t.Parallel()
+				test.T = t
+				testError := test.run()
+				wantError := test.expectFail() && !*force
+				if testError != nil {
+					if wantError {
+						t.Log(testError.Error() + " (expected)")
+					} else {
+						t.Fatal(testError)
+					}
+				} else if wantError {
+					t.Fatal("unexpected success")
 				}
-			} else if wantError {
-				t.Fatal("unexpected success")
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -214,7 +176,7 @@ func goFiles(t *testing.T, dir string) []string {
 	names := []string{}
 	for _, file := range files {
 		name := file.Name()
-		if !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go") {
+		if !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go") && shardMatch(name) {
 			names = append(names, name)
 		}
 	}
@@ -267,14 +229,14 @@ var stdlibImportcfg = sync.OnceValue(func() string {
 	return string(output)
 })
 
-var stdlibImportcfgPath string
-
-func stdlibImportcfgFile() string {
-	if stdlibImportcfgPath == "" {
-		panic("stdlib importcfg was not initialized")
+var stdlibImportcfgFile = sync.OnceValue(func() string {
+	filename := filepath.Join(tmpDir, "importcfg")
+	err := os.WriteFile(filename, []byte(stdlibImportcfg()), 0644)
+	if err != nil {
+		log.Fatal(err)
 	}
-	return stdlibImportcfgPath
-}
+	return filename
+})
 
 // linkFile links infile with the given importcfg and ldflags, writes to outfile.
 // infile can be the name of an object file or a go source file.
@@ -313,7 +275,6 @@ type test struct {
 	// dir and goFile identify the test case.
 	// For example, "fixedbugs", "bug000.go".
 	dir, goFile string
-	llvm        *llvmTestMode
 }
 
 // expectFail reports whether the (overall) test recipe is
@@ -344,20 +305,6 @@ func (t test) goFileName() string {
 
 func (t test) goDirName() string {
 	return filepath.Join(t.dir, strings.ReplaceAll(t.goFile, ".go", ".dir"))
-}
-
-func (t test) action(parent *testing.T) string {
-	parent.Helper()
-	filename := filepath.Join(t.gorootTestDir, t.goFileName())
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		parent.Fatal(err)
-	}
-	_, fields, err := parseTestRecipe(string(data))
-	if err != nil {
-		parent.Fatalf("%s: %v", filename, err)
-	}
-	return fields[0]
 }
 
 // goDirFiles returns .go files in dir.
@@ -526,160 +473,11 @@ func (ctxt *context) match(name string) bool {
 // or else the commands will rebuild any needed packages (like runtime)
 // over and over.
 func (t test) goGcflags() string {
-	flags := os.Getenv("GO_GCFLAGS")
-	if t.llvm != nil {
-		if flags != "" {
-			flags += " "
-		}
-		flags += "-enablellvm"
-	}
-	return "-gcflags=all=" + flags
+	return "-gcflags=all=" + os.Getenv("GO_GCFLAGS")
 }
 
 func (test) goGcflagsIsEmpty() bool {
 	return "" == os.Getenv("GO_GCFLAGS")
-}
-
-// toolCompileFlags returns compiler flags for recipes that invoke
-// "go tool compile" directly instead of going through the go command.
-func (t test) toolCompileFlags(flags []string) []string {
-	if t.llvm == nil || slices.Contains(flags, "-enablellvm") {
-		return flags
-	}
-	return append(slices.Clone(flags), "-enablellvm")
-}
-
-// appendBuildFlag adds extra flags to the effective unpatterned per-package
-// build flag. Existing unpatterned flags are updated in place. An all= rule is
-// retained for dependencies and followed by an unpatterned rule for the package
-// named on the command line.
-func appendBuildFlag(flags []string, name, initial string, extra ...string) []string {
-	effective := strings.TrimSpace(initial)
-	short, long := "-"+name, "--"+name
-	target := -1
-	targetPrefix := ""
-	for i := 0; i < len(flags); i++ {
-		var spec, prefix string
-		switch {
-		case flags[i] == short || flags[i] == long:
-			if i+1 >= len(flags) {
-				continue
-			}
-			i++
-			spec = flags[i]
-		case strings.HasPrefix(flags[i], short+"="):
-			spec = strings.TrimPrefix(flags[i], short+"=")
-			prefix = short + "="
-		case strings.HasPrefix(flags[i], long+"="):
-			spec = strings.TrimPrefix(flags[i], long+"=")
-			prefix = long + "="
-		default:
-			continue
-		}
-
-		spec = strings.TrimSpace(spec)
-		if spec == "" || strings.HasPrefix(spec, "-") {
-			effective = spec
-			target = i
-			targetPrefix = prefix
-			continue
-		}
-		pattern, value, ok := strings.Cut(spec, "=")
-		if !ok {
-			continue // Let the go command diagnose malformed flags.
-		}
-		if strings.TrimSpace(pattern) == "all" {
-			effective = strings.TrimSpace(value)
-			target = -1
-			targetPrefix = ""
-		}
-	}
-	if effective != "" {
-		effective += " "
-	}
-	effective += strings.Join(extra, " ")
-	if target >= 0 {
-		flags[target] = targetPrefix + effective
-		return flags
-	}
-	return append(flags, short+"="+effective)
-}
-
-func TestAppendBuildFlag(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		flag    string
-		initial string
-		flags   []string
-		extra   []string
-		want    []string
-	}{
-		{
-			name:    "all rule remains for dependencies",
-			flag:    "gcflags",
-			initial: "-N",
-			flags:   []string{"-race", "-gcflags=all=-d=checkptr=0"},
-			extra:   []string{"-enablellvm"},
-			want:    []string{"-race", "-gcflags=all=-d=checkptr=0", "-gcflags=-d=checkptr=0 -enablellvm"},
-		},
-		{
-			name:  "update separate unpatterned argument",
-			flag:  "gcflags",
-			flags: []string{"-gcflags", "-l=4"},
-			extra: []string{"-enablellvm"},
-			want:  []string{"-gcflags", "-l=4 -enablellvm"},
-		},
-		{
-			name:    "preserve dependency rule",
-			flag:    "gcflags",
-			flags:   []string{"-gcflags=runtime=-l"},
-			initial: "-N",
-			extra:   []string{"-enablellvm"},
-			want:    []string{"-gcflags=runtime=-l", "-gcflags=-N -enablellvm"},
-		},
-		{
-			name:  "update unpatterned ldflags",
-			flag:  "ldflags",
-			flags: []string{"-ldflags=-s"},
-			extra: []string{"-w"},
-			want:  []string{"-ldflags=-s -w"},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := appendBuildFlag(tc.flags, tc.flag, tc.initial, tc.extra...)
-			if !slices.Equal(got, tc.want) {
-				t.Fatalf("appendBuildFlag(%q, %q, %q, %q) = %q, want %q", tc.flags, tc.flag, tc.initial, tc.extra, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestGoGcflags(t *testing.T) {
-	t.Setenv("GO_GCFLAGS", "-N")
-	if got, want := (test{}).goGcflags(), "-gcflags=all=-N"; got != want {
-		t.Fatalf("native goGcflags() = %q, want %q", got, want)
-	}
-	if got, want := (test{llvm: new(llvmTestMode)}).goGcflags(), "-gcflags=all=-N -enablellvm"; got != want {
-		t.Fatalf("LLVM goGcflags() = %q, want %q", got, want)
-	}
-}
-
-func TestToolCompileFlags(t *testing.T) {
-	flags := []string{"-N"}
-	if got, want := (test{}).toolCompileFlags(flags), flags; !slices.Equal(got, want) {
-		t.Fatalf("native toolCompileFlags(%q) = %q, want %q", flags, got, want)
-	}
-
-	llvmTest := test{llvm: new(llvmTestMode)}
-	if got, want := llvmTest.toolCompileFlags(flags), []string{"-N", "-enablellvm"}; !slices.Equal(got, want) {
-		t.Fatalf("LLVM toolCompileFlags(%q) = %q, want %q", flags, got, want)
-	}
-	if got, want := llvmTest.toolCompileFlags([]string{"-enablellvm"}), []string{"-enablellvm"}; !slices.Equal(got, want) {
-		t.Fatalf("LLVM toolCompileFlags with existing flag = %q, want %q", got, want)
-	}
-	if !slices.Equal(flags, []string{"-N"}) {
-		t.Fatalf("toolCompileFlags mutated its input: %q", flags)
-	}
 }
 
 var errTimeout = errors.New("command exceeded time limit")
@@ -804,16 +602,6 @@ func (t test) run() error {
 			goexp += args[0]
 			runenv = append(runenv, "GOEXPERIMENT="+goexp)
 
-		case "-llvm-package-only":
-			// LLVM Test normally compiles the full dependency closure with
-			// -enablellvm. Some migrated fixtures intentionally exercised only
-			// the command-line package. Clear the all= rule for dependencies and
-			// restore LLVM for that package, while leaving the native Test recipe
-			// unchanged.
-			if t.llvm != nil {
-				flags = append(flags, "-gcflags=all=", "-gcflags=-enablellvm")
-			}
-
 		case "-godebug": // set GODEBUG environment
 			args = args[1:]
 			if godebug != "" {
@@ -830,26 +618,6 @@ func (t test) run() error {
 			flags = append(flags, args[0])
 		}
 		args = args[1:]
-	}
-	if t.llvm != nil {
-		// LLVM lowering and optimization are substantially heavier than the
-		// native compile path. Bound each recipe command to the CI per-case
-		// budget so a newly slow test fails promptly and can be reviewed for
-		// blacklisting. An explicit shorter timeout remains authoritative.
-		if tim == 0 || tim > llvmDefaultCaseTimeoutSeconds {
-			tim = llvmDefaultCaseTimeoutSeconds
-		}
-		if action == "run" || action == "runoutput" {
-			flags = appendBuildFlag(flags, "ldflags", "", "-w")
-		}
-		if slices.Contains(flags, "-race") {
-			// The ordinary runtime warm-up does not populate the race build
-			// cache. Separate go commands can compile the same missing race
-			// dependencies concurrently, so let subsequent race recipes reuse
-			// the first recipe's cached packages.
-			t.llvm.raceMu.Lock()
-			defer t.llvm.raceMu.Unlock()
-		}
 	}
 	if action == "errorcheck" {
 		found := false
@@ -962,7 +730,7 @@ func (t test) run() error {
 		panic("unreachable")
 
 	case "asmcheck":
-		if t.llvm != nil {
+		if *llvmCodegen {
 			return runLLVMCodegenTest(t.T, long)
 		}
 		// Compile Go file and match the generated assembly
@@ -1052,7 +820,7 @@ func (t test) run() error {
 
 	case "compile":
 		// Compile Go file.
-		_, err := compileFile(runcmd, long, t.toolCompileFlags(flags))
+		_, err := compileFile(runcmd, long, flags)
 		return err
 
 	case "compiledir":
@@ -1070,7 +838,7 @@ func (t test) run() error {
 		return nil
 
 	case "errorcheckdir", "errorcheckandrundir":
-		flags = t.toolCompileFlags(append(flags, "-d=panic"))
+		flags = append(flags, "-d=panic")
 		// Compile and errorCheck all files in the directory as packages in lexicographic order.
 		// If errorcheckdir and wantError, compilation of the last package must fail.
 		// If errorcheckandrundir and wantError, compilation of the package prior the last must fail.
@@ -1124,7 +892,6 @@ func (t test) run() error {
 				break
 			}
 		}
-		flags = t.toolCompileFlags(flags)
 
 		importcfgfile := importcfg(pkgs)
 
@@ -1234,7 +1001,6 @@ func (t test) run() error {
 		}
 		var objs []string
 		cmd := []string{goTool, "tool", "compile", "-p=main", "-e", "-D", ".", "-importcfg=" + stdlibImportcfgFile(), "-o", "go.o"}
-		cmd = append(cmd, t.toolCompileFlags(nil)...)
 		if len(asms) > 0 {
 			cmd = append(cmd, "-asmhdr", "go_asm.h", "-symabis", "symabis")
 		}
@@ -1304,7 +1070,7 @@ func (t test) run() error {
 		runInDir = ""
 		var out []byte
 		var err error
-		if t.llvm == nil && len(flags)+len(args) == 0 && t.goGcflagsIsEmpty() && !*linkshared && goarch == runtime.GOARCH && goos == runtime.GOOS && goexp == goExperiment && godebug == goDebug {
+		if len(flags)+len(args) == 0 && t.goGcflagsIsEmpty() && !*linkshared && goarch == runtime.GOARCH && goos == runtime.GOOS && goexp == goExperiment && godebug == goDebug {
 			// If we're not using special go command flags,
 			// skip all the go command machinery.
 			// This avoids any time the go command would

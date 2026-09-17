@@ -1,4 +1,4 @@
-// runindir -goexperiment simd -llvm-package-only -gomodversion 1.18
+// runindir -goexperiment simd -gomodversion 1.18
 
 //go:build amd64
 

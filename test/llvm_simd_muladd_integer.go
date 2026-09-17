@@ -1,4 +1,4 @@
-// runindir -goexperiment simd -llvm-package-only -gomodversion 1.18
+// runindir -goexperiment simd -gomodversion 1.18
 
 // Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style

@@ -202,6 +202,7 @@ func (t *tester) run() {
 		t.runRx = regexp.MustCompile(t.runRxStr)
 	}
 
+	loadLLVMTestFailures()
 	t.registerTests()
 	if t.listMode {
 		for _, tt := range t.tests {
@@ -464,8 +465,17 @@ func (opts *goTest) buildArgs(t *tester) (build, run, pkgs, testFlags []string, 
 	if opts.cpu != "" {
 		run = append(run, "-cpu="+opts.cpu)
 	}
-	if opts.skip != "" {
-		run = append(run, "-skip="+opts.skip)
+	skip := opts.skip
+	for _, pkg := range opts.packages() {
+		if known := llvmSkipPattern(pkg); known != "" {
+			if skip != "" {
+				skip += "|"
+			}
+			skip += known
+		}
+	}
+	if skip != "" {
+		run = append(run, "-skip="+skip)
 	}
 	if t.json {
 		run = append(run, "-json")
@@ -559,6 +569,14 @@ func (t *tester) registerStdTest(pkg string) {
 	const stdTestHeading = "Testing packages." // known to addTest for a safety check
 	gcflags := gogcflags
 	name := testName(pkg, "")
+	if len(llvmFailures.Tests[pkg]) != 0 {
+		// Keep package-specific exclusions out of the shared std package batch.
+		t.addTest(name, stdTestHeading, func(dt *distTest) error {
+			t.runPending(dt)
+			return (&goTest{pkg: pkg, gcflags: gcflags}).run(t)
+		})
+		return
+	}
 	if t.runRx == nil || t.runRx.MatchString(name) == t.runRxWant {
 		stdMatches = append(stdMatches, pkg)
 	}
@@ -1133,6 +1151,10 @@ func (t *tester) registerTest(heading string, test *goTest, opts ...registerTest
 		}
 		name := testName(test.pkg, test.variant)
 		t.addTest(name, heading, func(dt *distTest) error {
+			if reason := llvmFailures.Modes[name]; reason != "" {
+				test.printSkip(t, "LLVM known failure: "+reason)
+				return nil
+			}
 			if skipFunc != nil {
 				msg, skip := skipFunc(dt)
 				if skip {

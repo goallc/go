@@ -190,11 +190,37 @@ head 完全相同。没有 `LLVM-PR` 行时仍使用工作流内固定的正式 
 该根目录用于定位 `FileCheck` 等构建测试工具；compiler 的运行库随 host tools 安装，
 不通过这个路径选择运行库，也不再解析或注入 `llc`、`opt`、pass plugin 或 toolexec。
 
-测试启动日志只打印 Go、payload 和进程内优化 pipeline。testdir 启用用例和标准库
-runtime 用例只通过 `-gcflags=all=-enablellvm` 选择 LLVM；codegen 用例也运行完整
-进程内 pipeline，并以 `-llvm-keep-ir` 读取 compiler 留下的优化前/后 IR。
-`FileCheck` 是唯一额外测试工具，其选择仍被约束在同一 payload；外部
-LLVM 工具只用于 LLVM 项目自身的格式级测试，不参与 Go 测试执行。
+编译器默认使用 LLVM，bootstrap 的前两阶段使用原生后端；需要原生对照时显式传入
+`-gcflags=all=-enablellvm=false`。vendored bindings 默认选择 LLVM 23 和动态链接，
+普通 `go test cmd/...` 无需额外的 `llvm23,dynamicllvm` build tags。
+
+CI 在 Linux amd64、arm64 上执行 `src/all.bash`，不再通过独立的 `TestLLVM`
+入口筛选 recipe 或重复运行标准库。testdir 保留原生 `Test` 入口及所有 recipe 类型；
+`asmcheck` 使用完整 LLVM pipeline，并通过 `-llvm-keep-ir` 检查 LLVM FileCheck
+指令。原生汇编指令不会被误当作 LLVM IR 预期。
+
+已知失败集中记录在 `test/llvm_known_failures.json`：`tests` 指定包及完整测试/子测试名，
+`modes` 指定无法构建的 dist 模式，每项必须写明原因。dist 用原生 `-skip` 参数排除
+列出的测试，并逐项打印 `LLVM known failure: SKIP`；未列出的 recipe 一律参与。
+只对有排除项的包单独执行测试，其余包仍使用 dist 原有的批量测试方式。
+名单是待修问题清单，不代表已通过；修复后应删除对应条目。
+
+`run.bash` 默认设置 `GO_TEST_TIMEOUT_SCALE=4`，普通 10 分钟超时扩展为 40 分钟；
+已有独立超时的测试同比例放大，用户仍可覆盖。已知的零大小巨大数组及 `rangegen`
+超慢用例显式跳过，不依赖扩大超时掩盖它们。
+
+```sh
+cd src
+./all.bash -llvm-dir=/path/to/llvm-payload
+# 用同一 SDK 重新检查全部已知失败（可能很慢或触发编译器崩溃）。
+GOALLC_TEST_KNOWN_FAILURES=0 ./run.bash --no-rebuild -k
+# 单点重现不经过 dist，因此不使用失败名单。
+../bin/go test runtime -run '^TestCallersNilPointerPanic$' -count=1
+# 原生汇编对照。
+GO_GCFLAGS=-enablellvm=false ../bin/go test cmd/internal/testdir -llvm_codegen=false
+```
+
+完整日志与名单作为 CI artifact 保存。禁用名单不表示 LLVM 已支持名单中的能力。
 
 ## plugin 的构建与缓存
 
@@ -248,17 +274,13 @@ cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
 cmake --build "$PLUGIN_BUILD" --target GoALLCStatepoints
 ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
 "$GOROOT/bin/go" test cmd/dist cmd/internal/llvmbackend cmd/go/internal/work
-"$GOROOT/bin/go" test cmd/internal/testdir -run '^TestLLVM$/^testdir$/^codegen$'
+"$GOROOT/bin/go" test cmd/internal/testdir -run '^Test$/^codegen$'
 ```
-
-完整语言特性矩阵默认运行所有已发现的 LLVM 候选，任一失败都会让 CI 失败；
-blacklist 用例完全不运行，并且只允许记录已知不支持的能力、超时、OOM 或慢速
-CI 用例。
 
 ## Go action cache
 
-LLVM 模式下，`cmd/go` 使用带 `-enablellvm` 的 `compile -V=full` probe。
-compiler 把自身 build ID、Go toolchain 目录中与 payload ABI 同步构建的
+默认的 `compile -V=full` 已包含 LLVM 身份；显式 `-enablellvm=false` 使用原生身份。
+compiler 把自身 build ID 的 content ID、Go toolchain 目录中与 payload ABI 同步构建的
 plugin artifact，以及 payload 中存在的动态 `libLLVM` 内容合入 tool identity；
 optimization pipeline 等 compiler flags 仍由普通 action input 标识。因此在
 相同路径替换 LLVM 或 plugin 会使 LLVM package 失效重编，没有启用 LLVM 的
