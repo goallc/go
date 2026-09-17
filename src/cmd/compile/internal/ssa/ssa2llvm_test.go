@@ -36,6 +36,13 @@ func (*llvmTestTypeName) Pos() src.XPos     { return src.NoXPos }
 func (*llvmTestTypeName) Type() *types.Type { return nil }
 
 func llvmTestSIMDType(name string, elem *types.Type, lanes int64) *types.Type {
+	// These unit tests construct SIMD types directly, independently of the
+	// experiment selected for source compilation. Enable recognition only
+	// while calculating the fixture's layout, then restore the caller's state.
+	simd := buildcfg.Experiment.SIMD
+	buildcfg.Experiment.SIMD = true
+	defer func() { buildcfg.Experiment.SIMD = simd }()
+
 	pkg := types.NewPkg("simd/archsimd", "archsimd")
 	width := elem.Size() * lanes * 8
 	tag := types.NewNamed(&llvmTestTypeName{sym: pkg.Lookup(fmt.Sprintf("v%d", width))})
