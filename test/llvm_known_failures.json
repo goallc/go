@@ -134,11 +134,6 @@
         "reason": "expectation: LLVM retains main.lookupReflected under -gcflags=-l"
       },
       {
-        "test": "Test/escape2n.go",
-        "reason": "compiler: arm64 -N -l aborts with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
-        "goarch": "arm64"
-      },
-      {
         "test": "Test/fixedbugs/issue68525.go",
         "reason": "compiler: arm64 -gcflags=all=-N -l aborts compiling syscall with unsupported GoObj prologue/epilogue features; diagnostic run 35182652376",
         "goarch": "arm64"
