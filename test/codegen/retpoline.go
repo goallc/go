@@ -4,6 +4,9 @@
 
 package codegen
 
+// LLVM-OPT-DAG: "target-features"="{{[^"]*}}+retpoline-indirect-calls,+retpoline-indirect-branches{{[^"]*}}"
+// LLVM-ASM-DAG: CALL {{.*}}R_CALL:runtime.retpoline
+// LLVM-ASM-DAG: CALL {{.*}}R_CALL:runtime.retpoline
 func CallFunc(f func()) {
 	// amd64:`CALL runtime.retpoline`
 	f()

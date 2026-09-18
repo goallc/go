@@ -27,6 +27,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/GCStrategy.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -1450,7 +1451,9 @@ bool isNotInHeapAddress(const Value *V) {
 }
 
 bool isStatepointValue(const Value *V) {
-  if (isa<Constant>(V))
+  // InlineAsm has pointer type but denotes an assembly template, not a
+  // runtime address. Its pointer operands and results are tracked separately.
+  if (isa<Constant, InlineAsm>(V))
     return false;
   if (isNotInHeapAddress(V))
     return false;
