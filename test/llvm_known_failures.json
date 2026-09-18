@@ -109,10 +109,6 @@
     ],
     "runtime": [
       {
-        "test": "TestCallersNilPointerPanic",
-        "reason": "metadata: traceback, frame layout or created-by attribution differs"
-      },
-      {
         "test": "TestBadTraceback",
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
       },
@@ -125,26 +121,6 @@
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
       },
       {
-        "test": "TestTracebackSystem/trap",
-        "reason": "metadata: traceback, frame layout or created-by attribution differs"
-      },
-      {
-        "test": "TestGdbPython",
-        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
-      },
-      {
-        "test": "TestGdbPythonCgo",
-        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
-      },
-      {
-        "test": "TestGdbConst",
-        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
-      },
-      {
-        "test": "TestGdbAutotmpTypes",
-        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
-      },
-      {
         "test": "TestTracebackAncestors",
         "reason": "metadata: ancestor traceback omits expected recursive frames"
       }
@@ -154,12 +130,6 @@
         "test": "TestOutput/external_cgo_thread",
         "reason": "metadata: race report locates runtime.newextram in internal/runtime/atomic/types.go instead of runtime/proc.go; CI 35189324447",
         "goarch": "arm64"
-      }
-    ],
-    "cmd/addr2line": [
-      {
-        "test": "TestAddr2Line",
-        "reason": "debug: function entry line differs by one"
       }
     ],
     "cmd/compile": [
@@ -204,19 +174,9 @@
         "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
       }
     ],
-    "cmd/link": [
-      {
-        "test": "TestDWARF",
-        "reason": "debug: function entry line differs by one"
-      }
-    ],
     "cmd/link/internal/ld": [
       {
         "test": "TestInlinedRoutineArgsVars",
-        "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
-      },
-      {
-        "test": "TestStaticTmp",
         "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
       }
     ]
