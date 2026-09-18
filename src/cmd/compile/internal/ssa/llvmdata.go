@@ -575,7 +575,7 @@ func llvmDataSymbolKindSupported(kind objabi.SymKind) bool {
 	switch kind {
 	case objabi.SRODATA, objabi.SRODATAFIPS, objabi.SNOPTRDATA, objabi.SNOPTRDATAFIPS,
 		objabi.SDATA, objabi.SDATAFIPS, objabi.SBSS, objabi.SNOPTRBSS,
-		objabi.SLIBFUZZER_8BIT_COUNTER, objabi.SCOVERAGE_COUNTER:
+		objabi.SLIBFUZZER_8BIT_COUNTER, objabi.SCOVERAGE_COUNTER, objabi.SDWARFCONST:
 		return true
 	default:
 		return false
@@ -707,7 +707,7 @@ func llvmDataRelocZero(r obj.Reloc) llvm.Value {
 			base.Fatalf("unsupported address relocation size %d", r.Siz)
 		}
 		return llvm.ConstPointerNull(GlobalCtxt.PointerType(0))
-	case objabi.R_ADDROFF, objabi.R_WEAKADDROFF, objabi.R_METHODOFF:
+	case objabi.R_ADDROFF, objabi.R_WEAKADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
 		if r.Siz != 4 {
 			base.Fatalf("unsupported offset relocation size %d", r.Siz)
 		}
@@ -742,7 +742,7 @@ func llvmDataRelocValue(source *obj.LSym, r obj.Reloc, globals map[*obj.LSym]llv
 			base.Fatalf("unsupported address relocation size %d", r.Siz)
 		}
 		return addr
-	case objabi.R_ADDROFF, objabi.R_WEAKADDROFF, objabi.R_METHODOFF:
+	case objabi.R_ADDROFF, objabi.R_WEAKADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
 		if r.Siz != 4 {
 			base.Fatalf("unsupported offset relocation size %d", r.Siz)
 		}
@@ -784,6 +784,9 @@ func llvmExternalDataRef(s *obj.LSym, data map[*obj.LSym]bool) llvm.Value {
 
 func llvmDataSection(s *obj.LSym) string {
 	switch s.Type {
+	case objabi.SDWARFCONST:
+		// Reuse the frontend's constant DIEs and Go DWARF type references.
+		return ".debug_info"
 	case objabi.SRODATA:
 		return ".rodata"
 	case objabi.SRODATAFIPS:
@@ -819,7 +822,7 @@ func llvmFunctionSection(s *obj.LSym) string {
 
 func llvmDataIsReadOnly(s *obj.LSym) bool {
 	switch s.Type {
-	case objabi.SRODATA, objabi.SRODATAFIPS:
+	case objabi.SRODATA, objabi.SRODATAFIPS, objabi.SDWARFCONST:
 		return true
 	default:
 		return false
@@ -829,7 +832,8 @@ func llvmDataIsReadOnly(s *obj.LSym) bool {
 func setLLVMSymbolLinkage(value llvm.Value, s *obj.LSym) {
 	if s.Name == "" {
 		value.SetLinkage(llvm.PrivateLinkage)
-	} else if s.Local() {
+	} else if s.Local() || s.Static() {
+		// File-local Go symbols are local to the package's LLVM module too.
 		value.SetLinkage(llvm.InternalLinkage)
 	} else if s.DuplicateOK() {
 		value.SetLinkage(llvm.WeakAnyLinkage)
@@ -852,9 +856,9 @@ func emitGoObjStaticRODataType() {
 func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 	var flag, flag2 uint64
 	// Local and non-local Dupok symbols use LLVM linkage. LLVM cannot encode
-	// both properties at once, so only a Local+Dupok overlap needs a residual
+	// both properties at once, so only a local-linkage/Dupok overlap needs a residual
 	// metadata bit.
-	if s.Local() && s.DuplicateOK() {
+	if (s.Local() || s.Static()) && s.DuplicateOK() {
 		flag |= 1 << 0 // goobj.SymFlagDupok
 	}
 	if s.MakeTypelink() {
@@ -893,10 +897,10 @@ func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 // Functions carry linker-visible semantic flags in the same GoObj symbol
 // record as native compiler output. Local and non-local Dupok symbols use LLVM
 // linkage and are recovered by AsmPrinter. LLVM cannot encode both properties
-// at once, so only a Local+Dupok overlap needs a residual metadata bit.
+// at once, so only a local-linkage/Dupok overlap needs a residual metadata bit.
 func setGoObjFunctionFlags(fn llvm.Value, s *obj.LSym) {
 	var flag, flag2 uint64
-	if s.Local() && s.DuplicateOK() {
+	if (s.Local() || s.Static()) && s.DuplicateOK() {
 		flag |= goobj.SymFlagDupok
 	}
 	if s.ReflectMethod() {
@@ -992,7 +996,7 @@ func setGoObjOffsetRelocMetadata(g llvm.Value, s *obj.LSym) {
 	for _, r := range s.R {
 		var typ objabi.RelocType
 		switch r.Type {
-		case objabi.R_ADDROFF, objabi.R_METHODOFF:
+		case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
 			typ = r.Type
 		case objabi.R_WEAKADDROFF:
 			typ = objabi.R_ADDROFF
@@ -1016,7 +1020,7 @@ func setGoObjWeakRelocMetadata(g llvm.Value, s *obj.LSym) {
 		case objabi.R_WEAKADDR, objabi.R_WEAKADDROFF:
 			entries = append(entries,
 				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata())
-		case objabi.R_ADDR, objabi.R_ADDROFF, objabi.R_METHODOFF:
+		case objabi.R_ADDR, objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
 			// LLVM constants carry the offset, size, target, and addend.
 			// Offset relocation types are recorded separately in
 			// !goobj.relocs.
