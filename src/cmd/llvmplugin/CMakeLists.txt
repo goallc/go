@@ -831,6 +831,12 @@ if(BUILD_TESTING)
       "gc\\.statepoint"
   )
 
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.InlineAsm
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/inline-asm-statepoints.ll"
+    CHECK
+  )
+
   add_test(
     NAME GoALLCStatepoints.NestParamAttrRewrite
     COMMAND

@@ -3989,6 +3989,24 @@ func (lfc *LLVMFuncContext) genLV(v *Value, restoreBuilder bool) llvm.Value {
 		lVal = lfc.b.CreateICmp(llvm.IntULT, arg0(), arg1(), v.String()+".i1")
 	case OpIsSliceInBounds:
 		lVal = lfc.b.CreateICmp(llvm.IntULE, arg0(), arg1(), v.String()+".i1")
+	case OpSpectreIndex, OpSpectreSliceIndex:
+		if lfc.F.Config.arch != "amd64" {
+			v.Fatalf("Spectre index masking is unsupported on %s", lfc.F.Config.arch)
+		}
+		// Keep the comparison and conditional move opaque to LLVM. An IR
+		// select could be removed using the dominating bounds check, or
+		// converted back to a branch, losing the data dependency on the mask.
+		// Match the native backend: unsigned index >= bound (or > for slices)
+		// selects zero. Negative indices also fail the unsigned comparison.
+		x, bound := arg0(), arg1()
+		sig := llvm.FunctionType(x.Type(), []llvm.Type{x.Type(), bound.Type(), x.Type()}, false)
+		cmov := "cmovaeq"
+		if v.Op == OpSpectreSliceIndex {
+			cmov = "cmovaq"
+		}
+		mask := llvm.InlineAsm(sig, "cmpq $2, $0; "+cmov+" $3, $0", "=r,0,r,r,~{flags}", false, false, llvm.InlineAsmDialectATT, false)
+		lVal = lfc.b.CreateCall(sig, mask, []llvm.Value{x, bound, llvm.ConstNull(x.Type())}, v.String())
+		markLLVMGCLeafCall(lVal)
 	case OpIsNonNil:
 		lVal = lfc.b.CreateICmp(llvm.IntNE, arg0(), llvm.ConstNull(arg0().Type()), v.String()+".i1")
 	case OpLsh64x64, OpLsh64x32, OpLsh64x16, OpLsh64x8,

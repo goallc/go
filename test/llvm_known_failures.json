@@ -2,6 +2,10 @@
   "tests": {
     "cmd/internal/testdir": [
       {
+        "test": "Test/codegen/retpoline.go",
+        "reason": "unsupported: LLVM retpoline lowering (-spectre=ret); asmcheck now honors compiler flags"
+      },
+      {
         "test": "Test/abi/result_live.go",
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
@@ -255,9 +259,9 @@
     ]
   },
   "modes": {
-    "internal/runtime/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
-    "reflect:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering",
-    "crypto/...:spectre": "unsupported: SpectreIndex and SpectreSliceIndex LLVM lowering"
+    "internal/runtime/...:spectre": "unsupported: LLVM retpoline lowering (-spectre=all includes ret)",
+    "reflect:spectre": "unsupported: LLVM retpoline lowering (-spectre=all includes ret)",
+    "crypto/...:spectre": "unsupported: LLVM retpoline lowering (-spectre=all includes ret)"
   },
   "packages": {
     "cmd/cgo/internal/testshared": "TestMain: shared runtime fails to link (amd64 nosplit overflow; arm64 preemptible-symbol ADRP)"

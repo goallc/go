@@ -172,7 +172,7 @@ func main() {
 	}
 }
 
-func runLLVMCodegenTest(t *testing.T, source string) error {
+func runLLVMCodegenTest(t *testing.T, source string, flags, runenv []string) error {
 	t.Helper()
 	src, err := os.ReadFile(source)
 	if err != nil {
@@ -180,16 +180,43 @@ func runLLVMCodegenTest(t *testing.T, source string) error {
 	}
 
 	archive := filepath.Join(t.TempDir(), "codegen.a")
-	cmd := exec.Command(goTool, "tool", "compile",
+	cmdline := []string{"tool", "compile",
 		"-p=codegen",
-		"-importcfg="+stdlibImportcfgFile(),
+		"-importcfg=" + stdlibImportcfgFile(),
 		"-enablellvm",
 		"-llvm-keep-ir",
 		"-c=16",
 		"-o", archive,
-		source,
-	)
+	}
+	// asmcheck recipes contain go build flags. Pass their compiler options
+	// through to the direct compilation used for LLVM IR inspection.
+	for i := 0; i < len(flags); i++ {
+		flag := flags[i]
+		var gcflags string
+		switch {
+		case strings.HasPrefix(flag, "-gcflags="):
+			gcflags = strings.TrimPrefix(flag, "-gcflags=")
+		case strings.HasPrefix(flag, "--gcflags="):
+			gcflags = strings.TrimPrefix(flag, "--gcflags=")
+		case flag == "-gcflags" || flag == "--gcflags":
+			i++
+			if i == len(flags) {
+				return fmt.Errorf("missing argument to %s", flag)
+			}
+			gcflags = flags[i]
+		default:
+			cmdline = append(cmdline, flag)
+			continue
+		}
+		args, err := splitQuoted(gcflags)
+		if err != nil {
+			return fmt.Errorf("invalid asmcheck compiler flags: %w", err)
+		}
+		cmdline = append(cmdline, args...)
+	}
+	cmd := exec.Command(goTool, append(cmdline, source)...)
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=")
+	cmd.Env = append(cmd.Env, runenv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("LLVM compilation failed: %v\n%s", err, out)

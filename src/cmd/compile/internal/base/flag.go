@@ -308,6 +308,9 @@ func ParseFlags() {
 		log.Fatalf("%s/%s does not support -shared", buildcfg.GOOS, buildcfg.GOARCH)
 	}
 	parseSpectre(Flag.Spectre) // left as string for RecordFlags
+	if Flag.EnableLLVM && Ctxt.Retpoline {
+		log.Fatal("LLVM backend does not support -spectre=ret or -spectre=all")
+	}
 
 	Ctxt.CompressInstructions = Debug.CompressInstructions != 0
 	Ctxt.Flag_shared = Ctxt.Flag_dynlink || Ctxt.Flag_shared

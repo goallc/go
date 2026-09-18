@@ -731,7 +731,7 @@ func (t test) run() error {
 
 	case "asmcheck":
 		if *llvmCodegen {
-			return runLLVMCodegenTest(t.T, long)
+			return runLLVMCodegenTest(t.T, long, flags, runenv)
 		}
 		// Compile Go file and match the generated assembly
 		// against a set of regexps in comments.
