@@ -393,13 +393,6 @@ func FinalizeGoObjSymbolMetadata() {
 		if s.PkgIdx == goobj.PkgIdxNone {
 			setGoObjNonPackageMetadata(g)
 		}
-		if s.Name == "" {
-			// The generated IR name is only a handle for LLVM. Keep the
-			// original anonymous identity when writing the Go object.
-			g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.symbol.anonymous"), GlobalCtxt.MDNode([]llvm.Metadata{
-				llvm.ConstInt(GlobalCtxt.Int1Type(), 1, false).ConstantAsMetadata(),
-			}))
-		}
 		if s.ContentAddressable() {
 			setGoObjContentHashMetadata(g, s)
 		}
@@ -522,11 +515,9 @@ func llvmGoDataRef(s *obj.LSym) llvm.Value {
 	g := llvm.AddGlobal(CurrentModule, currentLLVMDataLowerer.dataType(s), currentLLVMDataLowerer.globalName(s))
 	currentLLVMDataLowerer.values[s] = g
 	if s.Name == "" {
-		// R_USENAMEDMETHOD deliberately uses an anonymous SRODATA symbol whose
-		// payload is the method name. LLVM globals need a stable identity, but
-		// the GoObj relocation remains a Self reference and the artificial name
-		// has no linker semantics.
-		g.SetLinkage(llvm.InternalLinkage)
+		// The IR name is only a handle. Go references anonymous data by object
+		// index, so it must not enter the linker's global name namespace.
+		g.SetLinkage(llvm.PrivateLinkage)
 	}
 	attachGoObjSymbolRef(g, s)
 	return g
@@ -836,7 +827,9 @@ func llvmDataIsReadOnly(s *obj.LSym) bool {
 }
 
 func setLLVMSymbolLinkage(value llvm.Value, s *obj.LSym) {
-	if s.Name == "" || s.Local() {
+	if s.Name == "" {
+		value.SetLinkage(llvm.PrivateLinkage)
+	} else if s.Local() {
 		value.SetLinkage(llvm.InternalLinkage)
 	} else if s.DuplicateOK() {
 		value.SetLinkage(llvm.WeakAnyLinkage)

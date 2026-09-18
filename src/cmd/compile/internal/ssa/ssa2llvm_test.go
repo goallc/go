@@ -422,11 +422,12 @@ func TestLLVMGoObjAnonymousDataIdentity(t *testing.T) {
 	FinalizeGoObjSymbolMetadata()
 	for _, s := range syms {
 		g := currentLLVMDataLowerer.values[s]
-		if got, want := strings.Contains(g.String(), "!goobj.symbol.anonymous"), s.Name == ""; got != want {
-			t.Fatalf("anonymous identity for %q: %s", s.Name, g.String())
+		want := llvm.ExternalLinkage
+		if s.Name == "" {
+			want = llvm.PrivateLinkage
 		}
-		if s.Name == "" && g.Linkage() != llvm.InternalLinkage {
-			t.Fatalf("anonymous symbol has external LLVM linkage: %s", g.String())
+		if g.Linkage() != want {
+			t.Fatalf("unexpected linkage for %q: %s", s.Name, g.String())
 		}
 	}
 }
