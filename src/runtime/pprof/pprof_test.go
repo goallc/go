@@ -374,17 +374,32 @@ func TestCPUProfileRecursion(t *testing.T) {
 	}
 }
 
+var recursionSink uint32
+
+//go:noinline
+func recordRecursion(x int) {
+	atomic.AddUint32(&recursionSink, uint32(x))
+}
+
 func recursionCaller(x int) int {
 	y := recursionCallee(3, x)
+	// Keep the caller on the stack even when tail calls are supported.
+	recordRecursion(y)
 	return y
 }
 
+// Keep recursive calls in separate physical frames so the test can detect
+// accidental merging of their profile Locations.
+//
+//go:noinline
 func recursionCallee(n, x int) int {
 	if n == 0 {
 		return 1
 	}
 	y := inlinedCallee(x, 1e4)
-	return y * recursionCallee(n-1, x)
+	z := recursionCallee(n-1, x)
+	recordRecursion(z)
+	return y * z
 }
 
 func recursionChainTop(x int, pcs []uintptr) {
@@ -398,12 +413,16 @@ func recursionChainMiddle(x int, pcs []uintptr) {
 	recursionChainBottom(x, pcs)
 }
 
+// Keep Bottom as the physical frame, with Top and Middle inlined into it.
+//
+//go:noinline
 func recursionChainBottom(x int, pcs []uintptr) {
-	// This will be called each time, we only care about the last. We
-	// can't make this conditional or this function won't be inlined.
+	// Capture each level; the last call leaves the deepest stack in pcs.
 	dumpCallers(pcs)
 
 	recursionChainTop(x-1, pcs)
+	// The test needs recursive frames, not a tail-recursion loop.
+	recordRecursion(x)
 }
 
 func parseProfile(t *testing.T, valBytes []byte, f func(uintptr, []*profile.Location, map[string][]string)) *profile.Profile {

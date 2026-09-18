@@ -91,6 +91,21 @@ target triple = "x86_64-unknown-linux-goobj"
 ; DEBUG:            "inline_tree": null
 ; DEBUG:            "pc_quantum":
 
+; DEBUG-LABEL:      "name": "main.zeroLineScope",
+; DEBUG:            "start_line": 160,
+; DEBUG:            "inline_tree": [
+; DEBUG:            "parent": -1,
+; DEBUG:            "line": 161,
+; DEBUG:            "name": "main.inner",
+; DEBUG:            "kind": "pcline",
+; DEBUG:            "value": 161
+; DEBUG:            "value": 25
+; DEBUG:            "value": 160
+; DEBUG:            "kind": "pcinline",
+; DEBUG:            "value": -1
+; DEBUG:            "value": 0
+; DEBUG:            "value": -1
+
 @main.sink = global i64 0
 
 define goabiinternal i64 @main.outer(i64 %x) !dbg !10 {
@@ -213,9 +228,19 @@ entry:
   ret void, !dbg !67
 }
 
+; Line-zero locations retain their inline scope. Enter the child and then
+; return to the parent even when merged instructions have no exact source line.
+define goabiinternal void @main.zeroLineScope() !dbg !110 {
+entry:
+  store volatile i64 0, ptr @main.sink, !dbg !111
+  %value = load volatile i64, ptr @main.sink, !dbg !112
+  store volatile i64 %value, ptr @main.sink, !dbg !113
+  ret void, !dbg !113
+}
+
 !llvm.dbg.cu = !{!0}
 !llvm.module.flags = !{!5, !6}
-!goobj.debug.funcs = !{!40, !41, !42, !43, !44, !45, !46, !47, !48, !49, !56, !57, !58, !59, !63, !64, !102}
+!goobj.debug.funcs = !{!40, !41, !42, !43, !44, !45, !46, !47, !48, !49, !56, !57, !58, !59, !63, !64, !102, !114}
 
 !0 = distinct !DICompileUnit(language: DW_LANG_Go, file: !1, producer: "goallc-test", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !2, splitDebugInlining: true, nameTableKind: None)
 !1 = !DIFile(filename: "outer.go", directory: "/tmp/goobj-inline")
@@ -315,3 +340,9 @@ entry:
 !63 = !{!24, ptr @main.coalescedLeaf}
 !64 = !{!25, ptr @main.entry}
 !102 = !{!26, ptr @main.entryChild}
+
+!110 = distinct !DISubprogram(name: "main.zeroLineScope", linkageName: "main.zeroLineScope", scope: !1, file: !1, line: 160, type: !3, scopeLine: 160, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0, retainedNodes: !2)
+!111 = distinct !DILocation(line: 161, column: 2, scope: !110)
+!112 = !DILocation(line: 0, scope: !12, inlinedAt: !111)
+!113 = !DILocation(line: 0, scope: !110)
+!114 = !{!110, ptr @main.zeroLineScope}
