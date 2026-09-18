@@ -3950,8 +3950,11 @@ Error rewriteCall(SafepointRecord &Record,
                                       Attr);
   }
 
-  Instruction *InsertBefore = Call->getNextNode();
-  Builder.SetInsertPoint(InsertBefore);
+  auto InsertPoint = std::next(Call->getIterator());
+  // The replacement result must precede debug records that use the old call.
+  // An Instruction* insertion point would move those records before gc.result.
+  InsertPoint.setHeadBit(true);
+  Builder.SetInsertPoint(Call->getParent(), InsertPoint);
   Builder.SetCurrentDebugLocation(Call->getDebugLoc());
 
   CallInst *Result = nullptr;

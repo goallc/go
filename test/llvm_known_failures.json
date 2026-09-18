@@ -122,11 +122,13 @@
       },
       {
         "test": "TestGdbPython",
-        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+        "reason": "debug: map variable location is still unavailable across later statepoint calls on AMD64; ARM64 passes after preserving call-result debug-record order",
+        "goarch": "amd64"
       },
       {
         "test": "TestGdbPythonCgo",
-        "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
+        "reason": "debug: map variable location is still unavailable across later statepoint calls on AMD64; ARM64 passes after preserving call-result debug-record order",
+        "goarch": "amd64"
       },
       {
         "test": "TestTracebackAncestors",

@@ -32,16 +32,19 @@ right:
 }
 
 ; A scalar result requires a fresh SelectionDAG scope even without gc-live.
+; Debug records using that result must follow its definition in the new block.
 ; IR-LABEL: define goabiinternal i64 @scalar_result()
 ; IR: @llvm.experimental.gc.statepoint
 ; IR-NEXT: br label %entry.statepoint.cont
 ; IR: entry.statepoint.cont:
 ; IR-NEXT: [[RESULT:%[^ ]+]] = call i64 @llvm.experimental.gc.result
+; IR-NEXT: #dbg_value(i64 [[RESULT]],
 ; IR-NEXT: ret i64 [[RESULT]]
-define goabiinternal i64 @scalar_result() gc "goallc" {
+define goabiinternal i64 @scalar_result() gc "goallc" !dbg !4 {
 entry:
-  %value = call goabiinternal i64 @result()
-  ret i64 %value
+  %value = call goabiinternal i64 @result(), !dbg !6
+  #dbg_value(i64 %value, !5, !DIExpression(), !6)
+  ret i64 %value, !dbg !6
 }
 
 ; Relocated heap pointers still require the continuation boundary.
@@ -110,3 +113,14 @@ loop:
 exit:
   ret i64 %next
 }
+
+!llvm.dbg.cu = !{!0}
+!llvm.module.flags = !{!7}
+!0 = distinct !DICompileUnit(language: DW_LANG_Go, file: !1, producer: "goallc", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug)
+!1 = !DIFile(filename: "result.go", directory: "/src")
+!2 = !DIBasicType(name: "int", size: 64, encoding: DW_ATE_signed)
+!3 = !DISubroutineType(types: !{})
+!4 = distinct !DISubprogram(name: "scalar_result", scope: !1, file: !1, line: 1, type: !3, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0)
+!5 = !DILocalVariable(name: "value", scope: !4, file: !1, line: 2, type: !2)
+!6 = !DILocation(line: 2, column: 1, scope: !4)
+!7 = !{i32 2, !"Debug Info Version", i32 3}
