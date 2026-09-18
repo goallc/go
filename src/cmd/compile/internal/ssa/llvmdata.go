@@ -832,11 +832,16 @@ func llvmDataIsReadOnly(s *obj.LSym) bool {
 func setLLVMSymbolLinkage(value llvm.Value, s *obj.LSym) {
 	if s.Name == "" {
 		value.SetLinkage(llvm.PrivateLinkage)
-	} else if s.Local() || s.Static() {
+	} else if s.Static() || (s.Local() && s.Type == objabi.STEXT) {
 		// File-local Go symbols are local to the package's LLVM module too.
 		value.SetLinkage(llvm.InternalLinkage)
 	} else if s.DuplicateOK() {
 		value.SetLinkage(llvm.WeakAnyLinkage)
+	}
+	if s.Local() && !s.Static() && s.Type != objabi.STEXT {
+		// Go LOCAL data can be referenced from another object in the package,
+		// notably assembly argument maps. Only STATIC is object-private.
+		value.SetVisibility(llvm.HiddenVisibility)
 	}
 }
 
@@ -855,10 +860,12 @@ func emitGoObjStaticRODataType() {
 
 func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 	var flag, flag2 uint64
-	// Local and non-local Dupok symbols use LLVM linkage. LLVM cannot encode
-	// both properties at once, so only a local-linkage/Dupok overlap needs a residual
-	// metadata bit.
-	if (s.Local() || s.Static()) && s.DuplicateOK() {
+	// LOCAL data remains externally addressable within the package. Preserve
+	// that Go linker flag independently of LLVM's object-private linkage.
+	if s.Local() {
+		flag |= goobj.SymFlagLocal
+	}
+	if s.Static() && s.DuplicateOK() {
 		flag |= 1 << 0 // goobj.SymFlagDupok
 	}
 	if s.MakeTypelink() {
