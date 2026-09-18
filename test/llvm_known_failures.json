@@ -261,10 +261,6 @@
       {
         "test": "TestStaticTmp",
         "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
-      },
-      {
-        "test": "TestDeadcode/globalmap",
-        "reason": "optimization: main.init retains unused main.large"
       }
     ],
     "runtime/secret/...": [

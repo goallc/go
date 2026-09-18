@@ -1129,6 +1129,27 @@ func setGoObjKeepMetadata(g llvm.Value, s *obj.LSym) {
 	}
 }
 
+// SetLLVMWeakCallTargets describes removable map-initializer call edges. Keep
+// the outlined bodies separate, as the Go frontend already does, so LLVM
+// inlining cannot turn a removable call into unconditional initialization.
+func SetLLVMWeakCallTargets(source *obj.LSym, targets []*obj.LSym) {
+	caller := CurrentModule.NamedFunction(llvmFunctionStorageName(source.Name, llvmCallConv(source.ABI())))
+	if caller.IsNil() {
+		return
+	}
+	for _, target := range targets {
+		callee := CurrentModule.NamedFunction(llvmFunctionStorageName(target.Name, llvmCallConv(target.ABI())))
+		if callee.IsNil() {
+			continue
+		}
+		callee.AddFunctionAttr(llvmNoInlineAttribute())
+		preserveGoObjMetadataValues(caller, callee)
+		CurrentModule.AddNamedMetadataOperand("goobj.weak_calls", GlobalCtxt.MDNode([]llvm.Metadata{
+			caller.ConstantAsMetadata(), callee.ConstantAsMetadata(),
+		}))
+	}
+}
+
 func setGoObjGotypeMetadata(g llvm.Value, s *obj.LSym) {
 	if s.Gotype == nil {
 		return

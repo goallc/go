@@ -19,6 +19,9 @@ func InitModule(pkg *types.Pkg) {
 func LowerGoObjData() {
 }
 
+func SetLLVMWeakCallTargets(source *obj.LSym, targets []*obj.LSym) {
+}
+
 func MarkGoObjDataReferencedOutsideLLVM(syms ...*obj.LSym) {
 }
 

@@ -20,6 +20,7 @@ import (
 	"cmd/compile/internal/objw"
 	"cmd/compile/internal/pgoir"
 	"cmd/compile/internal/ssa"
+	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
@@ -364,6 +365,25 @@ func RegisterMapInitLsym(s *obj.LSym) {
 		globalMapInitLsyms = make(map[*obj.LSym]struct{})
 	}
 	globalMapInitLsyms[s] = struct{}{}
+}
+
+// EmitLLVMMapInitMetadata carries the same outlined-init relationships used by
+// weakenGlobalMapInitRelocs to LLVM, where instruction offsets are not known
+// until object emission.
+func EmitLLVMMapInitMetadata() {
+	if len(globalMapInitLsyms) == 0 || base.Debug.WrapGlobalMapCtl == 1 {
+		return
+	}
+	targets := make([]*obj.LSym, 0, len(globalMapInitLsyms))
+	for target := range globalMapInitLsyms {
+		targets = append(targets, target)
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	for _, fn := range typecheck.Target.Funcs {
+		if fn.IsPackageInit() {
+			ssa.SetLLVMWeakCallTargets(fn.LSym, targets)
+		}
+	}
 }
 
 // weakenGlobalMapInitRelocs walks through all of the relocations on a
