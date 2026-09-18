@@ -34,7 +34,10 @@ import (
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation-edges type=R_USEIFACE count=[[USEIFACE]] sha256=[[USEIFACE_HASH]]
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation-count type=R_USENAMEDMETHOD count=[[USENAMEDMETHOD]]
 // LLVM-NATIVE-OBJSUMMARY-DAG: LLVM symbol name={{"codegen.llvmImportBox.*"}} kind=STEXT flags={{.*}}dupok
-// LLVM-NATIVE-OBJSUMMARY-DAG: LLVM symbol name={{".goallc.anon.*"}} kind={{.*}} flags={{.*}}local
+// Anonymous method-name data is referenced within the object; its carrier name
+// is an LLVM implementation detail.
+// LLVM-NATIVE-OBJSUMMARY-DAG: LLVM relocation {{.*}} type=R_USENAMEDMETHOD size=0 target_kind=self target_package="" target_name="[[METHOD_NAME:[^"]+]]" target_index={{[0-9]+}}
+// LLVM-NATIVE-OBJSUMMARY-DAG: LLVM symbol name="[[METHOD_NAME]]" kind=SRODATA flags=local class=package
 
 //go:noinline
 func llvmImportBox[T any](value T) any {

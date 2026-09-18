@@ -324,6 +324,20 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 	fn = getOrInsertLLVMFunction(name, runtimeSig, goABIInternalCallConv)
 	runtimeCall := builder.CreateCall(runtimeSig.Type, fn, nil, "runtime.call")
 	runtimeCall.SetInstructionCallConv(goABIInternalCallConv)
+
+	// In linkshared mode the builtin reference and runtime definition have
+	// the same name. A later call must keep the definition, while retaining
+	// the call's own ABI-compatible result type.
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(fn, "entry"))
+	builder.CreateRet(llvm.ConstNull(runtimeSlice))
+	definition := fn
+	fn = getOrInsertLLVMFunction(name, builtinSig, goABIInternalCallConv)
+	if fn != definition || fn.GlobalValueType() != runtimeSig.Type || fn.BasicBlocksCount() != 1 {
+		t.Fatal("builtin lookup changed an existing definition")
+	}
+	builder.SetInsertPointAtEnd(caller.EntryBasicBlock())
+	definedCall := builder.CreateCall(builtinSig.Type, fn, nil, "defined.call")
+	definedCall.SetInstructionCallConv(goABIInternalCallConv)
 	builder.CreateRetVoid()
 
 	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
@@ -377,6 +391,44 @@ func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	}
 	if strings.Contains(used, "@test.ordinary.local") {
 		t.Fatalf("ordinary local GoObj data is unnecessarily compiler-used: %s", used)
+	}
+}
+
+func TestLLVMGoObjAnonymousDataIdentity(t *testing.T) {
+	oldModule, oldLowerer, oldText := CurrentModule, currentLLVMDataLowerer, base.Ctxt.Text
+	module := GlobalCtxt.NewModule("anonymous_data")
+	CurrentModule = module
+	currentLLVMDataLowerer = newLLVMDataLowerer(nil)
+	base.Ctxt.Text = nil
+	t.Cleanup(func() {
+		CurrentModule, currentLLVMDataLowerer, base.Ctxt.Text = oldModule, oldLowerer, oldText
+		module.Dispose()
+	})
+
+	// A named symbol that resembles an IR handle must keep its identity.
+	// Anonymous symbols must remain distinct, even in the non-package block.
+	syms := []*obj.LSym{
+		{PkgIdx: goobj.PkgIdxNone},
+		{PkgIdx: goobj.PkgIdxNone},
+		{Name: ".goallc.anon.99", PkgIdx: goobj.PkgIdxNone},
+	}
+	for i, s := range syms {
+		g := llvm.AddGlobal(module, GlobalCtxt.Int8Type(), currentLLVMDataLowerer.globalName(s))
+		g.SetInitializer(llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(i), false))
+		setLLVMSymbolLinkage(g, s)
+		currentLLVMDataLowerer.values[s] = g
+		currentLLVMDataLowerer.lowered[s] = true
+	}
+	FinalizeGoObjSymbolMetadata()
+	for _, s := range syms {
+		g := currentLLVMDataLowerer.values[s]
+		want := llvm.ExternalLinkage
+		if s.Name == "" {
+			want = llvm.PrivateLinkage
+		}
+		if g.Linkage() != want {
+			t.Fatalf("unexpected linkage for %q: %s", s.Name, g.String())
+		}
 	}
 }
 

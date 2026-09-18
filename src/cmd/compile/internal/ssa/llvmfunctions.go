@@ -394,7 +394,11 @@ func (m *llvmFunctionManager) getOrInsert(name string, sig llvmFuncSignature, cc
 		fn.SetName(name)
 	} else if got := fn.GlobalValueType(); got != sig.Type {
 		if fn.BasicBlocksCount() != 0 {
-			base.Fatalf("conflicting LLVM function type for definition %s", name)
+			// A compiler builtin may use a different Go type for the same ABI
+			// value (for example, a slice versus runtime.slice). Calls carry
+			// their own signature through LLVM's opaque function pointer.
+			// Keep the definition and its attributes in its original types.
+			return fn
 		}
 		// Compiler data can refer to an ABI function before AuxCall exposes
 		// its exact signature. Replace that provisional declaration now.
