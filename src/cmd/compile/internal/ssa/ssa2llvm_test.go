@@ -324,6 +324,20 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 	fn = getOrInsertLLVMFunction(name, runtimeSig, goABIInternalCallConv)
 	runtimeCall := builder.CreateCall(runtimeSig.Type, fn, nil, "runtime.call")
 	runtimeCall.SetInstructionCallConv(goABIInternalCallConv)
+
+	// In linkshared mode the builtin reference and runtime definition have
+	// the same name. A later call must keep the definition, while retaining
+	// the call's own ABI-compatible result type.
+	builder.SetInsertPointAtEnd(llvm.AddBasicBlock(fn, "entry"))
+	builder.CreateRet(llvm.ConstNull(runtimeSlice))
+	definition := fn
+	fn = getOrInsertLLVMFunction(name, builtinSig, goABIInternalCallConv)
+	if fn != definition || fn.GlobalValueType() != runtimeSig.Type || fn.BasicBlocksCount() != 1 {
+		t.Fatal("builtin lookup changed an existing definition")
+	}
+	builder.SetInsertPointAtEnd(caller.EntryBasicBlock())
+	definedCall := builder.CreateCall(builtinSig.Type, fn, nil, "defined.call")
+	definedCall.SetInstructionCallConv(goABIInternalCallConv)
 	builder.CreateRetVoid()
 
 	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
