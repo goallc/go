@@ -702,6 +702,31 @@ func poisonStack() [20]int {
 	return [20]int{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 }
 
+func TestTracebackCreatedBy(t *testing.T) {
+	for _, ancestors := range []string{"0", "1"} {
+		t.Run("ancestors="+ancestors, func(t *testing.T) {
+			// A compiler may inline these methods into go wrappers. Both the
+			// current goroutine and its ancestor must name the logical creator,
+			// rather than hide it along with the wrapper.
+			output := runTestProg(t, "testprog", "TracebackCreatedBy", "GODEBUG=tracebackancestors="+ancestors)
+			want := "created by main.tracebackReporter.collect in goroutine "
+			if !strings.Contains(output, want) {
+				t.Errorf("missing %q in traceback:\n%s", want, output)
+			}
+			if ancestors == "1" {
+				want = "main.tracebackReporter.collect(...)\n"
+				if !strings.Contains(output, want) {
+					t.Errorf("missing %q in ancestor traceback:\n%s", want, output)
+				}
+				want = "created by main.tracebackReporter.start\n"
+				if !strings.Contains(output, want) {
+					t.Errorf("missing %q in ancestor traceback:\n%s", want, output)
+				}
+			}
+		})
+	}
+}
+
 func TestTracebackParentChildGoroutines(t *testing.T) {
 	parent := fmt.Sprintf("goroutine %d", runtime.Goid())
 	var wg sync.WaitGroup
