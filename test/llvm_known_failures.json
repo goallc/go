@@ -121,16 +121,6 @@
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
       },
       {
-        "test": "TestGdbPython",
-        "reason": "debug: map variable location is still unavailable across later statepoint calls on AMD64; ARM64 passes after preserving call-result debug-record order",
-        "goarch": "amd64"
-      },
-      {
-        "test": "TestGdbPythonCgo",
-        "reason": "debug: map variable location is still unavailable across later statepoint calls on AMD64; ARM64 passes after preserving call-result debug-record order",
-        "goarch": "amd64"
-      },
-      {
         "test": "TestTracebackAncestors",
         "reason": "metadata: ancestor traceback omits expected recursive frames"
       }
