@@ -32,6 +32,7 @@ type llvmFunctionModel struct {
 	noUnwind       bool
 	willReturn     bool
 	noSync         bool
+	noMerge        bool
 	readOnlyMemory bool
 	noMemory       bool
 
@@ -81,6 +82,7 @@ var (
 	llvmWriteOnlyAttribute      = llvmModelAttribute("writeonly")
 	llvmWillReturnAttribute     = llvmModelAttribute("willreturn")
 	llvmNoSyncAttribute         = llvmModelAttribute("nosync")
+	llvmNoMergeAttribute        = llvmModelAttribute("nomerge")
 	llvmReadOnlyMemoryAttribute = GlobalCtxt.CreateReadOnlyMemoryAttribute()
 	llvmNoMemoryAttribute       = llvmModelAttribute("memory")
 	llvmNoAliasAttribute        = llvmModelAttribute("noalias")
@@ -121,6 +123,10 @@ func newLLVMFunctionManager() llvmFunctionManager {
 		result: nonnullResult, allocSize: GlobalCtxt.CreateAllocSizeAttribute(0), allocation: true,
 	}
 	models := map[string]llvmFunctionModel{
+		// recover observes the logical caller depth. Merging calls from
+		// different inline stacks changes whether recovery is permitted.
+		"runtime.gorecover": {noMerge: true},
+
 		// These raw helpers already have a GC-leaf call contract in both the SSA
 		// static-call path and the dedicated memory-operation lowering paths.
 		"runtime.memmove": {
@@ -431,6 +437,9 @@ func (m *llvmFunctionManager) getOrInsert(name string, sig llvmFuncSignature, cc
 	}
 	if model.noSync {
 		fn.AddFunctionAttr(llvmNoSyncAttribute)
+	}
+	if model.noMerge {
+		fn.AddFunctionAttr(llvmNoMergeAttribute)
 	}
 	// ABI0 returns through caller-owned slots, so its wrapper writes memory
 	// even when the underlying comparison is read-only.
