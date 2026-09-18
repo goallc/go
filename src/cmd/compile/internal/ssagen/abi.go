@@ -310,6 +310,16 @@ func makeABIWrapper(f *ir.Func, wrapperABI obj.ABI) {
 	// FIXME: at the moment all.bash does not pass when I leave out
 	// NOSPLIT for these wrappers, so all are currently tagged with NOSPLIT.
 	fn.Pragma |= ir.Nosplit
+	if base.Flag.EnableLLVM && wrapperABI == obj.ABI0 && f.ABI == obj.ABIInternal &&
+		len(f.Body) != 0 && f.Pragma&ir.Nosplit == 0 {
+		// LLVM may inline the Go body into its ABI0 wrapper. The target
+		// already permits a stack check, so let the wrapper check the
+		// resulting frame too. Assembly targets and nosplit Go targets
+		// retain the restriction above. Preserve system-stack checking
+		// for targets that cannot grow the goroutine stack.
+		fn.Pragma &^= ir.Nosplit
+		fn.Pragma |= f.Pragma & ir.Systemstack
+	}
 
 	// Generate call. Use tail call if no params and no returns,
 	// but a regular call otherwise.
