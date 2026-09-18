@@ -139,10 +139,6 @@
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
       },
       {
-        "test": "TestFunctionAlignmentTraceback",
-        "reason": "expectation: LLVM function padding differs from native INT3 padding"
-      },
-      {
         "test": "TestGdbPython",
         "reason": "debug: incomplete LLVM Go DWARF locations/types for GDB"
       },
