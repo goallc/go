@@ -163,7 +163,9 @@ type makeFuncCtxt struct {
 //
 //go:nosplit
 func moveMakeFuncArgPtrs(ctxt *makeFuncCtxt, args *abi.RegArgs) {
-	for i, arg := range args.Ints {
+	// Range over the array pointer to avoid a copy of Ints on the nosplit
+	// stack. The loop only writes Ptrs, so Ints remains unchanged.
+	for i, arg := range &args.Ints {
 		// Avoid write barriers! Because our write barrier enqueues what
 		// was there before, we might enqueue garbage.
 		// Also avoid bounds checks, we don't have the stack space for it.

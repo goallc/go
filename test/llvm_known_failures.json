@@ -230,11 +230,6 @@
     ],
     "cmd/link": [
       {
-        "test": "TestDWARFLocationList",
-        "reason": "stack: arm64 -N -l reflect.methodValueCall chain exceeds nosplit limit by 40 bytes",
-        "goarch": "arm64"
-      },
-      {
         "test": "TestDWARF",
         "reason": "debug: function entry line differs by one"
       }
