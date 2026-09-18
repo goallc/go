@@ -107,12 +107,6 @@
         "goarch": "arm64"
       }
     ],
-    "internal/trace": [
-      {
-        "test": "TestTraceStacks",
-        "reason": "metadata: time.Sleep trace stack is not matched"
-      }
-    ],
     "runtime": [
       {
         "test": "TestBadTraceback",
@@ -136,20 +130,6 @@
         "test": "TestOutput/external_cgo_thread",
         "reason": "metadata: race report locates runtime.newextram in internal/runtime/atomic/types.go instead of runtime/proc.go; CI 35189324447",
         "goarch": "arm64"
-      }
-    ],
-    "runtime/pprof": [
-      {
-        "test": "TestCPUProfileRecursion",
-        "reason": "metadata: recursive/generic inline profile stack differs"
-      },
-      {
-        "test": "TestGenericsInlineLocations",
-        "reason": "metadata: recursive/generic inline profile stack differs"
-      },
-      {
-        "test": "TestTryAdd/recursion_chain_inline",
-        "reason": "metadata: recursive/generic inline profile stack differs"
       }
     ],
     "cmd/compile": [
