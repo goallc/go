@@ -236,12 +236,6 @@
         "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
       }
     ],
-    "cmd/compile/internal/test": [
-      {
-        "test": "TestScanfRemoval",
-        "reason": "optimization: unused scanf code is retained"
-      }
-    ],
     "cmd/link": [
       {
         "test": "TestDWARFLocationList",
