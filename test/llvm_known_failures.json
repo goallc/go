@@ -94,10 +94,6 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/maymorestack.go",
-        "reason": "unsupported: maymorestack instrumentation hook is not emitted"
-      },
-      {
         "test": "Test/rangegen.go",
         "reason": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
       },
