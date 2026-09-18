@@ -94,10 +94,6 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/maymorestack.go",
-        "reason": "unsupported: maymorestack instrumentation hook is not emitted"
-      },
-      {
         "test": "Test/rangegen.go",
         "reason": "slow: generated LLVM compilation exceeds the five-minute per-case budget"
       },
@@ -236,12 +232,6 @@
         "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
       }
     ],
-    "cmd/compile/internal/test": [
-      {
-        "test": "TestScanfRemoval",
-        "reason": "optimization: unused scanf code is retained"
-      }
-    ],
     "cmd/link": [
       {
         "test": "TestDWARFLocationList",
@@ -261,17 +251,6 @@
       {
         "test": "TestStaticTmp",
         "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
-      },
-      {
-        "test": "TestDeadcode/globalmap",
-        "reason": "optimization: main.init retains unused main.large"
-      }
-    ],
-    "runtime/secret/...": [
-      {
-        "test": "TestGoExit",
-        "reason": "runtime: secret remains in register spill slot after Goexit on arm64",
-        "goarch": "arm64"
       }
     ]
   },

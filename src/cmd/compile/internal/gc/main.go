@@ -386,6 +386,7 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	base.Timer.Start("be", "dumpobj")
 	if base.Flag.EnableLLVM {
 		dumpdata()
+		ssagen.EmitLLVMMapInitMetadata()
 		ssa.LowerGoObjData()
 		// Assign the same package, content-addressable, and non-package
 		// identities that the native object writer uses. LLVM data lowering

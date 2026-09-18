@@ -94,6 +94,7 @@ const goResultsTupleAttr = "go_results_tuple"
 const goGCStrategy = "goallc"
 const goGCLeafFunctionAttr = "gc-leaf-function"
 const goNoSplitAttr = "go-nosplit"
+const goMayMoreStackAttr = "go-maymorestack"
 const goSystemStackAttr = "go-systemstack"
 const goAsyncUnsafeAttr = "go-async-unsafe"
 const goWriteBarrierIntrinsic = "llvm.go.gc.write.barrier"
@@ -5041,6 +5042,13 @@ func LLVMCompile(f *Func) {
 	// policy directly instead of asking it to infer a pragma from GoObj metadata.
 	if f.NoSplit {
 		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goNoSplitAttr, ""))
+	}
+	if base.Debug.MayMoreStack != "" && !f.NoSplit {
+		// The native stack-check hook uses the containing function's ABI.
+		// Target frame lowering calls it before allocating the ordinary frame.
+		hook := base.Ctxt.LookupABI(base.Debug.MayMoreStack, f.OwnAux.Fn.ABI())
+		name := llvmFunctionStorageName(llvmGoObjReferenceName(hook), llvmCallConv(hook.ABI()))
+		FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goMayMoreStackAttr, name))
 	}
 	// Native Go gives //go:systemstack functions a distinct stack-growth
 	// prologue: it checks g.stackguard1 and calls runtime.morestackc. Carry the
