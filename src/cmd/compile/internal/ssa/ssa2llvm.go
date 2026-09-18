@@ -4962,6 +4962,12 @@ func LLVMCompile(f *Func) {
 		}
 		features += llvmCPUProfileByName(floor).targetFeatures
 	}
+	if base.Ctxt.Retpoline && f.Config.arch == "amd64" {
+		if features != "" {
+			features += ","
+		}
+		features += "+retpoline-indirect-calls,+retpoline-indirect-branches"
+	}
 	if features != "" {
 		// GOARM64 makes LSE mandatory at v8.1 and can request it explicitly at
 		// v8.0. Generic LLVM atomics need the same function feature in order to
