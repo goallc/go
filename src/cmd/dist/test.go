@@ -569,9 +569,9 @@ func (t *tester) registerStdTest(pkg string) {
 	const stdTestHeading = "Testing packages." // known to addTest for a safety check
 	gcflags := gogcflags
 	name := testName(pkg, "")
-	if entry, ok := llvmFailures.Packages[pkg]; ok && (entry.GOARCH == "" || entry.GOARCH == goarch) {
+	if reason := llvmFailures.Packages[pkg]; reason != "" {
 		t.addTest(name, stdTestHeading, func(dt *distTest) error {
-			(&goTest{pkg: pkg}).printSkip(t, "LLVM known failure: SKIP "+pkg+": "+entry.Reason)
+			(&goTest{pkg: pkg}).printSkip(t, "LLVM known failure: SKIP "+pkg+": "+reason)
 			return nil
 		})
 		return

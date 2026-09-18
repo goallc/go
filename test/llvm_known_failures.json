@@ -251,10 +251,5 @@
     ]
   },
   "modes": {},
-  "packages": {
-    "cmd/cgo/internal/testshared": {
-      "reason": "shared linking: arm64 preemptible-symbol ADRP remains to be requalified",
-      "goarch": "arm64"
-    }
-  }
+  "packages": {}
 }
