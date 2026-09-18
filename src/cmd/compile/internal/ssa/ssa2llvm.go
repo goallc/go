@@ -4988,7 +4988,9 @@ func LLVMCompile(f *Func) {
 	// nosplit limit. This conservative fence currently keeps LLVM inlining from
 	// increasing runtime's callRet chain beyond that limit. Replace it with a
 	// targeted policy once the specific frame growth is understood.
-	frontendNoInline := f.NoSplit || frontendFunc != nil && (frontendFunc.Pragma&ir.Noinline != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
+	// As in the Go inliner, keep yeswritebarrierrec as a function boundary
+	// because the recursive write-barrier checker stops at this function.
+	frontendNoInline := f.NoSplit || frontendFunc != nil && (frontendFunc.Pragma&(ir.Noinline|ir.Yeswritebarrierrec) != 0 || frontendFunc.HasDefer() || cgoUnsafeArgs)
 	// gorecover explicitly advances the physical unwinder past its own frame
 	// before it walks the remaining physical and inline frames. Preserve that
 	// one physical boundary. Direct callers may be represented by Go's inline

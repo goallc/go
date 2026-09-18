@@ -32,3 +32,5 @@ func Output(fileName string) error {
 func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 	return nil, nil
 }
+
+func SetLLVMNoWriteBarrierCheck(check func()) {}

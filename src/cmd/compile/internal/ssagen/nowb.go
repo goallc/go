@@ -10,6 +10,7 @@ import (
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
+	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
@@ -23,7 +24,15 @@ func EnableNoWriteBarrierRecCheck() {
 func NoWriteBarrierRecCheck() {
 	// Write barriers are now known. Check the
 	// call graph.
-	nowritebarrierrecCheck.check()
+	if base.Flag.EnableLLVM {
+		check := nowritebarrierrecCheck
+		ssa.SetLLVMNoWriteBarrierCheck(func() {
+			check.check()
+			base.ExitIfErrors()
+		})
+	} else {
+		nowritebarrierrecCheck.check()
+	}
 	nowritebarrierrecCheck = nil
 }
 

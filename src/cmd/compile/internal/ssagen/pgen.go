@@ -311,9 +311,8 @@ func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
 		// The in-process backend replaces native code generation. ssa.Compile
 		// has already emitted LLVM IR; genssa would consume native
 		// register-allocation state and emit a second _go_.o member.
-		// TODO(goallc): Enforce runtime //go:nowritebarrier(rec) against the
-		// finalized LLVM IR call graph in an LLVM pass. Do not approximate it
-		// by scanning SSA after LLVM IR emission.
+		// The nowritebarrier checker receives its call graph after LLVM
+		// optimization and write-barrier expansion, before machine emission.
 		return
 	}
 	// Note: check arg size to fix issue 25507.

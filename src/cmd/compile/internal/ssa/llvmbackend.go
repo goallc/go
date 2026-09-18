@@ -100,6 +100,11 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 		return nil, fmt.Errorf("verify LLVM module after pre-codegen: %w", err)
 	}
 
+	if llvmNoWriteBarrierCheck != nil {
+		recordLLVMWriteBarrierInfo()
+		llvmNoWriteBarrierCheck()
+	}
+
 	buffer, err := tm.EmitToMemoryBuffer(CurrentModule, llvm.ObjectFile)
 	if err != nil {
 		return nil, fmt.Errorf("emit LLVM GoObj: %w", err)

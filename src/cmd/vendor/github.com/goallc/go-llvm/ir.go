@@ -184,6 +184,7 @@ const (
 	Switch      Opcode = C.LLVMSwitch
 	IndirectBr  Opcode = C.LLVMIndirectBr
 	Invoke      Opcode = C.LLVMInvoke
+	CallBr      Opcode = C.LLVMCallBr
 	Unreachable Opcode = C.LLVMUnreachable
 
 	// Standard Binary Operators

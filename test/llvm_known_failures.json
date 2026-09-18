@@ -74,10 +74,6 @@
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {
-        "test": "Test/nowritebarrier.go",
-        "reason": "unsupported: transitive nowritebarrier diagnostics are incomplete"
-      },
-      {
         "test": "Test/fixedbugs/bug385_64.go",
         "reason": "expectation: native stack-frame limit diagnostic differs"
       },
