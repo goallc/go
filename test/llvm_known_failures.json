@@ -123,10 +123,6 @@
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
       },
       {
-        "test": "TestGoroutineLeakProfile",
-        "reason": "metadata: traceback, frame layout or created-by attribution differs"
-      },
-      {
         "test": "TestTracebackElision",
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
       },

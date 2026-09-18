@@ -835,22 +835,29 @@ func printcreatedby(gp *g) {
 	// Show what created goroutine, except main goroutine (goid 1).
 	pc := gp.gopc
 	f := findfunc(pc)
-	if f.valid() && showframe(f.srcFunc(), gp, false, abi.FuncIDNormal) && gp.goid != 1 {
-		printcreatedby1(f, pc, gp.parentGoid)
+	if f.valid() && gp.goid != 1 {
+		printcreatedby1(f, pc, gp.parentGoid, gp)
 	}
 }
 
-func printcreatedby1(f funcInfo, pc uintptr, goid uint64) {
-	print("created by ")
-	printFuncName(funcname(f))
-	if goid != 0 {
-		print(" in goroutine ", goid)
-	}
-	print("\n")
+func printcreatedby1(f funcInfo, pc uintptr, goid uint64, gp *g) {
 	tracepc := pc // back up to CALL instruction for funcline.
 	if pc > f.entry() {
 		tracepc -= sys.PCQuantum
 	}
+	// The go statement may have been inlined into a wrapper. Resolve its
+	// logical frame before filtering wrappers or printing the creator's name.
+	u, uf := newInlineUnwinder(f, tracepc)
+	sf := u.srcFunc(uf)
+	if !showframe(sf, gp, false, abi.FuncIDNormal) {
+		return
+	}
+	print("created by ")
+	printFuncName(sf.name())
+	if goid != 0 {
+		print(" in goroutine ", goid)
+	}
+	print("\n")
 	file, line := funcline(f, tracepc)
 	print("\t", file, ":", line)
 	if pc > f.entry() {
@@ -1107,19 +1114,17 @@ func printAncestorTraceback(ancestor ancestorInfo) {
 	print("[originating from goroutine ", ancestor.goid, "]:\n")
 	for fidx, pc := range ancestor.pcs {
 		f := findfunc(pc) // f previously validated
-		if showfuncinfo(f.srcFunc(), fidx == 0, abi.FuncIDNormal) {
-			printAncestorTracebackFuncInfo(f, pc)
-		}
+		printAncestorTracebackFuncInfo(f, pc, fidx == 0)
 	}
 	if len(ancestor.pcs) == tracebackInnerFrames {
 		print("...additional frames elided...\n")
 	}
 	// Show what created goroutine, except main goroutine (goid 1).
 	f := findfunc(ancestor.gopc)
-	if f.valid() && showfuncinfo(f.srcFunc(), false, abi.FuncIDNormal) && ancestor.goid != 1 {
+	if f.valid() && ancestor.goid != 1 {
 		// In ancestor mode, we'll already print the goroutine ancestor.
 		// Pass 0 for the goid parameter so we don't print it again.
-		printcreatedby1(f, ancestor.gopc, 0)
+		printcreatedby1(f, ancestor.gopc, 0, nil)
 	}
 }
 
@@ -1127,10 +1132,15 @@ func printAncestorTraceback(ancestor ancestorInfo) {
 // within an ancestor traceback. The precision of this info is reduced
 // due to only have access to the pcs at the time of the caller
 // goroutine being created.
-func printAncestorTracebackFuncInfo(f funcInfo, pc uintptr) {
-	u, uf := newInlineUnwinder(f, pc)
+func printAncestorTracebackFuncInfo(f funcInfo, pc uintptr, firstFrame bool) {
+	// tracebackPCs stores logical call PCs plus one, including inline frames.
+	u, uf := newInlineUnwinder(f, pc-1)
+	sf := u.srcFunc(uf)
+	if !showfuncinfo(sf, firstFrame, abi.FuncIDNormal) {
+		return
+	}
 	file, line := u.fileLine(uf)
-	printFuncName(u.srcFunc(uf).name())
+	printFuncName(sf.name())
 	print("(...)\n")
 	print("\t", file, ":", line)
 	if pc > f.entry() {
