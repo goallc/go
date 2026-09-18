@@ -252,13 +252,6 @@
         "test": "TestStaticTmp",
         "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
       }
-    ],
-    "runtime/secret/...": [
-      {
-        "test": "TestGoExit",
-        "reason": "runtime: secret remains in register spill slot after Goexit on arm64",
-        "goarch": "arm64"
-      }
     ]
   },
   "modes": {

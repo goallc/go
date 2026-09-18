@@ -218,13 +218,14 @@ func TestGoExit(t *testing.T) {
 	// cleared its stack. There's no signal for that, so just wait a bit.
 	time.Sleep(1 * time.Millisecond)
 
-	checkRangeForSecret(t, lo, hi)
-
+	// Capture registers before checking the stack: checkRangeForSecret itself
+	// may leave secretValue in a register after comparing against it.
 	var spillArea [64]secretType
 	n := spillRegisters(unsafe.Pointer(&spillArea))
 	if n > unsafe.Sizeof(spillArea) {
 		t.Fatalf("spill area overrun %d\n", n)
 	}
+	checkRangeForSecret(t, lo, hi)
 	for i, v := range spillArea {
 		if v == secretValue {
 			t.Errorf("secret found in spill slot %d", i)
