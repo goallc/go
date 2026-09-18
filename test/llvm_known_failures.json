@@ -266,13 +266,6 @@
         "test": "TestDeadcode/globalmap",
         "reason": "optimization: main.init retains unused main.large"
       }
-    ],
-    "runtime/secret/...": [
-      {
-        "test": "TestGoExit",
-        "reason": "runtime: secret remains in register spill slot after Goexit on arm64",
-        "goarch": "arm64"
-      }
     ]
   },
   "modes": {
