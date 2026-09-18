@@ -39,11 +39,15 @@ func TestLLVMFailureSelection(t *testing.T) {
 }
 
 func TestLLVMFailedTestMain(t *testing.T) {
-	old, oldMatches := llvmFailures, stdMatches
-	t.Cleanup(func() { llvmFailures, stdMatches = old, oldMatches })
+	old, oldMatches, oldArch := llvmFailures, stdMatches, goarch
+	t.Cleanup(func() { llvmFailures, stdMatches, goarch = old, oldMatches, oldArch })
+	goarch = "amd64"
 	stdMatches = nil
 	llvmFailures.Tests = nil
-	llvmFailures.Packages = map[string]string{"broken": "TestMain build failure"}
+	llvmFailures.Packages = map[string]llvmPackageFailure{
+		"broken": {Reason: "TestMain build failure"},
+		"arm64":  {Reason: "arm64 TestMain build failure", GOARCH: "arm64"},
+	}
 	runner := &tester{}
 	runner.registerStdTest("broken")
 	runner.registerStdTest("working")
@@ -53,5 +57,19 @@ func TestLLVMFailedTestMain(t *testing.T) {
 	// Retain the entry in dist -list, but skip before launching TestMain.
 	if err := runner.tests[0].fn(&runner.tests[0]); err != nil || len(runner.worklist) != 0 {
 		t.Fatalf("skip queued work: %v, %v", err, runner.worklist)
+	}
+	runner.registerStdTest("arm64")
+	if len(stdMatches) != 2 || stdMatches[1] != "arm64" {
+		t.Fatalf("arm64-only failure skipped on amd64: %v", stdMatches)
+	}
+	goarch = "arm64"
+	stdMatches = nil
+	runner = &tester{}
+	runner.registerStdTest("arm64")
+	if len(stdMatches) != 0 {
+		t.Fatalf("arm64 TestMain failure was queued: %v", stdMatches)
+	}
+	if err := runner.tests[0].fn(&runner.tests[0]); err != nil || len(runner.worklist) != 0 {
+		t.Fatalf("arm64 skip queued work: %v, %v", err, runner.worklist)
 	}
 }

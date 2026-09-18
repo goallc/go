@@ -20,7 +20,12 @@ var llvmFailures struct {
 	Tests map[string][]llvmTestFailure `json:"tests"`
 	Modes map[string]string            `json:"modes"`
 	// Packages is reserved for failures in TestMain, before -skip takes effect.
-	Packages map[string]string `json:"packages"`
+	Packages map[string]llvmPackageFailure `json:"packages"`
+}
+
+type llvmPackageFailure struct {
+	Reason string `json:"reason"`
+	GOARCH string `json:"goarch,omitempty"`
 }
 
 type llvmTestFailure struct {
@@ -58,8 +63,8 @@ func loadLLVMTestFailures() {
 			fatalf("invalid known LLVM test mode: %q", name)
 		}
 	}
-	for pkg, reason := range llvmFailures.Packages {
-		if pkg == "" || strings.Contains(pkg, ":") || reason == "" {
+	for pkg, entry := range llvmFailures.Packages {
+		if pkg == "" || strings.Contains(pkg, ":") || entry.Reason == "" {
 			fatalf("invalid known LLVM package failure: %q", pkg)
 		}
 	}

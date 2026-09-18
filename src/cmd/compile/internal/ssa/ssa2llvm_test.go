@@ -394,6 +394,43 @@ func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	}
 }
 
+func TestLLVMGoObjAnonymousDataIdentity(t *testing.T) {
+	oldModule, oldLowerer, oldText := CurrentModule, currentLLVMDataLowerer, base.Ctxt.Text
+	module := GlobalCtxt.NewModule("anonymous_data")
+	CurrentModule = module
+	currentLLVMDataLowerer = newLLVMDataLowerer(nil)
+	base.Ctxt.Text = nil
+	t.Cleanup(func() {
+		CurrentModule, currentLLVMDataLowerer, base.Ctxt.Text = oldModule, oldLowerer, oldText
+		module.Dispose()
+	})
+
+	// A named symbol that resembles an IR handle must keep its identity.
+	// Anonymous symbols must remain distinct, even in the non-package block.
+	syms := []*obj.LSym{
+		{PkgIdx: goobj.PkgIdxNone},
+		{PkgIdx: goobj.PkgIdxNone},
+		{Name: ".goallc.anon.99", PkgIdx: goobj.PkgIdxNone},
+	}
+	for i, s := range syms {
+		g := llvm.AddGlobal(module, GlobalCtxt.Int8Type(), currentLLVMDataLowerer.globalName(s))
+		g.SetInitializer(llvm.ConstInt(GlobalCtxt.Int8Type(), uint64(i), false))
+		setLLVMSymbolLinkage(g, s)
+		currentLLVMDataLowerer.values[s] = g
+		currentLLVMDataLowerer.lowered[s] = true
+	}
+	FinalizeGoObjSymbolMetadata()
+	for _, s := range syms {
+		g := currentLLVMDataLowerer.values[s]
+		if got, want := strings.Contains(g.String(), "!goobj.symbol.anonymous"), s.Name == ""; got != want {
+			t.Fatalf("anonymous identity for %q: %s", s.Name, g.String())
+		}
+		if s.Name == "" && g.Linkage() != llvm.InternalLinkage {
+			t.Fatalf("anonymous symbol has external LLVM linkage: %s", g.String())
+		}
+	}
+}
+
 func TestLLVMGoObjFunctionArgInfoMetadata(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer

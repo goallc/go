@@ -393,6 +393,13 @@ func FinalizeGoObjSymbolMetadata() {
 		if s.PkgIdx == goobj.PkgIdxNone {
 			setGoObjNonPackageMetadata(g)
 		}
+		if s.Name == "" {
+			// The generated IR name is only a handle for LLVM. Keep the
+			// original anonymous identity when writing the Go object.
+			g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.symbol.anonymous"), GlobalCtxt.MDNode([]llvm.Metadata{
+				llvm.ConstInt(GlobalCtxt.Int1Type(), 1, false).ConstantAsMetadata(),
+			}))
+		}
 		if s.ContentAddressable() {
 			setGoObjContentHashMetadata(g, s)
 		}
@@ -829,7 +836,7 @@ func llvmDataIsReadOnly(s *obj.LSym) bool {
 }
 
 func setLLVMSymbolLinkage(value llvm.Value, s *obj.LSym) {
-	if s.Local() {
+	if s.Name == "" || s.Local() {
 		value.SetLinkage(llvm.InternalLinkage)
 	} else if s.DuplicateOK() {
 		value.SetLinkage(llvm.WeakAnyLinkage)
