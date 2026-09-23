@@ -21,16 +21,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"unsafe"
+	_ "unsafe"
 )
-
-// Use a non-nil address in the unmapped first page when a test needs the
-// signal panic path. A nil pointer may instead call panicmem directly when
-// the compiler emits an explicit nil check.
-//go:nocheckptr
-func sigpanicPointer() *int {
-	return (*int)(unsafe.Pointer(uintptr(1)))
-}
 
 // Test traceback printing of inlined frames.
 func TestTracebackInlined(t *testing.T) {
