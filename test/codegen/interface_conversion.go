@@ -6,7 +6,7 @@
 
 package codegen
 
-// LLVM: @codegen..typeAssert.0 = internal global <{ ptr, ptr, [8 x i8] }>
+// LLVM: @codegen..typeAssert.0 = hidden global <{ ptr, ptr, [8 x i8] }>
 // LLVM-LABEL: define goabiinternal { i64, ptr } @codegen.convertLLVMInterface(
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
 // LLVM: ptrtoint ptr

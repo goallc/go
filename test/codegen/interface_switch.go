@@ -26,7 +26,7 @@ func (v llvmDoubleSwitchValue) Double() int {
 	return int(v) * 2
 }
 
-// LLVM-DAG: @codegen..interfaceSwitch.0 = internal global <{ ptr, [8 x i8], ptr, ptr }>
+// LLVM-DAG: @codegen..interfaceSwitch.0 = hidden global <{ ptr, [8 x i8], ptr, ptr }>
 // LLVM-DAG: load atomic ptr, ptr @codegen..interfaceSwitch.0 seq_cst
 // LLVM-DAG: call goabiinternal { i64, ptr } @"runtime.interfaceSwitch<builtin.{{[0-9]+}}>"(ptr @codegen..interfaceSwitch.0, ptr
 // LLVM-DAG: icmp eq ptr

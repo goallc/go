@@ -168,6 +168,7 @@ type opCall struct {
 }
 
 var sink []byte
+var genericAllocSink uint32
 
 func storeAlloc() {
 	sink = make([]byte, 16)
@@ -177,7 +178,11 @@ func nonRecursiveGenericAllocFunction[CurrentOp any, OtherOp any](alloc bool) {
 	if alloc {
 		storeAlloc()
 	} else {
+		// Keep the nested allocation between observable operations, so it
+		// cannot be merged with the direct allocation in the other branch.
+		genericAllocSink++
 		nonRecursiveGenericAllocFunction[OtherOp, CurrentOp](true)
+		genericAllocSink++
 	}
 }
 

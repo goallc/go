@@ -6,6 +6,8 @@
 
 package codegen
 
+const llvmDebugConstant int = 42
+
 type llvmDebugPair struct {
 	value   int
 	pointer *int
@@ -24,6 +26,7 @@ type llvmDebugPair struct {
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFFCN
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFABSFCN
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFLINES
+// LLVM-OBJSUMMARY-DAG: LLVM symbol name="go:constinfo.codegen" kind=SDWARFCONST
 // LLVM-OBJSUMMARY-DAG: LLVM aux owner="codegen.llvmDebugEntry" type=dwarf_info
 // LLVM-OBJSUMMARY-DAG: LLVM aux owner="codegen.llvmDebugEntry" type=dwarf_lines
 // LLVM-OBJSUMMARY-DAG: LLVM relocation-count type=R_DWARFSECREF count={{[1-9][0-9]*}}

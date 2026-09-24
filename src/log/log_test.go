@@ -27,7 +27,7 @@ const (
 	Rdate         = `[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]`
 	Rtime         = `[0-9][0-9]:[0-9][0-9]:[0-9][0-9]`
 	Rmicroseconds = `\.[0-9][0-9][0-9][0-9][0-9][0-9]`
-	Rline         = `(67|69):` // must update if the calls to l.Printf / l.Print below move
+	Rline         = `%d:` // replaced with the line of the selected logging call
 	Rlongfile     = `.*/[A-Za-z0-9_\-]+\.go:` + Rline
 	Rshortfile    = `[A-Za-z0-9_\-]+\.go:` + Rline
 )
@@ -57,17 +57,37 @@ var tests = []tester{
 	{Ldate | Ltime | Lmicroseconds | Lshortfile | Lmsgprefix, "XXX", Rdate + " " + Rtime + Rmicroseconds + " " + Rshortfile + " XXX"},
 }
 
+// Keep the two logging calls in separate functions so optimization cannot merge
+// their inline call chains before Logger.output observes them with runtime.Caller.
+// Each helper returns the exact line its log entry should report.
+//
+//go:noinline
+func testPrintf() int {
+	_, _, line, _ := runtime.Caller(0)
+	Printf("hello %d world", 23)
+	return line + 1
+}
+
+//go:noinline
+func testPrintln() int {
+	_, _, line, _ := runtime.Caller(0)
+	Println("hello", 23, "world")
+	return line + 1
+}
+
 // Test using Println("hello", 23, "world") or using Printf("hello %d world", 23)
 func testPrint(t *testing.T, flag int, prefix string, pattern string, useFormat bool) {
 	buf := new(strings.Builder)
 	SetOutput(buf)
 	SetFlags(flag)
 	SetPrefix(prefix)
+	var wantLine int
 	if useFormat {
-		Printf("hello %d world", 23)
+		wantLine = testPrintf()
 	} else {
-		Println("hello", 23, "world")
+		wantLine = testPrintln()
 	}
+	pattern = strings.ReplaceAll(pattern, Rline, fmt.Sprintf("%d:", wantLine))
 	line := buf.String()
 	line = line[0 : len(line)-1]
 	pattern = "^" + pattern + "hello 23 world$"

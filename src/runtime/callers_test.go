@@ -215,7 +215,7 @@ func TestCallersNilPointerPanic(t *testing.T) {
 	// Make sure we don't have any extra frames on the stack (due to
 	// open-coded defer processing)
 	want := []string{"runtime.Callers", "runtime_test.TestCallersNilPointerPanic.func1",
-		"runtime.gopanic", "runtime.panicmem", "runtime.sigpanic",
+		"runtime.gopanic", "runtime.panicmem",
 		"runtime_test.TestCallersNilPointerPanic"}
 
 	defer func() {
@@ -224,6 +224,15 @@ func TestCallersNilPointerPanic(t *testing.T) {
 		}
 		pcs := make([]uintptr, 20)
 		pcs = pcs[:runtime.Callers(0, pcs)]
+		// A faulting access enters panicmem through sigpanic; a compiler may
+		// also call panicmem directly when it knows the pointer is nil.
+		frames := runtime.CallersFrames(pcs)
+		for range 4 {
+			frames.Next()
+		}
+		if frame, _ := frames.Next(); frame.Function == "runtime.sigpanic" {
+			want = slices.Insert(want, 4, "runtime.sigpanic")
+		}
 		testCallersEqual(t, pcs, want)
 	}()
 	var p *int

@@ -17,7 +17,7 @@ func (v llvmAssertionValue) Value(delta int) int {
 	return int(v) + delta
 }
 
-// LLVM: @codegen..typeAssert.0 = internal global <{ ptr, ptr, [8 x i8] }>
+// LLVM: @codegen..typeAssert.0 = hidden global <{ ptr, ptr, [8 x i8] }>
 // LLVM-LABEL: define goabiinternal { { i64, ptr }, i1 } @codegen.assertLLVMInterface(
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
 // LLVM: call goabiinternal ptr @"runtime.typeAssert<builtin.{{[0-9]+}}>"(ptr @codegen..typeAssert.0, ptr

@@ -264,9 +264,9 @@ public:
           if (InsertedAnchor) {
             // Compiler-generated wrappers can carry a real inline edge whose
             // callsite line is zero. GoObj still needs a ParentPC for that
-            // edge, while the line-table collector deliberately ignores line
-            // zero. Give only a synthetic anchor the nearest existing caller
-            // line; a reused instruction keeps its original source location.
+            // edge with a usable source line. Give only a synthetic anchor
+            // the nearest existing caller line; a reused instruction keeps
+            // its original source location.
             unsigned AnchorLine = CallSite->getLine();
             for (const DILocation *Caller = CallSite->getInlinedAt();
                  AnchorLine == 0 && Caller; Caller = Caller->getInlinedAt())
