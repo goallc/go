@@ -420,6 +420,37 @@ func TestLLVMGoObjLocalDataLinkage(t *testing.T) {
 	}
 }
 
+func TestLLVMGoObjStaticDataLinkage(t *testing.T) {
+	oldDynlink := base.Ctxt.Flag_dynlink
+	t.Cleanup(func() { base.Ctxt.Flag_dynlink = oldDynlink })
+	for _, dynlink := range []bool{false, true} {
+		for _, local := range []bool{false, true} {
+			t.Run(fmt.Sprintf("dynlink=%t/local=%t", dynlink, local), func(t *testing.T) {
+				base.Ctxt.Flag_dynlink = dynlink
+				m := GlobalCtxt.NewModule("static_data_linkage")
+				defer m.Dispose()
+				s := &obj.LSym{Name: "test.data", Type: objabi.SDATA, PkgIdx: goobj.PkgIdxSelf}
+				s.Set(obj.AttrStatic|obj.AttrIndexed, true)
+				s.Set(obj.AttrLocal, local)
+				g := llvm.AddGlobal(m, GlobalCtxt.Int8Type(), s.Name)
+				g.SetInitializer(llvm.ConstInt(GlobalCtxt.Int8Type(), 1, false))
+				setLLVMSymbolLinkage(g, s)
+				setGoObjPackageSymbolIndexMetadata(g, s)
+				want := llvm.InternalLinkage
+				if dynlink && !local {
+					want = llvm.ExternalLinkage
+				}
+				if g.Linkage() != want {
+					t.Fatalf("wrong linkage: %s", g.String())
+				}
+				if !strings.Contains(m.String(), "!{i32 0, i16 -1}") {
+					t.Fatalf("missing STATIC identity:\n%s", m.String())
+				}
+			})
+		}
+	}
+}
+
 func TestLLVMGoObjAnonymousDataIdentity(t *testing.T) {
 	oldModule, oldLowerer, oldText := CurrentModule, currentLLVMDataLowerer, base.Ctxt.Text
 	module := GlobalCtxt.NewModule("anonymous_data")

@@ -422,9 +422,15 @@ func setGoObjPackageSymbolIndexMetadata(value llvm.Value, s *obj.LSym) {
 	// compiler-generated data. Definitions use their package symbol index, so
 	// discard the stale imported-reference attachment.
 	value.EraseGlobalMetadata(GlobalCtxt.MDKindID("goobj.import"))
-	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolIndexMD), GlobalCtxt.MDNode([]llvm.Metadata{
+	identity := []llvm.Metadata{
 		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(s.SymIdx), false).ConstantAsMetadata(),
-	}))
+	}
+	if s.Static() {
+		// STATIC is a Go object identity, not a promise that the definition
+		// binds within one DSO. Plugins can share writable static temporaries.
+		identity = append(identity, llvm.ConstInt(GlobalCtxt.Int16Type(), uint64(goobj.SymABIstatic), false).ConstantAsMetadata())
+	}
+	value.SetGlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolIndexMD), GlobalCtxt.MDNode(identity))
 }
 
 func setGoObjNonPackageMetadata(value llvm.Value) {
@@ -830,10 +836,12 @@ func llvmDataIsReadOnly(s *obj.LSym) bool {
 }
 
 func setLLVMSymbolLinkage(value llvm.Value, s *obj.LSym) {
+	staticLocal := s.Static() && (!base.Ctxt.Flag_dynlink || s.Local() || s.Type == objabi.STEXT)
 	if s.Name == "" {
 		value.SetLinkage(llvm.PrivateLinkage)
-	} else if s.Static() || (s.Local() && s.Type == objabi.STEXT) {
-		// File-local Go symbols are local to the package's LLVM module too.
+	} else if staticLocal || (s.Local() && s.Type == objabi.STEXT) {
+		// Dynamic linking uses GOT references for non-LOCAL data, including
+		// STATIC temporaries. Their Go identity is carried separately above.
 		value.SetLinkage(llvm.InternalLinkage)
 	} else if s.DuplicateOK() {
 		value.SetLinkage(llvm.WeakAnyLinkage)
