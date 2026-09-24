@@ -104,7 +104,7 @@ func trap1() {
 	trap2()
 }
 
-var sinkPtr *int
+var sinkPtr = sigpanicPointer()
 
 func trap2() {
 	trap3(sinkPtr)

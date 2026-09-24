@@ -394,6 +394,32 @@ func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	}
 }
 
+func TestLLVMGoObjLocalDataLinkage(t *testing.T) {
+	m := GlobalCtxt.NewModule("local_data_linkage")
+	defer m.Dispose()
+	for _, static := range []bool{false, true} {
+		for _, dupok := range []bool{false, true} {
+			s := &obj.LSym{Name: fmt.Sprintf("data.%t.%t", static, dupok), Type: objabi.SRODATA}
+			s.Set(obj.AttrLocal, true)
+			s.Set(obj.AttrStatic, static)
+			s.Set(obj.AttrDuplicateOK, dupok)
+			g := llvm.AddGlobal(m, GlobalCtxt.Int8Type(), s.Name)
+			g.SetInitializer(llvm.ConstInt(GlobalCtxt.Int8Type(), 1, false))
+			setLLVMSymbolLinkage(g, s)
+			setGoObjDataFlags(g, s)
+			want := llvm.ExternalLinkage
+			if static {
+				want = llvm.InternalLinkage
+			} else if dupok {
+				want = llvm.WeakAnyLinkage
+			}
+			if g.Linkage() != want {
+				t.Fatalf("wrong linkage for %s: %s", s.Name, g.String())
+			}
+		}
+	}
+}
+
 func TestLLVMGoObjAnonymousDataIdentity(t *testing.T) {
 	oldModule, oldLowerer, oldText := CurrentModule, currentLLVMDataLowerer, base.Ctxt.Text
 	module := GlobalCtxt.NewModule("anonymous_data")

@@ -226,7 +226,7 @@ func TestCallersNilPointerPanic(t *testing.T) {
 		pcs = pcs[:runtime.Callers(0, pcs)]
 		testCallersEqual(t, pcs, want)
 	}()
-	var p *int
+	p := sigpanicPointer()
 	if *p == 3 {
 		t.Fatal("did not see nil pointer panic")
 	}
