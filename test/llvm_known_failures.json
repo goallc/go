@@ -107,6 +107,12 @@
         "goarch": "arm64"
       }
     ],
+    "log": [
+      {
+        "test": "TestAll",
+        "reason": "metadata: merged LLVM call sites report the outer caller line instead of the logging call line; CI 35967415008"
+      }
+    ],
     "runtime": [
       {
         "test": "TestBadTraceback",
@@ -130,6 +136,18 @@
         "test": "TestOutput/external_cgo_thread",
         "reason": "metadata: race report locates runtime.newextram in internal/runtime/atomic/types.go instead of runtime/proc.go; CI 35189324447",
         "goarch": "arm64"
+      }
+    ],
+    "cmd/cgo/internal/testplugin": [
+      {
+        "test": "TestIssue44956",
+        "reason": "linkage: LLVM marks STATIC writable temporaries LOCAL, preventing shared initialization across plugins; CI 35967415008"
+      }
+    ],
+    "cmd/go": [
+      {
+        "test": "TestFilepathUnderCwdFormat",
+        "reason": "metadata: nested go test -cover log fails TestAll because merged LLVM call sites report the outer caller line; CI 35967415008"
       }
     ],
     "cmd/compile": [

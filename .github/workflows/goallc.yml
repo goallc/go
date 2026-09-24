@@ -297,7 +297,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libedit-dev libxml2-dev libzstd-dev zlib1g-dev
+          sudo apt-get install -y gdb libedit-dev libxml2-dev libzstd-dev zlib1g-dev
 
       - name: Download shared SDK
         uses: actions/download-artifact@v5
