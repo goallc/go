@@ -119,10 +119,6 @@
       {
         "test": "TestTracebackArgs",
         "reason": "metadata: traceback, frame layout or created-by attribution differs"
-      },
-      {
-        "test": "TestTracebackAncestors",
-        "reason": "metadata: ancestor traceback omits expected recursive frames"
       }
     ],
     "runtime/race": [

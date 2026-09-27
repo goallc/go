@@ -4975,6 +4975,11 @@ func LLVMCompile(f *Func) {
 		// select the single-instruction LSE forms.
 		FCtxt.LF.AddTargetDependentFunctionAttr(llvmTargetFeaturesAttr, features)
 	}
+	// Go stack inspection observes recursive calls. Inlining retains their
+	// logical frames in the inline tree, but tail recursion elimination turns
+	// them into a loop with no recoverable call history. Keep ordinary calls;
+	// explicit musttail transfers for compiler-generated wrappers still apply.
+	FCtxt.LF.AddTargetDependentFunctionAttr("disable-tail-calls", "true")
 	// Go has already made its source-level inlining decision before LLVM
 	// lowering. Preserve both explicit //go:noinline boundaries and the
 	// frontend's implicit no-inline rules for functions containing defer or
