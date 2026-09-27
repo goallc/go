@@ -120,6 +120,18 @@ if(BUILD_TESTING)
     )
   endforeach()
 
+  foreach(LEVEL IN ITEMS O0 O2)
+    goallc_add_filecheck_test(
+      "GoALLCWriteBarriers.Zero.${LEVEL}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-zero.ll" CHECK
+      "${GOALLC_OPT_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      "-passes=goallc-cpu-features,default<${LEVEL}>,goallc-write-barriers"
+      -verify-each -S
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-zero.ll"
+    )
+  endforeach()
+
   goallc_add_filecheck_test(
     GoALLCWriteBarriers.Limit
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record.ll" LIMIT
