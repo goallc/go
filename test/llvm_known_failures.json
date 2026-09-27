@@ -122,14 +122,7 @@
       },
       {
         "test": "TestTracebackAncestors",
-        "reason": "metadata: ancestor traceback omits expected recursive frames"
-      }
-    ],
-    "runtime/race": [
-      {
-        "test": "TestOutput/external_cgo_thread",
-        "reason": "metadata: race report locates runtime.newextram in internal/runtime/atomic/types.go instead of runtime/proc.go; CI 35189324447",
-        "goarch": "arm64"
+        "reason": "accepted difference: LLVM tail-recursion elimination removes recursive ancestor frames; preserve this optimization (PR #329)"
       }
     ],
     "cmd/compile": [
