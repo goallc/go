@@ -163,6 +163,12 @@
         "test": "TestDebugLines_74576",
         "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
       }
+    ],
+    "cmd/link/internal/ld": [
+      {
+        "test": "TestInlinedRoutineArgsVars",
+        "reason": "debug: abstract inline DIE includes synthesized return parameters"
+      }
     ]
   },
   "modes": {},
