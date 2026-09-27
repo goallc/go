@@ -46,7 +46,15 @@ func Generic[T comparable](x T) func(T) bool {
     return func(y T) bool { return x == y }
 }
 var Compare = Generic(Node{})
+//go:noinline
+func Observe(p *int) { *p += 1 }
+func ScopedLocals(x int) int {
+    { v := x; Observe(&v); x += v }; { v := x+1; Observe(&v); x += v }
+    return x
+}
 `)
+	// ScopedLocals deliberately declares same-named variables on one line:
+	// their distinct lexical scopes must survive debug-variable deduplication.
 	// Several roots and nested closures exercise both worker scheduling and
 	// the parent-before-closure dependency. Retain calls and pointer data so
 	// LLVM declarations, GC metadata, and debug metadata participate too.
