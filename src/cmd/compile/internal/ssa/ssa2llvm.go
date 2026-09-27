@@ -4945,8 +4945,14 @@ func LLVMCompile(f *Func) {
 	if FCtxt.LF.BasicBlocksCount() != 0 {
 		f.fe.Fatalf(f.Entry.Pos, "duplicate LLVM definition for %s", f.OwnAux.Fn.Name)
 	}
+	// The entry block may come from an inlined callee in another file. The
+	// function's declaration, not that block, owns its subprogram location.
+	declPos := f.Entry.Pos
+	if fn := f.Frontend().Func(); fn != nil {
+		declPos = fn.Pos()
+	}
 	FCtxt.DISubprogram = llvmDebugSubprogram(
-		f.OwnAux.Fn, llvmSourcePos(f.Entry.Pos), f)
+		f.OwnAux.Fn, llvmSourcePos(declPos), f)
 	llvmDISubprogramVals[f.OwnAux.Fn] = FCtxt.LF
 	FCtxt.LF.SetSubprogram(FCtxt.DISubprogram)
 	FCtxt.LF.SetGC(goGCStrategy)
