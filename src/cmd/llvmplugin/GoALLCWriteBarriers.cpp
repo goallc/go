@@ -5,7 +5,13 @@
 #include "GoALLCWriteBarriers.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/MDBuilder.h"
@@ -21,6 +27,47 @@ constexpr StringLiteral RecordName = "goallc.gc.write.record";
 bool isWriteBarrierRecord(const CallInst *CI) {
   const Function *F = CI->getCalledFunction();
   return F && F->getName() == RecordName;
+}
+
+// Query the optimized IR before expanding any records or changing the CFG.
+// Allocation attributes describe the initial contents, not the contents at an
+// arbitrary later store: MemorySSA and AA must also rule out intervening
+// writes.
+void findZeroOldValues(Function &F, ArrayRef<CallInst *> Writes,
+                       SmallPtrSetImpl<CallInst *> &ZeroOld) {
+  const DataLayout &DL = F.getDataLayout();
+  TargetLibraryInfoImpl TLII(F.getParent()->getTargetTriple());
+  TargetLibraryInfo TLI(TLII, &F);
+  AssumptionCache AC(F);
+  DominatorTree DT(F);
+  BasicAAResult BAA(DL, F, TLI, AC, &DT);
+  AAResults AA(TLI);
+  AA.addAAResult(BAA);
+  MemorySSA MSSA(F, &AA, &DT);
+  Type *PtrTy = PointerType::getUnqual(F.getContext());
+  for (CallInst *CI : Writes) {
+    Value *Dst = CI->getArgOperand(1);
+    MemoryLocation Loc(Dst, LocationSize::precise(DL.getTypeStoreSize(PtrTy)));
+    auto *Access = MSSA.getMemoryAccess(CI);
+    if (!Access)
+      continue;
+    auto *Def = dyn_cast<MemoryDef>(MSSA.getWalker()->getClobberingMemoryAccess(
+        Access->getDefiningAccess(), Loc));
+    if (!Def || MSSA.isLiveOnEntryDef(Def))
+      continue;
+    Instruction *I = Def->getMemoryInst();
+    if (I == getUnderlyingObject(Dst)) {
+      if (Constant *Init = getInitialValueOfAllocation(I, &TLI, PtrTy))
+        if (Init->isNullValue())
+          ZeroOld.insert(CI);
+    } else if (auto *Store = dyn_cast<StoreInst>(I)) {
+      if (Store->isSimple() &&
+          isa<ConstantPointerNull>(Store->getValueOperand()) &&
+          MemoryLocation::get(Store).Size == Loc.Size &&
+          AA.alias(MemoryLocation::get(Store), Loc) == AliasResult::MustAlias)
+        ZeroOld.insert(CI);
+    }
+  }
 }
 } // namespace
 
@@ -67,13 +114,18 @@ void configureWriteBarrierRecords(Module &M) {
 void lowerWriteBarrierRecords(Module &M) {
   configureWriteBarrierRecords(M);
   SmallVector<CallInst *, 32> Writes;
+  SmallPtrSet<CallInst *, 32> ZeroOld;
   for (Function &F : M)
-    if (F.hasGC() && F.getGC() == "goallc")
+    if (F.hasGC() && F.getGC() == "goallc") {
+      size_t Start = Writes.size();
       for (BasicBlock &BB : F)
         for (Instruction &I : BB)
           if (auto *CI = dyn_cast<CallInst>(&I))
             if (isWriteBarrierRecord(CI))
               Writes.push_back(CI);
+      if (Writes.size() != Start)
+        findZeroOldValues(F, ArrayRef(Writes).drop_front(Start), ZeroOld);
+    }
   if (Writes.empty())
     return;
   LLVMContext &C = M.getContext();
@@ -83,13 +135,15 @@ void lowerWriteBarrierRecords(Module &M) {
       Intrinsic::getOrInsertDeclaration(&M, Intrinsic::go_gc_write_barrier);
   SmallPtrSet<CallInst *, 32> Done;
   // SimplifyCFG can merge calls with different constant omission proofs into
-  // a call with a select/PHI argument. Without a constant proof, conservatively
-  // record both pointers. Losing an omission only adds redundant GC work.
+  // a call with a select/PHI argument. Discard those frontend omissions unless
+  // constant; independent LLVM proofs below can still omit a pointer.
   auto flags = [](CallInst *CI) -> unsigned {
     auto *C = dyn_cast<ConstantInt>(CI->getArgOperand(2));
     return C ? C->getZExtValue() : 0;
   };
-  auto needOld = [&](CallInst *CI) { return !(flags(CI) & 1); };
+  auto needOld = [&](CallInst *CI) {
+    return !(flags(CI) & 1) && !ZeroOld.contains(CI);
+  };
   auto needNew = [&](CallInst *CI) {
     Value *V = CI->getArgOperand(0);
     return !(flags(CI) & 2) && !isa<ConstantPointerNull>(V) &&

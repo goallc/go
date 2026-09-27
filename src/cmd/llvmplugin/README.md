@@ -21,7 +21,7 @@ This is a plugin-owned IR operation, not an upstream LLVM intrinsic or a runtime
 symbol. Flag bit 0 omits the old pointer; bit 1 omits the new pointer. Flags are
 constant operands so optimizer metadata dropping cannot change their meaning.
 If optimization merges different flags into a select or PHI, late lowering
-conservatively records both pointers instead of relying on an omission proof.
+discards those frontend omissions and uses only independent LLVM proofs.
 The native Go backend and `cgocheck2` retain their existing expansion; typed
 `wbMove`/`wbZero` helpers continue to be emitted by the native Go pass.
 
@@ -29,7 +29,16 @@ The native Go backend and `cgocheck2` retain their existing expansion; typed
 non-capturing, reading argument memory and modifying inaccessible GC memory.
 The destination read orders recording before publication, while the ordinary
 store exposes its value and escape behavior to LLVM. After optimization and
-before statepoint rewriting, the plugin expands records into the existing
+before statepoint rewriting, the plugin uses LLVM MemorySSA and alias analysis
+to find the last write to each destination. If that is its allocation,
+`getInitialValueOfAllocation` consumes the existing `allockind("alloc,zeroed")`
+attribute to prove the old pointer is null; a full pointer-sized null store also
+provides this proof. This covers allocations exposed by LLVM inlining and
+fields outside Go SSA's bounded zero map. Intervening possible writes and
+unresolved memory PHIs retain the old-value record. The analysis completes
+before any records are expanded or the CFG is changed.
+
+The plugin then expands records into the existing
 write-barrier flag diamond and `llvm.go.gc.write.barrier` buffer reservations.
 Old pointers are loaded and immediately recorded after buffer reservation,
 keeping these temporaries out of the call's live set.
