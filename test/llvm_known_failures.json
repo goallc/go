@@ -46,10 +46,6 @@
         "reason": "expectation: native stack-frame limit diagnostic differs"
       },
       {
-        "test": "Test/fixedbugs/issue25507.go",
-        "reason": "expectation: native stack-frame limit diagnostic differs"
-      },
-      {
         "test": "Test/fixedbugs/issue20529.go",
         "reason": "expectation: native stack-frame limit diagnostic differs"
       },
