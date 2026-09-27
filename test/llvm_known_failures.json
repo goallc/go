@@ -26,10 +26,6 @@
         "reason": "expectation: native stack-frame limit diagnostic differs"
       },
       {
-        "test": "Test/fixedbugs/issue34723.go",
-        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
-      },
-      {
         "test": "Test/fixedbugs/issue30908.go",
         "reason": "unsupported: strictdups=2 detects differing generic wrapper payloads"
       },
@@ -59,10 +55,6 @@
       },
       {
         "test": "Test/fixedbugs/issue15747.go",
-        "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
-      },
-      {
-        "test": "Test/writebarrier.go",
         "reason": "expectation: native liveness, nil-check, relocation or write-barrier diagnostic differs"
       },
       {

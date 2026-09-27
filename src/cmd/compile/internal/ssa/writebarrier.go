@@ -823,7 +823,9 @@ func IsNewObject(v *Value, select1 []*Value) (mem *Value, ok bool) {
 		} // assume it is the right selection if true
 	}
 	call := mem.Args[0]
-	if call.Op != OpStaticCall {
+	// LLVM keeps calls unexpanded. A pointer result from the same allocator
+	// still has the same zero-initialization guarantee before call expansion.
+	if call.Op != OpStaticCall && call.Op != OpStaticLECall {
 		return nil, false
 	}
 	// Check for new object, or for new object calls that have been transformed into size-specialized malloc calls.
