@@ -42,6 +42,10 @@ type testline struct {
 	// Set to nil to skip the check.
 	vars []string
 
+	// LLVM also describes heap-promoted source variables through their heap
+	// pointer, where native -N DWARF may describe only the pointer itself.
+	llvmVars []string
+
 	// decl is the list of variables declared at this line.
 	decl []string
 
@@ -176,7 +180,7 @@ var testfile = []testline{
 	{line: "func TestEscape() {"},
 	{line: "	a := 1", vars: []string{"var a int"}},
 	{line: "	{"},
-	{line: "		b := 2", scopes: []int{1}, vars: []string{"var &b *int", "var p *int"}},
+	{line: "		b := 2", scopes: []int{1}, vars: []string{"var &b *int", "var p *int"}, llvmVars: []string{"var &b *int", "var b int", "var p *int"}},
 	{line: "		p := &b", scopes: []int{1}},
 	{line: "		f1(a)", scopes: []int{1}},
 	{line: "		leak(p)", scopes: []int{1}},
@@ -271,6 +275,7 @@ func TestScopeRanges(t *testing.T) {
 	}
 
 	anyerror := false
+	llvm := testenv.GoCompilerUsesLLVM(t)
 	for i := range testfile {
 		tgt := testfile[i].scopes
 		out := lines[line{src, i + 1}]
@@ -285,11 +290,15 @@ func TestScopeRanges(t *testing.T) {
 		}
 
 		varsok := true
-		if testfile[i].vars != nil {
+		wantVars := testfile[i].vars
+		if llvm && testfile[i].llvmVars != nil {
+			wantVars = testfile[i].llvmVars
+		}
+		if wantVars != nil {
 			if len(out) > 0 {
-				varsok = checkVars(testfile[i].vars, out[len(out)-1].vars)
+				varsok = checkVars(wantVars, out[len(out)-1].vars)
 				if !varsok {
-					t.Logf("variable mismatch at line %d %q for scope %d: expected: %v got: %v\n", i+1, testfile[i].line, out[len(out)-1].id, testfile[i].vars, out[len(out)-1].vars)
+					t.Logf("variable mismatch at line %d %q for scope %d: expected: %v got: %v\n", i+1, testfile[i].line, out[len(out)-1].id, wantVars, out[len(out)-1].vars)
 				}
 				for j := range testfile[i].decl {
 					if line := declLineForVar(out[len(out)-1].vars, testfile[i].decl[j]); line != i+1 {

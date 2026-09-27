@@ -743,7 +743,7 @@ func main() {
 		absFcnIdx := ex.IdxFromOffset(ooff)
 		absFcnChildDies := ex.Children(absFcnIdx)
 		expectedFormals := 2
-		if os.Getenv(llvmStdlibPolicyEnv) == "1" {
+		if testenv.GoCompilerUsesLLVM(t) {
 			// LLVM retains cand's unnamed result as a typed output parameter.
 			expectedFormals = 3
 		}
