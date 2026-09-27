@@ -19,6 +19,7 @@ import (
 	"internal/buildcfg"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/goallc/go-llvm"
 )
@@ -479,7 +480,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 	expr := llvmDIBuilder.CreateExpression(nil)
 	for _, name := range fn.Dcl {
 		if name == nil || name.Sym() == nil || name.Type() == nil ||
-			name.Sym().Name == "_" || name.Type().IsUntyped() ||
+			name.Sym().Name == "_" || strings.HasPrefix(name.Sym().Name, ".") || name.Type().IsUntyped() ||
 			name.Type().Kind() == types.TSSA || ir.IsAutoTmp(name) ||
 			!IsVarWantedForDebug(name) {
 			continue
@@ -488,7 +489,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 			name.Class != ir.PAUTO {
 			continue
 		}
-		pos := llvmSourcePos(name.Pos())
+		pos := llvmSourcePos(name.Canonical().Pos())
 		if !pos.IsKnown() {
 			pos = llvmSourcePos(lfc.F.Entry.Pos)
 		}
@@ -498,7 +499,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 		}
 		file := llvmDIFile(pos)
 		diType := llvmDIType(name.Type(), file)
-		scope := lfc.DISubprogram
+		scope := lfc.llvmLexicalScope(name.Canonical().Pos())
 		inlIndex := -1
 		if name.InlFormal() || name.InlLocal() {
 			fullPos := base.Ctxt.PosTable.Pos(name.Pos())
@@ -564,7 +565,7 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 						continue
 					}
 					lfc.DebugValues[v.ID] = append(lfc.DebugValues[v.ID], llvmDebugValue{
-						diVar, valueExpr, llvm.DebugLoc{Line: uint(line), Scope: lfc.DISubprogram},
+						diVar, valueExpr, llvm.DebugLoc{Line: uint(line), Scope: scope},
 					})
 					hasValues = true
 				}
@@ -586,12 +587,14 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 		}
 		if ok && inlIndex < 0 {
 			llvmDIBuilder.InsertDeclareAtEnd(slot.Value, diVar, locationExpr,
-				llvm.DebugLoc{Line: uint(line), Scope: lfc.DISubprogram},
+				llvm.DebugLoc{Line: uint(line), Scope: scope},
 				lfc.Prologue)
 		}
 	}
 
-	if !lfc.ClosureContext.IsNil() {
+	// As in the native backend, expose the synthetic context only for range
+	// bodies that need it to find the parent frame in the debugger.
+	if lfc.F.CloSlot != nil && !lfc.ClosureContext.IsNil() {
 		pos := llvmSourcePos(lfc.F.Entry.Pos)
 		file := llvmDIFile(pos)
 		argNos[-1]++
@@ -622,6 +625,38 @@ func llvmInlineChain(inlIndex int) []int {
 		chain[left], chain[right] = chain[right], chain[left]
 	}
 	return chain
+}
+
+// llvmLexicalScope reuses the frontend's scope boundaries, just as native
+// dwarfgen does. LLVM's LexicalScopes analysis computes the final PC ranges.
+func (lfc *LLVMFuncContext) llvmLexicalScope(xpos src.XPos) llvm.Metadata {
+	fn := lfc.F.Frontend().Func()
+	if fn == nil || len(fn.Marks) == 0 {
+		return lfc.DISubprogram
+	}
+	pos := base.Ctxt.PosTable.Pos(xpos)
+	i := sort.Search(len(fn.Marks), func(i int) bool {
+		return pos.Before(base.Ctxt.PosTable.Pos(fn.Marks[i].Pos))
+	})
+	if i == 0 {
+		return lfc.DISubprogram
+	}
+	if lfc.DebugScopes == nil {
+		lfc.DebugScopes = map[ir.ScopeID]llvm.Metadata{0: lfc.DISubprogram}
+	}
+	var scopeFor func(ir.ScopeID) llvm.Metadata
+	scopeFor = func(id ir.ScopeID) llvm.Metadata {
+		if scope, ok := lfc.DebugScopes[id]; ok {
+			return scope
+		}
+		parent := scopeFor(fn.Parents[id-1])
+		scope := llvmDIBuilder.CreateLexicalBlock(parent, llvm.DILexicalBlock{
+			File: llvmDIFile(pos), Line: int(pos.RelLine()), Column: int(pos.RelCol()),
+		})
+		lfc.DebugScopes[id] = scope
+		return scope
+	}
+	return scopeFor(fn.Marks[i-1].Scope)
 }
 
 func (lfc *LLVMFuncContext) llvmDebugScope(pos src.Pos, chain []int) (llvm.Metadata, llvm.Metadata) {
@@ -661,6 +696,9 @@ func (lfc *LLVMFuncContext) setDebugLocation(xpos src.XPos) {
 
 	chain := llvmInlineChain(pos.Base().InliningIndex())
 	scope, inlinedAt := lfc.llvmDebugScope(pos, chain)
+	if len(chain) == 0 {
+		scope = lfc.llvmLexicalScope(xpos)
+	}
 	locationScope := llvmDIScopeForPos(scope, pos, 0)
 	location := GlobalCtxt.CreateDebugLocation(
 		pos.RelLine(), pos.RelCol(), locationScope, inlinedAt)

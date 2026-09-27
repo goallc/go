@@ -138,16 +138,6 @@
         "reason": "expectation: native -S assembly text is unavailable"
       }
     ],
-    "cmd/compile/internal/dwarfgen": [
-      {
-        "test": "TestIssue75249",
-        "reason": "debug: statement markers and lexical scopes differ"
-      },
-      {
-        "test": "TestScopeRanges",
-        "reason": "debug: statement markers and lexical scopes differ"
-      }
-    ],
     "cmd/compile/internal/ssa": [
       {
         "test": "TestDebugLinesSayHi",
@@ -172,12 +162,6 @@
       {
         "test": "TestDebugLines_74576",
         "reason": "expectation: test reads native genssa dump, which LLVM does not emit"
-      }
-    ],
-    "cmd/link/internal/ld": [
-      {
-        "test": "TestInlinedRoutineArgsVars",
-        "reason": "debug: abstract DIE shape and compiler temporary visibility differ"
       }
     ]
   },

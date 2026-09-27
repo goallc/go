@@ -22,6 +22,10 @@ type llvmDebugPair struct {
 // LLVM-DAG: DILabel(scope: {{.*}}, name: "$go.inlmark.{{[0-9]+}}"{{.*}}isArtificial: true)
 // LLVM-DAG: !goobj.debug.funcs
 // LLVM-DAG: inlinedAt:
+// LLVM-DAG: ![[LEXICAL_FN:[0-9]+]] = distinct !DISubprogram(name: "codegen.llvmDebugScopes"
+// LLVM-DAG: ![[LEXICAL_BLOCK:[0-9]+]] = distinct !DILexicalBlock(scope: ![[LEXICAL_FN]],
+// LLVM-DAG: !DILocalVariable(name: "outer", scope: ![[LEXICAL_FN]],
+// LLVM-DAG: !DILocalVariable(name: "inner", scope: ![[LEXICAL_BLOCK]],
 // LLVM-NOT: !goobj.debug.inline.required
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFFCN
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name={{".*"}} kind=SDWARFABSFCN
@@ -51,4 +55,15 @@ func llvmDebugObserve(pointer *int) {
 //go:noinline
 func llvmDebugEntry(value int, pair *llvmDebugPair) int {
 	return llvmDebugMiddle(value, pair)
+}
+
+//go:noinline
+func llvmDebugScopes(value int) int {
+	outer := value
+	llvmDebugObserve(&outer)
+	{
+		inner := value + 1
+		llvmDebugObserve(&inner)
+	}
+	return outer
 }

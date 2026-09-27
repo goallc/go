@@ -742,34 +742,19 @@ func main() {
 		// inlined subroutine DIE.
 		absFcnIdx := ex.IdxFromOffset(ooff)
 		absFcnChildDies := ex.Children(absFcnIdx)
-		expectedFormals := 2
-		if os.Getenv(llvmStdlibPolicyEnv) == "1" {
-			// LLVM retains cand's unnamed result as a typed output parameter.
-			expectedFormals = 3
-		}
-		if len(absFcnChildDies) != expectedFormals {
-			t.Fatalf("expected abstract function: expected %d children, got %d children", expectedFormals, len(absFcnChildDies))
+		if len(absFcnChildDies) != 2 {
+			t.Fatalf("expected abstract function: expected 2 children, got %d children", len(absFcnChildDies))
 		}
 		formalCount := 0
-		resultSeen := false
 		for _, absChild := range absFcnChildDies {
 			if absChild.Tag == dwarf.TagFormalParameter {
 				formalCount += 1
-				if name, _ := absChild.Val(dwarf.AttrName).(string); name == "~r0" {
-					resultSeen = true
-					if output, _ := absChild.Val(dwarf.AttrVarParam).(bool); !output {
-						t.Fatal("LLVM abstract result ~r0 is not marked as an output parameter")
-					}
-				}
 				continue
 			}
 			t.Fatalf("abstract function child DIE: expected formal, got %v", absChild.Tag)
 		}
-		if formalCount != expectedFormals {
-			t.Fatalf("abstract function DIE: expected %d formals, got %d", expectedFormals, formalCount)
-		}
-		if expectedFormals == 3 && !resultSeen {
-			t.Fatal("LLVM abstract function DIE has no unnamed result parameter")
+		if formalCount != 2 {
+			t.Fatalf("abstract function DIE: expected 2 formals, got %d", formalCount)
 		}
 
 		omap := make(map[dwarf.Offset]bool)
