@@ -309,6 +309,13 @@ func Compile(fn *ir.Func, worker int, profile *pgoir.Profile) {
 	}
 	f := buildssa(fn, worker, inline.IsPgoHotFunc(fn, profile) || inline.HasPgoHotInline(fn))
 	if base.Flag.EnableLLVM {
+		// LLVM owns local frame allocation, but the incoming argument/result
+		// area is fixed by the Go ABI and has the same size limit.
+		if f.OwnAux.ArgWidth() >= maxStackSize {
+			largeStackFramesMu.Lock()
+			largeStackFrames = append(largeStackFrames, largeStack{args: f.OwnAux.ArgWidth(), pos: fn.Pos()})
+			largeStackFramesMu.Unlock()
+		}
 		// The in-process backend replaces native code generation. ssa.Compile
 		// has already emitted LLVM IR; genssa would consume native
 		// register-allocation state and emit a second _go_.o member.

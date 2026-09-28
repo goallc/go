@@ -385,6 +385,9 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	// in-process backend lowers that closure into its module.
 	base.Timer.Start("be", "dumpobj")
 	if base.Flag.EnableLLVM {
+		// Report ABI-sized frames before LLVM attempts machine code emission.
+		ssagen.CheckLargeStacks()
+		base.ExitIfErrors()
 		dumpdata()
 		ssagen.EmitLLVMMapInitMetadata()
 		ssa.LowerGoObjData()
