@@ -419,7 +419,8 @@ bool markInlineAsmRanges(const MachineFunction &MF, StringRef StackRegName,
 
 bool hasWholeFunctionPolicy(const Function &F) {
   StringRef Name = F.getName();
-  return F.hasFnAttribute(goabi::NoSplitAttr) ||
+  return F.getFnAttribute("go-async-unsafe").getValueAsString() == "all" ||
+         F.hasFnAttribute(goabi::NoSplitAttr) ||
          F.hasFnAttribute(goabi::SystemStackAttr) ||
          Name.starts_with("runtime.") ||
          Name.starts_with("internal/runtime/") || Name.starts_with("reflect.");

@@ -357,6 +357,9 @@ Asynchronous preemption is safe by default for ordinary optimized Go machine
 code, including frames, calls, vectors, atomics, and pointer/integer
 conversions. The frontend retains `go-async-unsafe` as a fail-closed fallback,
 but a Go-owned read-only callback overrides it after final machine lowering.
+When compiling runtime, the frontend sets `"go-async-unsafe"="all"` to require
+whole-function protection even when `//go:linkname` changes the symbol prefix.
+The callback preserves this explicit policy instead of refining its ranges.
 The callback recognizes the complete write-barrier protocol in optimized IR,
 then marks its final machine blocks from the completed flag load through the
 raw heap write. It also marks target-inserted stack checks through the

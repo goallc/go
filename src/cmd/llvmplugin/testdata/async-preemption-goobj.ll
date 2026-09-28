@@ -95,3 +95,22 @@ attributes #1 = { "go-async-unsafe" "go-nosplit" }
 ; OBJVIEW: "start": 0
 ; OBJVIEW-NEXT: "end": [[#NOSPLIT_SIZE]]
 ; OBJVIEW-NEXT: "value": -2
+
+; A runtime definition may be renamed outside the runtime namespace. Its
+; explicit policy must protect the entire body, not just stack transitions.
+define goabiinternal i64 @other.runtime_entry(ptr %p) #2 gc "goallc" {
+entry:
+  %v = load volatile i64, ptr %p, align 8
+  %result = add i64 %v, 1
+  store volatile i64 %result, ptr %p, align 8
+  ret i64 %result
+}
+
+attributes #2 = { "go-async-unsafe"="all" }
+
+; OBJVIEW-LABEL: "name": "other.runtime_entry"
+; OBJVIEW: "size": [[#RUNTIME_SIZE:]]
+; OBJVIEW: "kind": "unsafe_point"
+; OBJVIEW: "start": 0
+; OBJVIEW-NEXT: "end": [[#RUNTIME_SIZE]]
+; OBJVIEW-NEXT: "value": -2

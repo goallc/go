@@ -5066,7 +5066,13 @@ func LLVMCompile(f *Func) {
 			FCtxt.LF.Param(result.ParamIndex).SetName(fmt.Sprintf(".result%d", i))
 		}
 	}
-	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, ""))
+	asyncUnsafe := ""
+	if base.Flag.CompilingRuntime {
+		// Match liveness.IsUnsafe even when linkname hides the runtime prefix.
+		// The final machine callback must preserve this whole-function policy.
+		asyncUnsafe = "all"
+	}
+	FCtxt.LF.AddFunctionAttr(GlobalCtxt.CreateStringAttribute(goAsyncUnsafeAttr, asyncUnsafe))
 	// A //go:nosplit function must not acquire that late morestack edge. Besides
 	// violating the runtime's nosplit call graph, it would expose a safepoint the
 	// frontend deliberately prohibited. Give target frame lowering the source
