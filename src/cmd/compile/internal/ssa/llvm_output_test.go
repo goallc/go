@@ -278,3 +278,45 @@ func TestLLVMMemorySnapshot(t *testing.T) {
 		})
 	}
 }
+
+func TestLLVMDwarfFlag(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	dir := t.TempDir()
+	source := filepath.Join(dir, "p.go")
+	code := `package p
+var Global int
+func Add(x int) int { return x + Global }
+func Caller(x int) int { return Add(x) }
+`
+	if err := os.WriteFile(source, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dwarf := range []bool{true, false} {
+		t.Run(fmt.Sprint(dwarf), func(t *testing.T) {
+			archive := filepath.Join(dir, fmt.Sprintf("p-%t.a", dwarf))
+			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", fmt.Sprintf("-dwarf=%t", dwarf), "-llvm-keep-ir", "-p=p", "-o", archive, source)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			for _, suffix := range []string{".ll", ".opt.ll"} {
+				data, err := os.ReadFile(archive + suffix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ir := string(data)
+				for _, marker := range []string{"!DILocalVariable(", "!DIGlobalVariable(", "!DIBasicType(", `!"dwarf-v1"`, "#dbg_value("} {
+					if got := strings.Contains(ir, marker); got != dwarf {
+						t.Errorf("%s: %s present = %v, want %v", suffix, marker, got, dwarf)
+					}
+				}
+				// Disabling DWARF must retain the locations and inline stacks
+				// that the GoObj writer uses for runtime traceback metadata.
+				for _, marker := range []string{`!"pcln-v1"`, "!DISubprogram(", "!DILocation(", "inlinedAt:", "!goobj.debug.funcs"} {
+					if !strings.Contains(ir, marker) {
+						t.Errorf("%s: missing %s", suffix, marker)
+					}
+				}
+			}
+		})
+	}
+}

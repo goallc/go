@@ -54,24 +54,31 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 	if name == "" {
 		name = "go-package"
 	}
+	emission := llvm.DwarfEmissionFull
+	if !base.Flag.Dwarf {
+		// PCLN still needs source locations and inline stacks when DWARF is
+		// disabled, but variable locations and types are unnecessary.
+		emission = llvm.DwarfEmissionLineTablesOnly
+	}
 	llvmDICompileUnit = llvmDIBuilder.CreateCompileUnit(llvm.DICompileUnit{
 		Language:     llvm.DW_LANG_Go,
 		File:         name,
 		Producer:     "Go compiler " + buildcfg.Version,
 		Optimized:    base.Flag.N == 0,
-		EmissionKind: llvm.DwarfEmissionFull,
+		EmissionKind: emission,
 	})
 	dwarfVersion := "dwarf4"
 	if buildcfg.Experiment.Dwarf5 {
 		dwarfVersion = "dwarf5"
 	}
-	CurrentModule.AddNamedMetadataOperand("goobj.debug.config",
-		GlobalCtxt.MDNode([]llvm.Metadata{
-			GlobalCtxt.MDString("pcln-v1"),
+	config := []llvm.Metadata{GlobalCtxt.MDString("pcln-v1")}
+	if base.Flag.Dwarf {
+		config = append(config,
 			GlobalCtxt.MDString("dwarf-v1"),
 			GlobalCtxt.MDString(dwarfVersion),
-			GlobalCtxt.MDString(pkg.Name),
-		}))
+			GlobalCtxt.MDString(pkg.Name))
+	}
+	CurrentModule.AddNamedMetadataOperand("goobj.debug.config", GlobalCtxt.MDNode(config))
 
 	flag := func(name string, value uint64) {
 		CurrentModule.AddNamedMetadataOperand("llvm.module.flags", GlobalCtxt.MDNode([]llvm.Metadata{
@@ -123,7 +130,7 @@ func finalizeLLVMDebugInfo() {
 }
 
 func emitGoObjDebugGlobals() {
-	if currentLLVMDataLowerer == nil {
+	if !base.Flag.Dwarf || currentLLVMDataLowerer == nil {
 		return
 	}
 	expr := llvmDIBuilder.CreateExpression(nil)
@@ -410,7 +417,7 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 		base.Fatalf("invalid LLVM debug subprogram")
 	}
 	if sp, ok := llvmDISubprograms[sym]; ok {
-		if f != nil {
+		if f != nil && base.Flag.Dwarf {
 			sp.ReplaceSubprogramType(llvmDebugFunctionType(f, llvmDIFile(pos)))
 		}
 		return sp
@@ -427,7 +434,7 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 		line = 1
 	}
 	typ := llvmDIBuilder.CreateSubroutineType(llvm.DISubroutineType{File: file})
-	if f != nil {
+	if f != nil && base.Flag.Dwarf {
 		typ = llvmDebugFunctionType(f, file)
 	}
 	sp := llvmDIBuilder.CreateFunction(llvmDICompileUnit, llvm.DIFunction{
@@ -462,6 +469,9 @@ func (lfc *LLVMFuncContext) emitDebugValue(v *Value, value llvm.Value) {
 }
 
 func (lfc *LLVMFuncContext) emitDebugVariables() {
+	if !base.Flag.Dwarf {
+		return
+	}
 	fn := lfc.F.Frontend().Func()
 	if fn == nil {
 		return
