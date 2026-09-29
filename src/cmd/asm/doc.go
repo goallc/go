@@ -35,6 +35,14 @@ Flags:
 		Support references to Go symbols defined in other shared libraries.
 	-e
 		No limit on number of errors reported.
+	-enablellvm
+		Use the experimental LLVM backend for amd64/arm64 on Linux or Darwin.
+		Parsed Go assembly becomes naked LLVM functions with target inline asm.
+		Object output remains GoObj and uses the Go linker. Unsupported
+		instructions or addressing modes are errors; coverage is incomplete.
+	-llvm-output obj|bc|ir
+		Select GoObj (default), LLVM bitcode, or LLVM IR. Requires -enablellvm.
+		Only obj can be passed to the Go linker.
 	-gensymabis
 		Write symbol ABI information to output file. Don't assemble.
 	-o file

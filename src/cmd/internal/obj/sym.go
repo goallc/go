@@ -271,13 +271,7 @@ func (ctxt *Link) NumberSyms() {
 		})
 	}
 
-	// Constant symbols are created late in the concurrent phase. Sort them
-	// to ensure a deterministic order.
-	sort.Slice(ctxt.constSyms, func(i, j int) bool {
-		return ctxt.constSyms[i].Name < ctxt.constSyms[j].Name
-	})
-	ctxt.Data = append(ctxt.Data, ctxt.constSyms...)
-	ctxt.constSyms = nil
+	ctxt.FinalizeConstSyms()
 
 	// So are SEH symbols.
 	sort.Slice(ctxt.SEHSyms, func(i, j int) bool {
@@ -532,4 +526,12 @@ func (ctxt *Link) traverseAuxSyms(flag traverseFlag, fn func(parent *LSym, aux *
 			}
 		}
 	}
+}
+
+// FinalizeConstSyms publishes constants synthesized by target preprocessing to
+// Data, independently of the eventual object format and its symbol numbering.
+func (ctxt *Link) FinalizeConstSyms() {
+	sort.Slice(ctxt.constSyms, func(i, j int) bool { return ctxt.constSyms[i].Name < ctxt.constSyms[j].Name })
+	ctxt.Data = append(ctxt.Data, ctxt.constSyms...)
+	ctxt.constSyms = nil
 }
