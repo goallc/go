@@ -16,6 +16,7 @@ import (
 	"cmd/asm/internal/asm"
 	"cmd/asm/internal/flags"
 	"cmd/asm/internal/lex"
+	"cmd/asm/internal/llvmasm"
 
 	"cmd/internal/bio"
 	"cmd/internal/obj"
@@ -32,6 +33,9 @@ func main() {
 	GOARCH := buildcfg.GOARCH
 
 	flags.Parse()
+	if !*flags.EnableLLVM && *flags.LLVMOutput != "obj" {
+		log.Fatal("-llvm-output requires -enablellvm")
+	}
 	counter.Inc("asm/invocations")
 	counter.CountFlags("asm/flag:", *flag.CommandLine)
 
@@ -77,7 +81,7 @@ func main() {
 	}
 	defer buf.Close()
 
-	if !*flags.SymABIs {
+	if !*flags.SymABIs && !*flags.EnableLLVM {
 		buf.WriteString(objabi.HeaderString())
 		fmt.Fprintf(buf, "!\n")
 	}
@@ -106,7 +110,11 @@ func main() {
 			pList.Firstpc, ok = parser.Parse()
 			// reports errors to parser.Errorf
 			if ok {
-				obj.Flushplist(ctxt, pList, nil)
+				if *flags.EnableLLVM {
+					obj.PrepareText(ctxt, pList, nil)
+				} else {
+					obj.Flushplist(ctxt, pList, nil)
+				}
 			}
 		}
 		if !ok {
@@ -114,9 +122,20 @@ func main() {
 			break
 		}
 	}
-	if ok && !*flags.SymABIs {
-		ctxt.NumberSyms()
-		obj.WriteObjFile(ctxt, buf)
+	if ok && !diag && !*flags.SymABIs {
+		if *flags.EnableLLVM {
+			data, err := llvmasm.Emit(ctxt, llvmasm.Options{
+				GOOS: buildcfg.GOOS, GOARCH: GOARCH, Output: *flags.LLVMOutput,
+			})
+			if err != nil {
+				ctxt.Diag("%v", err)
+			} else {
+				buf.Write(data)
+			}
+		} else {
+			ctxt.NumberSyms()
+			obj.WriteObjFile(ctxt, buf)
+		}
 	}
 	if !ok || diag {
 		if failedFile != "" {

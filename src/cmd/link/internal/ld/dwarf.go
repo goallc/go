@@ -2154,7 +2154,10 @@ func (d *dwctxt) writedebugaddr(unit *sym.CompilationUnit, debugaddr loader.Sym)
 		// collect relocations corresponding to indirect function
 		// references via .debug_addr.
 		dsyms = dsyms[:0]
-		dsyms = append(dsyms, infosym)
+		// Assembly and functions compiled without DWARF may have no DIE.
+		if infosym != 0 {
+			dsyms = append(dsyms, infosym)
+		}
 		if rangessym != 0 {
 			dsyms = append(dsyms, rangessym)
 		}
