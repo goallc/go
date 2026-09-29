@@ -126,7 +126,10 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 			}
 		}
 	}
-	canonical := func(r reference) reference { r.text = r.text || text[r.sym]; return r }
+	canonical := func(r reference) reference {
+		r.text = r.text || text[r.sym] || r.sym.ABI() == obj.ABIInternal || r.sym.Type == objabi.STEXT || r.sym.Type == objabi.STEXTFIPS
+		return r
+	}
 	name := func(r reference) string {
 		n := r.sym.Name
 		if n == "" {
@@ -280,6 +283,12 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 			fn.SetVisibility(llvm.HiddenVisibility)
 		}
 		setFlags(fn, f.sym)
+		if f.sym.Align > 0 {
+			fn.SetAlignment(int(f.sym.Align))
+		}
+		if features := assemblyFeatures(options.GOARCH); features != "" {
+			fn.AddFunctionAttr(context.CreateStringAttribute("target-features", features))
+		}
 		fn.AddFunctionAttr(context.CreateEnumAttribute(llvm.AttributeKindID("naked"), 0))
 		fn.AddFunctionAttr(context.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
 		builder.SetInsertPointAtEnd(context.AddBasicBlock(fn, "entry"))

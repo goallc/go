@@ -1203,6 +1203,8 @@ func span7(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 		default:
 			var out [6]uint32
 			count := c.asmout(p, out[:])
+			// Retain the encoded extent for consumers of the native instruction stream.
+			p.Isize = uint8(count * 4)
 			buf.emit(out[:count]...)
 		}
 	}

@@ -37,7 +37,8 @@ Flags:
 		No limit on number of errors reported.
 	-enablellvm
 		Use the experimental LLVM backend for amd64/arm64 on Linux or Darwin.
-		Parsed Go assembly becomes naked LLVM functions with target inline asm.
+		Go-encoded instructions are decoded and printed by LLVM into naked
+		functions with target inline asm.
 		Object output remains GoObj and uses the Go linker. Unsupported
 		instructions or addressing modes are errors; coverage is incomplete.
 	-llvm-output obj|bc|ir

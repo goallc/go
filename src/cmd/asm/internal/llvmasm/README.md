@@ -1,13 +1,16 @@
 # LLVM assembler backend
 
-This experimental backend translates parsed and preprocessed `obj.Prog`
-instructions into target syntax inside naked LLVM functions. LLVM's integrated
-assembler and GoObj writer produce the object. The ordinary Go linker still
-builds the executable. No instruction bytes from the Go encoder, disassembler,
-or external assembler are used in this path.
+This experimental backend reuses Go's parser, preprocessing and native instruction
+encoder. It passes the resulting bytes and relocations to LLVM's MCDisassembler,
+restores symbolic operands and local labels, and uses MCInstPrinter to produce
+one inline-asm block per naked LLVM function. LLVM's integrated assembler and
+GoObj writer produce the object; the ordinary Go linker builds the executable.
+There is no hand-written Plan 9 instruction translation table, external
+assembler/disassembler process, or intermediate native object file.
 
-Build Go with the matching LLVM changes (the `.goobj.asm*` MC directives and
-naked Go ABI support). Enable it for selected packages:
+Build Go with the matching LLVM changes (the `.goobj.asm*` MC directives, naked
+Go ABI support, assembly relocation merging and layout assertions). Enable it
+for selected packages:
 
 ```
 go test -asmflags='example.com/pkg=-enablellvm' example.com/pkg
@@ -16,55 +19,64 @@ go tool asm -enablellvm -llvm-output=ir -p example.com/pkg -o code.ll code.s
 go tool asm -enablellvm -llvm-output=bc -p example.com/pkg -o code.bc code.s
 ```
 
-The default assembler remains the Go encoder. `-gensymabis` uses the existing
-parser. Only `obj` output is accepted by the Go linker; IR/bitcode output exposes
-the carrier for inspection and future LTO integration.
+The default assembler remains the Go encoder and Go object writer. `-gensymabis`
+uses the existing parser. Only `obj` output is accepted by the Go linker;
+IR/bitcode output exposes the naked inline-asm carrier for future LTO integration.
 
 ## Ownership
 
-* Go preprocessing owns ABI0/ABIInternal selection, FP/SP addressing, Go frame
-  setup/teardown, stack growth checks, wrappers, and inserted FUNCDATA/PCDATA.
-* LLVM owns encoding, relaxation, relocations and GoObj serialization. Symbol
-  references are inline-asm operands, so LLVM can rename them consistently.
+* Go owns instruction selection, pseudo-instruction expansion, ABI0/ABIInternal,
+  FP/SP addressing, frames, stack checks, literal pools and unsafe-point marking.
+  The bridge reads the final instruction list after native encoding. AArch64,
+  like x86, records each Prog's encoded extent in `Isize`.
+* LLVM MC owns instruction decoding and target syntax. The C++ bridge uses
+  MCSymbolizer to restore symbolic operands; Go supplies only relocation-family
+  mappings. x86 PC-relative addends account for immediates after a displacement;
+  AArch64 composite relocations supply page and low-12 expressions.
+* External symbols are inline-asm operands and local labels use LLVM's unique
+  inline-asm expansion ID. Numeric PC-relative targets become labels before
+  printing, so relaxation cannot leave an old branch displacement behind.
+* Explicit BYTE/WORD data, literal pools, trailing padding and standalone x86
+  prefixes retain their original bytes. PCALIGN/PCALIGNMAX remain alignment
+  directives. An undecodable instruction or unmatched relocation is an error,
+  never an implicit raw-byte fallback.
 * `.goobj.asmfunc`, `.goobj.asmpc` and `.goobj.asmfuncdata` carry frame and runtime
-  metadata using MC symbols. PCSP changes apply after instructions; PCDATA and
-  source positions apply at labels. The writer resolves positions after
-  relaxation, preserves sparse FUNCDATA slots and emits indirect-call markers.
-* LLVM must not infer leafness or synthesize frame/argument maps for these naked
-  bodies. In particular, missing assembly stack maps are not replaced by empty
-  compiler stack maps.
+  metadata using MC symbols. SP changes apply after instructions; PCDATA and
+  source positions apply at labels. GoObj resolves positions after relaxation,
+  preserves sparse FUNCDATA and emits indirect-call markers. Assembly-owned
+  AArch64 relocation pairs remain composite for Go's dynamic-import handling.
+* References to a local assembly function plus an interior offset are allowed
+  only at recorded boundaries, with a final MC layout assertion (PC event -4).
+  If re-encoding changes that offset, object emission fails. Known external
+  function interior references cannot be validated and are rejected.
+* Naked bodies retain the frontend's frame/leaf facts. Missing assembly stack
+  maps are not replaced by empty compiler-generated maps.
 
-## Current coverage
+## Coverage and limits
 
-Initial targets are amd64 and arm64 on Linux/Darwin. Integer operations,
-branches, ordinary memory and symbol references, data definitions, automatic Go
-frames and runtime metadata have differential tests. Host tests link a real Go
-program and exercise ABI0 calls, signed extension, stack growth, GC and traceback
-through an assembly frame. Both architectures have IR optimization/codegen tests.
+Initial targets are amd64 and arm64 on Linux/Darwin. Coverage comes from Go's
+encoder and LLVM's decoder/printer, including SIMD and atomics, rather than a
+second instruction table. Optional AArch64 ISA features are enabled only on the
+naked assembly carriers and decoder; callers still own CPU dispatch, just as
+with native Go assembly. This does not change the compiler's baseline ISA.
 
-This is not yet a replacement for every runtime/standard-library assembly file:
-SIMD, atomics and some addressing/operand forms still need instruction-family
-coverage. Dynamic Go library binding is rejected. DWARF generation for these
-assembly bodies is deferred; Go PC/file/line and traceback metadata are emitted.
-Native ELF/Mach-O output and whole-program ThinLTO/Full LTO linking are deferred.
+Dynamic Go library binding is rejected. Assembly DWARF is deferred; Go runtime
+PC/file/line and traceback metadata are emitted. GoObj assembly directives still
+need a separate native-object metadata path before whole-program ThinLTO/Full
+LTO linking can work. The IR optimization test verifies the carrier contract,
+not a complete LTO link. Raw instruction/data directives remain the author's
+responsibility; numeric PC dependencies inside raw bytes cannot be recovered.
 
-## Validation (2026-09-29)
+## Validation
 
-Based on Go `743a300e26` and LLVM `267a23e09bf5`, with the changes in these
-worktrees:
+The regression suite compares native and LLVM machine code, relocations and
+runtime metadata for both architectures. It covers immediate/sign extension,
+SIMD, cryptography, atomics, literal pools, x86 prefixes, PC-relative references
+with trailing immediates, long/local branches, interior address assertions,
+ABIInternal pointers in DATA, signed frame metadata, and raw data directives.
+Host tests link real Go callers and exercise ABI0 wrappers, stack growth, GC and
+traceback. `GOALLC_ASM_TEST_AMD64=1` additionally enables amd64 execution under
+Rosetta on an arm64 macOS host.
 
-* Complete `make.bash` with the matching LLVM payload succeeded.
-* `go test cmd/asm/... cmd/internal/obj` passed using the rebuilt toolchain's
-  default LLVM compiler. The same focused tests also passed with the native Go
-  compiler (`-gcflags=all=-enablellvm=false`).
-* `GOALLC_ASM_TEST_AMD64=1` additionally exercised darwin/amd64 execution under
-  Rosetta on the arm64 host; both native and LLVM assembler variants passed.
-* LLVM `MC/GoObj`: 11/11 passed.
-* The broader AArch64/X86 `*go*.ll` selection passed 99/102. The same three
-  failures were reproduced after rebuilding the unmodified LLVM base:
-  `AArch64/go-statepoint-stack-results.ll`, `AArch64/goobj-abi.ll`, and
-  `X86/goobj-stack-growth.ll`. They are not changed by this patch.
-
-Linux has object/codegen coverage in this run, not executable runtime coverage.
-The optimization test checks the naked function carrier contract; it does not
-qualify a complete ThinLTO or Full LTO Go link.
+Validation results for the exact PR commits are recorded in the PR descriptions.
+Linux has local object/codegen coverage, not executable runtime coverage.

@@ -61,7 +61,7 @@ func emit(t *testing.T, goos, goarch, source, output string) []byte {
 	ctxt := parse(t, goos, goarch, source, false)
 	for _, fn := range ctxt.Text {
 		if len(fn.P) != 0 {
-			t.Fatal("LLVM path already encoded native instructions")
+			t.Fatal("parser/preprocessor unexpectedly encoded instructions")
 		}
 	}
 	data, err := Emit(ctxt, Options{GOOS: goos, GOARCH: goarch, Output: output})
@@ -87,14 +87,7 @@ func TestNativeInstructionParity(t *testing.T) {
 			idx := findSymbol(t, r, "test")
 			text := r.Data(idx)
 			nativeCode := native.Text[0].P
-			// The Go arm64 encoder pads every function to 16 bytes.
-			if test.arch == "arm64" {
-				last := native.Text[0].Func().Text
-				for last.Link != nil {
-					last = last.Link
-				}
-				nativeCode = nativeCode[:last.Pc+4]
-			}
+
 			if !bytes.Equal(text, nativeCode) {
 				t.Fatalf("LLVM code %x, Go assembler code %x", text, native.Text[0].P)
 			}
@@ -164,10 +157,19 @@ func TestBranchAndPCData(t *testing.T) {
 	}
 }
 
-func TestRejectUnsupportedOperand(t *testing.T) {
-	ctxt := parse(t, "linux", "arm64", "TEXT test<ABIInternal>(SB),4,$0\nVADD V0.B16,V1.B16,V2.B16\nRET\n", false)
-	if _, err := Emit(ctxt, Options{GOOS: "linux", GOARCH: "arm64", Output: "ir"}); err == nil || !strings.Contains(err.Error(), "unsupported arm64 instruction") {
-		t.Fatalf("got %v", err)
+func TestSIMDEncoding(t *testing.T) {
+	for _, tt := range []struct{ arch, body string }{
+		{"arm64", "VADD V0.B16,V1.B16,V2.B16"},
+		{"amd64", "VPADDD Y0,Y1,Y2"},
+	} {
+		t.Run(tt.arch, func(t *testing.T) {
+			source := "TEXT test<ABIInternal>(SB),4,$0\n" + tt.body + "\nRET\n"
+			native := parse(t, "linux", tt.arch, source, true)
+			r := readObject(t, emit(t, "linux", tt.arch, source, "obj"))
+			if got := r.Data(findSymbol(t, r, "test")); !bytes.Equal(got, native.Text[0].P) {
+				t.Fatalf("SIMD bytes %x want %x", got, native.Text[0].P)
+			}
+		})
 	}
 }
 
@@ -464,6 +466,7 @@ func TestStaticSymbolsAndDataKinds(t *testing.T) {
 GLOBL pointer(SB),0,$8
 GLOBL bss(SB),0,$64
 GLOBL noptr(SB),16,$64
+GLOBL tls(SB),256,$8
 TEXT local<>(SB),4,$0-0
  RET
 TEXT exported(SB),4,$0-0
@@ -474,7 +477,7 @@ TEXT exported(SB),4,$0-0
 			if r.Sym(findSymbol(t, r, "local")).ABI() != goobj.SymABIstatic {
 				t.Fatal("static function became externally visible")
 			}
-			for name, want := range map[string]objabi.SymKind{"pointer": objabi.SDATA, "bss": objabi.SBSS, "noptr": objabi.SNOPTRBSS} {
+			for name, want := range map[string]objabi.SymKind{"pointer": objabi.SDATA, "bss": objabi.SBSS, "noptr": objabi.SNOPTRBSS, "tls": objabi.STLSBSS} {
 				if got := r.Sym(findSymbol(t, r, name)).Type(); got != uint8(want) {
 					t.Errorf("%s kind=%d want %d", name, got, want)
 				}
@@ -483,5 +486,126 @@ TEXT exported(SB),4,$0-0
 				t.Fatal("DATA pointer relocation lost")
 			}
 		})
+	}
+}
+
+func TestEncodedRelocationsAndPools(t *testing.T) {
+	tests := []struct{ name, arch, body string }{
+		{"amd64_pcrel_immediate", "amd64", "CMPQ data+7(SB), $123\nMOVQ $123, data+8(SB)\nLEAQ data+3(SB), AX\nRET"},
+		{"amd64_prefix", "amd64", "LOCK\nXADDQ AX, (BX)\nREP\nMOVSQ\nRET"},
+		{"amd64_avx", "amd64", "VPXOR Y0,Y1,Y2\nVPSHUFB Y1,Y2,Y3\nRET"},
+		{"arm64_pool", "arm64", "MOVD $0x123456789abcdef0,R0\nMOVD $0x1122334455667788,R1\nRET"},
+		{"arm64_crypto", "arm64", "AESE V0.B16,V1.B16\nSHA256H V0.S4,V1,V2\nRET"},
+		{"arm64_atomics", "arm64", "LDAXR (R0),R1\nSTLXR R1,(R0),R2\nRET"},
+		{"arm64_address", "arm64", "MOVD $data+8(SB),R0\nMOVB data+3(SB),R1\nMOVH data+2(SB),R2\nMOVD data+3(SB),R3\nMOVD R3,data+3(SB)\nRET"},
+		{"amd64_long_branch", "amd64", "JMP done\n" + strings.Repeat("MOVQ AX,BX\n", 100) + "done:\nRET"},
+		{"arm64_local_address", "arm64", "ADR done,R0\nCBZ R0,done\ndone:\nRET"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := "TEXT test<ABIInternal>(SB),4,$0\n" + tt.body + "\n"
+			native := parse(t, "linux", tt.arch, source, true).Text[0]
+			r := readObject(t, emit(t, "linux", tt.arch, source, "obj"))
+			idx := findSymbol(t, r, "test")
+			got := r.Data(idx)
+			if !bytes.Equal(got, native.P) {
+				t.Fatalf("encoded bytes\n got %x\nwant %x", got, native.P)
+			}
+			wantRelocs := native.R
+			if int(r.NReloc(idx)) != len(wantRelocs) {
+				t.Fatalf("got %d relocations, want %d", r.NReloc(idx), len(wantRelocs))
+			}
+			for i, rel := range wantRelocs {
+				actual := r.Reloc(idx, i)
+				if actual.Off() != rel.Off || actual.Siz() != rel.Siz || actual.Type() != uint16(rel.Type) || actual.Add() != rel.Add {
+					t.Fatalf("relocation %d: got off=%d size=%d type=%d add=%d; want %+v", i, actual.Off(), actual.Siz(), actual.Type(), actual.Add(), rel)
+				}
+			}
+		})
+	}
+}
+
+func TestDataABIInternalReference(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			source := "DATA entry+0(SB)/8,$target<ABIInternal>(SB)\nGLOBL entry(SB),8,$8\nTEXT test<ABIInternal>(SB),4,$0\nRET\n"
+			r := readObject(t, emit(t, "linux", arch, source, "obj"))
+			if got := r.Sym(findSymbol(t, r, "target")).ABI(); got != uint16(obj.ABIInternal) {
+				t.Fatalf("target ABI=%d, want ABIInternal", got)
+			}
+		})
+	}
+}
+
+func TestInteriorAddressAndRawData(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			body := "MOVQ AX,BX\nPCALIGN $8\nRET\n"
+			addr := "MOVQ $target+8(SB),AX\nRET\n"
+			if arch == "arm64" {
+				body = "ADD R0,R1,R2\nPCALIGN $8\nRET\n"
+				addr = "MOVD $target+8(SB),R0\nRET\n"
+			}
+			source := "DATA pointer+0(SB)/8,$target+8(SB)\nGLOBL pointer(SB),8,$8\nTEXT target(SB),4,$0\n" + body + "TEXT reference(SB),4,$0\n" + addr
+			ir := string(emit(t, "linux", arch, source, "ir"))
+			if !strings.Contains(ir, ", -4, 8") {
+				t.Fatal("interior address has no final layout assertion")
+			}
+			readObject(t, emit(t, "linux", arch, source, "obj"))
+			raw := "BYTE $0xff\nBYTE $0xff\n"
+			if arch == "arm64" {
+				raw = "WORD $0xffffffff\n"
+			}
+			source = "TEXT raw(SB),4,$0\n" + raw
+			native := parse(t, "linux", arch, source, true).Text[0]
+			r := readObject(t, emit(t, "linux", arch, source, "obj"))
+			if !bytes.Equal(r.Data(findSymbol(t, r, "raw")), native.P) {
+				t.Fatal("raw data changed")
+			}
+		})
+	}
+}
+
+func TestNegativeLocalFrame(t *testing.T) {
+	source := "TEXT start(SB),4,$-8\nRET\n"
+	r := readObject(t, emit(t, "linux", "amd64", source, "obj"))
+	i := findSymbol(t, r, "start")
+	for _, aux := range r.Auxs(i) {
+		if aux.Type() == goobj.AuxFuncInfo {
+			info := r.Data(resolveSym(t, r, aux.Sym()))
+			if got := int32(binary.LittleEndian.Uint32(info[4:])); got != -8 {
+				t.Fatalf("locals=%d, want -8", got)
+			}
+			return
+		}
+	}
+	t.Fatal("missing function metadata")
+}
+
+func TestIndirectCallREXPrefix(t *testing.T) {
+	source := "TEXT test<ABIInternal>(SB),516,$0\nCALL R12\nRET\n"
+	r := readObject(t, emit(t, "linux", "amd64", source, "obj"))
+	i := findSymbol(t, r, "test")
+	for n := 0; n < r.NReloc(i); n++ {
+		rel := r.Reloc(i, n)
+		if rel.Type() == uint16(objabi.R_CALLIND) {
+			if rel.Off() != 0 {
+				t.Fatalf("indirect call marker at %d, want instruction start", rel.Off())
+			}
+			return
+		}
+	}
+	t.Fatal("missing indirect call marker")
+}
+
+func TestDecodeFailureDoesNotEmitRawBytes(t *testing.T) {
+	ctxt := parse(t, "linux", "amd64", "TEXT test<ABIInternal>(SB),4,$0\nRET\n", true)
+	fn := ctxt.Text[0]
+	// A truncated x86 opcode must fail; only explicit data regions may bypass
+	// decoding, even though an inline .byte directive could carry this byte.
+	fn.P = []byte{0x0f}
+	fn.Size = 1
+	if _, err := Emit(ctxt, Options{GOOS: "linux", GOARCH: "amd64", Output: "ir"}); err == nil || !strings.Contains(err.Error(), "could not decode") {
+		t.Fatalf("got %v, want decoder error", err)
 	}
 }
