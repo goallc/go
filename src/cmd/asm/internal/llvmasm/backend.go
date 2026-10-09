@@ -22,7 +22,13 @@ import (
 // integrated assembler; no intermediate assembly file or native Go object is
 // used. The returned bytes are owned by Go.
 func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
-	functions, err := lower(ctxt, options)
+	var functions []function
+	var err error
+	if options.Plan9 != nil {
+		functions, err = lowerPlan9(ctxt, options)
+	} else {
+		functions, err = lower(ctxt, options)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +297,9 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 		}
 		fn.AddFunctionAttr(context.CreateEnumAttribute(llvm.AttributeKindID("naked"), 0))
 		fn.AddFunctionAttr(context.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
+		if f.plan9Context != "" {
+			fn.AddFunctionAttr(context.CreateStringAttribute("go-plan9-context", f.plan9Context))
+		}
 		builder.SetInsertPointAtEnd(context.AddBasicBlock(fn, "entry"))
 		var operands []llvm.Value
 		var types []llvm.Type
@@ -322,11 +331,21 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 		defer buf.Dispose()
 		return append([]byte(nil), buf.Bytes()...), nil
 	default:
-		buf, err := tm.EmitToMemoryBuffer(module, llvm.ObjectFile)
-		if err != nil {
-			return nil, err
+		var data []byte
+		emit := func() error {
+			buf, err := tm.EmitToMemoryBuffer(module, llvm.ObjectFile)
+			if err != nil {
+				return err
+			}
+			defer buf.Dispose()
+			data = append([]byte(nil), buf.Bytes()...)
+			return nil
 		}
-		defer buf.Dispose()
-		return append([]byte(nil), buf.Bytes()...), nil
+		if options.Plan9 != nil {
+			err = llvm.WithPlan9Assembler(assemblePlan9, emit)
+		} else {
+			err = emit()
+		}
+		return data, err
 	}
 }

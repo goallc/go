@@ -14,3 +14,7 @@ import (
 func Emit(_ *obj.Link, _ Options) ([]byte, error) {
 	return nil, fmt.Errorf("LLVM assembly is unavailable in the bootstrap assembler")
 }
+
+func EmitPlan9File(_ string) ([]byte, error) {
+	return nil, fmt.Errorf("LLVM assembly is unavailable in the bootstrap assembler")
+}

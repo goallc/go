@@ -33,6 +33,22 @@ func main() {
 	GOARCH := buildcfg.GOARCH
 
 	flags.Parse()
+	if *flags.LLVMInput {
+		if !*flags.EnableLLVM || *flags.LLVMOutput != "obj" || flag.NArg() != 1 {
+			log.Fatal("-llvm-input requires -enablellvm, obj output, and one input file")
+		}
+		data, err := llvmasm.EmitPlan9File(flag.Arg(0))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err = os.WriteFile(*flags.OutputFile, data, 0666); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *flags.LLVMPlan9 && !*flags.EnableLLVM {
+		log.Fatal("-llvm-plan9 requires -enablellvm")
+	}
 	if !*flags.EnableLLVM && *flags.LLVMOutput != "obj" {
 		log.Fatal("-llvm-output requires -enablellvm")
 	}
@@ -95,10 +111,12 @@ func main() {
 	}
 
 	var ok, diag bool
+	var plan9 []asm.Plan9Function
 	var failedFile string
 	for _, f := range flag.Args() {
 		lexer := lex.NewLexer(f)
 		parser := asm.NewParser(ctxt, architecture, lexer)
+		parser.CapturePlan9 = *flags.LLVMPlan9
 		ctxt.DiagFunc = func(format string, args ...any) {
 			diag = true
 			log.Printf(format, args...)
@@ -108,6 +126,7 @@ func main() {
 		} else {
 			pList := new(obj.Plist)
 			pList.Firstpc, ok = parser.Parse()
+			plan9 = append(plan9, parser.Plan9...)
 			// reports errors to parser.Errorf
 			if ok {
 				if *flags.EnableLLVM {
@@ -126,6 +145,7 @@ func main() {
 		if *flags.EnableLLVM {
 			data, err := llvmasm.Emit(ctxt, llvmasm.Options{
 				GOOS: buildcfg.GOOS, GOARCH: GOARCH, Output: *flags.LLVMOutput,
+				Plan9: plan9,
 			})
 			if err != nil {
 				ctxt.Diag("%v", err)

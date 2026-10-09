@@ -22,9 +22,10 @@ type reference struct {
 	text bool
 }
 type function struct {
-	sym  *obj.LSym
-	body string
-	refs []reference
+	sym          *obj.LSym
+	body         string
+	refs         []reference
+	plan9Context string
 }
 type emitter struct {
 	ctxt     *obj.Link
@@ -326,7 +327,7 @@ func (e *emitter) encodedFunction(decoder llvm.MCDecoder) (function, error) {
 			fmt.Fprintf(&body, ".goobj.asmpc %s, %s, -5, 0\n", fn, pcLabel(pc))
 		}
 	}
-	return function{s, body.String(), e.refs}, nil
+	return function{sym: s, body: body.String(), refs: e.refs}, nil
 }
 
 // Only relocation families are translated here. Instruction semantics, opcode

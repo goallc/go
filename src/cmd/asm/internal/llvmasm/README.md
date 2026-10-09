@@ -1,5 +1,54 @@
 # LLVM assembler backend
 
+## Deferred Plan 9 carrier prototype
+
+`-enablellvm -llvm-plan9` selects a source-carrying path. Function definitions,
+declarations and DATA/GLOBL objects become LLVM IR. Each naked function contains
+one inline-asm block with preprocessed Plan 9 instructions, local labels,
+alignment and explicit inline data. TEXT, PCDATA and FUNCDATA are not in that
+block. A versioned `go-plan9-context` attribute carries the original frame/ABI
+context, source positions and PC directive events. Symbol dependencies are real
+LLVM operands; their original names are only lookup keys for Go's parser.
+
+The frontend parses and preprocesses once to discover ABI facts, implicit calls
+and generated globals, but does not encode function instructions for IR/bitcode
+output. At AsmPrinter time the matching LLVM extension calls the Go assembler,
+which reconstructs TEXT context programmatically, parses the body and performs
+native preprocessing/encoding. The callback returns bytes, native Go relocations
+and final PC events. LLVM emits bytes directly and its GoObj writer consumes
+those relocation records without MC instruction decoding or target asm parsing.
+The Plan 9 path has no x/arch or LLVM disassembler dependency.
+
+With the new assembler binary:
+
+```
+asm -enablellvm -llvm-plan9 -p example.com/pkg -o code.o code.s
+asm -enablellvm -llvm-plan9 -llvm-output=ir -p example.com/pkg -o code.ll code.s
+asm -enablellvm -llvm-plan9 -llvm-output=bc -p example.com/pkg -o code.bc code.s
+opt -passes='lto-pre-link<O2>,lto<O2>' code.bc -o optimized.bc
+asm -enablellvm -llvm-input -o optimized.o optimized.bc
+```
+
+`-llvm-input` accepts text IR or bitcode; original assembly/include files are not
+needed. The matching Go driver registers `LLVMGoSetPlan9Assembler` for the
+codegen OS thread. Standalone `llc` has no Go assembler registered and rejects
+these carriers with a specific diagnostic. Native ELF/Mach-O output and loading
+the callback in standalone LTO workers are not implemented by this prototype.
+The opt pipeline test is not an end-to-end FullLTO/ThinLTO link.
+
+The serialized carrier restores target settings and experiment configuration and
+requires the originating Go version. Current targets are Linux/Darwin amd64/arm64,
+with GoObj output and the ordinary Go linker. The Go-specific ABI carrier retains
+the existing opaque function signature contract; TEXT argument byte counts are
+not treated as typed LLVM parameter lists.
+
+Tests cover byte/relocation and PCSP/PCDATA parity, explicit IR symbol references,
+bitcode reload, symbol renaming, LTO optimization followed by materialization,
+ADX/EVEX/LSE/SHA512 instructions, and host execution with stack growth and GC.
+`GOALLC_ASM_TEST_AMD64=1` includes execution under Rosetta on an arm64 Mac.
+
+## Encoded-stream backend
+
 This experimental backend reuses Go's parser, preprocessing and native instruction
 encoder. It passes the resulting bytes and relocations to LLVM's MCDisassembler,
 restores symbolic operands and local labels, and uses MCInstPrinter to produce

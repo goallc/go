@@ -320,7 +320,7 @@ TEXT ·keep(SB),0,$32-16
 		targets = append(targets, "amd64")
 	}
 	for _, arch := range targets {
-		for _, backend := range []string{"false", "true"} {
+		for _, backend := range []string{"false", "true", "true -llvm-plan9"} {
 			t.Logf("execute %s/%s enablellvm=%s", runtime.GOOS, arch, backend)
 			cmd := exec.Command(goTool, "run", "-gcflags=all=-enablellvm=false", "-toolexec="+filepath.Join(dir, "tools"), "-asmflags=asmprobe=-enablellvm="+backend, ".")
 			cmd.Dir = dir
