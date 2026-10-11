@@ -16,6 +16,7 @@ import (
 	"cmd/internal/objabi"
 	"encoding/binary"
 	"internal/buildcfg"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,13 +27,28 @@ import (
 
 func parse(t *testing.T, goos, goarch, source string, native bool) *obj.Link {
 	t.Helper()
+	return parseShared(t, goos, goarch, source, native, false)
+}
+
+func parseShared(t *testing.T, goos, goarch, source string, native, shared bool) *obj.Link {
+	t.Helper()
+	return parseMode(t, goos, goarch, source, native, shared, false, false)
+}
+
+func parseMode(t *testing.T, goos, goarch, source string, native, shared, dynlink, linkshared bool) *obj.Link {
+	t.Helper()
+	shared = shared || dynlink
 	oldOS, oldArch := buildcfg.GOOS, buildcfg.GOARCH
 	buildcfg.GOOS, buildcfg.GOARCH = goos, goarch
 	defer func() { buildcfg.GOOS, buildcfg.GOARCH = oldOS, oldArch }()
-	architecture := arch.Set(goarch, false)
+	architecture := arch.Set(goarch, shared)
 	ctxt := obj.Linknew(architecture.LinkArch)
+	ctxt.Flag_shared = shared
+	ctxt.Flag_dynlink = dynlink
+	ctxt.Flag_linkshared = linkshared
 	ctxt.Pkgpath = "runtime"
 	ctxt.IsAsm = true
+	ctxt.DwTextCount = objabi.DummyDwarfFunctionCountForAssembler()
 	ctxt.DiagFunc = func(format string, args ...any) { t.Errorf(format, args...) }
 	architecture.Init(ctxt)
 	path := filepath.Join(t.TempDir(), "input.s")
@@ -322,10 +338,15 @@ TEXT ·keep(SB),0,$32-16
 	for _, arch := range targets {
 		for _, backend := range []string{"false", "true"} {
 			t.Logf("execute %s/%s enablellvm=%s", runtime.GOOS, arch, backend)
-			cmd := exec.Command(goTool, "run", "-gcflags=all=-enablellvm=false", "-toolexec="+filepath.Join(dir, "tools"), "-asmflags=asmprobe=-enablellvm="+backend, ".")
+			executable := filepath.Join(dir, "probe-"+arch+"-"+backend)
+			cmd := exec.Command(goTool, "build", "-o", executable, "-gcflags=all=-enablellvm=false", "-toolexec="+filepath.Join(dir, "tools"), "-asmflags=asmprobe=-enablellvm="+backend, ".")
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "GOWORK=off", "GOARCH="+arch, "CGO_ENABLED=0")
-			if out, err := cmd.CombinedOutput(); err != nil || string(out) != "OK\n" {
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build %s enablellvm=%s: %v\n%s", arch, backend, err, out)
+			}
+			checkLinkedAssemblyDWARF(t, executable, "asm_"+arch+".s")
+			if out, err := exec.Command(executable).CombinedOutput(); err != nil || string(out) != "OK\n" {
 				t.Fatalf("run %s enablellvm=%s: %v\n%s", arch, backend, err, out)
 			}
 		}
@@ -548,10 +569,14 @@ func TestInteriorAddressAndRawData(t *testing.T) {
 			}
 			source := "DATA pointer+0(SB)/8,$target+8(SB)\nGLOBL pointer(SB),8,$8\nTEXT target(SB),4,$0\n" + body + "TEXT reference(SB),4,$0\n" + addr
 			ir := string(emit(t, "linux", arch, source, "ir"))
-			if !strings.Contains(ir, ", -4, 8") {
-				t.Fatal("interior address has no final layout assertion")
+			if !strings.Contains(ir, "Go assembly instruction size changed") || !strings.Contains(ir, "Go assembly function size changed") {
+				t.Fatal("interior address has no fixed-layout assertions")
 			}
-			readObject(t, emit(t, "linux", arch, source, "obj"))
+			object := readObject(t, emit(t, "linux", arch, source, "obj"))
+			nativeTarget := parse(t, "linux", arch, source, true).Text[0]
+			if !bytes.Equal(object.Data(findSymbol(t, object, "target")), nativeTarget.P) {
+				t.Fatal("interior-address target changed layout")
+			}
 			raw := "BYTE $0xff\nBYTE $0xff\n"
 			if arch == "arm64" {
 				raw = "WORD $0xffffffff\n"
@@ -584,13 +609,20 @@ func TestNegativeLocalFrame(t *testing.T) {
 
 func TestIndirectCallREXPrefix(t *testing.T) {
 	source := "TEXT test<ABIInternal>(SB),516,$0\nCALL R12\nRET\n"
+	native := parse(t, "linux", "amd64", source, true).Text[0]
+	want := int32(-1)
+	for _, rel := range native.R {
+		if rel.Type == objabi.R_CALLIND {
+			want = rel.Off
+		}
+	}
 	r := readObject(t, emit(t, "linux", "amd64", source, "obj"))
 	i := findSymbol(t, r, "test")
 	for n := 0; n < r.NReloc(i); n++ {
 		rel := r.Reloc(i, n)
 		if rel.Type() == uint16(objabi.R_CALLIND) {
-			if rel.Off() != 0 {
-				t.Fatalf("indirect call marker at %d, want instruction start", rel.Off())
+			if rel.Off() != want || rel.Sym() != (goobj.SymRef{}) {
+				t.Fatalf("indirect call marker at %d, want native offset %d and no target", rel.Off(), want)
 			}
 			return
 		}
@@ -599,13 +631,33 @@ func TestIndirectCallREXPrefix(t *testing.T) {
 }
 
 func TestDecodeFailureDoesNotEmitRawBytes(t *testing.T) {
-	ctxt := parse(t, "linux", "amd64", "TEXT test<ABIInternal>(SB),4,$0\nRET\n", true)
+	ctxt := parse(t, "linux", "amd64", "TEXT test<ABIInternal>(SB),516,$0\nCALL target(SB)\nRET\n", true)
 	fn := ctxt.Text[0]
-	// A truncated x86 opcode must fail; only explicit data regions may bypass
-	// decoding, even though an inline .byte directive could carry this byte.
-	fn.P = []byte{0x0f}
-	fn.Size = 1
-	if _, err := Emit(ctxt, Options{GOOS: "linux", GOARCH: "amd64", Output: "ir"}); err == nil || !strings.Contains(err.Error(), "could not decode") {
-		t.Fatalf("got %v, want decoder error", err)
+	// A relocation-bearing instruction must never fall back to bytes: that
+	// would silently lose its symbolic target. Ordinary Go-encoded instructions
+	// deliberately do not need an LLVM decoder in the fixed-layout carrier.
+	for i := range fn.P[:5] {
+		fn.P[i] = 0x0f
+	}
+	if _, err := Emit(ctxt, Options{GOOS: "linux", GOARCH: "amd64", Output: "ir"}); err == nil {
+		t.Fatal("undecodable symbolic instruction accepted")
+	}
+}
+
+func TestSynthesizedConstantHash(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			body := "MOVSD $1.23456,X0\nRET\n"
+			if arch == "arm64" {
+				body = "FMOVD $1.23456,F0\nRET\n"
+			}
+			r := readObject(t, emit(t, "linux", arch, "TEXT probe<ABIInternal>(SB),516,$0\n"+body, "obj"))
+			if r.NHashed64def() != 1 {
+				t.Fatalf("synthesized constant has %d short hashed definitions, want 1", r.NHashed64def())
+			}
+			if got, want := r.Hash64(0), math.Float64bits(1.23456); got != want {
+				t.Fatalf("constant hash=%x, want %x", got, want)
+			}
+		})
 	}
 }

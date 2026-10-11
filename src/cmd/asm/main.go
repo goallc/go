@@ -33,8 +33,8 @@ func main() {
 	GOARCH := buildcfg.GOARCH
 
 	flags.Parse()
-	if !*flags.EnableLLVM && *flags.LLVMOutput != "obj" {
-		log.Fatal("-llvm-output requires -enablellvm")
+	if !*flags.EnableLLVM && (*flags.LLVMOutput != "obj" || *flags.LLVMObjectFormat != "goobj") {
+		log.Fatal("-llvm-output and -llvm-objfmt require -enablellvm")
 	}
 	counter.Inc("asm/invocations")
 	counter.CountFlags("asm/flag:", *flag.CommandLine)
@@ -126,6 +126,7 @@ func main() {
 		if *flags.EnableLLVM {
 			data, err := llvmasm.Emit(ctxt, llvmasm.Options{
 				GOOS: buildcfg.GOOS, GOARCH: GOARCH, Output: *flags.LLVMOutput,
+				ObjectFormat: *flags.LLVMObjectFormat,
 			})
 			if err != nil {
 				ctxt.Diag("%v", err)

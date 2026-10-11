@@ -5,8 +5,9 @@
 // Package llvmasm carries Go-encoded assembly in naked LLVM functions.
 package llvmasm
 
-// Options selects the LLVM artifact. Object output uses GoObj and the Go linker.
+// Options selects the LLVM artifact and target object format.
 type Options struct {
 	GOOS, GOARCH string
 	Output       string // obj, bc, or ir
+	ObjectFormat string // goobj (default), elf, or macho
 }

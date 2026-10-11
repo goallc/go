@@ -21,6 +21,28 @@
 #include <cstring>
 using namespace llvm;
 namespace {
+// This expression is only printed, never assembled or evaluated. Mark the
+// operand token so literal '$' characters from MCInstPrinter can be escaped
+// without touching the LLVM inline-asm operand. No symbol-name text rewriting
+// is involved, and target punctuation remains owned by the instruction printer.
+class InlineAsmOperandExpr final : public MCTargetExpr {
+  unsigned Operand;
+  StringRef Prefix, Suffix;
+
+public:
+  explicit InlineAsmOperandExpr(const LLVMGoMCReloc &R)
+      : Operand(R.Operand), Prefix(R.Prefix), Suffix(R.Suffix) {}
+  void printImpl(raw_ostream &OS, const MCAsmInfo *) const override {
+    OS << '\1' << Prefix << "${" << Operand << ":c}" << Suffix << '\2';
+  }
+  bool evaluateAsRelocatableImpl(MCValue &,
+                                 const MCAssembler *) const override {
+    return false;
+  }
+  void visitUsedExpr(MCStreamer &) const override {}
+  MCFragment *findAssociatedFragment() const override { return nullptr; }
+};
+
 struct Decoder {
   Triple TT;
   std::unique_ptr<MCRegisterInfo> MRI;
@@ -32,7 +54,6 @@ struct Decoder {
   std::unique_ptr<MCInstPrinter> Printer;
   ArrayRef<LLVMGoMCReloc> Relocs;
   SmallVector<bool, 2> Used;
-  int64_t Target = -1;
   std::string Error;
   explicit Decoder(const char *T) : TT(T) {}
 };
@@ -54,8 +75,7 @@ public:
         return false;
       }
       D.Used[I] = true;
-      const MCExpr *E =
-          MCSymbolRefExpr::create(D.Ctx->getOrCreateSymbol(R.Symbol), *D.Ctx);
+      const MCExpr *E = new (*D.Ctx) InlineAsmOperandExpr(R);
       // Go x86 PC-relative relocations are relative to the relocation field's
       // end; the assembler's symbolic operand is relative to instruction end.
       int64_t Addend = R.Addend;
@@ -84,18 +104,9 @@ public:
           "ADRP without a symbolic relocation is not position independent";
       return false;
     }
-    // x86 callbacks have already added instruction-end PC. AArch64 callbacks
-    // supply a byte displacement from the current instruction.
-    int64_t Target = Value + (D.TT.isAArch64() ? Address : 0);
-    if (Target < 0) {
-      D.Error = "PC-relative target outside function";
-      return false;
-    }
-    D.Target = Target;
-    auto *Sym = D.Ctx->getOrCreateSymbol(".Lgoasm_decode_" + Twine(Target));
-    Inst.addOperand(
-        MCOperand::createExpr(MCSymbolRefExpr::create(Sym, *D.Ctx)));
-    return true;
+    D.Error =
+        "PC-relative operand without a relocation in symbolic instruction";
+    return false;
   }
   void tryAddingPcLoadReferenceComment(raw_ostream &, int64_t,
                                        uint64_t) override {}
@@ -133,11 +144,10 @@ void LLVMGoDisposeMCDecoder(void *P) { delete static_cast<Decoder *>(P); }
 char *LLVMGoDecodeMCInstruction(void *P, const uint8_t *Bytes, size_t Length,
                                 uint64_t PC, const LLVMGoMCReloc *Relocs,
                                 size_t NumRelocs, uint64_t *Size,
-                                int64_t *Target, char **Error) {
+                                char **Error) {
   auto &D = *static_cast<Decoder *>(P);
   D.Relocs = ArrayRef(Relocs, NumRelocs);
   D.Used.assign(NumRelocs, false);
-  D.Target = -1;
   D.Error.clear();
   MCInst Inst;
   auto Status =
@@ -152,11 +162,32 @@ char *LLVMGoDecodeMCInstruction(void *P, const uint8_t *Bytes, size_t Length,
     *Error = strdup(D.Error.c_str());
     return nullptr;
   }
-  *Target = D.Target;
   std::string Text;
   raw_string_ostream OS(Text);
+  // A decoded x86 near jump must not become an initially short, relaxable
+  // jump when its mnemonic is parsed again. Besides preserving Go's encoding,
+  // this makes the inline-asm size assertions absolute at parse time.
+  if (D.TT.isX86() && D.MII->get(Inst.getOpcode()).isBranch())
+    for (const auto &R : ArrayRef(Relocs, NumRelocs))
+      if (R.PCRelative && R.Size == 4) {
+        OS << "{disp32} ";
+        break;
+      }
   D.Printer->printInst(&Inst, 0, "", *D.STI, OS);
-  return strdup(Text.c_str());
+  std::string Template;
+  bool InOperand = false;
+  for (char C : Text) {
+    if (C == '\1') {
+      InOperand = true;
+    } else if (C == '\2') {
+      InOperand = false;
+    } else {
+      Template += C;
+      if (C == '$' && !InOperand)
+        Template += '$';
+    }
+  }
+  return strdup(Template.c_str());
 }
 
 uint64_t LLVMGoMCInstructionSize(void *P, const uint8_t *Bytes, size_t Length,

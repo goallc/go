@@ -26,16 +26,28 @@ func Flushplist(ctxt *Link, plist *Plist, newprog ProgAlloc) {
 		newprog = ctxt.NewProg
 	}
 	prepareText(ctxt, plist, newprog, func(s *LSym) {
-		ctxt.Arch.Assemble(ctxt, s, newprog)
+		AssembleText(ctxt, s, newprog)
 		if ctxt.Errors > 0 {
 			return
 		}
-		linkpcln(ctxt, s)
-		ctxt.populateDWARF(plist.Curfn, s)
+		ctxt.PopulateDWARF(plist.Curfn, s)
 		if ctxt.Headtype == objabi.Hwindows && ctxt.Arch.SEH != nil {
 			s.Func().sehUnwindInfoSym = ctxt.Arch.SEH(ctxt, s)
 		}
 	})
+}
+
+// AssembleText encodes a prepared function and generates its PC tables. Both
+// GoObj serialization and fixed-layout native inline assembly consume these
+// same bytes and tables. PrepareText must have run before this function.
+func AssembleText(ctxt *Link, s *LSym, newprog ProgAlloc) {
+	if newprog == nil {
+		newprog = ctxt.NewProg
+	}
+	ctxt.Arch.Assemble(ctxt, s, newprog)
+	if ctxt.Errors == 0 {
+		linkpcln(ctxt, s)
+	}
 }
 
 // PrepareText assigns instructions to functions, resolves local branches, and

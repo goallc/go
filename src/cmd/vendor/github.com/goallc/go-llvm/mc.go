@@ -28,7 +28,9 @@ type MCReloc struct {
 	Size       uint32
 	PCRelative bool
 	Addend     int64
-	Symbol     string
+	Operand    uint32 // LLVM inline-asm operand index
+	Prefix     string // target relocation specifier, e.g. :lo12:
+	Suffix     string // target relocation specifier, e.g. @PAGEOFF
 }
 
 func NewMCDecoder(triple, features string) (MCDecoder, error) {
@@ -43,9 +45,9 @@ func NewMCDecoder(triple, features string) (MCDecoder, error) {
 	return d, nil
 }
 func (d MCDecoder) Dispose() { C.LLVMGoDisposeMCDecoder(d.ref) }
-func (d MCDecoder) Decode(code []byte, pc uint64, relocs []MCReloc) (text string, size uint64, target int64, err error) {
+func (d MCDecoder) Decode(code []byte, pc uint64, relocs []MCReloc) (text string, size uint64, err error) {
 	if len(code) == 0 {
-		return "", 0, -1, fmt.Errorf("empty instruction")
+		return "", 0, fmt.Errorf("empty instruction")
 	}
 	var ptr *C.LLVMGoMCReloc
 	if len(relocs) != 0 {
@@ -59,20 +61,22 @@ func (d MCDecoder) Decode(code []byte, pc uint64, relocs []MCReloc) (text string
 			if r.PCRelative {
 				rs[i].PCRelative = 1
 			}
-			rs[i].Symbol = C.CString(r.Symbol)
-			defer C.free(unsafe.Pointer(rs[i].Symbol))
+			rs[i].Operand = C.uint(r.Operand)
+			rs[i].Prefix = C.CString(r.Prefix)
+			rs[i].Suffix = C.CString(r.Suffix)
+			defer C.free(unsafe.Pointer(rs[i].Prefix))
+			defer C.free(unsafe.Pointer(rs[i].Suffix))
 		}
 	}
 	var n C.uint64_t
-	var dest C.int64_t
 	var msg *C.char
-	out := C.LLVMGoDecodeMCInstruction(d.ref, (*C.uint8_t)(unsafe.Pointer(&code[0])), C.size_t(len(code)), C.uint64_t(pc), ptr, C.size_t(len(relocs)), &n, &dest, &msg)
+	out := C.LLVMGoDecodeMCInstruction(d.ref, (*C.uint8_t)(unsafe.Pointer(&code[0])), C.size_t(len(code)), C.uint64_t(pc), ptr, C.size_t(len(relocs)), &n, &msg)
 	if out == nil {
 		defer C.free(unsafe.Pointer(msg))
-		return "", 0, -1, fmt.Errorf("decode at PC %d: %s", pc, C.GoString(msg))
+		return "", 0, fmt.Errorf("decode at PC %d: %s", pc, C.GoString(msg))
 	}
 	defer C.free(unsafe.Pointer(out))
-	return C.GoString(out), uint64(n), int64(dest), nil
+	return C.GoString(out), uint64(n), nil
 }
 
 func (d MCDecoder) InstructionSize(code []byte, pc uint64) uint64 {

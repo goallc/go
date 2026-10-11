@@ -15,17 +15,20 @@ typedef struct {
   unsigned Size;
   unsigned PCRelative;
   int64_t Addend;
-  const char *Symbol;
+  unsigned Operand;
+  const char *Prefix;
+  const char *Suffix;
 } LLVMGoMCReloc;
 void *LLVMGoCreateMCDecoder(const char *Triple, const char *Features);
 void LLVMGoDisposeMCDecoder(void *Decoder);
 uint64_t LLVMGoMCInstructionSize(void *Decoder, const uint8_t *Bytes,
                                  size_t Length, uint64_t PC);
-// Strings returned by this interface are owned by the caller (free).
+// Returns an LLVM inline-asm template: symbol operands are ${N:c}, and literal
+// dollar signs are escaped. Returned strings are owned by the caller (free).
 char *LLVMGoDecodeMCInstruction(void *Decoder, const uint8_t *Bytes,
                                 size_t Length, uint64_t PC,
                                 const LLVMGoMCReloc *Relocs, size_t NumRelocs,
-                                uint64_t *Size, int64_t *Target, char **Error);
+                                uint64_t *Size, char **Error);
 #ifdef __cplusplus
 }
 #endif

@@ -7,7 +7,6 @@
 package llvmasm
 
 import (
-	"cmd/internal/goobj"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"fmt"
@@ -30,16 +29,22 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 		return nil, fmt.Errorf("unknown LLVM assembly output %q (want obj, bc, or ir)", options.Output)
 	}
 	ctxt.FinalizeConstSyms()
+	if options.isGoObj() {
+		// Reuse Go's exact content hashes, including its symbol classes and
+		// relocation identities. Synthesized constants must not become strong
+		// named definitions in every assembly object that happens to use them.
+		ctxt.NumberSyms()
+	}
+	ctxt.PrintAssembly()
 	llvm.InitializeAllTargetInfos()
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllAsmPrinters()
 	llvm.InitializeAllAsmParsers()
-	arch := "x86_64"
-	if options.GOARCH == "arm64" {
-		arch = "aarch64"
+	triple, err := options.triple()
+	if err != nil {
+		return nil, err
 	}
-	triple := arch + "-unknown-" + options.GOOS + "-goobj"
 	target, err := llvm.GetTargetFromTriple(triple)
 	if err != nil {
 		return nil, err
@@ -55,60 +60,55 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 	module := context.NewModule(ctxt.Pkgpath)
 	defer module.Dispose()
 	module.SetTarget(triple)
-	module.SetInlineAsm(".goobj.assembly\n")
-	key, setting := buildcfg.GOGOARCH()
-	// Tests may cross-emit without changing the process build configuration.
-	if options.GOARCH == "amd64" && key != "GOAMD64" {
-		key, setting = "GOAMD64", "v1"
+	if ctxt.Flag_shared {
+		// Match Module::setPICLevel so standalone bitcode codegen retains the
+		// relocation model selected by the Go assembler's -shared flag.
+		const moduleFlagMin = 8
+		const bigPIC = 2
+		module.AddNamedMetadataOperand("llvm.module.flags", context.MDNode([]llvm.Metadata{
+			llvm.ConstInt(context.Int32Type(), moduleFlagMin, false).ConstantAsMetadata(),
+			context.MDString("PIC Level"),
+			llvm.ConstInt(context.Int32Type(), bigPIC, false).ConstantAsMetadata(),
+		}))
 	}
-	if options.GOARCH == "arm64" && key != "GOARM64" {
-		key, setting = "GOARM64", "v8.0"
-	}
-	var experiments []llvm.Metadata
-	for _, exp := range buildcfg.Experiment.Enabled() {
-		experiments = append(experiments, context.MDString(exp))
-	}
-	boolString := func(b bool) string {
-		if b {
-			return "1"
+	if options.isGoObj() {
+		module.SetInlineAsm(".goobj.assembly\n")
+		key, setting := buildcfg.GOGOARCH()
+		// Tests may cross-emit without changing the process build configuration.
+		if options.GOARCH == "amd64" && key != "GOAMD64" {
+			key, setting = "GOAMD64", "v1"
 		}
-		return "0"
-	}
-	var config []llvm.Metadata
-	for _, field := range []string{"goallc.goobj", options.GOOS, options.GOARCH, buildcfg.Version, key, setting, "", objabi.PathToPrefix(ctxt.Pkgpath), "0", boolString(ctxt.Flag_shared), boolString(ctxt.Std)} {
-		config = append(config, context.MDString(field))
-	}
-	config = append(config, context.MDNode(experiments), context.MDString("0000000000000000"))
-	module.AddNamedMetadataOperand("goobj.config", context.MDNode(config))
-	if err := llvm.ConfigureGoObjFromModule(module); err != nil {
-		return nil, err
+		if options.GOARCH == "arm64" && key != "GOARM64" {
+			key, setting = "GOARM64", "v8.0"
+		}
+		var experiments []llvm.Metadata
+		for _, exp := range buildcfg.Experiment.Enabled() {
+			experiments = append(experiments, context.MDString(exp))
+		}
+		boolString := func(b bool) string {
+			if b {
+				return "1"
+			}
+			return "0"
+		}
+		var config []llvm.Metadata
+		for _, field := range []string{"goallc.goobj", options.GOOS, options.GOARCH, buildcfg.Version, key, setting, "", objabi.PathToPrefix(ctxt.Pkgpath), "0", boolString(ctxt.Flag_shared), boolString(ctxt.Std)} {
+			config = append(config, context.MDString(field))
+		}
+		config = append(config, context.MDNode(experiments), context.MDString("0000000000000000"))
+		module.AddNamedMetadataOperand("goobj.config", context.MDNode(config))
+		if err := llvm.ConfigureGoObjFromModule(module); err != nil {
+			return nil, err
+		}
 	}
 	setFlags := func(v llvm.Value, s *obj.LSym) {
-		var flag, flag2 uint64
-		if s.DuplicateOK() {
-			flag |= goobj.SymFlagDupok
+		if !options.isGoObj() {
+			return
 		}
-		if s.NoSplit() {
-			flag |= goobj.SymFlagNoSplit
-		}
-		if s.Leaf() {
-			flag |= goobj.SymFlagLeaf
-		}
-		if s.ReflectMethod() {
-			flag |= goobj.SymFlagReflectMethod
-		}
-		if s.IsLinkname() {
-			flag2 |= goobj.SymFlagLinkname
-		}
-		if s.IsLinknameStd() {
-			flag2 |= goobj.SymFlagLinknameStd
-		}
-		if s.ABIWrapper() {
-			flag2 |= goobj.SymFlagABIWrapper
-		}
-		v.SetGlobalMetadata(context.MDKindID("goobj.symbol.flags"), context.MDNode([]llvm.Metadata{
-			llvm.ConstInt(context.Int32Type(), flag, false).ConstantAsMetadata(),
-			llvm.ConstInt(context.Int32Type(), flag2, false).ConstantAsMetadata(),
+		flag, flag2 := ctxt.SymbolFlags(s)
+		v.SetGlobalMetadata(context.MDKindID("goobj.symbol.flags.exact"), context.MDNode([]llvm.Metadata{
+			llvm.ConstInt(context.Int8Type(), uint64(flag), false).ConstantAsMetadata(),
+			llvm.ConstInt(context.Int8Type(), uint64(flag2), false).ConstantAsMetadata(),
 		}))
 	}
 	td := tm.CreateTargetData()
@@ -224,25 +224,30 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 		values[r] = g
 		g.SetInitializer(init)
 		setFlags(g, s)
+		if s.ContentAddressable() && options.isGoObj() {
+			g.SetGlobalMetadata(context.MDKindID("goobj.content_hash"), context.MDNode([]llvm.Metadata{
+				context.MDString(string(obj.ContentHash(ctxt, s))),
+			}))
+		}
 		switch s.Type {
 		case objabi.SNOPTRDATA:
-			g.SetSection(".noptrdata")
+			g.SetSection(options.dataSection(".noptrdata"))
 		case objabi.SNOPTRBSS:
-			g.SetSection(".noptrbss")
+			g.SetSection(options.dataSection(".noptrbss"))
 		case objabi.SBSS:
-			g.SetSection(".bss")
+			g.SetSection(options.dataSection(".bss"))
 		case objabi.SRODATA:
-			g.SetSection(".rodata")
+			g.SetSection(options.dataSection(".rodata"))
 		case objabi.STLSBSS:
-			g.SetSection(".tbss")
+			g.SetSection(options.dataSection(".tbss"))
 		case objabi.SRODATAFIPS:
-			g.SetSection(".rodata.fips")
+			g.SetSection(options.dataSection(".rodata.fips"))
 		case objabi.SNOPTRDATAFIPS:
-			g.SetSection(".noptrdata.fips")
+			g.SetSection(options.dataSection(".noptrdata.fips"))
 		case objabi.SDATAFIPS:
-			g.SetSection(".data.fips")
+			g.SetSection(options.dataSection(".data.fips"))
 		default:
-			g.SetSection(".data")
+			g.SetSection(options.dataSection(".data"))
 		}
 		alignment := int(s.Align)
 		if alignment == 0 {
@@ -252,12 +257,14 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 			}
 		}
 		g.SetAlignment(alignment)
-		if s.Static() || s.Name == "" {
+		if s.ContentAddressable() && !options.isGoObj() {
+			g.SetLinkage(llvm.PrivateLinkage)
+		} else if s.Static() || s.Name == "" {
 			g.SetLinkage(llvm.InternalLinkage)
 		} else if s.DuplicateOK() {
 			g.SetLinkage(llvm.WeakAnyLinkage)
 		}
-		if s.Local() {
+		if s.Local() && g.Linkage() != llvm.PrivateLinkage && g.Linkage() != llvm.InternalLinkage {
 			g.SetVisibility(llvm.HiddenVisibility)
 		}
 		if s.Type == objabi.SRODATA || s.Type == objabi.SRODATAFIPS {
@@ -272,14 +279,18 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 	for _, f := range functions {
 		fn := value(reference{f.sym, true})
 		if f.sym.Type == objabi.STEXTFIPS {
-			fn.SetSection(".text.fips")
+			if options.ObjectFormat == "macho" {
+				fn.SetSection("__TEXT,__text_fips,regular,pure_instructions")
+			} else {
+				fn.SetSection(".text.fips")
+			}
 		}
 		if f.sym.Static() {
 			fn.SetLinkage(llvm.InternalLinkage)
 		} else if f.sym.DuplicateOK() {
 			fn.SetLinkage(llvm.WeakAnyLinkage)
 		}
-		if f.sym.Local() {
+		if f.sym.Local() && fn.Linkage() != llvm.InternalLinkage {
 			fn.SetVisibility(llvm.HiddenVisibility)
 		}
 		setFlags(fn, f.sym)
@@ -310,6 +321,11 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 		asm := llvm.InlineAsm(ty, f.body, strings.Join(constraints, ","), true, false, llvm.InlineAsmDialectATT, false)
 		builder.CreateCall(ty, asm, operands, "")
 		builder.CreateUnreachable()
+	}
+	if !options.isGoObj() {
+		if err := emitNativeMetadata(context, module, ctxt, options, value); err != nil {
+			return nil, err
+		}
 	}
 	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 		return nil, fmt.Errorf("verify assembly module: %w", err)
