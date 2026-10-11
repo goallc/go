@@ -72,15 +72,31 @@ continues to use the ordinary parser.
 
 ## Go runtime metadata
 
-GoObj output retains its existing `.goobj.asm*` MC adapter. Its PC labels are
-aliases of the function start plus fixed offsets, and its indirect-call markers
-preserve the native Go offsets, including offsets inside x86 REX prefixes.
-The GoObj output path is executable with the current Go linker. It also emits
-Go-compatible DWARF function DIEs and line programs from `.goobj.asmdebug` and
-`.goobj.asmline` records, preserving wrapper/static identity, declaration files,
-statement markers and prologue boundaries. The DWARF version follows Go's
-experiment setting. These are GoObj metadata directives; bitcode codegen does
-not call back into the Go parser or instruction encoder.
+GoObj output uses a versioned `!goobj.asm` function attachment and a
+`!goobj.assembly` module marker. Frame information, PC events, sparse FUNCDATA,
+DWARF source rows and indirect-call offsets are structured LLVM metadata;
+inline assembly contains no GoObj metadata directives. FUNCDATA targets are
+LLVM global references and are also carrier inputs so optimization retains
+definitions used only by these references.
+
+AsmPrinter transfers the metadata directly to MCContext. Function-relative
+PC offsets become MC symbol expressions, and the GoObj writer checks the
+final function size against the recorded layout. Indirect-call offsets retain
+Go's exact positions, including offsets inside x86 REX prefixes. Existing
+inline-asm entry/replacement/size assertions still protect the encoded layout.
+The writer emits Go-compatible PC tables and DWARF 4/5 function DIEs and line
+programs, including wrapper/static identity, declaration files, statement
+markers and prologue boundaries. No Go parser or encoder callback is needed.
+
+Version 1 `!goobj.asm` has seven fields: version (i32), code size (i64),
+frame tuple, PC-event list, FUNCDATA list, debug tuple, and indirect-call PC
+list. Frame fields are i32 args/locals/FuncID/FuncFlag/start-line. Each PC event
+is `{i64 offset, i32 kind, i32 value, !"file"}`; kind -3 is SP, -2 is runtime
+file/line, and nonnegative kinds are PCDATA indices. FUNCDATA entries are
+`{i32 index, ptr @target}`. The optional debug tuple contains i32
+version/wrapper/external, a declaration-file string and rows of
+`{i64 offset, i32 line, i32 flags, !"file"}` (flags: bit 0 is statement,
+bit 1 is prologue end). Indirect-call entries are i64 offsets.
 
 Go symbol flags share `obj.Link.SymbolFlags` with the ordinary writer and are
 carried through `!goobj.symbol.flags.exact`: LLVM
@@ -181,3 +197,14 @@ native mode so the changed assembler can be compared independently.
 Other operating systems/architectures and end-to-end native-object Go linking
 remain outside this qualification. Passing LTO optimization/materialization
 checks does not establish complete FullLTO/ThinLTO linking.
+
+The structured-metadata revision (2026-10-11) passed the assembler/object/
+disassembly suites and all 16 LLVM MC/GoObj tests. Its new round-trip test
+checks Linux/Darwin amd64/arm64 with DWARF 4/5, renames a static FUNCDATA global
+through LLVM's API, and compares final objects after both unoptimized bitcode
+codegen and LTO optimization. PC tables, DWARF bytes/relocations, sparse
+FUNCDATA slots and the map definition survive unchanged. Targeted Darwin
+arm64/amd64 runtime stack, traceback, GC and checkptr tests also passed with
+all assembly routed through the new metadata path and the Go compiler held
+native. The earlier full-standard-library results above were not rerun for
+this metadata-only revision.

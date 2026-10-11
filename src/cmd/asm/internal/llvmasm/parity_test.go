@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/goallc/go-llvm"
 )
 
 func nativeGoObject(t *testing.T, goos, arch, source string) *goobj.Reader {
@@ -327,5 +329,101 @@ func TestAssemblyCLIParity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Exercise the serialized metadata rather than only direct TargetMachine
+// emission. Renaming the actual LLVM global must retarget FUNCDATA without
+// editing strings, and LTO must keep a static map used only by the carrier.
+func TestGoObjStructuredMetadataRoundTrip(t *testing.T) {
+	old := buildcfg.Experiment.Dwarf5
+	defer func() { buildcfg.Experiment.Dwarf5 = old }()
+	opt, llc := llvmTool(t, "opt"), llvmTool(t, "llc")
+	for _, dwarf5 := range []bool{false, true} {
+		buildcfg.Experiment.Dwarf5 = dwarf5
+		for _, goos := range []string{"linux", "darwin"} {
+			for _, arch := range []string{"amd64", "arm64"} {
+				t.Run(fmt.Sprintf("%s/%s/dwarf5=%t", goos, arch, dwarf5), func(t *testing.T) {
+					body := "CALL AX\n"
+					if arch == "arm64" {
+						body = "CALL (R0)\n"
+					}
+					source := "DATA maps<>+0(SB)/8,$7\nGLOBL maps<>(SB),8,$8\nTEXT probe<ABIInternal>(SB),4,$32-16\nFUNCDATA $1,maps<>(SB)\nPCDATA $0,$-2\n" + body + "PCDATA $0,$-1\nRET\n"
+					want := nativeGoObject(t, goos, arch, source)
+					dir := t.TempDir()
+					input, renamed := filepath.Join(dir, "input.bc"), filepath.Join(dir, "renamed.bc")
+					if err := os.WriteFile(input, emit(t, goos, arch, source, "bc"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					c := llvm.NewContext()
+					defer c.Dispose()
+					m, err := c.ParseBitcodeFile(input)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer m.Dispose()
+					if strings.Contains(m.String(), ".goobj.") || strings.Contains(m.String(), "module asm") {
+						t.Fatal("textual GoObj metadata remains")
+					}
+					maps := m.NamedGlobal("maps")
+					if maps.IsNil() {
+						t.Fatal("missing static FUNCDATA map")
+					}
+					maps.SetName("renamed_maps")
+					bc := llvm.WriteBitcodeToMemoryBuffer(m)
+					defer bc.Dispose()
+					if err := os.WriteFile(renamed, bc.Bytes(), 0600); err != nil {
+						t.Fatal(err)
+					}
+					for _, optimize := range []bool{false, true} {
+						codegen := renamed
+						if optimize {
+							codegen = filepath.Join(dir, "optimized.bc")
+							if out, err := exec.Command(opt, "-passes=lto-pre-link<O2>,lto<O2>", renamed, "-o", codegen).CombinedOutput(); err != nil {
+								t.Fatalf("LTO: %v\n%s", err, out)
+							}
+						}
+						object := filepath.Join(dir, "output.o")
+						if out, err := exec.Command(llc, "-O0", "-filetype=obj", codegen, "-o", object).CombinedOutput(); err != nil {
+							t.Fatalf("codegen: %v\n%s", err, out)
+						}
+						data, err := os.ReadFile(object)
+						if err != nil {
+							t.Fatal(err)
+						}
+						got := readObject(t, data)
+						compareSymbol(t, got, want, "probe")
+						for _, kind := range []uint8{goobj.AuxFuncInfo, goobj.AuxPcsp, goobj.AuxPcfile, goobj.AuxPcline, goobj.AuxPcinline, goobj.AuxPcdata, goobj.AuxDwarfInfo, goobj.AuxDwarfLines} {
+							g, w := auxiliary(t, got, "probe", kind), auxiliary(t, want, "probe", kind)
+							if !bytes.Equal(got.Data(g), want.Data(w)) {
+								t.Fatalf("LTO=%t auxiliary %d changed: got %x want %x", optimize, kind, got.Data(g), want.Data(w))
+							}
+							if got.NReloc(g) != want.NReloc(w) {
+								t.Fatalf("auxiliary %d relocation count differs", kind)
+							}
+							for n := 0; n < int(want.NReloc(w)); n++ {
+								a, b := got.Reloc(g, n), want.Reloc(w, n)
+								if a.Off() != b.Off() || a.Siz() != b.Siz() || a.Type() != b.Type() || a.Add() != b.Add() || referenceIdentity(t, got, a.Sym()) != referenceIdentity(t, want, b.Sym()) {
+									t.Fatalf("auxiliary %d relocation changed", kind)
+								}
+							}
+						}
+						var slots []goobj.SymRef
+						for _, aux := range got.Auxs(findSymbol(t, got, "probe")) {
+							if aux.Type() == goobj.AuxFuncdata {
+								slots = append(slots, aux.Sym())
+							}
+						}
+						if len(slots) != 2 || slots[0] != (goobj.SymRef{}) || got.Sym(resolveSym(t, got, slots[1])).Name(got) != "renamed_maps" {
+							t.Fatal("sparse or renamed FUNCDATA changed")
+						}
+						mapData := got.Data(findSymbol(t, got, "renamed_maps"))
+						if len(mapData) != 8 || mapData[0] != 7 {
+							t.Fatal("FUNCDATA-only definition discarded")
+						}
+					}
+				})
+			}
+		}
 	}
 }

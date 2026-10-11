@@ -289,8 +289,12 @@ func (e *emitter) encodedFunction(decoder llvm.MCDecoder) (function, error) {
 	writeBytes(pc, s.Size)
 	fmt.Fprintf(&body, ".if .-%s != %d\n.error \"Go assembly function size changed\"\n.endif\n", e.pcLabel(0), s.Size)
 	if e.options.isGoObj() {
-		if err := e.goobjMetadata(&body); err != nil {
-			return function{}, err
+		// Metadata references alone do not keep FUNCDATA symbols live through
+		// optimization. Retain them as explicit inputs of the carrier call.
+		for p := s.Func().Text; p != nil; p = p.Link {
+			if p.As == obj.AFUNCDATA && p.To.Sym != nil {
+				e.operand(p.To.Sym, false)
+			}
 		}
 	}
 	return function{s, body.String(), e.refs}, nil

@@ -72,7 +72,9 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 		}))
 	}
 	if options.isGoObj() {
-		module.SetInlineAsm(".goobj.assembly\n")
+		module.AddNamedMetadataOperand("goobj.assembly", context.MDNode([]llvm.Metadata{
+			llvm.ConstInt(context.Int32Type(), goObjAssemblyVersion, false).ConstantAsMetadata(),
+		}))
 		key, setting := buildcfg.GOGOARCH()
 		// Tests may cross-emit without changing the process build configuration.
 		if options.GOARCH == "amd64" && key != "GOAMD64" {
@@ -294,6 +296,11 @@ func Emit(ctxt *obj.Link, options Options) ([]byte, error) {
 			fn.SetVisibility(llvm.HiddenVisibility)
 		}
 		setFlags(fn, f.sym)
+		if options.isGoObj() {
+			if err := emitGoObjMetadata(context, ctxt, fn, f.sym, value); err != nil {
+				return nil, err
+			}
+		}
 		if f.sym.Align > 0 {
 			fn.SetAlignment(int(f.sym.Align))
 		}
