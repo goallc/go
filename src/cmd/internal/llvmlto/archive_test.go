@@ -1,7 +1,7 @@
 // Copyright 2026 The GoALLC Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-package main
+package llvmlto
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ func TestArchiveReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, e := range []struct{ name, data string }{{"__.PKGDEF", "export data"}, {"_go_.o", "old object"}, {"asm.o", "assembly bytes"}, {irMember, "IR bytes"}} {
+	for _, e := range []struct{ name, data string }{{"__.PKGDEF", "export data"}, {"asm.o", "assembly bytes"}, {irMember, "IR bytes"}} {
 		a.AddEntry(archive.EntryNativeObj, e.name, 0, 0, 0, 0644, int64(len(e.data)), strings.NewReader(e.data))
 	}
 	f.Close()
@@ -72,7 +72,7 @@ func TestArchivePreservesMembers(t *testing.T) {
 	// Odd member sizes exercise archive padding. Metadata and order must also
 	// survive, including duplicate assembly member names accepted by Go pack.
 	for _, e := range []struct{ name, data string }{
-		{"__.PKGDEF", "export data"}, {"_go_.o", "old object!"}, {"asm.o", "first asm"},
+		{"__.PKGDEF", "export data"}, {"asm.o", "first asm"},
 		{irMember, "IR bytes!"}, {"asm.o", "other asm"},
 	} {
 		a.AddEntry(archive.EntryNativeObj, e.name, 7, 12, 34, 0755, int64(len(e.data)), strings.NewReader(e.data))
@@ -99,6 +99,7 @@ func TestArchivePreservesMembers(t *testing.T) {
 		}
 		for _, e := range a.Entries {
 			if e.Name == irMember {
+				names = append(names, "_go_.o")
 				continue
 			}
 			names = append(names, e.Name)
@@ -127,7 +128,7 @@ func TestInvalidArchiveMembers(t *testing.T) {
 		readIR  bool
 		want    string
 	}{
-		{"missing-object", []string{irMember}, false, "found 0"},
+		{"missing-bitcode", []string{"__.PKGDEF"}, false, "found 0"},
 		{"duplicate-object", []string{"_go_.o", "_go_.o"}, false, "found 2"},
 		{"duplicate-ir", []string{irMember, irMember}, true, "duplicate"},
 	} {
@@ -186,103 +187,15 @@ func TestArchiveWriteErrors(t *testing.T) {
 	}
 }
 
-func TestSupportedOptions(t *testing.T) {
-	for _, args := range [][]string{
-		nil, {"-enablellvm", "-llvm-keep-ir"}, {"-enablellvm=false", "-enablellvm=true"},
-		{"-N", "-N=0", "-l"}, {"-shared=false", "-race=false", "-llvm-opt-passes=auto"},
-	} {
-		if err := validateCompileArgs(args); err != nil {
-			t.Errorf("%v: %v", args, err)
-		}
-	}
-	for _, args := range [][]string{
-		{"-enablellvm=false"}, {"--enablellvm=false"}, {"-llvm-keep-ir=false"}, {"-N"}, {"-N=1"}, {"--N"},
-		{"-shared"}, {"-dynlink"}, {"-linkshared"}, {"-race"}, {"-msan"}, {"-asan"},
-		{"-llvm-opt-passes=none"}, {"--llvm-opt-passes=none"}, {"-llvm-opt-passes", ""}, {"-linkobj", "separate.o"},
-	} {
-		if err := validateCompileArgs(args); err == nil {
-			t.Errorf("accepted incompatible compiler options %v", args)
-		}
-	}
-	for _, args := range [][]string{{"-buildmode=exe", "main.a"}, {"-race=false", "main.a"}} {
-		if err := validateLinkArgs(args); err != nil {
-			t.Errorf("%v: %v", args, err)
-		}
-	}
-	for _, args := range [][]string{nil, {"-buildmode=pie", "main.a"}, {"-buildmode", "c-archive", "main.a"}, {"-linkshared", "main.a"}, {"-race", "main.a"}} {
-		if err := validateLinkArgs(args); err == nil {
-			t.Errorf("accepted incompatible linker options %v", args)
-		}
-	}
-	args := []string{"-importcfg=first", "-importcfg", "last"}
-	if got := argValue(args, "-importcfg"); got != "last" {
-		t.Fatalf("effective importcfg = %q, want last", got)
-	}
-	replaceArg(args, "-importcfg", "replacement")
-	if got := argValue(args, "-importcfg"); got != "replacement" {
-		t.Fatalf("effective importcfg after replacement = %q", got)
-	}
-}
-
-func TestCacheIdentity(t *testing.T) {
-	dir := t.TempDir()
-	bin, lib := filepath.Join(dir, "bin"), filepath.Join(dir, "lib")
-	for _, path := range []string{bin, lib} {
-		if err := os.Mkdir(path, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	llcPath, library := filepath.Join(bin, "llc"), filepath.Join(lib, "libLLVM.so.23")
-	write := func(path, data string) {
-		t.Helper()
-		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(llcPath, "a")
-	write(library, "bc")
-	libraries, err := llvmLibraries(llcPath, filepath.Join(lib, "plugin.so"))
-	if err != nil || len(libraries) == 0 {
-		t.Fatalf("shared libraries not found: %v, %v", libraries, err)
-	}
-	paths := append([]string{llcPath}, libraries...)
-	identity := func(selection, version string) string {
-		t.Helper()
-		id, err := cacheIdentity(paths, selection, []byte(version))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return id
-	}
-	base := identity("all", "compile version")
-	if identity("example.com/lto/...", "compile version") == base || identity("all", "new compiler version") == base {
-		t.Fatal("package selection or compiler version did not change cache identity")
-	}
-	write(library, "bd")
-	if identity("all", "compile version") == base {
-		t.Fatal("shared LLVM library update did not change cache identity")
-	}
-	// Same concatenated bytes, different file boundaries.
-	write(llcPath, "ab")
-	write(library, "c")
-	if identity("all", "compile version") == base {
-		t.Fatal("cache identity does not frame artifact contents")
-	}
-}
-
 func TestFullLTO(t *testing.T) {
 	if (runtime.GOOS != "darwin" && runtime.GOOS != "linux") || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		t.Skip("FullLTO runtime fixture supports darwin/linux on amd64/arm64")
 	}
-	helper := os.Getenv("GOALLC_LTO_BACKEND")
-	llcPath := os.Getenv("GOALLC_LLC")
-	pluginPath := os.Getenv("GOALLC_PASS_PLUGIN")
-	if helper == "" || llcPath == "" || pluginPath == "" {
-		t.Skip("set GOALLC_LTO_BACKEND, GOALLC_LLC and GOALLC_PASS_PLUGIN")
+	if os.Getenv("GOALLC_TEST_LTO") != "1" {
+		t.Skip("set GOALLC_TEST_LTO=1 with an LLVM-enabled toolchain")
 	}
 	goTool := filepath.Join(runtime.GOROOT(), "bin", "go")
 	dir := t.TempDir()
-	driver := filepath.Join(dir, "llvmlto")
 	run := func(cwd string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command(args[0], args[1:]...)
@@ -297,7 +210,6 @@ func TestFullLTO(t *testing.T) {
 		}
 		return string(b)
 	}
-	run("", goTool, "build", "-gcflags=all=-enablellvm=false", "-o", driver, "cmd/llvmlto")
 	fixture, err := filepath.Abs("testdata/runtime")
 	if err != nil {
 		t.Fatal(err)
@@ -308,17 +220,11 @@ func TestFullLTO(t *testing.T) {
 	if !strings.Contains(want, "LTO RUNTIME OK") {
 		t.Fatal(want)
 	}
-	for _, p := range []string{driver, helper, llcPath, pluginPath} {
-		if strings.ContainsAny(p, " \t\n\"'") {
-			t.Fatal("test tool paths must not contain whitespace or quotes")
-		}
-	}
-	wrapper := strings.Join([]string{driver, "-packages=example.com/lto/...", "-keep", "-backend=" + helper, "-llc=" + llcPath, "-plugin=" + pluginPath}, " ")
 	output := filepath.Join(dir, "lto")
 	// A per-test link ID prevents a cached executable from hiding the LTO
 	// work directory. It leaves dependencies eligible for the Go build cache.
 	linkID := "lto-" + filepath.Base(filepath.Dir(dir))
-	log := run(fixture, goTool, "build", "-buildmode=exe", "-ldflags=-buildid="+linkID, "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-toolexec="+wrapper, "-o", output, ".")
+	log := run(fixture, goTool, "build", "-buildmode=exe", "-ldflags=-lto-keep -buildid="+linkID, "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-lto=full", "-o", output, ".")
 	if got := run("", output); got != want {
 		t.Fatalf("LTO output %q, baseline %q", got, want)
 	}
@@ -372,9 +278,31 @@ func TestFullLTO(t *testing.T) {
 	if !hasCall(after, "example.com/lto/dep.Opaque") {
 		t.Fatal("LLVM did not preserve the //go:noinline call")
 	}
-	// Force a new link action while reusing cached dependency fat archives.
+	archivePath := strings.TrimSpace(run(fixture, goTool, "list", "-export", "-lto=full", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-f", "{{.Export}}", "example.com/lto/dep"))
+	f, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ar, err := archive.Parse(f, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	found := false
+	for _, entry := range ar.Entries {
+		if entry.Name == "_go_.o" {
+			t.Fatal("compiler emitted machine code before FullLTO")
+		}
+		if entry.Name == irMember {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("compiler did not emit bitcode")
+	}
+	// Force a new link action while reusing cached dependency bitcode archives.
 	// Changing ldflags may rebuild main, which embeds the build settings.
-	cacheLog := run(fixture, goTool, "build", "-buildmode=exe", "-x", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-ldflags=-buildid="+linkID+"-cache-probe", "-toolexec="+wrapper, "-o", output, ".")
+	cacheLog := run(fixture, goTool, "build", "-buildmode=exe", "-x", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-ldflags=-lto-keep -buildid="+linkID+"-cache-probe", "-lto=full", "-o", output, ".")
 	cacheLinked := false
 	for _, line := range strings.Split(cacheLog, "\n") {
 		if strings.Contains(line, "/compile ") && !strings.Contains(line, " -V=full") && !strings.Contains(line, " -p main ") {
@@ -390,5 +318,36 @@ func TestFullLTO(t *testing.T) {
 	}
 	if got := run("", output); got != want {
 		t.Fatalf("cache-hit output: %q", got)
+	}
+}
+
+func TestLTOOptions(t *testing.T) {
+	if os.Getenv("GOALLC_TEST_LTO") != "1" {
+		t.Skip("set GOALLC_TEST_LTO=1 with an LLVM-enabled toolchain")
+	}
+	goTool := filepath.Join(runtime.GOROOT(), "bin", "go")
+	dir := t.TempDir()
+	source := filepath.Join(dir, "input.go")
+	if err := os.WriteFile(source, []byte("package p\nfunc F() int { return 42 }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, flags := range [][]string{{"-enablellvm=false"}, {"-N"}, {"-llvm-opt-passes=none"}, {"-dynlink"}, {"-linkshared"}, {"-race"}} {
+		args := append([]string{"tool", "compile", "-llvm-lto", "-o", filepath.Join(dir, "p.a")}, flags...)
+		args = append(args, source)
+		cmd := exec.Command(goTool, args...)
+		cmd.Env = append(os.Environ(), "GOFLAGS=", "GOTOOLCHAIN=local")
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "-llvm-lto requires") {
+			t.Fatalf("%v: %v\n%s", flags, err, out)
+		}
+	}
+	for _, flags := range [][]string{{"-lto=thin"}, {"-lto=full", "-race"}, {"-lto=full", "-buildmode=c-archive"}} {
+		cmd := exec.Command(goTool, append([]string{"build"}, flags...)...)
+		cmd.Dir = "testdata/runtime"
+		cmd.Env = append(os.Environ(), "GOFLAGS=", "GOTOOLCHAIN=local", "CGO_ENABLED=1")
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "-lto") {
+			t.Fatalf("%v: %v\n%s", flags, err, out)
+		}
 	}
 }

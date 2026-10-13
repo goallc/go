@@ -47,6 +47,7 @@ var bootstrapDirs = []string{
 	"cmd/internal/goobj",
 	"cmd/internal/hash",
 	"cmd/internal/macho",
+	"cmd/internal/llvmlto",
 	"cmd/internal/obj/...",
 	"cmd/internal/objabi",
 	"cmd/internal/par",

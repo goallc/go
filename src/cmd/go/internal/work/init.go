@@ -60,6 +60,7 @@ func BuildInit(ld *modload.Loader) {
 	modload.Init(ld)
 	instrumentInit()
 	buildModeInit()
+	ltoInit()
 	initCompilerConcurrencyPool()
 	cfgChangedEnv = makeCfgChangedEnv()
 
@@ -455,4 +456,20 @@ func compilerRequiredAsanVersion() error {
 		return fmt.Errorf("-asan: C compiler is not gcc or clang")
 	}
 	return nil
+}
+
+func ltoInit() {
+	if cfg.BuildLTO == "" {
+		return
+	}
+	if cfg.BuildLTO != "full" {
+		base.Fatalf("go: unsupported -lto mode %q", cfg.BuildLTO)
+	}
+	if cfg.BuildToolchainName != "gc" ||
+		(cfg.BuildBuildmode != "default" && cfg.BuildBuildmode != "exe" && cfg.BuildBuildmode != "pie") ||
+		cfg.BuildRace || cfg.BuildMSan || cfg.BuildASan || cfg.BuildLinkshared {
+		base.Fatalf("go: -lto=full requires gc, buildmode=exe or pie, and no sanitizers or shared linking")
+	}
+	forcedGcflags = append(forcedGcflags, "-enablellvm", "-llvm-lto")
+	forcedLdflags = append(forcedLdflags, "-lto=full")
 }
