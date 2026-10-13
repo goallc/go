@@ -14,7 +14,10 @@
 #include "llvm/Linker/Linker.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
-#include "llvm/Support/CommandLine.h"
+#include "GoALLCLTO.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
+#include <cstring>
+#include <cstdlib>
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -24,10 +27,7 @@
 #include <vector>
 
 using namespace llvm;
-static cl::list<std::string> Inputs(cl::Positional, cl::OneOrMore);
-static cl::opt<std::string> OutDir("output-dir", cl::Required);
-static cl::opt<std::string> Pipeline("passes", cl::init("lto<O2>"));
-static cl::opt<std::string> PluginPath("plugin", cl::Required);
+extern "C" llvm::PassPluginLibraryInfo llvmGetPassPluginInfo();
 static constexpr StringLiteral OwnerMD = "goallc.lto.owner";
 
 enum ConfigField {
@@ -47,9 +47,8 @@ enum ConfigField {
   ConfigFields
 };
 
-[[noreturn]] static void fail(const Twine &Message) {
-  errs() << "goallc-lto: " << Message << '\n';
-  exit(1);
+static Error fail(const Twine &Message) {
+  return createStringError(inconvertibleErrorCode(), Message);
 }
 
 struct Package {
@@ -81,17 +80,17 @@ struct SymbolIdentity {
   MDNode *Index;
 };
 
-static void checkPartitionable(Module &M,
+static Error checkPartitionable(Module &M,
                                const StringMap<SymbolIdentity> &Symbols) {
   if (!M.alias_empty() || !M.ifunc_empty())
-    fail("optimization produced an alias or ifunc");
+    return fail("optimization produced an alias or ifunc");
   DenseSet<std::pair<unsigned, uint64_t>> Indices;
   for (GlobalObject &G : M.global_objects()) {
     if (G.isDeclaration() || G.getName().starts_with("llvm."))
       continue;
     auto O = owner(G);
     if (!O && !clonedConstant(G))
-      fail("optimization produced a definition without package ownership: " +
+      return fail("optimization produced a definition without package ownership: " +
            G.getName());
     if (auto *Index = G.getMetadata("goobj.symbol.index")) {
       if (!O ||
@@ -99,7 +98,7 @@ static void checkPartitionable(Module &M,
                .insert({*O, mdconst::extract<ConstantInt>(Index->getOperand(0))
                                 ->getZExtValue()})
                .second)
-        fail("duplicate package symbol index after optimization: " +
+        return fail("duplicate package symbol index after optimization: " +
              G.getName());
     }
   }
@@ -107,8 +106,9 @@ static void checkPartitionable(Module &M,
     auto *G = dyn_cast_or_null<GlobalObject>(M.getNamedValue(S.getKey()));
     if (!G || G->isDeclaration() || owner(*G) != S.second.Owner ||
         G->getMetadata("goobj.symbol.index") != S.second.Index)
-      fail("optimization changed retained Go symbol identity: " + S.getKey());
+      return fail("optimization changed retained Go symbol identity: " + S.getKey());
   }
+  return Error::success();
 }
 
 static bool referencesLinkname(const Value *V) {
@@ -124,13 +124,13 @@ static bool referencesLinkname(const Value *V) {
   return false;
 }
 
-static void optimize(Module &M, PassPlugin &Plugin, StringRef Pipeline) {
+static Error optimize(Module &M, StringRef Pipeline) {
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
   CGSCCAnalysisManager CGAM;
   ModuleAnalysisManager MAM;
   PassBuilder PB;
-  Plugin.registerPassBuilderCallbacks(PB);
+  llvmGetPassPluginInfo().RegisterPassBuilderCallbacks(PB);
   PB.registerModuleAnalyses(MAM);
   PB.registerCGSCCAnalyses(CGAM);
   PB.registerFunctionAnalyses(FAM);
@@ -138,29 +138,31 @@ static void optimize(Module &M, PassPlugin &Plugin, StringRef Pipeline) {
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
   ModulePassManager PM;
   if (Error E = PB.parsePassPipeline(PM, Pipeline))
-    fail(toString(std::move(E)));
+    return fail(toString(std::move(E)));
   PM.run(M, MAM);
   if (verifyModule(M, &errs()))
-    fail("invalid optimized module");
+    return fail("invalid optimized module");
+  return Error::success();
 }
 
-int main(int argc, char **argv) {
-  cl::ParseCommandLineOptions(argc, argv,
-                              "Go FullLTO with package GoObj output\n");
+Error goallc::runFullLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
+                         StringRef Pipeline, bool SaveIR) {
+  if (Inputs.empty())
+    return fail("FullLTO requires at least one input");
   LLVMContext C;
-  auto Plugin = PassPlugin::Load(PluginPath);
-  if (!Plugin)
-    fail(toString(Plugin.takeError()));
   std::vector<Package> Packages;
   std::unique_ptr<Module> Combined;
   for (unsigned I = 0; I != Inputs.size(); ++I) {
     SMDiagnostic Diag;
     auto M = parseIRFile(Inputs[I], Diag, C);
     if (!M) {
-      Diag.print(argv[0], errs());
-      return 1;
+      std::string Message;
+      raw_string_ostream OS(Message);
+      Diag.print("FullLTO", OS);
+      return fail(Message);
     }
-    optimize(*M, *Plugin, "goallc-cpu-features");
+    if (Error E = optimize(*M, "goallc-cpu-features"))
+      return E;
     // A linkname can be legal only from its originating package (including
     // runtime's private allowlist). Keep such bodies in that package instead
     // of disabling the Go linker's checks after cross-package inlining.
@@ -174,36 +176,36 @@ int main(int argc, char **argv) {
     auto *Config = M->getNamedMetadata("goobj.config");
     if (!Config || Config->getNumOperands() != 1 ||
         Config->getOperand(0)->getNumOperands() != ConfigFields)
-      fail("input requires one compiler GoObj configuration");
+      return fail("input requires one compiler GoObj configuration");
     Package P;
     P.Config = Config->getOperand(0);
     for (unsigned Field = 0; Field != ConfigFields; ++Field)
       if (Field == Experiments ? !isa<MDNode>(P.Config->getOperand(Field))
                                : !isa<MDString>(P.Config->getOperand(Field)))
-        fail("invalid GoObj configuration field");
+        return fail("invalid GoObj configuration field");
     if (cast<MDString>(P.Config->getOperand(Format))->getString() !=
         "goallc.goobj")
-      fail("unsupported GoObj configuration format");
+      return fail("unsupported GoObj configuration format");
     P.Prefix = cast<MDString>(P.Config->getOperand(PackagePrefix))->getString();
     if (P.Prefix.empty())
-      fail("empty package prefix");
+      return fail("empty package prefix");
     for (const Package &Previous : Packages)
       if (P.Prefix == Previous.Prefix)
-        fail("duplicate package prefix: " + P.Prefix);
+        return fail("duplicate package prefix: " + P.Prefix);
     if (M->getNamedMetadata("goobj.dynlink"))
-      fail("dynamic Go linking is not supported");
+      return fail("dynamic Go linking is not supported");
     if (!Packages.empty())
       for (unsigned Field :
            {Format, OS, Arch, Version, ArchKey, ArchValue, Shared, Experiments})
         if (P.Config->getOperand(Field) !=
             Packages[0].Config->getOperand(Field))
-          fail("incompatible GoObj configuration in " + P.Prefix);
+          return fail("incompatible GoObj configuration in " + P.Prefix);
     llvm::append_range(P.ModuleAsm, M->getModuleInlineAsm());
     for (const auto &Fragment : P.ModuleAsm) {
       StringRef Asm = StringRef(Fragment.Asm).trim();
       if (!Asm.empty() &&
           (!Asm.starts_with(".goobj.cgo ") || Asm.contains('\n')))
-        fail("unsupported module assembly in " + P.Prefix);
+        return fail("unsupported module assembly in " + P.Prefix);
     }
     M->removeModuleInlineAsm();
     // These records describe the output package, not the combined program.
@@ -217,7 +219,7 @@ int main(int argc, char **argv) {
       }
     }
     if (!M->alias_empty() || !M->ifunc_empty())
-      fail("aliases and ifuncs are not supported in " + P.Prefix);
+      return fail("aliases and ifuncs are not supported in " + P.Prefix);
     uint64_t NextIndex = 0;
     DenseSet<uint64_t> Indices;
     for (GlobalObject &G : M->global_objects())
@@ -228,14 +230,14 @@ int main(int argc, char **argv) {
                 : nullptr;
         if (!Value || Value->getBitWidth() != 32 ||
             (Index->getNumOperands() != 1 && Index->getNumOperands() != 2))
-          fail("invalid package symbol index: " + G.getName());
+          return fail("invalid package symbol index: " + G.getName());
         if (Index->getNumOperands() == 2) {
           auto *ABI = mdconst::dyn_extract<ConstantInt>(Index->getOperand(1));
           if (!ABI || ABI->getBitWidth() != 16)
-            fail("invalid package symbol ABI: " + G.getName());
+            return fail("invalid package symbol ABI: " + G.getName());
         }
         if (!G.isDeclaration() && !Indices.insert(Value->getZExtValue()).second)
-          fail("duplicate package symbol index: " + G.getName());
+          return fail("duplicate package symbol index: " + G.getName());
         NextIndex = std::max(NextIndex, 1 + Value->getZExtValue());
       }
     for (GlobalObject &G : M->global_objects()) {
@@ -247,7 +249,7 @@ int main(int argc, char **argv) {
       if (G.hasLocalLinkage() && !clonedConstant(G) &&
           !G.getMetadata("goobj.symbol.index")) {
         if (NextIndex >= UINT32_MAX)
-          fail("too many package symbols");
+          return fail("too many package symbols");
         Metadata *Index[] = {ConstantAsMetadata::get(ConstantInt::get(
                                  Type::getInt32Ty(C), NextIndex++)),
                              ConstantAsMetadata::get(ConstantInt::get(
@@ -260,7 +262,7 @@ int main(int argc, char **argv) {
       SmallVector<MDNode *> Records;
       for (MDNode *E : N->operands()) {
         if (E->getNumOperands() != 2)
-          fail("invalid gotype record");
+          return fail("invalid gotype record");
         Metadata *Fields[] = {
             E->getOperand(0), E->getOperand(1),
             ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(C), I))};
@@ -285,7 +287,7 @@ int main(int argc, char **argv) {
     else {
       if (Combined->getTargetTriple() != M->getTargetTriple() ||
           Combined->getDataLayout() != M->getDataLayout())
-        fail("incompatible target or data layout");
+        return fail("incompatible target or data layout");
       for (GlobalVariable &G : M->globals()) {
         auto *Old = Combined->getNamedGlobal(G.getName());
         auto BSS = [](GlobalVariable &V) {
@@ -307,7 +309,7 @@ int main(int argc, char **argv) {
           GlobalVariable &Loser = NewWins ? *Old : G;
           if (DL.getTypeAllocSize(Winner.getValueType()) <
               DL.getTypeAllocSize(Loser.getValueType()))
-            fail("BSS declaration exceeds initialized definition: " +
+            return fail("BSS declaration exceeds initialized definition: " +
                  G.getName());
           Loser.setInitializer(nullptr);
           Loser.setLinkage(GlobalValue::ExternalLinkage);
@@ -318,7 +320,7 @@ int main(int argc, char **argv) {
         }
       }
       if (Linker::linkModules(*Combined, std::move(M)))
-        fail("module linking failed");
+        return fail("module linking failed");
     }
   }
   // A declaration's import metadata is no longer valid once resolved in IR.
@@ -333,8 +335,10 @@ int main(int argc, char **argv) {
     if (auto *Index = G.getMetadata("goobj.symbol.index"))
       Symbols.try_emplace(G.getName(), SymbolIdentity{*owner(G), Index});
   }
-  optimize(*Combined, *Plugin, Pipeline);
-  checkPartitionable(*Combined, Symbols);
+  if (Error E = optimize(*Combined, Pipeline))
+    return E;
+  if (Error E = checkPartitionable(*Combined, Symbols))
+    return E;
   // Imported inlined bodies can refer to their package's static data. Go's
   // indexed relocation still identifies the original static definition;
   // LLVM linkage must permit a declaration in a different output partition.
@@ -342,7 +346,7 @@ int main(int argc, char **argv) {
     if (G.hasLocalLinkage() && G.getMetadata("goobj.symbol.index"))
       G.setLinkage(GlobalValue::ExternalLinkage);
   if (std::error_code EC = sys::fs::create_directories(OutDir))
-    fail(EC.message());
+    return fail(EC.message());
 
   for (unsigned I = 0; I != Packages.size(); ++I) {
     ValueToValueMapTy Map;
@@ -399,12 +403,12 @@ int main(int argc, char **argv) {
         StringRef Path = cast<MDString>(E->getOperand(0))->getString();
         auto [It, Inserted] = Unique.try_emplace(Path, E);
         if (!Inserted && It->second != E)
-          fail("inconsistent import fingerprints");
+          return fail("inconsistent import fingerprints");
         if (!Inserted)
           continue;
         StringRef Prefix = cast<MDString>(E->getOperand(1))->getString();
         if (Prefix == Packages[I].Prefix)
-          fail("cyclic package imports");
+          return fail("cyclic package imports");
         for (Package &P : Packages)
           if (P.Prefix == Prefix)
             llvm::append_range(Work, P.Settings["goobj.imports"]);
@@ -444,13 +448,36 @@ int main(int argc, char **argv) {
       }
     }
     if (verifyModule(*M, &errs()))
-      fail("invalid package partition");
+      return fail("invalid package partition");
     std::error_code EC;
-    ToolOutputFile Out(OutDir + "/" + std::to_string(I) + ".ll", EC,
-                       sys::fs::OF_Text);
+    ToolOutputFile Out((OutDir + "/" + std::to_string(I) + ".bc").str(), EC,
+                       sys::fs::OF_None);
     if (EC)
-      fail(EC.message());
-    M->print(Out.os(), nullptr);
+      return fail(EC.message());
+    WriteBitcodeToFile(*M, Out.os());
+    Out.os().flush();
+    if (Out.os().has_error())
+      return fail("cannot write package bitcode");
     Out.keep();
+    if (SaveIR) {
+      ToolOutputFile IR((OutDir + "/" + std::to_string(I) + ".ll").str(), EC,
+                        sys::fs::OF_Text);
+      if (EC)
+        return fail(EC.message());
+      M->print(IR.os(), nullptr);
+      IR.keep();
+    }
   }
+  return Error::success();
+}
+
+// The caller owns the returned error string and frees it with free().
+extern "C" char *GoALLCFullLTO(const char *const *Inputs, size_t Count,
+                               const char *OutDir, int SaveIR) {
+  std::vector<std::string> Paths;
+  for (size_t I = 0; I != Count; ++I)
+    Paths.emplace_back(Inputs[I]);
+  if (Error E = goallc::runFullLTO(Paths, OutDir, "lto<O2>", SaveIR))
+    return strdup(toString(std::move(E)).c_str());
+  return nullptr;
 }
