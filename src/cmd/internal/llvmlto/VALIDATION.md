@@ -15,10 +15,10 @@ code generation inside `cmd/link`; neither path uses a standalone LTO tool.
 | Linker LTO version identity test | Passed |
 | Existing compiler SSA LLVM tests (`-run TestLLVM`) | Passed |
 | macOS arm64 executable and PIE, complete runtime fixture closure | Both modes passed with `GOGC=1` |
-| Linux arm64 and amd64 executable, ThinLTO complete closure | Built and ran with `GOGC=1`; arm64 native Docker, amd64 emulated Docker |
+| Linux arm64 and amd64 executable, complete closure | Both modes built and ran with `GOGC=1`; arm64 native Docker, amd64 emulated Docker |
 | macOS arm64 linker with LLVM/plugin statically linked | Both modes linked PIE and ran with `GOGC=1`; no libLLVM shared dependency |
 | Workflow YAML, four LTO matrix combinations, shell syntax | Passed |
-| Eight common standard-library short suites | Local full/thin runs in progress |
+| Eight common standard-library short suites on macOS arm64 | All 8/8 passed in each mode, 16/16 total |
 
 The runtime fixture covers recursive stack growth with live pointer arrays,
 goroutines, repeated GC, reflection, interfaces, panic/recover, stack frames,
@@ -43,3 +43,9 @@ Go linking, plugin/shared-library build modes, and custom optimization
 pipelines are rejected as documented. Thin backends are sequential and do
 not implement a persistent backend cache. Hosted CI status is reported in
 the PR separately from local results; queued or absent checks are not passes.
+
+At publication on 2026-10-13, manual dispatch of the consolidated PR branch
+was rejected by GitHub with HTTP 422: `Actions has been disabled for this
+repository.` No workflow run was created. The four Linux standard-library
+jobs are configured but have not executed; the standard-library results
+above are local macOS arm64 results, not hosted Linux qualification.
