@@ -7,7 +7,7 @@ package llvmlto
 /*
 #include <stdlib.h>
 #cgo linux LDFLAGS: -ldl
-char *goallcFullLTO(const char *, const char *const *, size_t, const char *, int);
+char *goallcLTO(const char *, const char *const *, size_t, const char *, int, int);
 */
 import "C"
 import (
@@ -18,7 +18,7 @@ import (
 	"unsafe"
 )
 
-func optimize(inputs []string, out string, keep bool) error {
+func optimize(inputs []string, out string, keep bool, mode string) error {
 	if keep {
 		for _, input := range inputs {
 			c := llvm.NewContext()
@@ -56,10 +56,14 @@ func optimize(inputs []string, out string, keep bool) error {
 	if keep {
 		save = 1
 	}
-	message := C.goallcFullLTO(path, (**C.char)(unsafe.Pointer(&values[0])), C.size_t(len(values)), dir, save)
+	thin := C.int(0)
+	if mode == "thin" {
+		thin = 1
+	}
+	message := C.goallcLTO(path, (**C.char)(unsafe.Pointer(&values[0])), C.size_t(len(values)), dir, save, thin)
 	if message != nil {
 		defer C.free(unsafe.Pointer(message))
-		return fmt.Errorf("FullLTO: %s", C.GoString(message))
+		return fmt.Errorf("LTO: %s", C.GoString(message))
 	}
 	return nil
 }

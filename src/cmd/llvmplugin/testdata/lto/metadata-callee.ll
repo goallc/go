@@ -1,5 +1,5 @@
 target triple = "x86_64-unknown-linux-goobj"
-target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-n8:16:32:64-S128"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
 ; CHECK: @leaf.counter = external {{.*}}global i64, !goobj.import
 ; CHECK: @leaf.identity = external {{.*}}constant i8, !goobj.import
 ; CHECK-LABEL: define goabiinternal {{.*}}ptr @callee.Identity()

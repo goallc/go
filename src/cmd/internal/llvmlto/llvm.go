@@ -28,7 +28,7 @@ func emit(input, output string, pic bool) error {
 		if strings.HasPrefix(m.Target(), "aarch64") {
 			arch = "arm64"
 		}
-		llvm.ParseCommandLineOptions(append([]string{"cmd/link FullLTO"}, llvmbackend.CodeGenOptions(arch)...), "GoALLC FullLTO")
+		llvm.ParseCommandLineOptions(append([]string{"cmd/link LTO"}, llvmbackend.CodeGenOptions(arch)...), "GoALLC LTO")
 		llvm.InitializeAllTargetInfos()
 		llvm.InitializeAllTargets()
 		llvm.InitializeAllTargetMCs()
@@ -56,7 +56,7 @@ func emit(input, output string, pic bool) error {
 		}
 	}
 	if err := tm.RunPassPluginPreCodeGen(m, llvm.ObjectFile, plugin); err != nil {
-		return fmt.Errorf("FullLTO pre-codegen: %w", err)
+		return fmt.Errorf("LTO pre-codegen: %w", err)
 	}
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		return err

@@ -16,7 +16,7 @@ func TestLTOVersionMode(t *testing.T) {
 		{[]string{"-lto=full", "-V=full"}, true},
 		{[]string{"--lto", "full", "-V=full"}, true},
 		{[]string{"-lto=full", "-lto="}, false},
-		{[]string{"-lto=thin"}, false},
+		{[]string{"-lto=thin"}, true},
 	} {
 		if got := ltoVersionEnabled(test.args); got != test.want {
 			t.Errorf("%v: got %v, want %v", test.args, got, test.want)

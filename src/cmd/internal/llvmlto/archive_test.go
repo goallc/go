@@ -187,9 +187,15 @@ func TestArchiveWriteErrors(t *testing.T) {
 	}
 }
 
-func TestFullLTO(t *testing.T) {
+func TestLTO(t *testing.T) {
+	for _, mode := range []string{"full", "thin"} {
+		t.Run(mode, func(t *testing.T) { testLTO(t, mode) })
+	}
+}
+
+func testLTO(t *testing.T, mode string) {
 	if (runtime.GOOS != "darwin" && runtime.GOOS != "linux") || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
-		t.Skip("FullLTO runtime fixture supports darwin/linux on amd64/arm64")
+		t.Skip("LTO runtime fixture supports darwin/linux on amd64/arm64")
 	}
 	if os.Getenv("GOALLC_TEST_LTO") != "1" {
 		t.Skip("set GOALLC_TEST_LTO=1 with an LLVM-enabled toolchain")
@@ -215,7 +221,7 @@ func TestFullLTO(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseline := filepath.Join(dir, "baseline")
-	run(fixture, goTool, "build", "-buildmode=exe", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-o", baseline, ".")
+	run(fixture, goTool, "build", "-buildmode=exe", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l -dwarf=false", "-o", baseline, ".")
 	want := run("", baseline)
 	if !strings.Contains(want, "LTO RUNTIME OK") {
 		t.Fatal(want)
@@ -223,8 +229,8 @@ func TestFullLTO(t *testing.T) {
 	output := filepath.Join(dir, "lto")
 	// A per-test link ID prevents a cached executable from hiding the LTO
 	// work directory. It leaves dependencies eligible for the Go build cache.
-	linkID := "lto-" + filepath.Base(filepath.Dir(dir))
-	log := run(fixture, goTool, "build", "-buildmode=exe", "-ldflags=-lto-keep -buildid="+linkID, "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-lto=full", "-o", output, ".")
+	linkID := "lto-" + mode + "-" + filepath.Base(filepath.Dir(dir))
+	log := run(fixture, goTool, "build", "-buildmode=exe", "-ldflags=-lto-keep -buildid="+linkID, "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l -dwarf=false", "-lto="+mode, "-o", output, ".")
 	if got := run("", output); got != want {
 		t.Fatalf("LTO output %q, baseline %q", got, want)
 	}
@@ -238,6 +244,11 @@ func TestFullLTO(t *testing.T) {
 		t.Fatalf("LTO did not run: %s", log)
 	}
 	defer os.RemoveAll(work)
+	if mode == "thin" {
+		if info, err := os.Stat(filepath.Join(work, "optimized", "thin.index.bc")); err != nil || info.Size() == 0 {
+			t.Fatalf("ThinLTO summary index missing: %v", err)
+		}
+	}
 	before, err := filepath.Glob(filepath.Join(work, "*.input.ll"))
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +289,7 @@ func TestFullLTO(t *testing.T) {
 	if !hasCall(after, "example.com/lto/dep.Opaque") {
 		t.Fatal("LLVM did not preserve the //go:noinline call")
 	}
-	archivePath := strings.TrimSpace(run(fixture, goTool, "list", "-export", "-lto=full", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-f", "{{.Export}}", "example.com/lto/dep"))
+	archivePath := strings.TrimSpace(run(fixture, goTool, "list", "-export", "-lto="+mode, "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l -dwarf=false", "-f", "{{.Export}}", "example.com/lto/dep"))
 	f, err := os.Open(archivePath)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +302,7 @@ func TestFullLTO(t *testing.T) {
 	found := false
 	for _, entry := range ar.Entries {
 		if entry.Name == "_go_.o" {
-			t.Fatal("compiler emitted machine code before FullLTO")
+			t.Fatal("compiler emitted machine code before LTO")
 		}
 		if entry.Name == irMember {
 			found = true
@@ -302,7 +313,7 @@ func TestFullLTO(t *testing.T) {
 	}
 	// Force a new link action while reusing cached dependency bitcode archives.
 	// Changing ldflags may rebuild main, which embeds the build settings.
-	cacheLog := run(fixture, goTool, "build", "-buildmode=exe", "-x", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l", "-ldflags=-lto-keep -buildid="+linkID+"-cache-probe", "-lto=full", "-o", output, ".")
+	cacheLog := run(fixture, goTool, "build", "-buildmode=exe", "-x", "-gcflags=all=-enablellvm", "-gcflags=example.com/lto=-enablellvm -l -dwarf=false", "-ldflags=-lto-keep -buildid="+linkID+"-cache-probe", "-lto="+mode, "-o", output, ".")
 	cacheLinked := false
 	for _, line := range strings.Split(cacheLog, "\n") {
 		if strings.Contains(line, "/compile ") && !strings.Contains(line, " -V=full") && !strings.Contains(line, " -p main ") {
@@ -341,7 +352,7 @@ func TestLTOOptions(t *testing.T) {
 			t.Fatalf("%v: %v\n%s", flags, err, out)
 		}
 	}
-	for _, flags := range [][]string{{"-lto=thin"}, {"-lto=full", "-race"}, {"-lto=full", "-buildmode=c-archive"}} {
+	for _, flags := range [][]string{{"-lto=invalid"}, {"-lto=full", "-race"}, {"-lto=full", "-buildmode=c-archive"}} {
 		cmd := exec.Command(goTool, append([]string{"build"}, flags...)...)
 		cmd.Dir = "testdata/runtime"
 		cmd.Env = append(os.Environ(), "GOFLAGS=", "GOTOOLCHAIN=local", "CGO_ENABLED=1")

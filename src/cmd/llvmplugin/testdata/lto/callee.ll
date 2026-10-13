@@ -2,7 +2,7 @@
 ; CHECK-SAME: !goobj.symbol.index ![[INDEX:[0-9]+]]
 ; CHECK: ![[INDEX]] = !{i32 3}
 target triple = "x86_64-unknown-linux-goobj"
-target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-n8:16:32:64-S128"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
 @llvm.compiler.used = appending global [3 x ptr] [ptr @callee.Add, ptr @callee.Opaque, ptr @callee.Restricted], section "llvm.metadata"
 define goabiinternal i64 @callee.Add(i64 %x) !goobj.symbol.index !0 {
   %n = add i64 %x, 7

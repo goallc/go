@@ -50,8 +50,8 @@ import (
 )
 
 var (
-	flagLTO        = flag.String("lto", "", "LLVM link-time optimization mode (full)")
-	flagLTOKeep    = flag.Bool("lto-keep", false, "keep FullLTO work directory")
+	flagLTO        = flag.String("lto", "", "LLVM link-time optimization mode (full or thin)")
+	flagLTOKeep    = flag.Bool("lto-keep", false, "keep LTO work directory")
 	pkglistfornote []byte
 	windowsgui     bool // writes a "GUI binary" instead of a "console binary"
 	ownTmpDir      bool // set to true if tmp dir created by linker (e.g. no -tmpdir)
@@ -348,21 +348,21 @@ func Main(arch *sys.Arch, theArch Arch) {
 
 	mainFile := flag.Arg(0)
 	if *flagLTO != "" {
-		if *flagLTO != "full" {
+		if *flagLTO != "full" && *flagLTO != "thin" {
 			Exitf("unsupported -lto mode %q", *flagLTO)
 		}
 		if ctxt.BuildMode != BuildModeExe && ctxt.BuildMode != BuildModePIE {
-			Exitf("FullLTO requires buildmode=exe or pie")
+			Exitf("LTO requires buildmode=exe or pie")
 		}
 		if ctxt.linkShared || *flagRace || *flagMsan || *flagAsan {
-			Exitf("FullLTO does not support shared linking or sanitizers")
+			Exitf("LTO does not support shared linking or sanitizers")
 		}
 		if ctxt.PackageFile == nil {
-			Exitf("FullLTO requires -importcfg")
+			Exitf("LTO requires -importcfg")
 		}
 		var cleanup func()
 		var err error
-		mainFile, ctxt.PackageFile, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE)
+		mainFile, ctxt.PackageFile, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE, *flagLTO)
 		AtExit(cleanup)
 		if err != nil {
 			Exitf("%v", err)

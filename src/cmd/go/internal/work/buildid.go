@@ -811,7 +811,7 @@ func (b *Builder) updateBuildID(a *Action, target string) error {
 }
 
 // linkToolID includes LLVM runtime contents when the effective linker flags
-// enable FullLTO, including explicit -ldflags overrides.
+// enable LTO, including explicit -ldflags overrides.
 func (b *Builder) linkToolID(p *load.Package) string {
 	flags := append([]string(nil), forcedLdflags...)
 	if p != nil {
@@ -827,8 +827,8 @@ func (b *Builder) linkToolID(p *load.Package) string {
 			mode = strings.TrimPrefix(arg, "-lto=")
 		}
 	}
-	if mode == "full" {
-		return b.toolIDWithArgs("link", "link\x00-lto=full", []string{"-lto=full"})
+	if mode == "full" || mode == "thin" {
+		return b.toolIDWithArgs("link", "link\x00-lto="+mode, []string{"-lto=" + mode})
 	}
 	return b.toolID("link")
 }

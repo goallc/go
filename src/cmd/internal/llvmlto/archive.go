@@ -1,7 +1,7 @@
 // Copyright 2026 The GoALLC Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-// Package llvmlto implements the linker's package-preserving FullLTO phase.
+// Package llvmlto implements the linker's package-preserving LTO phase.
 package llvmlto
 
 import (
@@ -18,8 +18,8 @@ const irMember = "__.LLVMBC"
 // Prepare replaces bitcode archives in an isolated directory. The caller must
 // keep that directory until the ordinary Go linker has finished loading them.
 // No cache input is modified, including on failure.
-func Prepare(main string, packages map[string]string, keep, pic bool) (string, map[string]string, func(), error) {
-	work, err := os.MkdirTemp("", "go-full-lto-")
+func Prepare(main string, packages map[string]string, keep, pic bool, mode string) (string, map[string]string, func(), error) {
+	work, err := os.MkdirTemp("", "go-lto-")
 	if err != nil {
 		return "", nil, func() {}, err
 	}
@@ -54,10 +54,10 @@ func Prepare(main string, packages map[string]string, keep, pic bool) (string, m
 		originals = append(originals, path)
 	}
 	if len(inputs) == 0 {
-		return "", nil, cleanup, fmt.Errorf("-lto=full requires packages compiled with -llvm-lto")
+		return "", nil, cleanup, fmt.Errorf("LTO requires packages compiled with -llvm-lto")
 	}
 	out := filepath.Join(work, "optimized")
-	if err := optimize(inputs, out, keep); err != nil {
+	if err := optimize(inputs, out, keep, mode); err != nil {
 		return "", nil, cleanup, err
 	}
 	replacements := make(map[string]string)

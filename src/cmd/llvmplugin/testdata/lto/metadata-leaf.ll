@@ -1,8 +1,8 @@
 target triple = "x86_64-unknown-linux-goobj"
-target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-n8:16:32:64-S128"
-; CHECK: @leaf.counter = {{.*}}global i64 41, !goobj.symbol.index ![[COUNTER:[0-9]+]]
-; CHECK: @leaf.identity = {{.*}}constant i8 7, !goobj.symbol.index ![[IDENTITY:[0-9]+]]
-; CHECK: @leaf.unreferenced = {{.*}}global i64 3, !goobj.symbol.index ![[RETAINED:[0-9]+]]
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
+; CHECK: @leaf.counter = {{.*}}global i64 41, {{.*}}!goobj.symbol.index ![[COUNTER:[0-9]+]]
+; CHECK: @leaf.identity = {{.*}}constant i8 7, {{.*}}!goobj.symbol.index ![[IDENTITY:[0-9]+]]
+; CHECK: @leaf.unreferenced = {{.*}}global i64 3, {{.*}}!goobj.symbol.index ![[RETAINED:[0-9]+]]
 ; CHECK: !goobj.keep = !{![[KEEP:[0-9]+]]}
 ; CHECK: !goobj.gotype = !{![[KEEP]]}
 ; CHECK-DAG: ![[KEEP]] = !{ptr @leaf.counter, ptr @leaf.identity}

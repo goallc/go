@@ -1,26 +1,35 @@
-# Package-preserving FullLTO library
+# Package-preserving LLVM LTO library
 
-`GoALLCFullLTO` is a C ABI entry point in the existing GoALLC pass plugin.
-It combines compiler bitcode, runs FullLTO at O2, and writes one optimized
-bitcode partition for each input package. The linker calls this library in
-process and performs GoObj code generation before its ordinary loading,
-resolution, dead-code elimination, and layout phases.
+`GoALLCLTO` is a C ABI entry point in the existing GoALLC pass plugin.
+The linker calls it in process, selects FullLTO or ThinLTO, then performs
+GoObj code generation before ordinary object loading, symbol resolution,
+dead-code elimination, and layout.
 
-The library preserves package symbol indices, export fingerprints, import
-relationships, assembly-visible definitions, and package-owned metadata.
-Cross-package references use indexed GoObj imports. Address-significant
-constants retain ownership. Linkname-sensitive bodies stay in their original
-package so the Go linker's access checks still apply.
+FullLTO combines compiler bitcode, runs `lto<O2>`, and partitions by original
+package ownership. ThinLTO constructs and combines LLVM summary indexes,
+uses LLVM's cost-based cross-module import planner and function importer,
+and runs `thinlto<O2>` separately on each package plus its imported bodies.
+Thin backends currently run sequentially without a persistent backend cache.
+`-lto-keep` retains the combined ThinLTO index as `optimized/thin.index.bc`
+and the before/after package IR for inspection.
 
-Errors return an allocated string to the caller, which frees it with `free`.
-The entry point never launches a subprocess. Unsupported aliases, conflicting
-configuration, and optimization-created symbols without ownership are rejected.
-The initial pipeline conservatively retains Go definitions; ThinLTO and
-aggressive whole-program internalization are not implemented.
+Both paths preserve package symbol indices, export fingerprints, imports,
+assembly-visible definitions, and package metadata. Cross-package references
+use indexed GoObj imports. Address-significant constants retain ownership.
+Content-addressed function copies receive distinct package indices so newly
+exposed cross-package references can resolve before their machine-code hashes
+exist. ABI padding types remain distinct from ordinary byte structs.
+Linkname-sensitive bodies remain uninlined so Go linker access checks apply.
 
-With `BUILD_TESTING=ON`, `goallc-lto-test` is a test-only harness linked against
-the same library. It is not installed as a toolchain command. Its nine FileCheck
-cases live in `testdata/lto` and run with the existing plugin CTest suite.
+Errors return an allocated string which the caller frees with `free()`.
+No subprocess is launched. Unsupported aliases, conflicting configuration,
+and optimization-created definitions without ownership are rejected. Go
+symbols are conservatively retained because ordinary assembly is outside
+LLVM's reachability graph.
 
-Local validation: all 172 plugin CTest cases passed with LLVM 23 on macOS arm64,
-including the nine FullLTO cases. Go build integration is provided separately.
+With `BUILD_TESTING=ON`, `goallc-lto-test` is a test-only harness linked with
+the same library. It is not installed as a toolchain command. FileCheck cases
+in `testdata/lto` run with the existing plugin CTest suite. Runtime, archive,
+and build-cache integration tests live in `cmd/internal/llvmlto`; see its
+[README](../internal/llvmlto/README.md) and
+[validation record](../internal/llvmlto/VALIDATION.md).

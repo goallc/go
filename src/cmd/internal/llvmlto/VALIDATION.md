@@ -1,48 +1,45 @@
-# In-process FullLTO validation
+# In-process LTO validation
 
-Local validation on 2026-10-13 used the LLVM 23 payload built from source
-tree `1204008cc14b7a995b2dd152b6bc38b3350dfb9d`, matching the CI LLVM pin
-`267a23e09bf5894dcf2544c8fbff38c49ea6ea92`. The Go toolchain was rebuilt
-from this PR, including bootstrap, compiler, plugin, and linker. LLVM/LLD
-sources were not modified for this integration.
+Local validation on 2026-10-13 uses the LLVM 23 payload built from source
+`1204008cc14b7a995b2dd152b6bc38b3350dfb9d`, matching the clean CI LLVM pin
+`267a23e09bf5894dcf2544c8fbff38c49ea6ea92`. The compiler, linker, Go command,
+and plugin are rebuilt from this change. LLVM sources are unchanged.
 
-The production command is `go build -lto=full`; all optimization and GoObj
-code generation execute inside `cmd/link` through library calls. The old
-`cmd/llvmlto` driver and standalone backend executable have been removed.
+`go build -lto=full` and `go build -lto=thin` execute optimization and GoObj
+code generation inside `cmd/link`; neither path uses a standalone LTO tool.
 
 | Check | Result |
 | --- | --- |
-| Fresh dynamic LLVM toolchain bootstrap | Passed |
-| Plugin CTest suite, including nine FullLTO FileCheck cases | 172/172 passed |
-| Archive preservation, malformed inputs, write failures, option rejection, runtime and cache integration | Six Go tests passed |
+| Plugin CTest suite, including FullLTO/ThinLTO FileCheck regressions | 178/178 passed |
+| Archive preservation, invalid inputs, write failures, option rejection, runtime and cached relink | Passed for both modes |
 | Linker LTO version identity test | Passed |
 | Existing compiler SSA LLVM tests (`-run TestLLVM`) | Passed |
-| macOS arm64, default PIE, complete 45-package closure | Built, linked, and ran with `GOGC=1` |
-| macOS arm64, explicit executable, complete closure | Baseline comparison and cached relink passed with `GOGC=1` |
-| Linux arm64, executable, complete 47-package closure | Built, linked, and ran with `GOGC=1` in native Docker |
-| Linux amd64, executable, complete 47-package closure | Built, linked, and ran with `GOGC=1` in emulated Docker |
-| Linux arm64 and amd64, PIE, complete closures | Built, linked, and ran with `GOGC=1` in native/emulated Docker |
-| Ordinary link given a bitcode archive | Rejected with the required `-lto=full` diagnostic |
-| macOS arm64 linker with LLVM/plugin statically linked | Built, performed FullLTO, linked PIE, and ran with `GOGC=1` |
-
-The static linker has no `libLLVM` shared-library dependency. The compiler
-for that probe came from the dynamic SDK; this is a static-linker/C ABI
-check, not a separate full static SDK bootstrap.
+| macOS arm64 executable and PIE, complete runtime fixture closure | Both modes passed with `GOGC=1` |
+| Linux arm64 and amd64 executable, ThinLTO complete closure | Built and ran with `GOGC=1`; arm64 native Docker, amd64 emulated Docker |
+| macOS arm64 linker with LLVM/plugin statically linked | Both modes linked PIE and ran with `GOGC=1`; no libLLVM shared dependency |
+| Workflow YAML, four LTO matrix combinations, shell syntax | Passed |
+| Eight common standard-library short suites | Local full/thin runs in progress |
 
 The runtime fixture covers recursive stack growth with live pointer arrays,
-four goroutines, repeated GC, reflection, interfaces, panic/recover, stack
-frames, ordinary Go assembly calling back into Go, and references to private
-transitive-package data. Each three-platform IR inspection found the
-cross-package `dep.Add` call before LTO and no such call afterwards. The
-`//go:noinline` call remains. Archive inspection confirms that the compiler
-writes `__.LLVMBC` without `_go_.o`; a fresh link reuses cached dependency
-bitcode while still running FullLTO.
+goroutines, repeated GC, reflection, interfaces, panic/recover, stack frames,
+ordinary assembly callbacks, and private transitive-package data. Saved IR
+checks cross-package `dep.Add` call elimination and preserves `//go:noinline`.
+ThinLTO also checks its combined summary index. Archive tests confirm
+`__.LLVMBC` without an initial `_go_.o` and reuse of dependency bitcode on a
+fresh link action. A mixed no-DWARF main package tests debug-record handling.
 
-This is not a full standard-library qualification. Cgo, sanitizers, shared
-Go linking, and ThinLTO are not qualified. Unsupported option combinations
-are rejected where documented in README.md.
+Regressions cover ABI padding versus ordinary byte structs, indexed closure
+copies (including ABI0 identity), same-named private globals, content-addressed
+constants, metadata-only debug/marker references, markers moved by inlining,
+and the Go defer callbr intrinsic during ThinLTO summary construction.
 
-Hosted CI status is separate from these local results. Earlier dispatches
-were rejected by GitHub with `Actions has been disabled for this repository`;
-see the PR descriptions for the latest dispatch status. No empty or queued
-check set is treated as a passing CI run.
+CI runs complete short tests for `bytes`, `strings`, `strconv`, `sort`,
+`encoding/binary`, `encoding/json`, `hash/crc32`, and `unicode/utf8` in four
+jobs: FullLTO/ThinLTO on native Linux amd64/arm64. Tests are serialized and
+resource logs are uploaded. No LTO-specific exclusions are applied.
+
+This is not a full standard-library or cgo qualification. Sanitizers, shared
+Go linking, plugin/shared-library build modes, and custom optimization
+pipelines are rejected as documented. Thin backends are sequential and do
+not implement a persistent backend cache. Hosted CI status is reported in
+the PR separately from local results; queued or absent checks are not passes.

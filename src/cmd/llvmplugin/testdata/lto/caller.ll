@@ -1,3 +1,12 @@
+; THIN-LABEL: define goabiinternal {{.*}}i64 @caller.Answer()
+; THIN-NOT: call
+; THIN: ret i64 42
+; THIN-LABEL: define goabiinternal {{.*}}i64 @caller.Opaque
+; THIN: call goabiinternal i64 @callee.Opaque
+; THIN: declare !goobj.import ![[IMPORT:[0-9]+]] goabiinternal i64 @callee.Opaque
+; THIN-LABEL: define goabiinternal {{.*}}i64 @caller.Restricted
+; THIN: call goabiinternal i64 @callee.Restricted
+; THIN: ![[IMPORT]] = !{!"callee", i32 4, i8 0}
 ; DUPLICATE: goallc-lto: duplicate package prefix: caller
 ; CHECK-LABEL: define goabiinternal {{.*}}i64 @caller.Answer()
 ; CHECK-NOT: call
@@ -11,7 +20,7 @@
 ; CHECK: ![[CONFIG]] = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"caller-id", !"caller"
 ; CHECK: ![[IMPORT]] = !{!"callee", i32 4, i8 0}
 target triple = "x86_64-unknown-linux-goobj"
-target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-n8:16:32:64-S128"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
 @llvm.compiler.used = appending global [3 x ptr] [ptr @caller.Answer, ptr @caller.Opaque, ptr @caller.Restricted], section "llvm.metadata"
 define goabiinternal i64 @caller.Answer() !goobj.symbol.index !0 {
   %n = call goabiinternal i64 @callee.Add(i64 35)

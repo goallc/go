@@ -57,5 +57,5 @@ func ltoVersionEnabled(args []string) bool {
 			mode = strings.TrimPrefix(arg, "-lto=")
 		}
 	}
-	return mode == "full"
+	return mode == "full" || mode == "thin"
 }
