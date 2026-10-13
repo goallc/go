@@ -215,38 +215,16 @@ jobs:
             -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
             -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
-          cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
+          cmake --build "$plugin_build" --target GoALLCStatepoints goallc-lto-test --parallel "$(nproc)"
           ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
 
-      - name: Test FullLTO package backend
+      - name: Test in-process FullLTO and runtime
         shell: bash
         run: |
           set -euo pipefail
-          lto_build="$RUNNER_TEMP/goallc-lto"
-          cmake -S src/cmd/llvmlto/backend -B "$lto_build" -G Ninja \
-            -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm" \
-            -DGOALLC_LTO_PLUGIN="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin/GoALLCStatepoints.so" \
-            -DBUILD_TESTING=ON \
-            -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
-          cmake --build "$lto_build" --parallel "$(nproc)"
-          ctest --test-dir "$lto_build" --output-on-failure -j "$(nproc)"
+          GOALLC_TEST_LTO=1 ./bin/go test -tags=llvm23,dynamicllvm \
+            -gcflags=all=-enablellvm=false cmd/internal/llvmlto -count=1 -v
 
-      - name: Test FullLTO build driver and runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          export GOALLC_LTO_BACKEND="$RUNNER_TEMP/goallc-lto/goallc-lto"
-          export GOALLC_LLC="$LLVM_ROOT/bin/llc"
-          export GOALLC_PASS_PLUGIN="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin/GoALLCStatepoints.so"
-          ./bin/go test -gcflags=all=-enablellvm=false cmd/llvmlto -count=1 -v
-          ./bin/go build -gcflags=all=-enablellvm=false -o "$RUNNER_TEMP/llvmlto" cmd/llvmlto
-          cd src/cmd/llvmlto/testdata/runtime
-          CGO_ENABLED=0 "$GITHUB_WORKSPACE/bin/go" build -buildmode=exe \
-            -gcflags=all=-enablellvm '-gcflags=example.com/lto=-enablellvm -l' \
-            -toolexec="$RUNNER_TEMP/llvmlto -packages=all -backend=$GOALLC_LTO_BACKEND -llc=$GOALLC_LLC -plugin=$GOALLC_PASS_PLUGIN" \
-            -o "$RUNNER_TEMP/lto-runtime" .
-          GOGC=1 "$RUNNER_TEMP/lto-runtime"
 
       - name: Package shared SDK and test tools
         shell: bash
