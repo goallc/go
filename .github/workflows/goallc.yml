@@ -218,6 +218,20 @@ jobs:
           cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
           ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
 
+      - name: Test FullLTO package backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          lto_build="$RUNNER_TEMP/goallc-lto"
+          cmake -S src/cmd/llvmlto/backend -B "$lto_build" -G Ninja \
+            -DLLVM_DIR="$LLVM_ROOT/lib/cmake/llvm" \
+            -DGOALLC_LTO_PLUGIN="$GITHUB_WORKSPACE/pkg/goallc-llvmplugin/GoALLCStatepoints.so" \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
+          cmake --build "$lto_build" --parallel "$(nproc)"
+          ctest --test-dir "$lto_build" --output-on-failure -j "$(nproc)"
+
       - name: Package shared SDK and test tools
         shell: bash
         run: |
