@@ -33,6 +33,7 @@ package ld
 import (
 	"bufio"
 	"cmd/internal/goobj"
+	"cmd/internal/llvmlto"
 	"cmd/internal/objabi"
 	"cmd/internal/quoted"
 	"cmd/internal/sys"
@@ -49,6 +50,8 @@ import (
 )
 
 var (
+	flagLTO        = flag.String("lto", "", "LLVM link-time optimization mode (full or thin)")
+	flagLTOKeep    = flag.Bool("lto-keep", false, "keep LTO work directory")
 	pkglistfornote []byte
 	windowsgui     bool // writes a "GUI binary" instead of a "console binary"
 	ownTmpDir      bool // set to true if tmp dir created by linker (e.g. no -tmpdir)
@@ -343,6 +346,28 @@ func Main(arch *sys.Arch, theArch Arch) {
 		ctxt.Logf("HEADER = -H%d -T0x%x -R0x%x\n", ctxt.HeadType, uint64(*FlagTextAddr), uint32(*FlagRound))
 	}
 
+	mainFile := flag.Arg(0)
+	if *flagLTO != "" {
+		if *flagLTO != "full" && *flagLTO != "thin" {
+			Exitf("unsupported -lto mode %q", *flagLTO)
+		}
+		if ctxt.BuildMode != BuildModeExe && ctxt.BuildMode != BuildModePIE {
+			Exitf("LTO requires buildmode=exe or pie")
+		}
+		if ctxt.linkShared || *flagRace || *flagMsan || *flagAsan {
+			Exitf("LTO does not support shared linking or sanitizers")
+		}
+		if ctxt.PackageFile == nil {
+			Exitf("LTO requires -importcfg")
+		}
+		var cleanup func()
+		var err error
+		mainFile, ctxt.PackageFile, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE, *flagLTO)
+		AtExit(cleanup)
+		if err != nil {
+			Exitf("%v", err)
+		}
+	}
 	zerofp := goobj.FingerprintType{}
 	switch ctxt.BuildMode {
 	case BuildModeShared:
@@ -362,7 +387,7 @@ func Main(arch *sys.Arch, theArch Arch) {
 	case BuildModePlugin:
 		addlibpath(ctxt, "command line", "command line", flag.Arg(0), *flagPluginPath, "", zerofp)
 	default:
-		addlibpath(ctxt, "command line", "command line", flag.Arg(0), "main", "", zerofp)
+		addlibpath(ctxt, "command line", "command line", mainFile, "main", "", zerofp)
 	}
 	bench.Start("loadlib")
 	ctxt.loadlib()

@@ -173,7 +173,7 @@ jobs:
           for target in X86 AArch64; do
             "$LLVM_ROOT/bin/llvm-config" --targets-built | tr ' ' '\n' | grep -Fx "$target"
           done
-          for tool in FileCheck llc llvm-ar llvm-config opt; do
+          for tool in FileCheck llc llvm-ar llvm-as llvm-config llvm-dis not opt; do
             test -x "$LLVM_ROOT/bin/$tool"
           done
           test -f "$LLVM_ROOT/include/llvm-c/Core.h"
@@ -215,8 +215,15 @@ jobs:
             -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
             -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
-          cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
+          cmake --build "$plugin_build" --target GoALLCStatepoints goallc-lto-test --parallel "$(nproc)"
           ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
+
+      - name: Test in-process FullLTO/ThinLTO and runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOALLC_TEST_LTO=1 ./bin/go test -tags=llvm23,dynamicllvm \
+            -gcflags=all=-enablellvm=false cmd/internal/llvmlto -count=1 -v
 
       - name: Package shared SDK and test tools
         shell: bash
@@ -370,3 +377,83 @@ jobs:
             ${{ runner.temp }}/resources.log
             ${{ runner.temp }}/kernel.log
             test/llvm_known_failures.json
+
+  lto-stdlib:
+    name: lto-${{ matrix.mode }}-stdlib-linux-${{ matrix.arch }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        mode: [full, thin]
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    env:
+      GOROOT: ${{ github.workspace }}
+      GOCACHE: ${{ github.workspace }}/.go-build
+      GOENV: "off"
+      GOMAXPROCS: "2"
+    steps:
+      - name: Check out Go
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdb libedit-dev libxml2-dev libzstd-dev zlib1g-dev
+
+      - name: Download shared SDK
+        uses: actions/download-artifact@v5
+        with:
+          name: goallc-sdk-${{ matrix.arch }}
+          path: ${{ runner.temp }}/sdk
+
+      - name: Restore shared SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GOCACHE"
+          tar --zstd -xf "$RUNNER_TEMP/sdk/go-build-cache.tar.zst" -C "$GOCACHE"
+          tar --zstd -xf "$RUNNER_TEMP/sdk/goallc-sdk.tar.zst"
+          mkdir -p .goallc/llvm
+          tar --zstd -xf "$RUNNER_TEMP/sdk/llvm-test-tools.tar.zst" -C .goallc/llvm
+          ln -sfn "$GITHUB_WORKSPACE/.goallc/llvm" src/cmd/vendor/github.com/goallc/go-llvm/llvm
+          printf '%s\n' "$GITHUB_WORKSPACE/.goallc/llvm" > pkg/goallc-llvm-payload
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+          ./bin/go tool compile -V=full
+          .goallc/llvm/bin/FileCheck --version
+
+      - name: Provision swap for LTO standard-library links
+        run: |
+          swap_file="$RUNNER_TEMP/goallc-lto.swap"
+          sudo fallocate -l 4G "$swap_file"
+          sudo chmod 600 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+
+      - name: Run common standard-library tests with LTO
+        shell: bash
+        env:
+          LTO_MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/goallc-resource-monitor.sh > >(tee "$RUNNER_TEMP/resources.log") 2>&1 &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
+          .github/scripts/goallc-lto-stdlib.sh "$LTO_MODE" 2>&1 | tee "$RUNNER_TEMP/lto-stdlib.log"
+
+      - name: Publish LTO standard-library logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lto-stdlib-${{ matrix.arch }}-${{ matrix.mode }}
+          path: |
+            ${{ runner.temp }}/lto-stdlib.log
+            ${{ runner.temp }}/resources.log
