@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license.
 
 #include "GoALLCLTO.h"
+#include "GoALLCPlugin.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -20,7 +21,6 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/SourceMgr.h"
@@ -35,7 +35,6 @@
 #include <vector>
 
 using namespace llvm;
-extern "C" llvm::PassPluginLibraryInfo llvmGetPassPluginInfo();
 static constexpr StringLiteral OwnerMD = "goallc.lto.owner";
 // Go 1.27 cmd/internal/goobj SymFlagLinknameStd (not in older LLVM headers).
 static constexpr uint32_t GoSymFlagLinknameStd = 1u << 5;
@@ -158,7 +157,7 @@ static Error optimize(Module &M, StringRef Pipeline) {
   CGSCCAnalysisManager CGAM;
   ModuleAnalysisManager MAM;
   PassBuilder PB;
-  llvmGetPassPluginInfo().RegisterPassBuilderCallbacks(PB);
+  registerGoALLCPassBuilderCallbacks(PB);
   PB.registerModuleAnalyses(MAM);
   PB.registerCGSCCAnalyses(CGAM);
   PB.registerFunctionAnalyses(FAM);
