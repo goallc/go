@@ -537,6 +537,9 @@ func (ctxt *Link) loadlib() {
 		log.Fatalf("invalid -strictdups flag value %d", *FlagStrictDups)
 	}
 	ctxt.loader = loader.NewLoader(flags, &ctxt.ErrorReporter.ErrorReporter)
+	if ctxt.ltoManifest != nil {
+		ctxt.loader.SetLTO(ctxt.ltoManifest, ctxt.LibraryByPkg)
+	}
 	ctxt.ErrorReporter.SymName = func(s loader.Sym) string {
 		return ctxt.loader.SymName(s)
 	}

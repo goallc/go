@@ -1991,6 +1991,16 @@ func dwarfGenerateDebugInfo(ctxt *Link) {
 				pnsData := d.ldr.Data(pnSymIdx)
 				pkgname = string(pnsData)
 			}
+			// A single FullLTO object has one physical CU-name carrier. The
+			// manifest retains the declared name of every logical package.
+			if ctxt.ltoManifest != nil {
+				for _, p := range ctxt.ltoManifest.Packages {
+					if p.Path == unit.Lib.Pkg {
+						pkgname = p.Name
+						break
+					}
+				}
+			}
 			newattr(unit.DWInfo, dwarf.DW_AT_go_package_name, dwarf.DW_CLS_STRING, int64(len(pkgname)), pkgname)
 
 			if buildcfg.Experiment.Dwarf5 && cuabrv == dwarf.DW_ABRV_COMPUNIT {

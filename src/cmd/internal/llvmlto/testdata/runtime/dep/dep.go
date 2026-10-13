@@ -5,6 +5,10 @@ import (
 	"runtime"
 )
 
+var InitOrder string
+
+func init() { InitOrder = leaf.InitOrder + ":dep" }
+
 type Node struct {
 	Value int
 	Next  *Node

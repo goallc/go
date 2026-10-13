@@ -6,7 +6,10 @@ package llvmlto
 import (
 	"bytes"
 	"cmd/internal/archive"
+	"cmd/internal/goobj"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -248,6 +251,61 @@ func testLTO(t *testing.T, mode string) {
 		if info, err := os.Stat(filepath.Join(work, "optimized", "thin.index.bc")); err != nil || info.Size() == 0 {
 			t.Fatalf("ThinLTO summary index missing: %v", err)
 		}
+	} else {
+		data, err := os.ReadFile(filepath.Join(work, "optimized", "program.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest goobj.LTOManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		objects, err := filepath.Glob(filepath.Join(work, "*.o"))
+		if err != nil || len(objects) != 1 || filepath.Base(objects[0]) != "program.o" {
+			t.Fatalf("FullLTO must emit exactly one GoObj: %v, %v", objects, err)
+		}
+		data, err = os.ReadFile(objects[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := bytes.Index(data, []byte(goobj.Magic))
+		if start < 0 {
+			t.Fatal("FullLTO output has no GoObj header")
+		}
+		r := goobj.NewReaderFromBytes(data[start:], true)
+		n := r.NSym() + r.NHashed64def() + r.NHasheddef() + r.NNonpkgdef()
+		for i := 0; i < n; i++ {
+			if name := r.Sym(uint32(i)).Name(r); strings.Contains(name, ".goallc.lto.") {
+				t.Fatalf("temporary LLVM storage name leaked into GoObj: %s", name)
+			}
+		}
+		for i := range manifest.Packages {
+			f, err := os.Open(filepath.Join(work, fmt.Sprintf("%d.a", i)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := archive.Parse(f, false)
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			compilerObjects := 0
+			for _, e := range a.Entries {
+				if e.Name == "_go_.o" {
+					compilerObjects++
+				}
+				if e.Name == irMember {
+					t.Fatalf("temporary archive %d still has bitcode", i)
+				}
+			}
+			want := 0
+			if i == manifest.Main {
+				want = 1
+			}
+			if compilerObjects != want {
+				t.Fatalf("archive %d has %d compiler objects, want %d", i, compilerObjects, want)
+			}
+		}
 	}
 	before, err := filepath.Glob(filepath.Join(work, "*.input.ll"))
 	if err != nil {
@@ -285,6 +343,9 @@ func testLTO(t *testing.T, mode string) {
 	}
 	if hasCall(after, "example.com/lto/dep.Add") {
 		t.Fatal("LLVM did not eliminate the cross-package call")
+	}
+	if mode == "full" && (len(after) != 1 || filepath.Base(after[0]) != "program.ll") {
+		t.Fatalf("FullLTO repartitioned the optimized module: %v", after)
 	}
 	if !hasCall(after, "example.com/lto/dep.Opaque") {
 		t.Fatal("LLVM did not preserve the //go:noinline call")

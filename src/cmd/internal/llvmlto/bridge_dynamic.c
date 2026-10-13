@@ -10,6 +10,13 @@ char *goallcLTO(const char *plugin, const char *const *inputs, size_t count,
   void *handle = dlopen(plugin, RTLD_NOW | RTLD_GLOBAL);
   if (!handle)
     return strdup(dlerror());
+  if (!thin) {
+    char *(*single)(const char *const *, size_t, const char *, int) =
+        dlsym(handle, "GoALLCFullLTOSingle");
+    if (!single)
+      return strdup(dlerror());
+    return single(inputs, count, out, keep);
+  }
   char *(*run)(const char *const *, size_t, const char *, int, int) =
       dlsym(handle, "GoALLCLTO");
   if (!run)

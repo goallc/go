@@ -9,6 +9,9 @@ import (
 
 func catch() (ok bool) { defer func() { ok = recover() == "lto-panic" }(); dep.Boom(); return }
 func main() {
+	if dep.InitOrder != "leaf:dep" {
+		panic("package initialization order")
+	}
 	ch := make(chan int, 4)
 	for i := 1; i <= 4; i++ {
 		go func(i int) { ch <- dep.Deep(256, dep.Make(i)) }(i)

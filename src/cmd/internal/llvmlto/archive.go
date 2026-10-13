@@ -6,6 +6,10 @@ package llvmlto
 
 import (
 	"cmd/internal/archive"
+	"cmd/internal/goobj"
+	"cmd/internal/objabi"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,10 +22,10 @@ const irMember = "__.LLVMBC"
 // Prepare replaces bitcode archives in an isolated directory. The caller must
 // keep that directory until the ordinary Go linker has finished loading them.
 // No cache input is modified, including on failure.
-func Prepare(main string, packages map[string]string, keep, pic bool, mode string) (string, map[string]string, func(), error) {
+func Prepare(main string, packages map[string]string, keep, pic bool, mode string) (string, map[string]string, *goobj.LTOManifest, func(), error) {
 	work, err := os.MkdirTemp("", "go-lto-")
 	if err != nil {
-		return "", nil, func() {}, err
+		return "", nil, nil, func() {}, err
 	}
 	cleanup := func() { os.RemoveAll(work) }
 	if keep {
@@ -41,34 +45,78 @@ func Prepare(main string, packages map[string]string, keep, pic bool, mode strin
 	for _, path := range names {
 		ir, err := readIR(path)
 		if err != nil {
-			return "", nil, cleanup, err
+			return "", nil, nil, cleanup, err
 		}
 		if ir == nil {
 			continue
 		}
 		input := filepath.Join(work, fmt.Sprintf("%d.input.bc", len(inputs)))
 		if err := os.WriteFile(input, ir, 0600); err != nil {
-			return "", nil, cleanup, err
+			return "", nil, nil, cleanup, err
 		}
 		inputs = append(inputs, input)
 		originals = append(originals, path)
 	}
 	if len(inputs) == 0 {
-		return "", nil, cleanup, fmt.Errorf("LTO requires packages compiled with -llvm-lto")
+		return "", nil, nil, cleanup, fmt.Errorf("LTO requires packages compiled with -llvm-lto")
 	}
 	out := filepath.Join(work, "optimized")
 	if err := optimize(inputs, out, keep, mode); err != nil {
-		return "", nil, cleanup, err
+		return "", nil, nil, cleanup, err
+	}
+	var manifest *goobj.LTOManifest
+	if mode == "full" {
+		data, err := os.ReadFile(filepath.Join(out, "program.json"))
+		if err != nil {
+			return "", nil, nil, cleanup, err
+		}
+		manifest = new(goobj.LTOManifest)
+		if err := json.Unmarshal(data, manifest); err != nil {
+			return "", nil, nil, cleanup, err
+		}
+		if manifest.Version != 1 || len(manifest.Packages) != len(originals) || manifest.Main < 0 || manifest.Main >= len(originals) || originals[manifest.Main] != main {
+			return "", nil, nil, cleanup, fmt.Errorf("invalid single-object LTO package manifest")
+		}
+		for i := range manifest.Packages {
+			p := &manifest.Packages[i]
+			if i == manifest.Main {
+				p.Path = "main"
+			} else {
+				for name, path := range packages {
+					if path == originals[i] {
+						p.Path = name
+						break
+					}
+				}
+			}
+			fp, err := hex.DecodeString(p.Fingerprint)
+			if p.Path == "" || objabi.PathToPrefix(p.Path) != p.Prefix || err != nil || len(fp) != len(goobj.FingerprintType{}) {
+				return "", nil, nil, cleanup, fmt.Errorf("invalid LTO identity for package %q", p.Prefix)
+			}
+		}
+		if err := emit(filepath.Join(out, "program.bc"), filepath.Join(work, "program.o"), pic); err != nil {
+			return "", nil, nil, cleanup, err
+		}
+		if err := finalizeSingleObject(filepath.Join(work, "program.o"), filepath.Join(out, "program.json"), manifest); err != nil {
+			return "", nil, nil, cleanup, err
+		}
 	}
 	replacements := make(map[string]string)
 	for i, path := range originals {
-		object := filepath.Join(work, fmt.Sprintf("%d.o", i))
-		if err := emit(filepath.Join(out, fmt.Sprintf("%d.bc", i)), object, pic); err != nil {
-			return "", nil, cleanup, err
+		object := ""
+		if manifest != nil {
+			if i == manifest.Main {
+				object = filepath.Join(work, "program.o")
+			}
+		} else {
+			object = filepath.Join(work, fmt.Sprintf("%d.o", i))
+			if err := emit(filepath.Join(out, fmt.Sprintf("%d.bc", i)), object, pic); err != nil {
+				return "", nil, nil, cleanup, err
+			}
 		}
 		archive := filepath.Join(work, fmt.Sprintf("%d.a", i))
 		if err := rewriteArchive(path, archive, object); err != nil {
-			return "", nil, cleanup, err
+			return "", nil, nil, cleanup, err
 		}
 		replacements[path] = archive
 	}
@@ -82,7 +130,10 @@ func Prepare(main string, packages map[string]string, keep, pic bool, mode strin
 	if replacement := replacements[main]; replacement != "" {
 		main = replacement
 	}
-	return main, result, cleanup, nil
+	if manifest != nil {
+		manifest.Archive = main
+	}
+	return main, result, manifest, cleanup, nil
 }
 
 func readIR(path string) ([]byte, error) {
@@ -165,14 +216,19 @@ func rewriteArchive(src, dst, object string) (err error) {
 	if bitcode != 1 {
 		return fmt.Errorf("%s: expected one bitcode member, found %d", src, bitcode)
 	}
-	obj, err := os.Open(object)
-	if err != nil {
-		return err
-	}
-	defer obj.Close()
-	info, err := obj.Stat()
-	if err != nil {
-		return err
+	var obj *os.File
+	var objectSize int64
+	if object != "" {
+		obj, err = os.Open(object)
+		if err != nil {
+			return err
+		}
+		defer obj.Close()
+		info, err := obj.Stat()
+		if err != nil {
+			return err
+		}
+		objectSize = info.Size()
 	}
 	out, err := os.Create(dst)
 	if err != nil {
@@ -191,7 +247,10 @@ func rewriteArchive(src, dst, object string) (err error) {
 	}
 	for _, e := range a.Entries {
 		if e.Name == irMember {
-			if err := writeArchiveEntry(out, "_go_.o", info.Size(), obj); err != nil {
+			if obj == nil {
+				continue
+			}
+			if err := writeArchiveEntry(out, "_go_.o", objectSize, obj); err != nil {
 				return err
 			}
 		} else {

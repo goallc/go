@@ -7,6 +7,7 @@
 #include "llvm/Support/Error.h"
 namespace goallc {
 llvm::Error runLTO(llvm::ArrayRef<std::string> Inputs, llvm::StringRef OutDir,
-                   llvm::StringRef Pipeline, bool SaveIR, bool Thin = false);
+                   llvm::StringRef Pipeline, bool SaveIR, bool Thin = false,
+                   bool Single = false);
 }
 #endif

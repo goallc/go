@@ -362,7 +362,7 @@ func Main(arch *sys.Arch, theArch Arch) {
 		}
 		var cleanup func()
 		var err error
-		mainFile, ctxt.PackageFile, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE, *flagLTO)
+		mainFile, ctxt.PackageFile, ctxt.ltoManifest, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE, *flagLTO)
 		AtExit(cleanup)
 		if err != nil {
 			Exitf("%v", err)
@@ -390,6 +390,9 @@ func Main(arch *sys.Arch, theArch Arch) {
 		addlibpath(ctxt, "command line", "command line", mainFile, "main", "", zerofp)
 	}
 	bench.Start("loadlib")
+	if ctxt.ltoManifest != nil {
+		ctxt.addLTOLibraries()
+	}
 	ctxt.loadlib()
 
 	bench.Start("inittasks")

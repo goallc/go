@@ -1,4 +1,56 @@
-# In-process LTO validation
+# Single-object FullLTO experiment
+
+Local branch `codex/full-lto-single-goobj`, based on `1469e0d858da`,
+validated on 2026-10-13. The compiler and LLVM payload are inherited from
+the base below; the plugin and cmd/link are rebuilt for this experiment.
+No LLVM source or package-cache archive is modified.
+
+FullLTO produces one optimized module and one `program.o` for the complete
+45-package runtime fixture closure. Only the temporary main archive contains
+that compiler object; the other archives retain export data and assembly/native
+members. Logical package identity and original symbol indices are carried by
+`program.json` and interpreted by the modified Go linker.
+
+| Check | Result |
+| --- | --- |
+| Plugin CTest suite, including single-object FileCheck fixture | 179/179 passed |
+| Archive, runtime, optimization, and cached-relink integration | FullLTO and ThinLTO passed |
+| Linkname compatibility | Six allowed/forbidden fixtures, both with and without DWARF: 12/12 passed |
+| Mixed native dependency referencing a merged LLVM leaf | Build and runtime passed |
+| macOS arm64 executable and PIE | Runtime fixture passed with `GOGC=1` |
+| Linux arm64 / amd64 | Complete runtime closure built and ran; arm64 native Docker, amd64 emulated Docker |
+| GoObj and linker loader unit suites | Passed |
+| Standard-library short suites during implementation | 8/8 passed on macOS arm64: bytes, strings, strconv, sort, encoding/binary, encoding/json, hash/crc32, unicode/utf8 |
+
+The standard-library run preceded the final symbol-name and DWARF package-name
+corrections. Runtime, object-name, and debug-package regressions are rerun after
+those corrections. The fixture also checks leaf-before-dependency initialization,
+assembly calls in both directions, goroutines, stack growth, repeated GC,
+reflection, panic/recover, and stack frames. Object inspection checks that LLVM
+storage suffixes do not escape into final GoObj symbol names.
+
+With uncompressed full DWARF, `llvm-dwarfdump --verify` reports 89 overlapping
+DIE address ranges. The same fixture built by the base's partitioned FullLTO
+reports 89 of the same error category. This is a baseline failure, not a green
+DWARF qualification. The new regression checks logical CUs and their declared
+Go package names, which must survive single-object emission.
+
+Open experimental limits:
+
+- Synthesized read-only constants still use LLVM's module-wide default kind.
+  Per-origin FIPS classification needs a backend contract or a validated
+  post-codegen mapping; this branch is not suitable for FIPS qualification.
+- Cgo, external linking, the complete standard library, static LLVM linkage,
+  and hosted CI have not been requalified for this single-object change.
+- No controlled link-time, peak-memory, or binary-size comparison has been run.
+  One backend invocation alone is not performance evidence.
+
+Local logs and retained binaries are in `/tmp/go-lto-single-20261013/`.
+The base validation below describes the previous partitioned FullLTO path;
+its broader checks must not be read as results for this experiment.
+
+## Base implementation validation (before the single-object experiment)
+
 
 Local validation on 2026-10-13 uses the LLVM 23 payload built from source
 `1204008cc14b7a995b2dd152b6bc38b3350dfb9d`, matching the clean CI LLVM pin

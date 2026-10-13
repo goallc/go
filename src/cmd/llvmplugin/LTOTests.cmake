@@ -3,6 +3,10 @@ add_executable(goallc-lto-test testdata/lto/driver.cpp)
 llvm_update_compile_flags(goallc-lto-test)
 target_include_directories(goallc-lto-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(goallc-lto-test PRIVATE cxx_std_17)
+
+add_test(NAME full-lto-single-object
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+    "'$<TARGET_FILE:goallc-lto-test>' --single --output-dir='${CMAKE_CURRENT_BINARY_DIR}/full-single' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/single-main.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/single-dep.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/single-main.ll' --input-file='${CMAKE_CURRENT_BINARY_DIR}/full-single/program.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=MANIFEST '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/single-main.ll' --input-file='${CMAKE_CURRENT_BINARY_DIR}/full-single/program.json'")
 target_link_libraries(goallc-lto-test PRIVATE GoALLCStatepointsStatic LLVM)
 add_test(NAME full-lto-cross-package
   COMMAND ${GOALLC_BASH_EXECUTABLE} -o pipefail -c

@@ -4,4 +4,8 @@ package leaf
 // when an accessor is inlined into a different package.
 var Values = []int{11, 12, 13}
 
+var InitOrder string
+
+func init() { InitOrder = "leaf" }
+
 func At(i int) int { return Values[i] }

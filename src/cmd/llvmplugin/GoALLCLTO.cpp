@@ -22,6 +22,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Transforms/IPO/FunctionImport.h"
@@ -36,6 +37,8 @@
 using namespace llvm;
 extern "C" llvm::PassPluginLibraryInfo llvmGetPassPluginInfo();
 static constexpr StringLiteral OwnerMD = "goallc.lto.owner";
+// Go 1.27 cmd/internal/goobj SymFlagLinknameStd (not in older LLVM headers).
+static constexpr uint32_t GoSymFlagLinknameStd = 1u << 5;
 
 enum ConfigField {
   Format,
@@ -63,6 +66,7 @@ struct Package {
   std::string Prefix;
   std::vector<Module::GlobalAsmFragment> ModuleAsm;
   StringMap<SmallVector<MDNode *>> Settings;
+  SmallVector<std::pair<std::string, unsigned>> Linknames;
 };
 
 static std::optional<unsigned> owner(const GlobalObject &G) {
@@ -77,7 +81,12 @@ static void givePackageName(GlobalObject &G, StringRef Prefix) {
       "goallc.lto.name",
       MDNode::get(G.getContext(), MDString::get(G.getContext(), Name)));
   bool ABI0 = Name.consume_back(GoObj::ABI0SymbolSuffix);
-  G.setName(Name + ".goallc.lto." + Prefix +
+  StringRef Variant = GoObj::getSymbolSuffix(Name);
+  if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
+    Name = Name.drop_back(Variant.size());
+  else
+    Variant = {};
+  G.setName(Name + ".goallc.lto." + Prefix + Variant +
             (ABI0 ? GoObj::ABI0SymbolSuffix : StringRef()));
 }
 
@@ -373,8 +382,176 @@ static Error importThinModules(std::vector<std::unique_ptr<Module>> &Modules,
   return Error::success();
 }
 
+// Keep the physical object independent of the logical Go package identities.
+// The manifest is consumed by cmd/link together with this link's single object;
+// it is never installed in the package cache or used by an ordinary link.
+static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
+                               StringRef OutDir, bool SaveIR) {
+  LLVMContext &C = M.getContext();
+  unsigned Main = Packages.size();
+  json::Array PackageRecords, ReferenceRecords;
+  for (unsigned I = 0; I != Packages.size(); ++I) {
+    const Package &P = Packages[I];
+    if (cast<MDString>(P.Config->getOperand(IsMain))->getString() == "1") {
+      if (Main != Packages.size())
+        return fail("single-object FullLTO requires exactly one main package");
+      Main = I;
+    }
+    json::Array Imports, Cgo;
+    for (const auto &Fragment : P.ModuleAsm)
+      Cgo.push_back(StringRef(Fragment.Asm).trim().drop_front(StringRef(".goobj.cgo ").size()));
+    auto It = P.Settings.find("goobj.imports");
+    if (It != P.Settings.end())
+      for (MDNode *E : It->second)
+        Imports.push_back(json::Object{
+            {"path", cast<MDString>(E->getOperand(0))->getString()},
+            {"prefix", cast<MDString>(E->getOperand(1))->getString()},
+            {"fingerprint", cast<MDString>(E->getOperand(2))->getString()}});
+    StringRef PackageName;
+    auto DebugIt = P.Settings.find("goobj.debug.config");
+    if (DebugIt != P.Settings.end() && !DebugIt->second.empty() &&
+        DebugIt->second.front()->getNumOperands() >= 4)
+      PackageName = cast<MDString>(DebugIt->second.front()->getOperand(3))->getString();
+    PackageRecords.push_back(json::Object{
+        {"prefix", P.Prefix},
+        {"name", PackageName},
+        {"std", cast<MDString>(P.Config->getOperand(StandardLibrary))
+                        ->getString() == "1"},
+        {"fingerprint",
+         cast<MDString>(P.Config->getOperand(Fingerprint))->getString()},
+        {"imports", std::move(Imports)}, {"cgo", std::move(Cgo)}});
+    for (const auto &[Name, ABI] : P.Linknames)
+      ReferenceRecords.push_back(json::Object{
+          {"package", I}, {"name", Name}, {"abi", ABI}});
+  }
+  if (Main == Packages.size())
+    return fail("single-object FullLTO requires a main package");
+
+  json::Array Symbols;
+  uint32_t NextIndex = 0;
+  for (GlobalObject &G : M.global_objects()) {
+    if (G.isDeclaration() || G.getName().starts_with("llvm."))
+      continue;
+    auto O = owner(G);
+    if (!O)
+      continue; // Optimizer-created content-addressed constants have no owner.
+    unsigned ABI = GoObj::SymABI0;
+    if (const auto *F = dyn_cast<Function>(&G))
+      ABI = F->getCallingConv() == CallingConv::GoABI0
+                ? GoObj::SymABI0 : GoObj::SymABIInternal;
+    MDNode *Index = G.getMetadata("goobj.symbol.index");
+    if (Index && Index->getNumOperands() == 2)
+      ABI = mdconst::extract<ConstantInt>(Index->getOperand(1))->getZExtValue();
+    StringRef Name = G.getName();
+    Name.consume_back(GoObj::ABI0SymbolSuffix);
+    StringRef Suffix = GoObj::getSymbolSuffix(Name);
+    if (Suffix.starts_with(GoObj::FMVSymbolSuffixPrefix)) {
+      ABI = GoObj::SymABIstatic;
+      Name = Name.drop_back(Suffix.size());
+    }
+    json::Object S{{"package", *O}, {"name", Name}, {"abi", ABI}};
+    if (auto *Original = G.getMetadata("goallc.lto.name")) {
+      StringRef OriginalName = cast<MDString>(Original->getOperand(0))->getString();
+      OriginalName.consume_back(GoObj::ABI0SymbolSuffix);
+      StringRef Variant = GoObj::getSymbolSuffix(OriginalName);
+      if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
+        OriginalName = OriginalName.drop_back(Variant.size());
+      S["original_name"] = OriginalName;
+    }
+    if (Index) {
+      S["original_index"] =
+          mdconst::extract<ConstantInt>(Index->getOperand(0))->getZExtValue();
+      S["index"] = NextIndex;
+      Metadata *Fields[] = {
+          ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(C), NextIndex++)),
+          ConstantAsMetadata::get(ConstantInt::get(Type::getInt16Ty(C), ABI))};
+      G.setMetadata("goobj.symbol.index", MDNode::get(C, Fields));
+    }
+    Symbols.push_back(std::move(S));
+    G.setMetadata("goallc.lto.name", nullptr);
+  }
+
+  const Package &P = Packages[Main];
+  for (StringRef Name : {"goobj.config", "goobj.static_rodata_type",
+                         "goallc.cpu.config"}) {
+    auto It = P.Settings.find(Name);
+    if (It != P.Settings.end())
+      for (MDNode *E : It->second)
+        M.getOrInsertNamedMetadata(Name)->addOperand(E);
+  }
+  // Library loading and the original import DAG are supplied by the manifest.
+  // Putting the union of imports on main would introduce spurious cycles.
+  M.getOrInsertNamedMetadata("goobj.imports");
+  MDNode *DebugConfig = nullptr;
+  auto MainDebug = P.Settings.find("goobj.debug.config");
+  if (MainDebug != P.Settings.end() && !MainDebug->second.empty())
+    DebugConfig = MainDebug->second.front();
+  for (const Package &Pkg : Packages) {
+    auto It = Pkg.Settings.find("goobj.debug.config");
+    if (It != Pkg.Settings.end() && !It->second.empty()) {
+      MDNode *N = It->second.front();
+      if (!DebugConfig || N->getNumOperands() > DebugConfig->getNumOperands())
+        DebugConfig = N;
+    }
+  }
+  if (DebugConfig)
+    M.getOrInsertNamedMetadata("goobj.debug.config")->addOperand(DebugConfig);
+  if (auto *N = M.getNamedMetadata("goobj.gotype")) {
+    SmallVector<MDNode *> Records;
+    for (MDNode *E : N->operands()) {
+      auto *V = dyn_cast_or_null<ValueAsMetadata>(E->getOperand(0));
+      auto *G = V ? dyn_cast<GlobalObject>(V->getValue()) : nullptr;
+      unsigned RecordOwner =
+          mdconst::extract<ConstantInt>(E->getOperand(2))->getZExtValue();
+      if (!G || G->isDeclaration() || owner(*G) != RecordOwner)
+        continue;
+      Metadata *Fields[] = {E->getOperand(0), E->getOperand(1)};
+      Records.push_back(MDNode::get(C, Fields));
+    }
+    N->clearOperands();
+    for (MDNode *E : Records)
+      N->addOperand(E);
+  }
+  for (GlobalObject &G : M.global_objects())
+    G.setMetadata(OwnerMD, nullptr);
+  for (StructType *T : M.getIdentifiedStructTypes())
+    if (T->hasName() && (T->getName() == "go.abi.pad" ||
+                         T->getName().starts_with("go.abi.pad."))) {
+      if (auto *Old = StructType::getTypeByName(C, "go.abi.pad"); Old && Old != T)
+        Old->setName("go.abi.pad.saved");
+      T->setName("go.abi.pad");
+    }
+  if (verifyModule(M, &errs()))
+    return fail("invalid single-object FullLTO module");
+  if (std::error_code EC = sys::fs::create_directories(OutDir))
+    return fail(EC.message());
+  std::error_code EC;
+  ToolOutputFile BC((OutDir + "/program.bc").str(), EC, sys::fs::OF_None);
+  if (EC)
+    return fail(EC.message());
+  WriteBitcodeToFile(M, BC.os());
+  BC.keep();
+  ToolOutputFile Manifest((OutDir + "/program.json").str(), EC, sys::fs::OF_Text);
+  if (EC)
+    return fail(EC.message());
+  Manifest.os() << json::Value(json::Object{
+      {"version", 1}, {"main", Main}, {"packages", std::move(PackageRecords)},
+      {"symbols", std::move(Symbols)}, {"linknames", std::move(ReferenceRecords)}});
+  Manifest.keep();
+  if (SaveIR) {
+    ToolOutputFile IR((OutDir + "/program.ll").str(), EC, sys::fs::OF_Text);
+    if (EC)
+      return fail(EC.message());
+    M.print(IR.os(), nullptr);
+    IR.keep();
+  }
+  return Error::success();
+}
+
 Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
-                     StringRef Pipeline, bool SaveIR, bool Thin) {
+                     StringRef Pipeline, bool SaveIR, bool Thin, bool Single) {
+  if (Single && Thin)
+    return fail("single-object output requires FullLTO");
   if (Inputs.empty())
     return fail("LTO requires at least one input");
   LLVMContext C;
@@ -411,6 +588,22 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         Config->getOperand(0)->getNumOperands() != ConfigFields)
       return fail("input requires one compiler GoObj configuration");
     Package P;
+    for (GlobalObject &G : M->global_objects())
+      if (G.isDeclaration() && referencesLinkname(&G)) {
+        StringRef Name = G.getName();
+        bool ABI0 = Name.consume_back(GoObj::ABI0SymbolSuffix);
+        Name.consume_back(GoObj::LinknameSymbolSuffix);
+        unsigned ABI = isa<Function>(G) && !ABI0
+                           ? GoObj::SymABIInternal : GoObj::SymABI0;
+        P.Linknames.emplace_back(Name.str(), ABI);
+      }
+    for (GlobalVariable &G : M->globals())
+      if (G.hasInitializer() && G.getInitializer()->isNullValue())
+        if (auto *Flags = G.getMetadata("goobj.symbol.flags")) {
+          uint64_t Flag2 = mdconst::extract<ConstantInt>(Flags->getOperand(1))->getZExtValue();
+          if (Flag2 & (GoObj::SymFlagLinkname | GoSymFlagLinknameStd))
+            P.Linknames.emplace_back(G.getName().str(), GoObj::SymABI0);
+        }
     P.Config = Config->getOperand(0);
     for (unsigned Field = 0; Field != ConfigFields; ++Field)
       if (Field == Experiments ? !isa<MDNode>(P.Config->getOperand(Field))
@@ -543,6 +736,25 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         if (Combined->getTargetTriple() != M->getTargetTriple() ||
             Combined->getDataLayout() != M->getDataLayout())
           return fail("incompatible target or data layout");
+        // A linknamed BSS placeholder can denote a function in another Go
+        // package. Resolve storage to the real definition, while retaining
+        // the originating package's pull-linkname check in the manifest.
+        auto LinknameBSS = [](GlobalVariable &G) {
+          auto *Flags = G.getMetadata("goobj.symbol.flags");
+          return G.hasInitializer() && G.getInitializer()->isNullValue() &&
+                 Flags && (mdconst::extract<ConstantInt>(Flags->getOperand(1))->getZExtValue() &
+                           (GoObj::SymFlagLinkname | GoSymFlagLinknameStd));
+        };
+        if (Single) {
+          for (GlobalVariable &G : M->globals())
+            if (LinknameBSS(G))
+              if (auto *F = Combined->getFunction(G.getName()); F && !F->isDeclaration())
+                G.setInitializer(nullptr);
+          for (Function &F : *M)
+            if (!F.isDeclaration())
+              if (auto *G = Combined->getNamedGlobal(F.getName()); G && LinknameBSS(*G))
+                G->setInitializer(nullptr);
+        }
         for (GlobalVariable &G : M->globals()) {
           auto *Old = Combined->getNamedGlobal(G.getName());
           auto BSS = [](GlobalVariable &V) {
@@ -602,6 +814,8 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
     for (GlobalObject &G : Combined->global_objects())
       if (G.hasLocalLinkage() && G.getMetadata("goobj.symbol.index"))
         G.setLinkage(GlobalValue::ExternalLinkage);
+    if (Single)
+      return writeSingleModule(*Combined, Packages, OutDir, SaveIR);
   }
   StringMap<SymbolIdentity> ThinSymbols;
   if (Thin) {
@@ -830,6 +1044,14 @@ extern "C" char *GoALLCLTO(const char *const *Inputs, size_t Count,
     Paths.emplace_back(Inputs[I]);
   if (Error E = goallc::runLTO(Paths, OutDir, Thin ? "thinlto<O2>" : "lto<O2>",
                                SaveIR, Thin))
+    return strdup(toString(std::move(E)).c_str());
+  return nullptr;
+}
+
+extern "C" char *GoALLCFullLTOSingle(const char *const *Inputs, size_t Count,
+                                    const char *OutDir, int SaveIR) {
+  std::vector<std::string> Paths(Inputs, Inputs + Count);
+  if (Error E = goallc::runLTO(Paths, OutDir, "lto<O2>", SaveIR, false, true))
     return strdup(toString(std::move(E)).c_str());
   return nullptr;
 }
