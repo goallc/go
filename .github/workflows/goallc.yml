@@ -222,8 +222,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # These tests perform serial whole-program links for both LTO modes
+          # and linkname cases; the default 10m package timeout is too short.
           GOALLC_TEST_LTO=1 ./bin/go test -tags=llvm23,dynamicllvm \
-            -gcflags=all=-enablellvm=false cmd/internal/llvmlto -count=1 -v
+            -gcflags=all=-enablellvm=false cmd/internal/llvmlto -timeout=30m -count=1 -v
 
       - name: Package shared SDK and test tools
         shell: bash

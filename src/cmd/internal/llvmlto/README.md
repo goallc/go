@@ -75,13 +75,15 @@ The backend library and its FileCheck tests are described in
 
 ```sh
 GOALLC_TEST_LTO=1 go test -tags=llvm23,dynamicllvm \
-  -gcflags=all=-enablellvm=false cmd/internal/llvmlto -count=1 -v
+  -gcflags=all=-enablellvm=false cmd/internal/llvmlto -timeout=30m -count=1 -v
 ```
 
 Use the normal toolchain build environment, including any required cgo
 linker flag allowlist. `GOALLC_TEST_LTO=1` enables runtime/toolchain probes;
 archive unit tests run without it. See [VALIDATION.md](VALIDATION.md) for
 the measured validation scope.
+The integration probes perform several serial whole-program links; the 30-minute
+timeout accommodates shared CI runners without increasing link concurrency.
 
 CI runs both LTO modes on Linux amd64 and arm64. The standard-library job
 runs complete short test suites for `bytes`, `strings`, `strconv`, `sort`,
