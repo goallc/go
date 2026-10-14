@@ -537,6 +537,9 @@ func (ctxt *Link) loadlib() {
 		log.Fatalf("invalid -strictdups flag value %d", *FlagStrictDups)
 	}
 	ctxt.loader = loader.NewLoader(flags, &ctxt.ErrorReporter.ErrorReporter)
+	if ctxt.ltoManifest != nil {
+		ctxt.loader.SetLTO(ctxt.ltoManifest, ctxt.LibraryByPkg)
+	}
 	ctxt.ErrorReporter.SymName = func(s loader.Sym) string {
 		return ctxt.loader.SymName(s)
 	}
@@ -1151,6 +1154,9 @@ func loadobjfile(ctxt *Link, lib *sym.Library) {
 		// Skip other special (non-object-file) sections that
 		// build tools may have added. Such sections must have
 		// short names so that the suffix is not truncated.
+		if arhdr.name == "__.LLVMBC" {
+			Exitf("%s: LLVM bitcode archive requires -lto=full or -lto=thin", lib.File)
+		}
 		if len(arhdr.name) < 16 {
 			if ext := filepath.Ext(arhdr.name); ext != ".o" && ext != ".syso" {
 				continue

@@ -350,6 +350,20 @@ func (s *Sym) SetName(x string, w *Writer) {
 	binary.LittleEndian.PutUint32(s[4:], w.stringOff(x))
 }
 
+// SetNamePrefix shortens a symbol's name without changing the shared string
+// table. It is used to remove temporary LTO storage suffixes after codegen.
+func (s *Sym) SetNamePrefix(x string, r *Reader) error {
+	if r.readonly {
+		return errors.New("cannot update a read-only Go object")
+	}
+	old := s.Name(r)
+	if len(x) > len(old) || old[:len(x)] != x {
+		return fmt.Errorf("Go object name %q does not have prefix %q", old, x)
+	}
+	binary.LittleEndian.PutUint32(s[:], uint32(len(x)))
+	return nil
+}
+
 func (s *Sym) SetABI(x uint16)   { binary.LittleEndian.PutUint16(s[8:], x) }
 func (s *Sym) SetType(x uint8)   { s[10] = x }
 func (s *Sym) SetFlag(x uint8)   { s[11] = x }

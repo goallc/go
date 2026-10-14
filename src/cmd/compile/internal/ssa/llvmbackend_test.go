@@ -38,9 +38,9 @@ func TestLLVMEmissionRejectsInvalidIRBeforeOptimization(t *testing.T) {
 	llvm.AddBasicBlock(function, "entry")
 
 	output := filepath.Join(t.TempDir(), "invalid.a")
-	data, err := EmitLLVMGoObj(output)
+	data, err := EmitLLVMObject(output)
 	if err == nil || !strings.Contains(err.Error(), "verify LLVM module before optimization") {
-		t.Fatalf("EmitLLVMGoObj error = %v, want pre-optimization verification failure", err)
+		t.Fatalf("EmitLLVMObject error = %v, want pre-optimization verification failure", err)
 	}
 	if len(data) != 0 {
 		t.Fatal("invalid module produced object data")

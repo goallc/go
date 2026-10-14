@@ -14,7 +14,9 @@ type llvmTrailingEmpty struct {
 	Empty llvmEmpty
 }
 
-// LLVM-DAG: %go.abi.pad = type { i8 }
+// The padding carrier is packed so LTO cannot structurally merge it with an
+// ordinary struct{byte}, whose byte must remain a value in the Go ABI.
+// LLVM-DAG: %go.abi.pad = type <{ i8 }>
 // LLVM-DAG: %codegen.llvmTrailingEmpty = type { i8, %codegen.llvmEmpty, %go.abi.pad }
 // LLVM-DAG: define goabiinternal i8 @codegen.llvmZeroSizedArgs(i8 %a, { %codegen.llvmEmpty, %go.abi.pad } %e, { [0 x i64], %go.abi.pad } %z, i8 %b)
 func llvmZeroSizedArgs(a byte, e llvmEmpty, z llvmZeroAlign8, b byte) byte {

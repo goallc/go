@@ -72,16 +72,20 @@ func dumpobj1(outfile string, mode int) {
 			// Export writing computes the package fingerprint. Emit LLVM only
 			// afterwards so the linker object records the same identity, also
 			// when -linkobj puts the two objects in separate files.
-			linkerObj, err := ssa.EmitLLVMGoObj(base.Flag.LowerO)
+			linkerObj, err := ssa.EmitLLVMObject(base.Flag.LowerO)
 			if err != nil {
-				fmt.Printf("error generating LLVM GoObj: %v\n", err)
+				fmt.Printf("error generating LLVM object: %v\n", err)
 				base.ErrorExit()
 			}
 			bout.Write(linkerObj)
 		} else {
 			dumpLinkerObj(bout)
 		}
-		finishArchiveEntry(bout, start, "_go_.o")
+		name := "_go_.o"
+		if base.Flag.LLVMLTO {
+			name = "__.LLVMBC"
+		}
+		finishArchiveEntry(bout, start, name)
 	}
 
 	if err := bout.Close(); err != nil {

@@ -17,6 +17,7 @@ import (
 	"cmd/go/internal/cache"
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/fsys"
+	"cmd/go/internal/load"
 	"cmd/go/internal/str"
 	"cmd/internal/buildid"
 	"cmd/internal/pathcache"
@@ -807,4 +808,27 @@ func (b *Builder) updateBuildID(a *Action, target string) error {
 	}
 
 	return nil
+}
+
+// linkToolID includes LLVM runtime contents when the effective linker flags
+// enable LTO, including explicit -ldflags overrides.
+func (b *Builder) linkToolID(p *load.Package) string {
+	flags := append([]string(nil), forcedLdflags...)
+	if p != nil {
+		flags = append(flags, p.Internal.Ldflags...)
+	}
+	mode := ""
+	for i := 0; i < len(flags); i++ {
+		arg := "-" + strings.TrimLeft(flags[i], "-")
+		if arg == "-lto" && i+1 < len(flags) {
+			i++
+			mode = flags[i]
+		} else if strings.HasPrefix(arg, "-lto=") {
+			mode = strings.TrimPrefix(arg, "-lto=")
+		}
+	}
+	if mode == "full" || mode == "thin" {
+		return b.toolIDWithArgs("link", "link\x00-lto="+mode, []string{"-lto=" + mode})
+	}
+	return b.toolID("link")
 }

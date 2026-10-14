@@ -16,9 +16,9 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
-// EmitLLVMGoObj runs the complete LLVM optimization and code-generation
-// pipeline in cmd/compile and returns the linker object as owned Go memory.
-func EmitLLVMGoObj(outputFile string) ([]byte, error) {
+// EmitLLVMObject returns a GoObj linker object, or pre-optimization bitcode
+// when -llvm-lto defers optimization and code generation to cmd/link.
+func EmitLLVMObject(outputFile string) ([]byte, error) {
 	finalizeLLVMModule()
 	if err := llvm.ConfigureGoObjFromModule(CurrentModule); err != nil {
 		return nil, fmt.Errorf("configure LLVM GoObj writer: %w", err)
@@ -60,6 +60,11 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 		}
 	}
 
+	if base.Flag.LLVMLTO {
+		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
+		defer buffer.Dispose()
+		return append([]byte(nil), buffer.Bytes()...), nil
+	}
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
 		plugin, err = llvmbackend.PassPlugin()
@@ -113,22 +118,4 @@ func configureLLVMCodeGenOptions() {
 	llvm.ParseCommandLineOptions(args, "GoALLC in-process LLVM backend")
 }
 
-func llvmCodeGenOptions() []string {
-	options := []string{
-		"-trap-unreachable",
-		"-disable-machine-cse",
-		// Target prologue emission models the morestack retry as a loop
-		// backedge. Without profile data, MachineBlockPlacement otherwise
-		// keeps the cold morestack block in the loop chain before the function
-		// body. Honor the target-provided edge probabilities and outline it
-		// after the body, matching the native Go prologue layout.
-		"-force-loop-cold-block",
-		"-disable-lsr",
-	}
-	if buildcfg.GOARCH == "arm64" {
-		// Keep page-relative references compatible with Go linkers that require
-		// one composite relocation instead of separate page and low-12 records.
-		options = append(options, "-aarch64-goobj-composite-relocations")
-	}
-	return options
-}
+func llvmCodeGenOptions() []string { return llvmbackend.CodeGenOptions(buildcfg.GOARCH) }
