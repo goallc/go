@@ -57,7 +57,8 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 	emission := llvm.DwarfEmissionFull
 	if !base.Flag.Dwarf {
 		// PCLN still needs source locations and inline stacks when DWARF is
-		// disabled, but variable locations and types are unnecessary.
+		// disabled. Like the native backend, emit minimal function DIEs
+		// and line tables, but omit local variables and inline DIEs.
 		emission = llvm.DwarfEmissionLineTablesOnly
 	}
 	llvmDICompileUnit = llvmDIBuilder.CreateCompileUnit(llvm.DICompileUnit{
@@ -71,12 +72,14 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 	if buildcfg.Experiment.Dwarf5 {
 		dwarfVersion = "dwarf5"
 	}
-	config := []llvm.Metadata{GlobalCtxt.MDString("pcln-v1")}
-	if base.Flag.Dwarf {
-		config = append(config,
-			GlobalCtxt.MDString("dwarf-v1"),
-			GlobalCtxt.MDString(dwarfVersion),
-			GlobalCtxt.MDString(pkg.Name))
+	// The config selects the object encoding. Each compile unit's emission
+	// kind selects minimal or full DWARF, including after LTO combines units
+	// compiled with different -dwarf settings.
+	config := []llvm.Metadata{
+		GlobalCtxt.MDString("pcln-v1"),
+		GlobalCtxt.MDString("dwarf-v1"),
+		GlobalCtxt.MDString(dwarfVersion),
+		GlobalCtxt.MDString(pkg.Name),
 	}
 	CurrentModule.AddNamedMetadataOperand("goobj.debug.config", GlobalCtxt.MDNode(config))
 
@@ -130,7 +133,8 @@ func finalizeLLVMDebugInfo() {
 }
 
 func emitGoObjDebugGlobals() {
-	if !base.Flag.Dwarf || currentLLVMDataLowerer == nil {
+	// Native Go retains global-variable DIEs even with -dwarf=false.
+	if currentLLVMDataLowerer == nil {
 		return
 	}
 	expr := llvmDIBuilder.CreateExpression(nil)
