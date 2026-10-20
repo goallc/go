@@ -304,14 +304,14 @@ func Caller(x int) int { return Add(x) }
 					t.Fatal(err)
 				}
 				ir := string(data)
-				for _, marker := range []string{"!DILocalVariable(", "!DIGlobalVariable(", "!DIBasicType(", `!"dwarf-v1"`, "#dbg_value("} {
+				for _, marker := range []string{"!DILocalVariable(", "#dbg_value("} {
 					if got := strings.Contains(ir, marker); got != dwarf {
 						t.Errorf("%s: %s present = %v, want %v", suffix, marker, got, dwarf)
 					}
 				}
 				// Disabling DWARF must retain the locations and inline stacks
 				// that the GoObj writer uses for runtime traceback metadata.
-				for _, marker := range []string{`!"pcln-v1"`, "!DISubprogram(", "!DILocation(", "inlinedAt:", "!goobj.debug.funcs"} {
+				for _, marker := range []string{`!"pcln-v1"`, `!"dwarf-v1"`, "!DIGlobalVariable(", "!DIBasicType(", "!DISubprogram(", "!DILocation(", "inlinedAt:", "!goobj.debug.funcs"} {
 					if !strings.Contains(ir, marker) {
 						t.Errorf("%s: missing %s", suffix, marker)
 					}
