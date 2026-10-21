@@ -16,9 +16,9 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
-// EmitLLVMGoObj runs the complete LLVM optimization and code-generation
-// pipeline in cmd/compile and returns the linker object as owned Go memory.
-func EmitLLVMGoObj(outputFile string) ([]byte, error) {
+// EmitLLVMObject returns a GoObj linker object, or pre-optimization bitcode
+// when -llvm-lto defers optimization and code generation to cmd/link.
+func EmitLLVMObject(outputFile string) ([]byte, error) {
 	finalizeLLVMModule()
 	if err := llvm.ConfigureGoObjFromModule(CurrentModule); err != nil {
 		return nil, fmt.Errorf("configure LLVM GoObj writer: %w", err)
@@ -60,6 +60,11 @@ func EmitLLVMGoObj(outputFile string) ([]byte, error) {
 		}
 	}
 
+	if base.Flag.LLVMLTO {
+		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
+		defer buffer.Dispose()
+		return append([]byte(nil), buffer.Bytes()...), nil
+	}
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
 		plugin, err = llvmbackend.PassPlugin()
