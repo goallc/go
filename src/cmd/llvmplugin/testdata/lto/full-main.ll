@@ -1,23 +1,23 @@
 ; FullLTO checks observe the single output module and retained package manifest.
-; CROSS-LABEL: define goabiinternal {{.*}}i64 @caller.Answer()
+; CROSS-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Answer()
 ; CROSS-NOT: call
 ; CROSS: ret i64 42
-; CROSS-LABEL: define goabiinternal {{.*}}i64 @caller.Opaque
+; CROSS-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Opaque
 ; CROSS: call goabiinternal i64 @callee.Opaque
-; CROSS-LABEL: define goabiinternal {{.*}}i64 @caller.Restricted
+; CROSS-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Restricted
 ; CROSS: call goabiinternal i64 @callee.Restricted
-; CROSS: define goabiinternal {{.*}}i64 @callee.Opaque
-; CROSS: define goabiinternal {{.*}}i64 @callee.Restricted
+; CROSS: define dso_local goabiinternal {{.*}}i64 @callee.Opaque
+; CROSS: define dso_local goabiinternal {{.*}}i64 @callee.Restricted
 ; CROSS: call goabiinternal i64 @"runtime.private<linkname>"
 ; CROSS-NOT: goallc.lto.owner
 ;
 ; META-DAG: @leaf.counter = {{.*}}global i64 41
 ; META-DAG: @leaf.identity = {{.*}}constant i8 7
 ; META-DAG: @leaf.unreferenced = {{.*}}global i64 3
-; META-LABEL: define goabiinternal {{.*}}ptr @caller.Identity()
+; META-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.Identity()
 ; META-NOT: call
 ; META: ret ptr @leaf.identity
-; META-LABEL: define goabiinternal i64 @caller.Read()
+; META-LABEL: define dso_local goabiinternal i64 @caller.Read()
 ; META-NOT: call
 ; META: load volatile i64, ptr @leaf.counter
 ; META-DAG: !goobj.imports = !{}
@@ -26,19 +26,24 @@
 ; META: ![[KEEP]] = !{ptr @leaf.counter, ptr @leaf.identity}
 ; META-NOT: goallc.lto.owner
 ;
-; BSS: @shared = global [2 x i64] [i64 4, i64 5], section ".data", !goobj.symbol.nonpackage
+; WEAK: @choice = weak dso_local global i64 3
+; OTHER: @choice = weak dso_local global i64 5
+; BAD-PIPELINE: goallc-lto: unknown pass name 'not-a-real-pass'
+; RESOLVE: @choice = dso_local global i64 6
+; RESOLVE-NOT: @choice.{{[0-9]+}}
+; BSS: @shared = dso_local global [2 x i64] [i64 4, i64 5], section ".data", !goobj.symbol.nonpackage
 ;
 ; ABI: %go.abi.pad = type <{ i8 }>
 ; ABI: %callee.Byte = type { i8 }
-; ABI-LABEL: define goabiinternal {{.*}}i64 @caller.Padded(%go.abi.pad
-; ABI-LABEL: define goabiinternal {{.*}}ptr @caller.Closure()
+; ABI-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Padded(%go.abi.pad
+; ABI-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.Closure()
 ; ABI: ret ptr @callee.Closure.goallc.lto.callee
-; ABI-LABEL: define goabiinternal {{.*}}i8 @callee.Byte(%callee.Byte
-; ABI: define goabiinternal {{.*}}i64 @callee.Closure.goallc.lto.callee(i64
+; ABI-LABEL: define dso_local goabiinternal {{.*}}i8 @callee.Byte(%callee.Byte
+; ABI: define dso_local goabiinternal {{.*}}i64 @callee.Closure.goallc.lto.callee(i64
 ; ABI-NOT: !goobj.content_addressable
-; ABI0-LABEL: define goabiinternal {{.*}}ptr @caller.ABI0()
+; ABI0-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.ABI0()
 ; ABI0: ret ptr @"callee.ABI0.goallc.lto.callee<ABI0>"
-; ABI0-LABEL: define goabi0 void @"callee.ABI0.goallc.lto.callee<ABI0>"()
+; ABI0-LABEL: define dso_local goabi0 void @"callee.ABI0.goallc.lto.callee<ABI0>"()
 ; ABI0-SAME: !goobj.symbol.index ![[ABI0INDEX:[0-9]+]]
 ; ABI0: ![[ABI0INDEX]] = !{i32 {{[0-9]+}}, i16 0}
 ;

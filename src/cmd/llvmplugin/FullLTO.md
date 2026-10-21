@@ -1,8 +1,8 @@
 # Single-object FullLTO backend
 
-`goallc::runLTO` merges compiler bitcode inputs into one LLVM module, optimizes
-the module, and writes `program.bc` and `program.json`. With `SaveIR`, it also
-writes `program.ll` for inspection. The C entry point `GoALLCLTO` selects the
+`goallc::runLTO` uses LLVM's resolution-based `llvm::lto::LTO` API to merge
+compiler bitcode inputs and optimize one module. It writes `program.bc` and
+`program.json`. With `SaveIR`, it also writes `program.ll` for inspection. The C entry point `GoALLCLTO` selects the
 `lto<O2>` pipeline; a non-null return is an error string owned by the caller
 and released with `free`.
 
@@ -10,6 +10,35 @@ This stage produces optimized bitcode, not a machine-code object. The later
 linker integration will run final code generation once and consume the
 manifest alongside that object's symbols. There is no per-package FullLTO
 output. ThinLTO requests are explicitly rejected at this stage.
+
+## LLVM LTO integration
+
+Go-specific input preparation runs before `lto::InputFile::create`. Prepared
+inputs are serialized to in-memory bitcode buffers, which stay alive through
+`LTO::add` and `LTO::run`. LLVM owns module combination, internalization and
+the target-aware optimization pipeline; this backend no longer calls the IR
+linker or constructs the whole-program optimization pass manager itself.
+
+The caller supplies `SymbolResolution` records: strong definitions take
+precedence over weak definitions, duplicate strong definitions are errors,
+and visible Go symbols remain available to ordinary objects outside LTO.
+This remains deliberately conservative until the Go linker supplies more
+precise reachability information. Go named BSS placeholders are normalized
+before resolution because they do not use LLVM common-linkage semantics.
+
+LLVM rereads the inputs into its own context. Temporary named metadata
+transports package settings across that boundary and is removed from the
+output. `PreOptModuleHook` records retained identities. `PostOptModuleHook`
+checks them and restores the GoObj output metadata on a clone of the optimized
+module, then returns false to stop before machine-code generation. The clone
+respects the hook's const-module contract. A native output callback reports
+an error if code generation is unexpectedly reached.
+
+The on-disk bitcode remains the interface to the later GoObj code-generation
+stage. It is not required by LLVM's LTO API; future integration can replace
+this interface with direct object output after arranging the Go metadata and
+pre-codegen callbacks at the appropriate stages. This PR does not implement
+that direct-output path or enable ThinLTO.
 
 ## Package and symbol identity
 
@@ -51,8 +80,11 @@ and module assembly other than cgo directive records are also rejected.
 The test-only `goallc-lto-test` executable calls the production backend and
 links its static library. It is not installed into the toolchain. FileCheck
 fixtures cover cross-package optimization, manifests and import DAGs, BSS,
-ABI padding, closures, ABI0, and rejected inputs. The plugin CI builds this
-executable before running CTest.
+ABI padding, closures, ABI0, strong/weak resolution in both input orders,
+and rejected inputs. Additional fixtures take optimized bitcode through
+`llc` on amd64 and arm64, checking late statepoint callbacks and using
+`objview` to validate stack maps, safepoints and assembly-visible symbols.
+The plugin CI builds this executable before running CTest.
 
 After configuring the plugin build with `BUILD_TESTING=ON`, run:
 
