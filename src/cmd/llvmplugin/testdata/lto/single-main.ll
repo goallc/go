@@ -1,10 +1,10 @@
 ; One optimized module, with distinct output indices for formerly overlapping
 ; package symbol spaces. The manifest retains both original package indices.
-; CHECK-LABEL: define goabiinternal{{.*}} i64 @main.Answer()
+; CHECK-LABEL: define dso_local goabiinternal{{.*}} i64 @main.Answer()
 ; CHECK: ret i64 42
-; CHECK-LABEL: define goabiinternal i64 @main.Opaque()
+; CHECK-LABEL: define dso_local goabiinternal i64 @main.Opaque()
 ; CHECK: call goabiinternal i64 @dep.Opaque()
-; CHECK: define goabiinternal i64 @dep.Opaque()
+; CHECK: define dso_local goabiinternal i64 @dep.Opaque()
 ; CHECK: !goobj.config = !{
 ; CHECK-NOT: module asm
 ; MANIFEST-DAG: "name":"main.Answer","original_index":7,"package":0
@@ -13,6 +13,7 @@
 ; MANIFEST-DAG: "prefix":"dep"
 ; MANIFEST-DAG: "version":1
 target triple = "x86_64-unknown-linux-goobj"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
 define goabiinternal i64 @main.Answer() !goobj.symbol.index !1 {
   %v = call goabiinternal i64 @dep.Add(i64 35)
   ret i64 %v
