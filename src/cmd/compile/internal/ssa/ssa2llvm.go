@@ -169,7 +169,10 @@ var llvmABIPadType llvm.Type
 func getLLVMABIPadType() llvm.Type {
 	if llvmABIPadType.IsNil() {
 		llvmABIPadType = GlobalCtxt.StructCreateNamed("go.abi.pad")
-		llvmABIPadType.StructSetBody([]llvm.Type{GlobalCtxt.Int8Type()}, false)
+		// Packed and unpacked one-byte structs have identical storage layout,
+		// but remain distinct through LLVM's structural type merging in LTO.
+		// An ordinary struct{byte} must never become an ABI padding carrier.
+		llvmABIPadType.StructSetBody([]llvm.Type{GlobalCtxt.Int8Type()}, true)
 	}
 	return llvmABIPadType
 }
