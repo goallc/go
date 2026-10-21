@@ -215,7 +215,7 @@ jobs:
             -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
             -DCMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
-          cmake --build "$plugin_build" --target GoALLCStatepoints --parallel "$(nproc)"
+          cmake --build "$plugin_build" --target GoALLCStatepoints goallc-lto-test --parallel "$(nproc)"
           ctest --test-dir "$plugin_build" --output-on-failure -j "$(nproc)"
 
       - name: Package shared SDK and test tools
