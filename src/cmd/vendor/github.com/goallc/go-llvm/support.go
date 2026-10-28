@@ -46,8 +46,8 @@ func (c Context) HasErrors() bool {
 	return C.LLVMGoALLCContextHasErrors(c.C) != 0
 }
 
-// ConfigureGoObjFromModule decodes !goobj.config metadata into the GoObj
-// writer configuration consumed by the target code-generation pipeline.
+// ConfigureGoObjFromModule uses LLVM's shared decoder for !goobj.config and
+// the goobj.abi module flag before constructing the code-generation pipeline.
 func ConfigureGoObjFromModule(m Module) error {
 	err := C.LLVMConfigureGoObjFromModule(m.C)
 	if err == nil {

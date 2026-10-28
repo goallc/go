@@ -204,39 +204,40 @@ goroutine、defer 或 panic unwind。
 ## LLVM IR 契约
 
 LLVM IR 本身是 frontend 到 `llc` 的唯一配置载体。`compile` 设置 GoObj
-target triple，并添加一个名为 `!goobj.config` 的 named metadata：
+target triple，并将公共兼容性约束与每包身份分开：
 
 ```llvm
 target triple = "aarch64-apple-darwin-goobj"
-!goobj.config = !{!0}
-!0 = !{!"goallc.goobj", !"darwin", !"arm64", !"go1.27rc2",
-       !"GOARM64", !"v8.0", !"build-id", !"main", !"1", !"0", !1}
-!1 = !{!"regabiwrappers", !"regabiargs"}
+!llvm.module.flags = !{!0}
+!0 = !{i32 1, !"goobj.abi", !1} ; Error: incompatible inputs cannot link
+!1 = !{!"goallc.goobj", !"darwin", !"arm64", !"go1.27",
+       !"GOARM64", !"v8.0", !"0", !2}
+!2 = !{!"regabiwrappers", !"regabiargs"}
+!goobj.config = !{!3}
+!3 = !{!"build-id", !"main", !"1", !"0", !"0000000000000000"}
 ```
 
-`!0` 的字段顺序固定，每一项均为独立 metadata operand：
+`goobj.abi` 的八个字段依次是 schema、GOOS、GOARCH、Go compiler 版本、
+架构设置 key/value、shared 标志和 experiment node。LLVM 原生 module flag
+合并规则检查整个节点是否一致，不需要 LTO 自己逐字段比较。
 
-| Index | 字段 |
-| --- | --- |
-| 0 | schema 标识，固定为 `goallc.goobj` |
-| 1–2 | `GOOS`、`GOARCH` |
-| 3 | Go compiler 版本 |
-| 4–5 | 架构设置的 key/value，例如 `GOARM64` / `v8.0` |
-| 6 | build ID |
-| 7 | package path |
-| 8–9 | `main`、`shared`，值为 `0` 或 `1` |
-| 10 | experiment metadata node；其中每个 operand 是一个 experiment 名称 |
+`!goobj.config` 的五个字段依次是 build ID、package prefix、main 标志、std
+标志和十六进制 package fingerprint。它与 imports 一样仍属于原始输入包；
+LTO 必须保存包身份与依赖图，不能把这些记录简单合并成 main 的属性。
 
-experiments 不使用逗号分隔字符串，其他字段也不拼接成 Go textual object
-header。进程内 binding 会在建立 code-generation pipeline 前读取并严格校验
-这些字段，然后把它们传给 GoObj writer；LLVM 侧的 `llc` 仍用于格式级回归。
-没有
-`!goobj.config` 的普通 GoObj IR 仍可使用
-既有 `-goobj-*` command-line 选项作为兼容回退。
+`codegen::configureGoObjFromModule` 是 `llc` 与进程内 binding 共用的解析入口，
+在创建 writer 前校验配置，只读取上述格式。没有配置的手写 GoObj IR 仍可使用
+`-goobj-*` 选项。
+
+普通编译直接将 `!goobj.gotype !{ptr @type.T}` 附在定义上；LLVM 合并时随胜出
+定义保留类型引用。GoObj writer 直接读取定义上的 attachment。NoSplit 从已有的
+`go-nosplit` 函数属性生成，不再重复写入 symbol flags。
+ `!goobj.debug.config = !{!{!"pcln-v1", !"main"}}` 只保存 PCLN
+协议和包名，DWARF 编码版本由标准 `Dwarf Version` module flag 指定。
 
 对应 LLVM 测试为
 `llvm/test/CodeGen/AArch64/goobj-ir-config.ll`。LLVM 侧实现位于
-`llvm/tools/llc/llc.cpp`、`llvm/lib/CodeGen/CodeGenTargetMachineImpl.cpp`
+`llvm/lib/CodeGen/CommandFlags.cpp`、`llvm/lib/CodeGen/CodeGenTargetMachineImpl.cpp`
 和 `llvm/lib/MC/GoObjObjectWriter.cpp`；进程内解码入口位于 vendored
 `go-llvm/SupportBindings.cpp`。
 
@@ -690,8 +691,8 @@ cd src && ./all.bash -llvm-dir=/path/to/llvm-payload
   的 type switch 也已覆盖。
 - 每个经 LLVM 替换的 package 都必须由 `llc` 生成完整的 `_go_.o`，不能与
   原生 compiler object 混合。
-- `!goobj.config` 是这条开发链路的稳定交接点。新增 header 配置时应新增独立
-  metadata 字段和相应 `llc` 验证，不要恢复 wrapper 中的 header 解析逻辑。
+- 新增 header 配置时先区分公共兼容性约束与每包身份，并更新 LLVM 公共解析器；
+  不要在 binding 或 wrapper 中另建一套 header 解析逻辑。
 - 类型 descriptor data 已覆盖，但这不等同于通用 static-data lowering；目前仅
   支持 type-rooted readonly/data closure 中已验证的 relocation 类型。
 

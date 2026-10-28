@@ -26,15 +26,14 @@ func (v llvmDoubleSwitchValue) Double() int {
 	return int(v) * 2
 }
 
-// LLVM-DAG: @codegen..interfaceSwitch.0 = hidden global <{ ptr, [8 x i8], ptr, ptr }>
+// LLVM-DAG: @codegen..interfaceSwitch.0 = hidden global <{ ptr, [8 x i8], ptr, ptr }>{{.*}}!goobj.gotype ![[SWITCH_TYPE:[0-9]+]]
 // LLVM-DAG: load atomic ptr, ptr @codegen..interfaceSwitch.0 seq_cst
 // LLVM-DAG: call goabiinternal { i64, ptr } @"runtime.interfaceSwitch<builtin.{{[0-9]+}}>"(ptr @codegen..interfaceSwitch.0, ptr
 // LLVM-DAG: icmp eq ptr
 // LLVM-DAG: @"type:codegen.llvmSwitchValue"
 // LLVM-DAG: @"type:string<builtin.{{[0-9]+}}>"
 // LLVM-DAG: ret i64 -1
-// LLVM: !goobj.gotype = !{
-// LLVM-DAG: !{ptr @codegen..interfaceSwitch.0, ptr @
+// LLVM: ![[SWITCH_TYPE]] = !{ptr @"type:struct { Cache *struct {{.*}}; NCases int; Cases [1]*struct {{.*}}"}
 func classifyLLVMInterface(v any) int {
 	switch x := v.(type) {
 	case nil:

@@ -31,8 +31,8 @@ void LLVMLoadLibraryPermanently2(const char *Filename, char **ErrMsg);
 // API return failure, so in-process callers must check this state explicitly.
 LLVMBool LLVMGoALLCContextHasErrors(LLVMContextRef Context);
 
-// Decode the Go frontend's !goobj.config metadata into the LLVM GoObj writer
-// configuration used by the target code-generation pipeline.
+// Use LLVM's shared decoder for the Go frontend's module configuration before
+// constructing the target code-generation pipeline.
 LLVMErrorRef LLVMConfigureGoObjFromModule(LLVMModuleRef Module);
 
 // Load a pass plugin and run its named GoALLC early-IR pipeline. This happens

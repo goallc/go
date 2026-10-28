@@ -5884,9 +5884,9 @@ func goObjTargetTriple() string {
 	}
 }
 
-// addGoObjConfigMetadata makes an LLVM IR file self-describing for llc's
-// GoObj writer. Keep every Go object-header field structurally separate so llc
-// never needs to parse a Go header or a comma-separated experiment list.
+// addGoObjConfigMetadata separates link-wide compatibility from the output
+// package identity. LLVM rejects incompatible goobj.abi module flags itself;
+// the package record and import DAG remain local to each input package.
 func addGoObjConfigMetadata(pkg *types.Pkg) {
 	goarchKey, goarchValue := buildcfg.GOGOARCH()
 	experiments := buildcfg.Experiment.Enabled()
@@ -5906,19 +5906,26 @@ func addGoObjConfigMetadata(pkg *types.Pkg) {
 	if base.Ctxt.Std {
 		std = "1"
 	}
-	config := GlobalCtxt.MDNode([]llvm.Metadata{
+	abi := GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString("goallc.goobj"),
 		GlobalCtxt.MDString(buildcfg.GOOS),
 		GlobalCtxt.MDString(buildcfg.GOARCH),
 		GlobalCtxt.MDString(buildcfg.Version),
 		GlobalCtxt.MDString(goarchKey),
 		GlobalCtxt.MDString(goarchValue),
+		GlobalCtxt.MDString(shared),
+		GlobalCtxt.MDNode(experimentMetadata),
+	})
+	CurrentModule.AddNamedMetadataOperand("llvm.module.flags", GlobalCtxt.MDNode([]llvm.Metadata{
+		llvm.ConstInt(GlobalCtxt.Int32Type(), 1, false).ConstantAsMetadata(), // Error
+		GlobalCtxt.MDString("goobj.abi"),
+		abi,
+	}))
+	config := GlobalCtxt.MDNode([]llvm.Metadata{
 		GlobalCtxt.MDString(base.Flag.BuildID),
 		GlobalCtxt.MDString(objabi.PathToPrefix(pkg.Path)),
 		GlobalCtxt.MDString(main),
-		GlobalCtxt.MDString(shared),
 		GlobalCtxt.MDString(std),
-		GlobalCtxt.MDNode(experimentMetadata),
 		GlobalCtxt.MDString(hex.EncodeToString(base.Ctxt.Fingerprint[:])),
 	})
 	CurrentModule.AddNamedMetadataOperand("goobj.config", config)

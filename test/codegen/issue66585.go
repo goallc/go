@@ -7,6 +7,7 @@
 package codegen
 
 // The inlined call's unread temporary is removed before LLVM emission.
+// LLVM: @codegen.x = global {{.*}}!goobj.gotype ![[X_TYPE:[0-9]+]]
 // LLVM-LABEL: define goabiinternal void @codegen.init()
 // LLVM-NOT: alloca
 // LLVM: store i64 1, ptr @codegen.x, align 8
@@ -16,7 +17,7 @@ package codegen
 // LLVM-DAG: icmp eq ptr %p, null
 // LLVM-DAG: call goabiinternal void @runtime.panicmem()
 // LLVM-DAG: store i64 1, ptr %p, align 8
-// LLVM-DAG: !{ptr @codegen.x, ptr @"type:int"}
+// LLVM-DAG: ![[X_TYPE]] = !{ptr @"type:int"}
 
 var x = func() int {
 	n := 0

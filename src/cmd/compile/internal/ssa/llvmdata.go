@@ -913,6 +913,7 @@ func setGoObjDataFlags(g llvm.Value, s *obj.LSym) {
 // record as native compiler output. Local and non-local Dupok symbols use LLVM
 // linkage and are recovered by AsmPrinter. LLVM cannot encode both properties
 // at once, so only a local-linkage/Dupok overlap needs a residual metadata bit.
+// AsmPrinter derives NoSplit from the function's go-nosplit attribute.
 func setGoObjFunctionFlags(fn llvm.Value, s *obj.LSym) {
 	var flag, flag2 uint64
 	if (s.Local() || s.Static()) && s.DuplicateOK() {
@@ -920,9 +921,6 @@ func setGoObjFunctionFlags(fn llvm.Value, s *obj.LSym) {
 	}
 	if s.ReflectMethod() {
 		flag |= goobj.SymFlagReflectMethod
-	}
-	if s.NoSplit() {
-		flag |= goobj.SymFlagNoSplit
 	}
 	if s.IsPkgInit() {
 		flag2 |= goobj.SymFlagPkgInit
@@ -1178,8 +1176,9 @@ func setGoObjGotypeMetadata(g llvm.Value, s *obj.LSym) {
 		target = llvmGoDataRef(s.Gotype)
 	}
 	preserveGoObjMetadataValues(g, target)
-	CurrentModule.AddNamedMetadataOperand("goobj.gotype", GlobalCtxt.MDNode([]llvm.Metadata{
-		g.ConstantAsMetadata(),
+	// Keep the relation on its definition so LLVM's linker selects the
+	// prevailing definition's type and remaps the reference with it.
+	g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.gotype"), GlobalCtxt.MDNode([]llvm.Metadata{
 		target.ConstantAsMetadata(),
 	}))
 }

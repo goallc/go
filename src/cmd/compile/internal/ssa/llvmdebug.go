@@ -68,17 +68,11 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 		Optimized:    base.Flag.N == 0,
 		EmissionKind: emission,
 	})
-	dwarfVersion := "dwarf4"
-	if buildcfg.Experiment.Dwarf5 {
-		dwarfVersion = "dwarf5"
-	}
-	// The config selects the object encoding. Each compile unit's emission
-	// kind selects minimal or full DWARF, including after LTO combines units
-	// compiled with different -dwarf settings.
+	// Dwarf Version below selects the object encoding. Each compile unit's
+	// emission kind selects minimal or full DWARF, including after LTO combines
+	// units compiled with different -dwarf settings.
 	config := []llvm.Metadata{
 		GlobalCtxt.MDString("pcln-v1"),
-		GlobalCtxt.MDString("dwarf-v1"),
-		GlobalCtxt.MDString(dwarfVersion),
 		GlobalCtxt.MDString(pkg.Name),
 	}
 	CurrentModule.AddNamedMetadataOperand("goobj.debug.config", GlobalCtxt.MDNode(config))
