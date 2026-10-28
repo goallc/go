@@ -226,13 +226,13 @@ target triple = "aarch64-apple-darwin-goobj"
 LTO 必须保存包身份与依赖图，不能把这些记录简单合并成 main 的属性。
 
 `codegen::configureGoObjFromModule` 是 `llc` 与进程内 binding 共用的解析入口，
-在创建 writer 前校验配置。它也接受旧的十二／十三字段 `!goobj.config`，
-以便读取已生成的 IR。没有配置的 GoObj IR 仍可使用 `-goobj-*` 选项。
+在创建 writer 前校验配置，只读取上述格式。没有配置的手写 GoObj IR 仍可使用
+`-goobj-*` 选项。
 
 普通编译直接将 `!goobj.gotype !{ptr @type.T}` 附在定义上；LLVM 合并时随胜出
-定义保留类型引用。GoObj writer 兼容旧的模块关系表，但不接受同一来源同时使用
-两种形式。NoSplit 从已有的 `go-nosplit` 函数属性生成，不再重复写入 symbol
-flags。新的 `!goobj.debug.config = !{!{!"pcln-v1", !"main"}}` 只保存 PCLN
+定义保留类型引用。GoObj writer 直接读取定义上的 attachment。NoSplit 从已有的
+`go-nosplit` 函数属性生成，不再重复写入 symbol flags。
+ `!goobj.debug.config = !{!{!"pcln-v1", !"main"}}` 只保存 PCLN
 协议和包名，DWARF 编码版本由标准 `Dwarf Version` module flag 指定。
 
 对应 LLVM 测试为
