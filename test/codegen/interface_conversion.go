@@ -6,13 +6,12 @@
 
 package codegen
 
-// LLVM: @codegen..typeAssert.0 = hidden global <{ ptr, ptr, [8 x i8] }>
+// LLVM: @codegen..typeAssert.0 = hidden global <{ ptr, ptr, [8 x i8] }>{{.*}}!goobj.gotype ![[ASSERT_TYPE:[0-9]+]]
 // LLVM-LABEL: define goabiinternal { i64, ptr } @codegen.convertLLVMInterface(
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
 // LLVM: ptrtoint ptr
 // LLVM: call goabiinternal ptr @"runtime.typeAssert<builtin.{{[0-9]+}}>"(ptr @codegen..typeAssert.0, ptr
-// LLVM: !goobj.gotype = !{
-// LLVM-DAG: !{ptr @codegen..typeAssert.0, ptr @
+// LLVM: ![[ASSERT_TYPE]] = !{ptr @"type:struct { Cache *struct {{.*}}; CanFail bool }"}
 
 type llvmSourceInterface interface {
 	Double() int

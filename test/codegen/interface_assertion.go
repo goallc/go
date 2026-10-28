@@ -17,7 +17,7 @@ func (v llvmAssertionValue) Value(delta int) int {
 	return int(v) + delta
 }
 
-// LLVM: @codegen..typeAssert.0 = hidden global <{ ptr, ptr, [8 x i8] }>
+// LLVM: @codegen..typeAssert.0 = hidden global <{ ptr, ptr, [8 x i8] }>{{.*}}!goobj.gotype ![[ASSERT_TYPE:[0-9]+]]
 // LLVM-LABEL: define goabiinternal { { i64, ptr }, i1 } @codegen.assertLLVMInterface(
 // LLVM: load atomic ptr, ptr @codegen..typeAssert.0 seq_cst
 // LLVM: call goabiinternal ptr @"runtime.typeAssert<builtin.{{[0-9]+}}>"(ptr @codegen..typeAssert.0, ptr
@@ -46,5 +46,4 @@ func mustLLVMInterface(v any) llvmAssertionInterface {
 	return v.(llvmAssertionInterface)
 }
 
-// LLVM: !goobj.gotype = !{
-// LLVM-DAG: !{ptr @codegen..typeAssert.0, ptr @
+// LLVM: ![[ASSERT_TYPE]] = !{ptr @"type:struct { Cache *struct {{.*}}; CanFail bool }"}
