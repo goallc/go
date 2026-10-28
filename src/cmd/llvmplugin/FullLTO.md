@@ -1,92 +1,71 @@
 # Single-object FullLTO backend
 
-`goallc::runLTO` uses LLVM's resolution-based `llvm::lto::LTO` API to merge
-compiler bitcode inputs and optimize one module. It writes `program.bc` and
-`program.json`. With `SaveIR`, it also writes `program.ll` for inspection. The C entry point `GoALLCLTO` selects the
-`lto<O2>` pipeline; a non-null return is an error string owned by the caller
-and released with `free`.
+`goallc::runLTO` uses LLVM's IR `Linker` to combine compiler bitcode and
+`llvm::lto::backend` to run target-aware FullLTO optimization. It writes
+`program.bc` and a version 1 `program.json` manifest, plus `program.ll` when
+`SaveIR` is enabled. The C entry point `GoALLCLTO` selects `lto<O2>` and
+returns either null or an error string that the caller releases with `free`.
 
-This stage produces optimized bitcode, not a machine-code object. The later
-linker integration will run final code generation once and consume the
-manifest alongside that object's symbols. There is no per-package FullLTO
-output. ThinLTO requests are explicitly rejected at this stage.
+The output is optimized IR for later single-object GoObj code generation.
+This stage does not connect to cmd/link, produce an executable, or enable
+ThinLTO. A post-optimization hook stops the standard LTO backend before
+code generation; the caller still owns the module and writes it directly.
 
-## LLVM LTO integration
+## Native LLVM merging
 
-Go-specific input preparation runs before `lto::InputFile::create`. Prepared
-inputs are serialized to in-memory bitcode buffers, which stay alive through
-`LTO::add` and `LTO::run`. LLVM owns module combination, internalization and
-the target-aware optimization pipeline; this backend no longer calls the IR
-linker or constructs the whole-program optimization pass manager itself.
+All inputs share one LLVMContext. LLVM selects strong/weak definitions,
+renames colliding locals, remaps references and merges named metadata and
+module flags. There is no custom symbol-resolution table, second bitcode
+parse, module clone, or `goallc.lto.owner/name/packages` metadata protocol.
 
-The caller supplies `SymbolResolution` records: strong definitions take
-precedence over weak definitions, duplicate strong definitions are errors,
-and visible Go symbols remain available to ordinary objects outside LTO.
-This remains deliberately conservative until the Go linker supplies more
-precise reachability information. Go named BSS placeholders are normalized
-before resolution because they do not use LLVM common-linkage semantics.
+Go named BSS placeholders are expressed as LLVM `common` definitions while
+linking. LLVM selects the largest size and alignment, allows initialized
+strong definitions to win, and resolves linknamed placeholders to functions.
+The adapter checks the Go-specific minimum storage requirement and permits
+a function only for linkname placeholders. After linking, it restores the
+selected Go BSS section and ordinary linkage for GoObj emission.
 
-LLVM rereads the inputs into its own context. Temporary named metadata
-transports package settings across that boundary and is removed from the
-output. `PreOptModuleHook` records retained identities. `PostOptModuleHook`
-checks them and restores the GoObj output metadata on a clone of the optimized
-module, then returns false to stop before machine-code generation. The clone
-respects the hook's const-module contract. A native output callback reports
-an error if code generation is unexpectedly reached.
+The existing `goobj.gotype` relation is attached to its definition while
+linking. LLVM carries the winning definition's type reference; the adapter
+restores the normal named-metadata form after optimization. Type references
+are retained with `llvm.compiler.used`. No package-owner operand is added
+to gotype records, and no custom winner-filtering pass is needed.
 
-The on-disk bitcode remains the interface to the later GoObj code-generation
-stage. It is not required by LLVM's LTO API; future integration can replace
-this interface with direct object output after arranging the Go metadata and
-pre-codegen callbacks at the appropriate stages. This PR does not implement
-that direct-output path or enable ThinLTO.
+## Go identities and output
 
-## Package and symbol identity
+Package configurations, import DAGs, cgo directives and linkname origins
+remain in a C++ side table. Inputs require compatible GoObj configurations,
+target triples and data layouts, unique package prefixes, and one main.
+CPU-feature preparation runs before combining packages.
 
-Each input must have a unique package prefix and a compatible GoObj
-configuration, target triple, and data layout. Exactly one input must be the
-main package. CPU feature preparation runs before modules are combined, while
-the original package metadata is still available.
+During linking, definitions receive unique temporary indices using the
+existing `goobj.symbol.index` attachment. LLVM carries the selected index
+and the side table maps it back to the original package, index and name,
+even when LLVM renames local symbols. Compiler indices are restored before
+optimization. Indexed symbols and assembly-visible definitions are retained
+with `llvm.compiler.used`; post-optimization checks reject lost identities,
+unsupported new definitions, aliases and ifuncs.
 
-Definitions retain package ownership through optimization. Indexed Go
-symbols are kept even when their only users may be ordinary assembly or
-packages outside LTO. Content-addressed functions receive distinct indexed
-identities before cross-package optimization. Optimizer-created aliases,
-ifuncs, duplicate indices, and unowned definitions other than eligible
-constants are rejected.
+Content-addressed functions receive distinct package-qualified identities
+before optimization. Go ABI suffixes must remain at the end of storage
+names. Bodies with restricted linkname references remain out of cross-package
+inlining; the original reference package is preserved for access checks.
+FIPS packages, dynamic Go linking and arbitrary module assembly are rejected.
 
-The version 1 manifest contains:
-
-- `main`: the index of the original main package in `packages`.
-- `packages`: each package's prefix, debug name, standard-library flag,
-  fingerprint, imports, and cgo directives.
-- `symbols`: each surviving symbol's owning package, name, ABI, and, where
-  present, its original and combined-object symbol indices. Renamed symbols
-  also retain their original name.
-- `linknames`: references whose access checks must use the originating
-  package, including references inside bodies that were optimized away.
-
-The original import DAG lives in the manifest. The combined module does not
-put every package's imports on main, which would create artificial cycles.
-Bodies with restricted linkname references are kept out of cross-package
-inlining. Named BSS declarations are resolved against definitions with size
-checks before LLVM module linking.
-
-FIPS packages and modules carrying `goobj.static_rodata_type` must remain
-ordinary compiler objects. Dynamic Go linking, input aliases and ifuncs,
-and module assembly other than cgo directive records are also rejected.
+The manifest records the main package, original packages/imports/cgo data,
+surviving symbol owners and ABI/index mappings, and linkname access checks.
+The original import DAG is not flattened onto main. GoObj serialization,
+package ownership and access rules remain Go-specific; LLVM linkage does
+not replace those contracts.
 
 ## Tests
 
-The test-only `goallc-lto-test` executable calls the production backend and
-links its static library. It is not installed into the toolchain. FileCheck
-fixtures cover cross-package optimization, manifests and import DAGs, BSS,
-ABI padding, closures, ABI0, strong/weak resolution in both input orders,
-and rejected inputs. Additional fixtures take optimized bitcode through
-`llc` on amd64 and arm64, checking late statepoint callbacks and using
-`objview` to validate stack maps, safepoints and assembly-visible symbols.
-The plugin CI builds this executable before running CTest.
-
-After configuring the plugin build with `BUILD_TESTING=ON`, run:
+The test-only `goallc-lto-test` driver links the production static backend.
+FileCheck covers optimization, package manifests, local renaming, strong/weak
+selection, common size/alignment/type selection in both input orders, ABI0,
+closures, BSS errors and linkname function placeholders. Downstream llc and
+objview tests check amd64/arm64 statepoints, stack maps, safepoints, retained
+symbols and merged variable layout/type references.
 
 ```sh
 cmake --build <build-dir> --target GoALLCStatepoints goallc-lto-test

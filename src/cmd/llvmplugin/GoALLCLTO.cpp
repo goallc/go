@@ -15,14 +15,14 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/LTO/LTO.h"
+#include "llvm/LTO/LTOBackend.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/ToolOutputFile.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <cstdlib>
 #include <cstring>
@@ -31,7 +31,6 @@
 #include <vector>
 
 using namespace llvm;
-static constexpr StringLiteral OwnerMD = "goallc.lto.owner";
 // Go 1.27 cmd/internal/goobj SymFlagLinknameStd (not in older LLVM headers).
 static constexpr uint32_t GoSymFlagLinknameStd = 1u << 5;
 
@@ -64,17 +63,8 @@ struct Package {
   SmallVector<std::pair<std::string, unsigned>> Linknames;
 };
 
-static std::optional<unsigned> owner(const GlobalObject &G) {
-  if (const MDNode *N = G.getMetadata(OwnerMD))
-    return mdconst::extract<ConstantInt>(N->getOperand(0))->getZExtValue();
-  return std::nullopt;
-}
-
 static void givePackageName(GlobalObject &G, StringRef Prefix) {
   StringRef Name = G.getName();
-  G.setMetadata(
-      "goallc.lto.name",
-      MDNode::get(G.getContext(), MDString::get(G.getContext(), Name)));
   bool ABI0 = Name.consume_back(GoObj::ABI0SymbolSuffix);
   StringRef Variant = GoObj::getSymbolSuffix(Name);
   if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
@@ -97,40 +87,37 @@ static bool clonedConstant(const GlobalValue &G) {
 // linker symbols. In particular, a specialized clone must not inherit its
 // source function's package symbol index.
 struct SymbolIdentity {
-  unsigned Owner;
+  unsigned Package;
   MDNode *Index;
+  std::string OriginalName;
+  std::string Section;
 };
 
 static Error checkSymbolIdentities(Module &M,
                                    const StringMap<SymbolIdentity> &Symbols) {
   if (!M.alias_empty() || !M.ifunc_empty())
     return fail("optimization produced an alias or ifunc");
-  DenseSet<std::pair<unsigned, uint64_t>> Indices;
   for (GlobalObject &G : M.global_objects()) {
     if (G.isDeclaration() || G.getName().starts_with("llvm."))
       continue;
-    auto O = owner(G);
-    if (!O && !clonedConstant(G))
-      return fail(
-          "optimization produced a definition without package ownership: " +
-          G.getName());
-    if (auto *Index = G.getMetadata("goobj.symbol.index")) {
-      if (!O ||
-          !Indices
-               .insert({*O, mdconst::extract<ConstantInt>(Index->getOperand(0))
-                                ->getZExtValue()})
-               .second)
-        return fail("duplicate package symbol index after optimization: " +
-                    G.getName());
+    auto It = Symbols.find(G.getName());
+    if (It == Symbols.end()) {
+      if (!clonedConstant(G))
+        return fail(
+            "optimization produced a definition without package ownership: " +
+            G.getName());
+    } else if (G.getMetadata("goobj.symbol.index") != It->second.Index) {
+      return fail("optimization changed retained Go symbol identity: " +
+                  G.getName());
     }
   }
-  for (const auto &S : Symbols) {
-    auto *G = dyn_cast_or_null<GlobalObject>(M.getNamedValue(S.getKey()));
-    if (!G || G->isDeclaration() || owner(*G) != S.second.Owner ||
-        G->getMetadata("goobj.symbol.index") != S.second.Index)
-      return fail("optimization changed retained Go symbol identity: " +
-                  S.getKey());
-  }
+  for (const auto &S : Symbols)
+    if (S.second.Index) {
+      auto *G = dyn_cast_or_null<GlobalObject>(M.getNamedValue(S.getKey()));
+      if (!G || G->isDeclaration())
+        return fail("optimization changed retained Go symbol identity: " +
+                    S.getKey());
+    }
   return Error::success();
 }
 
@@ -169,7 +156,8 @@ static Error prepareInput(Module &M) {
 }
 
 static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
-                               StringRef OutDir, bool SaveIR) {
+                               StringRef OutDir, bool SaveIR,
+                               const StringMap<SymbolIdentity> &Origins) {
   LLVMContext &C = M.getContext();
   unsigned Main = Packages.size();
   json::Array PackageRecords, ReferenceRecords;
@@ -220,9 +208,10 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
   for (GlobalObject &G : M.global_objects()) {
     if (G.isDeclaration() || G.getName().starts_with("llvm."))
       continue;
-    auto O = owner(G);
-    if (!O)
+    auto It = Origins.find(G.getName());
+    if (It == Origins.end())
       continue; // Optimizer-created content-addressed constants have no owner.
+    const SymbolIdentity &Origin = It->second;
     unsigned ABI = GoObj::SymABI0;
     if (const auto *F = dyn_cast<Function>(&G))
       ABI = F->getCallingConv() == CallingConv::GoABI0 ? GoObj::SymABI0
@@ -237,10 +226,9 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
       ABI = GoObj::SymABIstatic;
       Name = Name.drop_back(Suffix.size());
     }
-    json::Object S{{"package", *O}, {"name", Name}, {"abi", ABI}};
-    if (auto *Original = G.getMetadata("goallc.lto.name")) {
-      StringRef OriginalName =
-          cast<MDString>(Original->getOperand(0))->getString();
+    json::Object S{{"package", Origin.Package}, {"name", Name}, {"abi", ABI}};
+    if (!Origin.OriginalName.empty()) {
+      StringRef OriginalName = Origin.OriginalName;
       OriginalName.consume_back(GoObj::ABI0SymbolSuffix);
       StringRef Variant = GoObj::getSymbolSuffix(OriginalName);
       if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
@@ -258,7 +246,6 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
       G.setMetadata("goobj.symbol.index", MDNode::get(C, Fields));
     }
     Symbols.push_back(std::move(S));
-    G.setMetadata("goallc.lto.name", nullptr);
   }
 
   const Package &P = Packages[Main];
@@ -286,24 +273,6 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
   }
   if (DebugConfig)
     M.getOrInsertNamedMetadata("goobj.debug.config")->addOperand(DebugConfig);
-  if (auto *N = M.getNamedMetadata("goobj.gotype")) {
-    SmallVector<MDNode *> Records;
-    for (MDNode *E : N->operands()) {
-      auto *V = dyn_cast_or_null<ValueAsMetadata>(E->getOperand(0));
-      auto *G = V ? dyn_cast<GlobalObject>(V->getValue()) : nullptr;
-      unsigned RecordOwner =
-          mdconst::extract<ConstantInt>(E->getOperand(2))->getZExtValue();
-      if (!G || G->isDeclaration() || owner(*G) != RecordOwner)
-        continue;
-      Metadata *Fields[] = {E->getOperand(0), E->getOperand(1)};
-      Records.push_back(MDNode::get(C, Fields));
-    }
-    N->clearOperands();
-    for (MDNode *E : Records)
-      N->addOperand(E);
-  }
-  for (GlobalObject &G : M.global_objects())
-    G.setMetadata(OwnerMD, nullptr);
   for (StructType *T : M.getIdentifiedStructTypes())
     if (T->hasName() && (T->getName() == "go.abi.pad" ||
                          T->getName().starts_with("go.abi.pad."))) {
@@ -343,221 +312,31 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
   return Error::success();
 }
 
-static Error resolveGoBSS(ArrayRef<std::unique_ptr<Module>> Modules) {
-  // Normalize Go named BSS before LLVM resolves and combines the inputs.
-  // These placeholders follow Go linker rules rather than LLVM common linkage.
-  StringMap<GlobalObject *> Definitions;
-  auto LinknameBSS = [](GlobalVariable &G) {
-    auto *Flags = G.getMetadata("goobj.symbol.flags");
-    return G.hasInitializer() && G.getInitializer()->isNullValue() && Flags &&
-           (mdconst::extract<ConstantInt>(Flags->getOperand(1))
-                ->getZExtValue() &
-            (GoObj::SymFlagLinkname | GoSymFlagLinknameStd));
-  };
-  auto BSS = [](GlobalVariable &G) {
-    return G.hasInitializer() && G.getInitializer()->isNullValue() &&
-           G.getMetadata("goobj.symbol.nonpackage") &&
-           (G.getSection() == ".bss" || G.getSection() == ".noptrbss");
-  };
-  for (auto &M : Modules)
-    for (GlobalObject &G : M->global_objects()) {
-      if (G.isDeclaration() || G.hasLocalLinkage())
-        continue;
-      auto [It, Inserted] = Definitions.try_emplace(G.getName(), &G);
-      if (Inserted)
-        continue;
-      GlobalObject *Old = It->second;
-      auto *NewVar = dyn_cast<GlobalVariable>(&G);
-      auto *OldVar = dyn_cast<GlobalVariable>(Old);
-      if (NewVar && LinknameBSS(*NewVar) && isa<Function>(Old)) {
-        NewVar->setInitializer(nullptr);
-        continue;
-      }
-      if (OldVar && LinknameBSS(*OldVar) && isa<Function>(G)) {
-        OldVar->setInitializer(nullptr);
-        It->second = &G;
-        continue;
-      }
-      if (!NewVar || !OldVar || (!BSS(*NewVar) && !BSS(*OldVar)) ||
-          G.getMetadata("goobj.symbol.index") ||
-          Old->getMetadata("goobj.symbol.index"))
-        continue;
-      const DataLayout &DL = M->getDataLayout();
-      bool NewWins =
-          BSS(*OldVar) &&
-          (!BSS(*NewVar) || DL.getTypeAllocSize(NewVar->getValueType()) >
-                                DL.getTypeAllocSize(OldVar->getValueType()));
-      GlobalVariable &Winner = NewWins ? *NewVar : *OldVar;
-      GlobalVariable &Loser = NewWins ? *OldVar : *NewVar;
-      if (DL.getTypeAllocSize(Winner.getValueType()) <
-          DL.getTypeAllocSize(Loser.getValueType()))
-        return fail("BSS declaration exceeds initialized definition: " +
-                    G.getName());
-      Loser.setInitializer(nullptr);
-      Loser.setLinkage(GlobalValue::ExternalLinkage);
-      SmallVector<std::pair<unsigned, MDNode *>> MDs;
-      Loser.getAllMetadata(MDs);
-      for (auto [Kind, N] : MDs)
-        Loser.setMetadata(Kind, nullptr);
-      It->second = &Winner;
-    }
-
-  return Error::success();
-}
-
-static Error runFullLTO(ArrayRef<std::unique_ptr<Module>> Modules,
-                        MutableArrayRef<Package> Packages, StringRef Pipeline,
-                        StringRef OutDir, bool SaveIR) {
-  LLVMContext &C = Modules.front()->getContext();
-  // LTO reads bitcode into its own context. Transport package-scoped metadata
-  // with each input instead of keeping pointers into the input LLVMContext.
-  std::vector<SmallVector<char, 0>> Buffers(Modules.size());
-  std::vector<std::unique_ptr<lto::InputFile>> Files;
-  for (unsigned I = 0; I != Modules.size(); ++I) {
-    Module &M = *Modules[I];
-    SmallVector<Metadata *> Settings;
-    for (auto &Entry : Packages[I].Settings) {
-      SmallVector<Metadata *> Fields{MDString::get(C, Entry.getKey())};
-      llvm::append_range(Fields, Entry.second);
-      Settings.push_back(MDNode::get(C, Fields));
-    }
-    Metadata *Record[] = {
-        ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(C), I)),
-        Packages[I].Config, MDNode::get(C, Settings)};
-    M.getOrInsertNamedMetadata("goallc.lto.packages")
-        ->addOperand(MDNode::get(C, Record));
-    raw_svector_ostream OS(Buffers[I]);
-    WriteBitcodeToFile(M, OS);
-    auto File = lto::InputFile::create(
-        MemoryBufferRef(StringRef(Buffers[I].data(), Buffers[I].size()),
-                        M.getModuleIdentifier()));
-    if (!File)
-      return File.takeError();
-    Files.push_back(std::move(*File));
-  }
-
-  // Describe the link to LLVM. Keep externally named Go definitions visible:
-  // ordinary assembly and packages outside this LTO unit can reference them.
-  // Local indexed identities are retained separately by llvm.compiler.used.
-  struct Definition {
-    unsigned File;
-    const lto::InputFile::Symbol *Sym;
-  };
-  StringMap<Definition> Prevailing;
-  for (unsigned I = 0; I != Files.size(); ++I)
-    for (const auto &S : Files[I]->symbols()) {
-      if (S.isUndefined())
-        continue;
-      auto [It, Inserted] =
-          Prevailing.try_emplace(S.getName(), Definition{I, &S});
-      if (Inserted)
-        continue;
-      const auto &Old = *It->second.Sym;
-      auto Rank = [](const lto::InputFile::Symbol &S) {
-        return S.isCommon() ? 1 : S.isWeak() ? 0 : 2;
-      };
-      if (Rank(S) == 2 && Rank(Old) == 2)
-        return fail("duplicate symbol: " + S.getName());
-      if (Rank(S) > Rank(Old) || (S.isCommon() && Old.isCommon() &&
-                                  S.getCommonSize() > Old.getCommonSize()))
-        It->second = {I, &S};
-    }
-
+static Error optimize(Module &M, StringRef Pipeline, lto::Config &Conf) {
   static std::once_flag TargetsInitialized;
   std::call_once(TargetsInitialized, [] {
     InitializeAllTargetInfos();
     InitializeAllTargets();
     InitializeAllTargetMCs();
   });
-  // The public entry uses lto<O2>; validate the test harness override before
-  // LTOBackend's fatal-error path for malformed custom pipelines.
+  // Validate the test harness override before LTOBackend's fatal-error path.
   ModulePassManager ValidationPipeline;
   PassBuilder PB;
   if (Error E = PB.parsePassPipeline(ValidationPipeline, Pipeline))
     return E;
-  lto::Config Conf;
   Conf.OptPipeline = Pipeline.str();
-  Conf.ShouldDiscardValueNames = false;
-  std::string Diagnostics;
-  bool DiagnosticError = false;
-  Conf.DiagHandler = [&](const DiagnosticInfo &DI) {
-    DiagnosticError |= DI.getSeverity() == DS_Error;
-    raw_string_ostream OS(Diagnostics);
-    DiagnosticPrinterRawOStream Printer(OS);
-    DI.print(Printer);
-    OS << '\n';
-  };
-  StringMap<SymbolIdentity> Symbols;
-  Conf.PreOptModuleHook = [&](unsigned, const Module &M) {
-    for (const GlobalObject &G : M.global_objects())
-      if (!G.isDeclaration() && !G.getName().starts_with("llvm."))
-        if (auto *Index = G.getMetadata("goobj.symbol.index"))
-          Symbols.try_emplace(G.getName(), SymbolIdentity{*owner(G), Index});
-    return true;
-  };
-  std::string OutputError;
-  bool WroteOutput = false;
-  Conf.PostOptModuleHook = [&](unsigned, const Module &M) {
-    // Hooks expose a const module. Work on a clone when restoring the GoObj
-    // output contract, and stop before LLVM's native object code generation.
-    auto Combined = CloneModule(M);
-    auto *Records = Combined->getNamedMetadata("goallc.lto.packages");
-    for (MDNode *Record : Records->operands()) {
-      unsigned I =
-          mdconst::extract<ConstantInt>(Record->getOperand(0))->getZExtValue();
-      Package &P = Packages[I];
-      P.Config = cast<MDNode>(Record->getOperand(1));
-      P.Settings.clear();
-      for (const MDOperand &Setting :
-           cast<MDNode>(Record->getOperand(2))->operands()) {
-        auto *Fields = cast<MDNode>(Setting);
-        auto &Entries =
-            P.Settings[cast<MDString>(Fields->getOperand(0))->getString()];
-        for (unsigned J = 1; J != Fields->getNumOperands(); ++J)
-          Entries.push_back(cast<MDNode>(Fields->getOperand(J)));
-      }
-    }
-    Combined->eraseNamedMetadata(Records);
-    if (Error E = checkSymbolIdentities(*Combined, Symbols)) {
-      OutputError = toString(std::move(E));
-      return false;
-    }
-    for (GlobalObject &G : Combined->global_objects()) {
-      if (!G.isDeclaration())
-        G.setMetadata("goobj.import", nullptr);
-      if (G.hasLocalLinkage() && G.getMetadata("goobj.symbol.index"))
-        G.setLinkage(GlobalValue::ExternalLinkage);
-    }
-    if (Error E = writeSingleModule(*Combined, Packages, OutDir, SaveIR))
-      OutputError = toString(std::move(E));
-    WroteOutput = true;
-    return false;
-  };
-  lto::LTO LTO(std::move(Conf));
-  for (unsigned I = 0; I != Files.size(); ++I) {
-    SmallVector<lto::SymbolResolution> Resolutions;
-    for (const auto &S : Files[I]->symbols()) {
-      lto::SymbolResolution R;
-      R.Prevailing =
-          !S.isUndefined() && Prevailing.lookup(S.getName()).File == I;
-      R.VisibleToRegularObj = true;
-      R.FinalDefinitionInLinkageUnit = Prevailing.count(S.getName()) != 0;
-      Resolutions.push_back(R);
-    }
-    if (Error E = LTO.add(std::move(Files[I]), Resolutions))
-      return E;
-  }
-  if (Error E = LTO.run([](unsigned, const Twine &)
-                            -> Expected<std::unique_ptr<CachedFileStream>> {
-        return fail("unexpected FullLTO native code generation");
-      }))
+  // We own M: stop after optimization, then restore GoObj output metadata
+  // directly. No second LLVMContext, bitcode round trip, or module clone.
+  Conf.PostOptModuleHook = [](unsigned, const Module &) { return false; };
+  ModuleSummaryIndex Index(false);
+  if (Error E = lto::backend(
+          Conf,
+          [](unsigned,
+             const Twine &) -> Expected<std::unique_ptr<CachedFileStream>> {
+            return fail("unexpected FullLTO native code generation");
+          },
+          1, M, Index, {}))
     return E;
-  if (!OutputError.empty())
-    return fail(OutputError);
-  if (DiagnosticError)
-    return fail(Diagnostics);
-  if (!WroteOutput)
-    return fail("FullLTO did not produce an optimized module: " + Diagnostics);
   return Error::success();
 }
 
@@ -567,9 +346,26 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
     return fail("ThinLTO is not available in this backend yet");
   if (Inputs.empty())
     return fail("LTO requires at least one input");
-  LLVMContext C;
+  lto::Config Conf;
+  Conf.ShouldDiscardValueNames = false;
+  std::string Diagnostics;
+  Conf.DiagHandler = [&](const DiagnosticInfo &DI) {
+    if (DI.getSeverity() == DS_Error) {
+      raw_string_ostream OS(Diagnostics);
+      DiagnosticPrinterRawOStream Printer(OS);
+      DI.print(Printer);
+      OS << '\n';
+    }
+  };
+  lto::LTOLLVMContext C(Conf);
   std::vector<Package> Packages;
   std::vector<std::unique_ptr<Module>> Modules;
+  std::vector<SymbolIdentity> InputSymbols;
+  struct BSSRequirement {
+    uint64_t Size = 0;
+    bool FunctionAllowed = true;
+  };
+  StringMap<BSSRequirement> BSSRequirements;
   for (unsigned I = 0; I != Inputs.size(); ++I) {
     SMDiagnostic Diag;
     auto M = parseIRFile(Inputs[I], Diag, C);
@@ -688,12 +484,11 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
           return fail("duplicate package symbol index: " + G.getName());
         NextIndex = std::max(NextIndex, 1 + Value->getZExtValue());
       }
+    SmallVector<GlobalValue *> Retained;
     for (GlobalObject &G : M->global_objects()) {
       if (G.isDeclaration() || G.getName().starts_with("llvm."))
         continue;
-      G.setMetadata(OwnerMD,
-                    MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(
-                                       Type::getInt32Ty(C), I))));
+      std::string OriginalName;
       // Content-addressed functions normally remain in their compiler
       // package. LTO can expose references to them in other packages before
       // their machine-code hashes exist. Give each original copy an indexed
@@ -701,6 +496,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       bool HashedFunction =
           isa<Function>(G) && G.getMetadata("goobj.content_addressable");
       if (HashedFunction) {
+        OriginalName = G.getName().str();
         givePackageName(G, P.Prefix);
         G.setMetadata("goobj.content_addressable", nullptr);
       }
@@ -721,37 +517,130 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         G.setMetadata("goobj.symbol.index", MDNode::get(C, Index));
         G.setMetadata("goobj.symbol.nonpackage", nullptr);
       }
+      // Rebase the existing GoObj index into a unique input identity during
+      // linking. LLVM keeps the selected definition's attachment (and renames
+      // colliding locals); the side table supplies its original package/index.
+      // Restore the compiler's index before optimizing or emitting GoObj IR.
+      bool Retain = !clonedConstant(G);
+      MDNode *Index = G.getMetadata("goobj.symbol.index");
+      if (InputSymbols.size() >= UINT32_MAX)
+        return fail("too many combined symbols");
+      InputSymbols.push_back(
+          {I, Index, std::move(OriginalName), G.getSection().str()});
+      G.setMetadata(
+          "goobj.symbol.index",
+          MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(
+                             Type::getInt32Ty(C), InputSymbols.size() - 1))));
+      if (Retain)
+        Retained.push_back(&G);
+      if (auto *V = dyn_cast<GlobalVariable>(&G);
+          V && !Index && !V->hasLocalLinkage() && V->hasInitializer() &&
+          V->getInitializer()->isNullValue()) {
+        auto *Flags = V->getMetadata("goobj.symbol.flags");
+        bool Linkname =
+            Flags && (mdconst::extract<ConstantInt>(Flags->getOperand(1))
+                          ->getZExtValue() &
+                      (GoObj::SymFlagLinkname | GoSymFlagLinknameStd));
+        if (Linkname ||
+            (V->getMetadata("goobj.symbol.nonpackage") &&
+             (V->getSection() == ".bss" || V->getSection() == ".noptrbss"))) {
+          auto &Requirement = BSSRequirements[G.getName()];
+          Requirement.Size = std::max(Requirement.Size,
+                                      M->getDataLayout()
+                                          .getTypeAllocSize(V->getValueType())
+                                          .getFixedValue());
+          Requirement.FunctionAllowed &= Linkname;
+          // LLVM common linkage handles largest size/alignment, strong
+          // definitions and linknamed function definitions automatically.
+          V->setLinkage(GlobalValue::CommonLinkage);
+          V->setSection("");
+        }
+      }
     }
     if (auto *N = M->getNamedMetadata("goobj.gotype")) {
-      SmallVector<MDNode *> Records;
       for (MDNode *E : N->operands()) {
         if (E->getNumOperands() != 2)
           return fail("invalid gotype record");
-        Metadata *Fields[] = {
-            E->getOperand(0), E->getOperand(1),
-            ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(C), I))};
-        Records.push_back(MDNode::get(C, Fields));
+        auto *G = dyn_cast<GlobalObject>(
+            cast<ValueAsMetadata>(E->getOperand(0))->getValue());
+        if (!G)
+          return fail("invalid gotype source");
+        // Attach the type to its definition while linking. LLVM remaps the
+        // reference and keeps the winning definition's attachment, rather
+        // than concatenating conflicting per-module type records.
+        auto *Type = dyn_cast<GlobalValue>(
+            cast<ValueAsMetadata>(E->getOperand(1))->getValue());
+        if (!Type)
+          return fail("invalid gotype target");
+        Retained.push_back(Type);
+        G->setMetadata("goobj.gotype", MDNode::get(C, {E->getOperand(1)}));
       }
-      N->clearOperands();
-      for (MDNode *E : Records)
-        N->addOperand(E);
+      M->eraseNamedMetadata(N);
     }
-    // The IR linker can discard unreferenced local definitions before the
-    // optimization pipeline runs. Preserve them while their package is still
-    // separate, including symbols that only ordinary assembly can reference.
-    SmallVector<GlobalValue *> Retained;
-    for (GlobalObject &G : M->global_objects())
-      if (!G.isDeclaration() && !G.getName().starts_with("llvm.") &&
-          !clonedConstant(G))
-        Retained.push_back(&G);
     appendToCompilerUsed(*M, Retained);
     Packages.push_back(std::move(P));
     M->setModuleIdentifier(Inputs[I]);
     Modules.push_back(std::move(M));
   }
-  if (Error E = resolveGoBSS(Modules))
+  auto Combined = std::move(Modules.front());
+  Linker L(*Combined);
+  for (unsigned I = 1; I != Modules.size(); ++I)
+    if (L.linkInModule(std::move(Modules[I])))
+      return fail(Diagnostics.empty() ? "module linking failed" : Diagnostics);
+
+  for (const auto &R : BSSRequirements) {
+    auto *G = Combined->getNamedValue(R.getKey());
+    if (isa_and_nonnull<Function>(G)) {
+      if (!R.second.FunctionAllowed)
+        return fail(
+            "BSS declaration resolves to a function without linkname: " +
+            R.getKey());
+      continue;
+    }
+    auto *V = dyn_cast_or_null<GlobalVariable>(G);
+    if (!V || Combined->getDataLayout().getTypeAllocSize(V->getValueType()) <
+                  R.second.Size)
+      return fail("BSS declaration exceeds initialized definition: " +
+                  R.getKey());
+  }
+  StringMap<SymbolIdentity> Symbols;
+  for (GlobalObject &G : Combined->global_objects()) {
+    if (G.isDeclaration() || G.getName().starts_with("llvm."))
+      continue;
+    auto *Index = G.getMetadata("goobj.symbol.index");
+    if (!Index)
+      return fail("linked definition lost its Go identity: " + G.getName());
+    unsigned ID =
+        mdconst::extract<ConstantInt>(Index->getOperand(0))->getZExtValue();
+    const SymbolIdentity &Origin = InputSymbols[ID];
+    Symbols.try_emplace(G.getName(), Origin);
+    G.setMetadata("goobj.symbol.index", Origin.Index);
+    G.setMetadata("goobj.import", nullptr);
+    if (G.hasCommonLinkage()) {
+      G.setLinkage(GlobalValue::ExternalLinkage);
+      G.setSection(Origin.Section);
+    }
+    if (!G.hasLocalLinkage())
+      G.setDSOLocal(true);
+  }
+  if (Error E = optimize(*Combined, Pipeline, Conf))
     return E;
-  return runFullLTO(Modules, Packages, Pipeline, OutDir, SaveIR);
+  if (!Diagnostics.empty())
+    return fail(Diagnostics);
+  if (Error E = checkSymbolIdentities(*Combined, Symbols))
+    return E;
+  for (GlobalObject &G : Combined->global_objects()) {
+    if (G.hasLocalLinkage() && G.getMetadata("goobj.symbol.index"))
+      G.setLinkage(GlobalValue::ExternalLinkage);
+    if (!G.isDeclaration())
+      if (auto *Type = G.getMetadata("goobj.gotype")) {
+        Combined->getOrInsertNamedMetadata("goobj.gotype")
+            ->addOperand(MDNode::get(
+                C, {ValueAsMetadata::get(&G), Type->getOperand(0)}));
+        G.setMetadata("goobj.gotype", nullptr);
+      }
+  }
+  return writeSingleModule(*Combined, Packages, OutDir, SaveIR, Symbols);
 }
 
 // The caller owns the returned error string and frees it with free().

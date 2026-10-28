@@ -49,6 +49,12 @@ add_test(NAME full-lto-abi0
     "'$<TARGET_FILE:goallc-lto-test>' --output-dir='${CMAKE_CURRENT_BINARY_DIR}/full-abi0' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/abi-closure-caller.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/abi-closure-callee.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/full-main.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=ABI0 '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/full-main.ll' --input-file='${CMAKE_CURRENT_BINARY_DIR}/full-abi0/program.ll'")
 
 add_full_lto_test(full-lto-bss-reversed BSS bss-definition bss-declaration)
+add_full_lto_test(full-lto-common COMMON bss-small bss-large)
+add_full_lto_test(full-lto-common-reversed COMMON bss-large bss-small)
+add_full_lto_test(full-lto-common-initialized INIT bss-small bss-initialized)
+add_full_lto_test(full-lto-common-initialized-reversed INIT bss-initialized bss-small)
+add_full_lto_test(full-lto-linkname-function LINKNAME linkname-placeholder linkname-function)
+add_full_lto_test(full-lto-linkname-function-reversed LINKNAME linkname-function linkname-placeholder)
 add_full_lto_test(full-lto-weak-resolution WEAK weak weak-other)
 add_full_lto_test(full-lto-weak-resolution-reversed OTHER weak-other weak)
 add_lto_error_test(full-lto-invalid-pipeline full-main BAD-PIPELINE "not-a-real-pass" full-main)
@@ -95,3 +101,16 @@ endforeach()
 add_test(NAME full-lto-no-save-ir
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
     "'${CMAKE_COMMAND}' -E rm -f '${CMAKE_CURRENT_BINARY_DIR}/full-no-save/program.ll' && '$<TARGET_FILE:goallc-lto-test>' --save-ir=false --output-dir='${CMAKE_CURRENT_BINARY_DIR}/full-no-save' '${LTO_CODEGEN_MAIN}' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/codegen-dep.ll' && test ! -e '${CMAKE_CURRENT_BINARY_DIR}/full-no-save/program.ll' && test -s '${CMAKE_CURRENT_BINARY_DIR}/full-no-save/program.json' && '${GOALLC_OPT_EXECUTABLE}' -passes=verify -disable-output '${CMAKE_CURRENT_BINARY_DIR}/full-no-save/program.bc'")
+
+add_lto_error_test(full-lto-bss-too-small-reversed bss-too-small ERROR "lto<O2>" bss-too-small bss-declaration)
+add_lto_error_test(full-lto-bss-function-error ordinary-placeholder ERROR "lto<O2>" ordinary-placeholder linkname-function)
+add_test(NAME full-lto-local-collision
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+    "'$<TARGET_FILE:goallc-lto-test>' --output-dir='${CMAKE_CURRENT_BINARY_DIR}/full-local' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/local-a.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/local-b.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/full-main.ll' && cat '${CMAKE_CURRENT_BINARY_DIR}/full-local/program.ll' '${CMAKE_CURRENT_BINARY_DIR}/full-local/program.json' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=LOCAL '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/local-a.ll'")
+
+if(GOALLC_OBJVIEW_EXECUTABLE)
+  add_test(NAME full-lto-common-goobj
+    COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+      "'${GOALLC_LLC_EXECUTABLE}' '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>' -verify-machineinstrs -filetype=obj '${CMAKE_CURRENT_BINARY_DIR}/full-lto-common/program.bc' -o '${CMAKE_CURRENT_BINARY_DIR}/full-lto-common/program.goobj' && '${GOALLC_OBJVIEW_EXECUTABLE}' -json '${CMAKE_CURRENT_BINARY_DIR}/full-lto-common/program.goobj' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=OBJ '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/bss-large.ll'")
+  set_tests_properties(full-lto-common-goobj PROPERTIES DEPENDS full-lto-common)
+endif()

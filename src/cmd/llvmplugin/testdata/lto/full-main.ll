@@ -1,3 +1,11 @@
+; COMMON: @shared = dso_local global [4 x i64] zeroinitializer, section ".noptrbss", align 32, !goobj.symbol.nonpackage
+; COMMON: !goobj.gotype = !{![[TYPE:[0-9]+]]}
+; COMMON: ![[TYPE]] = !{ptr @shared, ptr @type.large}
+; INIT: @shared = dso_local global [4 x i64] [i64 1, i64 2, i64 3, i64 4], section ".data"
+; INIT: !goobj.gotype = !{![[TYPE:[0-9]+]]}
+; INIT: ![[TYPE]] = !{ptr @shared, ptr @type.initialized}
+; LINKNAME-LABEL: define dso_local goabiinternal {{.*}}i64 @target()
+; LINKNAME: ret i64 42
 ; FullLTO checks observe the single output module and retained package manifest.
 ; CROSS-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Answer()
 ; CROSS-NOT: call

@@ -1,0 +1,11 @@
+target triple = "x86_64-unknown-linux-goobj"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
+@shared = global [4 x i64] [i64 1, i64 2, i64 3, i64 4], section ".data", !goobj.symbol.nonpackage !0
+@type.initialized = external global i8
+!goobj.gotype = !{!1}
+!0 = !{i1 true}
+!1 = !{ptr @shared, ptr @type.initialized}
+!goobj.config = !{!900}
+!goobj.imports = !{}
+!900 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"bss-initialized-id", !"bss-initialized", !"0", !"0", !"0", !901, !"0100000000000000"}
+!901 = !{}
