@@ -4423,8 +4423,11 @@ Error markReflectMethod(Function &F) {
 
 Error materializeFunctionMarkers(Module &M) {
   SmallVector<Instruction *, 16> Markers;
-  NamedMDNode *Relocs = nullptr;
   for (Function &F : M) {
+    SmallVector<Metadata *, 4> Relocs;
+    if (MDNode *MD = F.getMetadata("goobj.marker_relocs"))
+      for (const MDOperand &Op : MD->operands())
+        Relocs.push_back(Op.get());
     for (Instruction &I : instructions(F)) {
       auto *II = dyn_cast<IntrinsicInst>(&I);
       if (!II || II->getIntrinsicID() != Intrinsic::sideeffect)
@@ -4471,13 +4474,13 @@ Error materializeFunctionMarkers(Module &M) {
             "GoALLC function marker relocation metadata has an unsupported "
             "type");
       }
-      if (!Relocs)
-        Relocs = M.getOrInsertNamedMetadata("goobj.marker_relocs");
-      Metadata *Operands[] = {ValueAsMetadata::get(&F), TargetMD,
-                              MD->getOperand(1).get(), MD->getOperand(2).get()};
-      Relocs->addOperand(MDNode::get(M.getContext(), Operands));
+      // The marker has followed inlining to its final owning definition.
+      // Its three operands already match the definition attachment format.
+      Relocs.push_back(MD);
       Markers.push_back(&I);
     }
+    if (!Relocs.empty())
+      F.setMetadata("goobj.marker_relocs", MDNode::get(M.getContext(), Relocs));
   }
   for (Instruction *Marker : Markers)
     Marker->eraseFromParent();

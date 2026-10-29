@@ -1050,9 +1050,10 @@ func setGoObjWeakRelocMetadata(g llvm.Value, s *obj.LSym) {
 }
 
 // GoObj marker relocations describe linker relationships and occupy no storage.
-// Keep their source and target as ordinary LLVM values, with the relocation
-// kind and addend in a module relationship table shared by functions and data.
+// Attach data relationships to their definition so LLVM linking selects the
+// winning definition's markers along with its initializer.
 func setGoObjMarkerRelocMetadata(source llvm.Value, s *obj.LSym) {
+	var entries []llvm.Metadata
 	for _, r := range s.R {
 		switch r.Type {
 		case objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD:
@@ -1067,7 +1068,11 @@ func setGoObjMarkerRelocMetadata(source llvm.Value, s *obj.LSym) {
 			base.Fatalf("nil GoObj marker target in %s", s.Name)
 		}
 		target := llvmGoDataRef(r.Sym)
-		addGoObjMarkerReloc(source, target, r.Type, r.Add)
+		preserveGoObjMetadataValues(source, target)
+		entries = append(entries, goObjMarkerRelocMetadata(target, r.Type, r.Add))
+	}
+	if len(entries) != 0 {
+		source.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.marker_relocs"), GlobalCtxt.MDNode(entries))
 	}
 }
 
@@ -1118,11 +1123,7 @@ func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 		target := llvmGoDataRef(r.Sym)
 		preserveGoObjMetadataValues(target)
 		marker := b.CreateCall(sideeffect.GlobalValueType(), sideeffect, nil, "")
-		marker.SetMetadata(GlobalCtxt.MDKindID(goObjMarkerRelocMD), GlobalCtxt.MDNode([]llvm.Metadata{
-			target.ConstantAsMetadata(),
-			llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint16(r.Type)), false).ConstantAsMetadata(),
-			llvm.ConstInt(GlobalCtxt.Int64Type(), uint64(r.Add), true).ConstantAsMetadata(),
-		}))
+		marker.SetMetadata(GlobalCtxt.MDKindID(goObjMarkerRelocMD), goObjMarkerRelocMetadata(target, r.Type, r.Add))
 	}
 }
 
@@ -1130,6 +1131,7 @@ func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 // Keep it separate from !goobj.weak_relocs so llc can synthesize the GoObj record
 // without inventing bytes or a target-address expression in the global.
 func setGoObjKeepMetadata(g llvm.Value, s *obj.LSym) {
+	var targets []llvm.Metadata
 	for _, r := range s.R {
 		if r.Type != objabi.R_KEEP {
 			continue
@@ -1139,10 +1141,10 @@ func setGoObjKeepMetadata(g llvm.Value, s *obj.LSym) {
 		}
 		target := llvmGoDataRef(r.Sym)
 		preserveGoObjMetadataValues(g, target)
-		CurrentModule.AddNamedMetadataOperand("goobj.keep", GlobalCtxt.MDNode([]llvm.Metadata{
-			g.ConstantAsMetadata(),
-			target.ConstantAsMetadata(),
-		}))
+		targets = append(targets, target.ConstantAsMetadata())
+	}
+	if len(targets) != 0 {
+		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.keep"), GlobalCtxt.MDNode(targets))
 	}
 }
 
@@ -1183,25 +1185,19 @@ func setGoObjGotypeMetadata(g llvm.Value, s *obj.LSym) {
 	}))
 }
 
-func addGoObjMarkerReloc(source, target llvm.Value, typ objabi.RelocType, addend int64) {
-	preserveGoObjMetadataValues(source, target)
-	CurrentModule.AddNamedMetadataOperand("goobj.marker_relocs", goObjMarkerRelocMetadata(source, target, typ, addend))
-}
-
-func goObjMarkerRelocMetadata(source, target llvm.Value, typ objabi.RelocType, addend int64) llvm.Metadata {
+func goObjMarkerRelocMetadata(target llvm.Value, typ objabi.RelocType, addend int64) llvm.Metadata {
 	return GlobalCtxt.MDNode([]llvm.Metadata{
-		source.ConstantAsMetadata(),
 		target.ConstantAsMetadata(),
 		llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint16(typ)), false).ConstantAsMetadata(),
 		llvm.ConstInt(GlobalCtxt.Int64Type(), uint64(addend), true).ConstantAsMetadata(),
 	})
 }
 
-// Named metadata references participate in RAUW, but GlobalDCE is allowed to
+// Metadata references participate in RAUW, but GlobalDCE is allowed to
 // delete values that are referenced only from metadata. llvm.compiler.used is
 // LLVM's native way to state that those values also have object-format
 // semantics. It emits no storage; Go linker reachability remains controlled by
-// the R_KEEP and marker records produced from the relationship tables.
+// the R_KEEP and marker records attached to their owning definitions.
 func preserveGoObjMetadataValues(values ...llvm.Value) {
 	for _, v := range values {
 		if v.IsNil() || v.Name() == "" {

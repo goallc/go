@@ -74,12 +74,18 @@ relocation offset 和类型；`R_WEAKADDROFF` 的基础类型同样在该表中�
 `!goobj.weak_relocs` 只记录 LLVM 无法表达的逐 relocation weak 属性。这样 LLVM
 initializer 始终是地址关系的 source of truth，metadata 只承载对象格式特有的
 剩余语义。零宽度的 linker
-保活边 `R_KEEP` 不伪装为地址常量，而用模块级 `!goobj.keep` 关系表记录；
-`gotype` aux 和 interface dead-method marker 也使用模块级关系表。表中的 source
-与 target 都是对 LLVM global/function 的直接引用，不再以字符串重复符号名，
-因此 LLVM 重命名和 RAUW 会同步更新这些关系；关系涉及的值同时进入
-`@llvm.compiler.used`，避免 GlobalDCE 删除仅承担对象格式语义的声明。该 LLVM
-特殊全局本身不生成数据，writer 再根据关系表合成 GoObj relocation/aux。最终链路仍只有
+保活边 `R_KEEP` 不伪装为地址常量，而以 `!goobj.keep !{ptr @target, ...}`
+附着到源定义。`gotype` aux 同样是定义上的 `!goobj.gotype !{ptr @type}`；
+数据的 linker marker 使用 `!goobj.marker_relocs !{!entry, ...}`，每个 entry
+只保存 `{ptr @target, i32 relocation_type, i64 addend}`。source 由所附着的定义
+提供，不再在模块级关系表中重复记录。因此 LLVM 链接选择强定义或 weak/DUPOK
+定义时，关系随同该定义选择，不会合并已丢弃定义的保活边和初始化顺序。
+
+关系中的 target 是 LLVM global/function 的直接引用，重命名和 RAUW 会同步
+更新。关系涉及的值仍进入 `@llvm.compiler.used`，防止 GlobalDCE 删除仅承担
+对象格式语义的值；这个特殊全局不生成数据，也不代替 Go linker 的可达性判断。
+writer 从最终定义的 attachment 恢复 GoObj relocation/aux。LLVM 和 Go producer
+需要一起更新；旧的模块级 keep/marker 表会被明确拒绝。最终链路仍只有
 `__.PKGDEF + _go_.o` 两个有意义的 archive members；不会生成或合并 native data
 object。
 
@@ -93,9 +99,11 @@ weak `R_ADDR` relocation。interface 方法调用从 itab 槽直接加载 LLVM p
 
 Go linker 的 dead-method elimination 还依赖函数上的零宽度
 `R_USEIFACE`、`R_USEIFACEMETHOD` 和 `R_USENAMEDMETHOD`。它们不对应 LLVM
-机器指令或地址常量，因此 compiler 用 `!goobj.marker_relocs` 保存精确的
-relocation type、addend 和 target name；GoObj writer 将其恢复到源函数的
-relocation 列表。普通 LLVM call graph 不能替代这项 linker 契约。
+机器指令或地址常量，因此 compiler 先在 `llvm.sideeffect` 指令上保存
+`!goobj.marker_reloc` 的 target、type、addend。这些指令随内联复制到调用者；
+优化结束后，plugin 将记录附着为最终所在函数的 `!goobj.marker_relocs`，再移除
+指令。GoObj writer 恢复该函数的 relocation 列表，普通 LLVM call graph 不能
+替代这项 linker 契约。不能在内联前把函数 marker 仅存成函数 attachment。
 
 non-empty interface 到另一 non-empty interface 的转换沿用 compiler 生成的
 `internal/abi.TypeAssert` cache 和 `runtime.typeAssert` fallback。LLVM lowering
