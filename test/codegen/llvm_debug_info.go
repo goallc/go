@@ -20,9 +20,10 @@ type llvmDebugPair struct {
 // LLVM-DAG: #dbg_declare
 // LLVM-DAG: #dbg_label(
 // LLVM-DAG: DILabel(scope: {{.*}}, name: "$go.inlmark.{{[0-9]+}}"{{.*}}isArtificial: true)
-// LLVM-DAG: !goobj.debug.funcs
+// Defined functions carry their subprogram on !dbg; no duplicate table is needed.
+// LLVM-DAG: define {{.*}}@codegen.llvmDebugScopes({{.*}} !dbg ![[LEXICAL_FN:[0-9]+]]
 // LLVM-DAG: inlinedAt:
-// LLVM-DAG: ![[LEXICAL_FN:[0-9]+]] = distinct !DISubprogram(name: "codegen.llvmDebugScopes"
+// LLVM-DAG: ![[LEXICAL_FN]] = distinct !DISubprogram(name: "codegen.llvmDebugScopes"
 // LLVM-DAG: ![[LEXICAL_BLOCK:[0-9]+]] = distinct !DILexicalBlock(scope: ![[LEXICAL_FN]],
 // LLVM-DAG: !DILocalVariable(name: "outer", scope: ![[LEXICAL_FN]],
 // LLVM-DAG: !DILocalVariable(name: "inner", scope: ![[LEXICAL_BLOCK]],

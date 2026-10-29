@@ -113,6 +113,12 @@ func finalizeLLVMDebugInfo() {
 			value = llvmDebugSubprogramValue(sym, llvmDISubprograms[sym], abstractValues)
 		}
 		preserveGoObjMetadataValues(value)
+		// Definitions carry their exact subprogram on !dbg. Keep the symbol
+		// rooted, but only publish mappings that cannot be recovered there:
+		// abstract inline instances can share storage with a different SP.
+		if !value.IsAFunction().IsNil() && !value.IsDeclaration() && value.Subprogram() == llvmDISubprograms[sym] {
+			continue
+		}
 		CurrentModule.AddNamedMetadataOperand("goobj.debug.funcs", GlobalCtxt.MDNode([]llvm.Metadata{
 			llvmDISubprograms[sym],
 			value.ConstantAsMetadata(),

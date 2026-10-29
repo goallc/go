@@ -150,6 +150,15 @@ if(BUILD_TESTING)
   )
 
   goallc_add_filecheck_test(
+    GoALLCCPUFeatures.DebugRoots
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-debug-roots.ll" CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-cpu-features,globaldce -verify-each -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-debug-roots.ll"
+  )
+
+  goallc_add_filecheck_test(
     GoALLCCPUFeatures.SSE41
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/cpu-features-sse41.ll"
     CHECK

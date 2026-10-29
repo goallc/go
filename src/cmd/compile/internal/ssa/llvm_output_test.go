@@ -309,12 +309,123 @@ func Caller(x int) int { return Add(x) }
 						t.Errorf("%s: %s present = %v, want %v", suffix, marker, got, dwarf)
 					}
 				}
+				if suffix == ".ll" {
+					checkLLVMAbstractFunctionMappings(t, ir)
+				}
 				// Disabling DWARF must retain the locations and inline stacks
 				// that the GoObj writer uses for runtime traceback metadata.
-				for _, marker := range []string{`!"pcln-v1"`, `!"Dwarf Version"`, "!DIGlobalVariable(", "!DIBasicType(", "!DISubprogram(", "!DILocation(", "inlinedAt:", "!goobj.debug.funcs"} {
+				for _, marker := range []string{`!"pcln-v1"`, `!"Dwarf Version"`, "!DIGlobalVariable(", "!DIBasicType(", "!DISubprogram(", "!DILocation(", "inlinedAt:"} {
 					if !strings.Contains(ir, marker) {
 						t.Errorf("%s: missing %s", suffix, marker)
 					}
+				}
+			}
+		})
+	}
+}
+
+// Each defined function already supplies its exact subprogram through !dbg.
+// An inline instance sharing its symbol can still require a distinct mapping.
+func checkLLVMAbstractFunctionMappings(t *testing.T, ir string) {
+	t.Helper()
+	definitions := regexp.MustCompile(`(?m)^define [^\n]* !dbg (![0-9]+)`).FindAllStringSubmatch(ir, -1)
+	if len(definitions) == 0 {
+		t.Fatal("missing function debug attachments")
+	}
+	for _, def := range definitions {
+		mapping := regexp.MustCompile(`(?m)^![0-9]+ = !\{` + def[1] + `, ptr @`)
+		if mapping.MatchString(ir) {
+			t.Errorf("redundant function mapping for %s", def[1])
+		}
+	}
+}
+
+// A module without inline instances needs no custom debug-function table.
+// Its functions must nevertheless remain roots after optimization, even when
+// debug and runtime inline records are their only remaining users.
+func TestLLVMDebugFunctionMappings(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	source := filepath.Join(t.TempDir(), "p.go")
+	if err := os.WriteFile(source, []byte(`package p
+func Add(x int) int { return x + 1 }
+func Caller(x int) int { return Add(x) }
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "p.a")
+			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-l", "-llvm-keep-ir", "-p=p", "-o", output, source)
+			cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			for _, suffix := range []string{".ll", ".opt.ll"} {
+				data, err := os.ReadFile(output + suffix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ir := string(data)
+				if strings.Contains(ir, "!goobj.debug.funcs") {
+					t.Errorf("%s: unexpected debug-function table", suffix)
+				}
+				checkLLVMAbstractFunctionMappings(t, ir)
+				roots := regexp.MustCompile(`(?m)^@llvm.compiler.used = .*`).FindString(ir)
+				for _, name := range []string{"p.Add", "p.Caller"} {
+					if !strings.Contains(roots, "ptr @"+name) {
+						t.Errorf("%s: missing debug root %s", suffix, name)
+					}
+				}
+			}
+		})
+	}
+}
+
+// An imported inline callee has no definition in the caller's module. Its
+// subprogram must retain an explicit mapping to the external Go symbol.
+func TestLLVMImportedInlineMappings(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	dir := t.TempDir()
+	depSource := filepath.Join(dir, "dep.go")
+	if err := os.WriteFile(depSource, []byte("package dep\nfunc Add(x int) int { return x + 1 }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "p.go")
+	if err := os.WriteFile(source, []byte("package p\nimport \"dep\"\nfunc Caller(x int) int { return dep.Add(x) }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			dir := t.TempDir()
+			depArchive := filepath.Join(dir, "dep.a")
+			cfg := filepath.Join(dir, "importcfg")
+			if err := os.WriteFile(cfg, []byte("packagefile dep="+depArchive+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(dir, "p.a")
+			for _, args := range [][]string{
+				{"-p=dep", "-o", depArchive, depSource},
+				{"-p=p", "-importcfg", cfg, "-o", output, source},
+			} {
+				cmd := testenv.Command(t, testenv.GoToolPath(t), append([]string{"tool", "compile", "-enablellvm", "-llvm-keep-ir"}, args...)...)
+				cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile: %v\n%s", err, out)
+				}
+			}
+			for _, suffix := range []string{".ll", ".opt.ll"} {
+				data, err := os.ReadFile(output + suffix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ir := string(data)
+				checkLLVMAbstractFunctionMappings(t, ir)
+				if !strings.Contains(ir, "!goobj.debug.funcs =") ||
+					!regexp.MustCompile(`(?m)^![0-9]+ = !\{![0-9]+, ptr @dep.Add\}`).MatchString(ir) {
+					t.Errorf("%s: missing imported inline mapping", suffix)
+				}
+				if !strings.Contains(ir, "inlinedAt:") {
+					t.Errorf("%s: missing inline location", suffix)
 				}
 			}
 		})

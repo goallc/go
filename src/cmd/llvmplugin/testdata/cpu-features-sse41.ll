@@ -156,7 +156,6 @@ attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
 !goallc.cpu.config = !{!0}
 !llvm.dbg.cu = !{!7}
 !llvm.module.flags = !{!8}
-!goobj.debug.funcs = !{!13}
 !0 = !{!"goallc.cpu.v1", !"amd64", !"v1"}
 !1 = !{!"x86.sse41"}
 !2 = !{i32 17}
@@ -170,7 +169,6 @@ attributes #1 = { "no-builtins" "target-cpu"="x86-64" }
 !10 = !DILocation(line: 1, column: 1, scope: !9)
 !11 = distinct !DISubprogram(name: "helper", linkageName: "helper", scope: !4, file: !4, line: 10, type: !6, scopeLine: 10, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !7, retainedNodes: !5)
 !12 = !{ptr @round, !14}
-!13 = !{!9, ptr @round}
 !14 = !DILocation(line: 10, column: 1, scope: !11, inlinedAt: !10)
 !15 = !{i8 10, i8 3}
 !16 = distinct !DISubprogram(name: "round.caller", linkageName: "round.caller", scope: !4, file: !4, line: 20, type: !6, scopeLine: 20, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !7, retainedNodes: !5)

@@ -578,20 +578,6 @@ Expected<Function *> cloneVariant(Function &Source, StringRef Suffix,
   return Clone;
 }
 
-Error registerGoObjDebugFunction(Function &F) {
-  NamedMDNode *Funcs = F.getParent()->getNamedMetadata(GoObjDebugFuncsMD);
-  if (!Funcs)
-    return Error::success();
-  DISubprogram *SP = F.getSubprogram();
-  if (!SP)
-    return createStringError(inconvertibleErrorCode(),
-                             "GoALLC CPU variant " + F.getName() +
-                                 " has no debug subprogram");
-  Metadata *Operands[] = {SP, ConstantAsMetadata::get(&F)};
-  Funcs->addOperand(MDNode::get(F.getContext(), Operands));
-  return Error::success();
-}
-
 Function *cloneResolver(Function &Source) {
   const bool DuplicateOK = isGoObjDuplicateOK(Source);
   ValueToValueMapTy VMap;
@@ -627,8 +613,6 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
   Function *BaselineImpl = *BaselineOrErr;
   if (Error Err =
           verifyRequirements(*BaselineImpl, Config))
-    return Err;
-  if (Error Err = registerGoObjDebugFunction(*BaselineImpl))
     return Err;
   if (Automatic)
     for (BasicBlock &BB : *BaselineImpl)
@@ -694,9 +678,6 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
         Clone = BaselineImpl;
       }
     }
-    if (Clone != BaselineImpl)
-      if (Error Err = registerGoObjDebugFunction(*Clone))
-        return Err;
     // Keep the predicate mapping even when its implementation is shared:
     // another partial profile may otherwise win selection on this CPU.
     Variants.push_back({Clone, Required & ~Config.Baseline});
@@ -720,8 +701,6 @@ Error multiversionFunction(Function &F, const CPUConfig &Config,
       addTargetFeature(F, "+lse");
     }
   }
-  if (Error Err = registerGoObjDebugFunction(*Resolver))
-    return Err;
 
   auto *Slot = new GlobalVariable(M, PointerType::getUnqual(C), false,
                                   GlobalValue::InternalLinkage, Resolver,
@@ -874,17 +853,22 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
         return Err;
   }
 
-  // Named debug records do not keep symbols alive through GlobalDCE. Publish
-  // all roots once: rebuilding llvm.compiler.used for every generated version
-  // retains quadratically many uniqued constants in large SIMD packages.
+  // !dbg supplies the exact subprogram-to-symbol mapping for definitions,
+  // including FMV clones. Keep these symbols alive even if optimization removes
+  // every call: Go debug/inline records may still refer to their subprograms.
+  // Abstract inline instances can instead have an explicit named mapping.
+  // Publish roots once to avoid rebuilding llvm.compiler.used for every clone.
+  SmallVector<GlobalValue *, 32> Roots;
+  for (Function &F : M)
+    if (!F.isDeclaration() && F.getSubprogram())
+      Roots.push_back(&F);
   if (NamedMDNode *Funcs = M.getNamedMetadata(GoObjDebugFuncsMD)) {
-    SmallVector<GlobalValue *, 32> Roots;
     for (MDNode *Node : Funcs->operands())
       if (Node->getNumOperands() == 2)
         if (auto *F = mdconst::dyn_extract<Function>(Node->getOperand(1)))
           Roots.push_back(F);
-    appendToCompilerUsed(M, Roots);
   }
+  appendToCompilerUsed(M, Roots);
 
   NamedMDNode *Done = M.getOrInsertNamedMetadata(DoneMD);
   Done->addOperand(MDNode::get(M.getContext(),
