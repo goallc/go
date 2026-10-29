@@ -61,8 +61,9 @@ LLVM IR 优先使用原生 linkage 和语义类型交接这些属性：Local 对
 不能从 `weak`、DUPOK 或 symbol name 猜测。这样跨 package 生成的 descriptor
 和 itab 仍按 Go linker 的原生规则合并。原生匿名 GoObj definition 在 LLVM IR
 中使用 internal synthetic name；这类 marker payload 的链接语义由数据而非名称表达。
-`!goobj.symbol.flags` 只保留 typelink、ReflectMethod、UsedInIface、linkname
-以及 Local+DUPOK 重叠等没有等价 LLVM 表示的位。
+`!goobj.symbol.flags` 显式保存 GoType、Itab、typelink、ReflectMethod、UsedInIface、linkname
+以及 Local+DUPOK 重叠等没有等价 LLVM 表示的位，不依赖 LLVM 根据 struct type
+名字推断 GoType 或 Itab。
 普通 `R_ADDR` 由 LLVM initializer 和 target symbol 语义直接表达，不向
 metadata 复制同一份信息。`R_ADDROFF` 是 GoObj 的 32 位 section offset；
 `R_METHODOFF` 还额外控制 Go linker 的 dead-method elimination。LLVM 原生
@@ -242,6 +243,12 @@ LTO 必须保存包身份与依赖图，不能把这些记录简单合并成 mai
 `go-llvm/SupportBindings.cpp`。
 
 ## 集成与调试边界
+
+函数定义的 subprogram 到 symbol 映射直接取自 LLVM `!dbg`，包括优化器和 FMV
+产生的克隆。`!goobj.debug.funcs` 只补充无法从定义恢复的抽象内联实例：同一个
+storage symbol 可以对应多个不同的 `DISubprogram`。省去重复映射不改变保活契约；
+前端和 FMV 仍将 debug 所需的函数放入 `@llvm.compiler.used`，避免 GlobalDCE
+删除仍被变量或内联记录引用的定义。
 
 GoObj variable locations are emitted from final machine-frame offsets and
 LLVM debug-value histories as Go linker-native DWARF4/5 location lists.
