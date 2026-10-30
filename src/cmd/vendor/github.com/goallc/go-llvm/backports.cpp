@@ -56,12 +56,32 @@ LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
     size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,
     LLVMBool AlwaysPreserve, LLVMDIFlags Flags, uint32_t AlignInBits,
     LLVMMetadataRef Annotations) {
-  return llvm::wrap(llvm::unwrap(Builder)->createAutoVariable(
-      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen),
-      llvm::unwrap<llvm::DIFile>(File), LineNo, llvm::unwrap<llvm::DIType>(Type),
-      AlwaysPreserve, static_cast<llvm::DINode::DIFlags>(Flags), AlignInBits,
-      llvm::DINodeArray(Annotations ? llvm::unwrap<llvm::MDTuple>(Annotations)
-                                   : nullptr)));
+  auto *D = llvm::unwrap(Builder);
+  auto *S = llvm::unwrap<llvm::DILocalScope>(Scope);
+  auto *F = llvm::unwrap<llvm::DIFile>(File);
+  auto *T = llvm::unwrap<llvm::DIType>(Type);
+  auto DIFlags = static_cast<llvm::DINode::DIFlags>(Flags);
+  if (!Annotations)
+    return llvm::wrap(D->createAutoVariable(S, llvm::StringRef(Name, NameLen),
+                                           F, LineNo, T, AlwaysPreserve,
+                                           DIFlags, AlignInBits));
+
+  // DILocalVariable already supports annotations, but createAutoVariable
+  // does not expose them. Use the native node API without changing DIBuilder.
+  auto *Var = llvm::DILocalVariable::get(
+      S->getContext(), S, llvm::StringRef(Name, NameLen), F, LineNo, T,
+      /*Arg=*/0, DIFlags, AlignInBits,
+      llvm::DINodeArray(llvm::unwrap<llvm::MDTuple>(Annotations)));
+  if (AlwaysPreserve) {
+    auto *SP = S->getSubprogram();
+    // finalizeSubprogram merges existing retainedNodes with builder-tracked
+    // nodes. Keep the variable there even if optimization removes all uses.
+    if (!llvm::is_contained(SP->getRetainedNodes(), Var)) {
+      llvm::Metadata *Node = Var;
+      SP->retainNodes(&Node, &Node + 1);
+    }
+  }
+  return llvm::wrap(Var);
 }
 
 LLVMMetadataRef LLVMGoDIBuilderCreateParameterVariable(

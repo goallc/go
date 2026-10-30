@@ -11,6 +11,7 @@ import (
 	"internal/testenv"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,7 @@ type Named [2]int
 //go:noinline
 func Arrays(x Named, y [2]int) (result Named) { result = Named(y); result[0] += x[0]; return }
 //go:noinline
-func Generic[T ~[2]int](x T) (result T) { local := x; return local }
+func Generic[T ~[2]int](x T) (result T) { local := x; optimizedAway := x; _ = optimizedAway; return local }
 var Instantiated = Generic[Named]
 func InlineResult(x int) (result int) { return x + 1 }
 func Caller(x int) int { return InlineResult(x) + InlineResult(x+1) }
@@ -59,6 +60,20 @@ func Caller(x int) int { return InlineResult(x) + InlineResult(x+1) }
 						if !strings.Contains(ir, want) {
 							t.Errorf("%s: missing %s", suffix, want)
 						}
+					}
+					// This generic local has no executable uses. Its annotation and
+					// native retention must survive DIBuilder finalization and O2.
+					local := regexp.MustCompile(`(?m)^!(\d+) = !DILocalVariable\(name: "optimizedAway", scope: !(\d+), .*annotations: !(\d+)\)`).FindStringSubmatch(ir)
+					if local == nil {
+						t.Fatalf("%s: lost annotated optimized-out local", suffix)
+					}
+					sp := regexp.MustCompile(`(?m)^!` + local[2] + ` = .*retainedNodes: !(\d+)`).FindStringSubmatch(ir)
+					if sp == nil {
+						t.Fatalf("%s: local scope has no retained nodes", suffix)
+					}
+					retained := regexp.MustCompile(`(?m)^!` + sp[1] + ` = !\{([^}]*)\}`).FindStringSubmatch(ir)
+					if retained == nil || !regexp.MustCompile(`(^|, )!`+local[1]+`(,|$)`).MatchString(retained[1]) {
+						t.Errorf("%s: optimized-out local is not retained", suffix)
 					}
 				}
 				r := readDwarfTestObject(t, output)
