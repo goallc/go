@@ -1156,6 +1156,7 @@ func SetLLVMWeakCallTargets(source *obj.LSym, targets []*obj.LSym) {
 	if caller.IsNil() {
 		return
 	}
+	var callees []llvm.Metadata
 	for _, target := range targets {
 		callee := CurrentModule.NamedFunction(llvmFunctionStorageName(target.Name, llvmCallConv(target.ABI())))
 		if callee.IsNil() {
@@ -1163,9 +1164,11 @@ func SetLLVMWeakCallTargets(source *obj.LSym, targets []*obj.LSym) {
 		}
 		callee.AddFunctionAttr(llvmNoInlineAttribute())
 		preserveGoObjMetadataValues(caller, callee)
-		CurrentModule.AddNamedMetadataOperand("goobj.weak_calls", GlobalCtxt.MDNode([]llvm.Metadata{
-			caller.ConstantAsMetadata(), callee.ConstantAsMetadata(),
-		}))
+		callees = append(callees, callee.ConstantAsMetadata())
+	}
+	if len(callees) != 0 {
+		// The selected caller definition owns its removable call edges.
+		caller.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.weak_calls"), GlobalCtxt.MDNode(callees))
 	}
 }
 

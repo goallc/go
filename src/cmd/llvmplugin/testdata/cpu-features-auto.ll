@@ -9,7 +9,7 @@ declare void @stop() noreturn
 declare void @llvm.sideeffect()
 declare <2 x i64> @llvm.x86.aesni.aesenc(<2 x i64>, <2 x i64>)
 
-define goabiinternal void @conditional(ptr %x, ptr %out) #0 gc "goallc" {
+define goabiinternal void @conditional(ptr %x, ptr %out) #0 gc "goallc" !goobj.weak_calls !5 {
 entry:
   %flag = load i1, ptr @algorithm.enabled
   br i1 %flag, label %feature, label %fallback
@@ -46,6 +46,7 @@ attributes #1 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx,x86.a
 !2 = !{}
 !3 = !{!"x86.avxaes"}
 !4 = !{!"x86.avx"}
+!5 = !{ptr @ordinary}
 
 ; CHECK-NOT: @dead.goallc.fmv.slot
 ; CHECK-LABEL: define goabiinternal i32 @after_stop(
@@ -58,6 +59,7 @@ attributes #1 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx,x86.a
 ; CHECK: call void @stop()
 ; CHECK-NEXT: unreachable
 ; CHECK-LABEL: define internal goabiinternal void @"conditional<goallc.fmv.baseline>"(
+; CHECK-SAME: !goobj.weak_calls ![[WEAK:[0-9]+]]
 ; CHECK: load i1, ptr @algorithm.enabled
 ; CHECK: br i1 %flag
 ; CHECK: call void @ordinary()
@@ -66,7 +68,7 @@ attributes #1 = { "target-cpu"="x86-64" "goallc.cpu.multiversion"="x86.avx,x86.a
 ; CHECK: store <32 x i8> zeroinitializer
 ; CHECK: ret void
 ; CHECK-LABEL: define internal goabiinternal void @"conditional<goallc.fmv.avx2>"(
-; CHECK-SAME: #[[ISA:[0-9]+]] gc "goallc"
+; CHECK-SAME: #[[ISA:[0-9]+]] gc "goallc" !goobj.weak_calls ![[WEAK]]
 ; CHECK: load i1, ptr @algorithm.enabled
 ; CHECK: br i1 %flag
 ; CHECK: call void @ordinary()
@@ -128,3 +130,4 @@ done:
   ret i1 %avx
 }
 ; CHECK: attributes #[[ISA]] = { "target-cpu"="x86-64" "target-features"="+avx,+avx2" }
+; CHECK: ![[WEAK]] = !{ptr @ordinary}

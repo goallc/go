@@ -177,3 +177,67 @@ func Call(i I) int { return i.M() }
 		}
 	}
 }
+
+// Outlined map initialization stays removable only from the owning package
+// initializer. The LLVM attachment must reproduce the native weak call.
+func TestLLVMWeakCallAttachments(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	source := filepath.Join(t.TempDir(), "p.go")
+	if err := os.WriteFile(source, []byte(`package p
+var Map = map[int]int{
+0: 10, 1: 11, 2: 12, 3: 13, 4: 14, 5: 15,
+6: 16, 7: 17, 8: 18, 9: 19, 10: 20, 11: 21,
+12: 22, 13: 23, 14: 24, 15: 25, 16: 26, 17: 27,
+18: 28, 19: 29, 20: 30, 21: 31, 22: 32, 23: 33,
+}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		for _, enableLLVM := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/llvm=%t", arch, enableLLVM), func(t *testing.T) {
+				output := filepath.Join(t.TempDir(), "p.a")
+				args := []string{"tool", "compile", fmt.Sprintf("-enablellvm=%t", enableLLVM), "-p=p", "-o", output}
+				if enableLLVM {
+					args = append(args, "-llvm-keep-ir")
+				}
+				cmd := testenv.Command(t, testenv.GoToolPath(t), append(args, source)...)
+				cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile: %v\n%s", err, out)
+				}
+				r := readDwarfTestObject(t, output)
+				want := objabi.R_CALL | objabi.R_WEAK
+				if arch == "arm64" {
+					want = objabi.R_CALLARM64 | objabi.R_WEAK
+				}
+				count := 0
+				for i := uint32(0); i < uint32(r.NSym()); i++ {
+					if r.Sym(i).Name(r) != "p.init" {
+						continue
+					}
+					for _, reloc := range r.Relocs(i) {
+						if objabi.RelocType(reloc.Type()) == want {
+							count++
+						}
+					}
+				}
+				if count != 1 {
+					t.Fatalf("package init has %d weak calls, want 1", count)
+				}
+				if enableLLVM {
+					for _, suffix := range []string{".ll", ".opt.ll"} {
+						data, err := os.ReadFile(output + suffix)
+						if err != nil {
+							t.Fatal(err)
+						}
+						ir := string(data)
+						if strings.Contains(ir, "!goobj.weak_calls =") || !regexp.MustCompile(`(?m)^define .*@p.init\(\).* !goobj.weak_calls ![0-9]+`).MatchString(ir) {
+							t.Fatalf("%s missing definition-owned weak calls", suffix)
+						}
+					}
+				}
+			})
+		}
+	}
+}

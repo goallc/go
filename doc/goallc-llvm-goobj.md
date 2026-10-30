@@ -89,6 +89,13 @@ writer 从最终定义的 attachment 恢复 GoObj relocation/aux。LLVM 和 Go p
 `__.PKGDEF + _go_.o` 两个有意义的 archive members；不会生成或合并 native data
 object。
 
+可移除的 map initializer 调用同样以 `!goobj.weak_calls !{ptr @callee, ...}`
+附着在所属 package init 定义上；已丢弃定义的调用边不会污染胜出的定义。
+只有最终机器码中该 caller 到目标的直接调用被标为 weak，取地址和其他 caller
+的调用仍为 strong。outlined callee 保持 noinline；caller 被克隆时 attachment
+随定义复制，被内联到其他函数时不扩大 weak 契约，调用保守地保持 strong。
+旧的模块级 weak-call 表会被明确拒绝。
+
 静态 interface conversion 还会把带有 `ItabInfo` 的 roots 纳入同一数据闭包。
 itab 使用 `%go.runtime.ITab` 和按实际方法数扩展的 packed LLVM struct 表达；
 固定的 `Fun[0]` 后面按 LSym 的最终大小追加 `ptr` 数组。`ptr` 与 runtime
