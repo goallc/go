@@ -30,6 +30,7 @@ type llvmDataLowerer struct {
 	lowered          map[*obj.LSym]bool
 	values           map[*obj.LSym]llvm.Value
 	fileData         map[*obj.LSym][]byte
+	genericLayouts   map[*obj.LSym]llvmDataLayout
 	anonymousCount   int
 	runtimeTypes     map[*types.Type]llvm.Type
 	descriptorTypes  map[*obj.LSym]llvm.Type
@@ -57,7 +58,7 @@ func (l *llvmDataLowerer) dataType(s *obj.LSym) llvm.Type {
 	if s.ItabInfo() != nil {
 		return l.itabType(s)
 	}
-	return llvmDataType(s, l.dataBytes(s))
+	return l.dataLayout(s).llvmType()
 }
 
 func (l *llvmDataLowerer) dataInitializer(s *obj.LSym, globals map[*obj.LSym]llvm.Value) llvm.Value {
@@ -67,7 +68,9 @@ func (l *llvmDataLowerer) dataInitializer(s *obj.LSym, globals map[*obj.LSym]llv
 	if s.ItabInfo() != nil {
 		return l.itabInitializer(s, globals)
 	}
-	return llvmDataInitializer(s, l.dataBytes(s), globals, l.data)
+	layout := l.dataLayout(s)
+	delete(l.genericLayouts, s)
+	return layout.initializer(s, l.dataBytes(s), globals, l.data)
 }
 
 func llvmDescriptorGoType(s *obj.LSym) *types.Type {
