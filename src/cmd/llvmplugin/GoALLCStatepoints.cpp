@@ -6,6 +6,7 @@
 #include "GoALLCCPUFeatures.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -46,6 +47,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <tuple>
 
 using namespace llvm;
 
@@ -4425,9 +4427,47 @@ Error materializeFunctionMarkers(Module &M) {
   SmallVector<Instruction *, 16> Markers;
   for (Function &F : M) {
     SmallVector<Metadata *, 4> Relocs;
+    DenseSet<std::tuple<GlobalValue *, uint64_t, int64_t>> Seen;
+    auto AppendMarker = [&](MDNode *MD) -> Error {
+      if (!MD || MD->getNumOperands() != 3)
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC function marker relocation metadata must have three "
+            "operands");
+      auto *TargetMD = dyn_cast<ValueAsMetadata>(MD->getOperand(0));
+      auto *Target =
+          TargetMD ? dyn_cast<GlobalValue>(TargetMD->getValue()) : nullptr;
+      auto *Type = mdconst::dyn_extract<ConstantInt>(MD->getOperand(1));
+      auto *Addend = mdconst::dyn_extract<ConstantInt>(MD->getOperand(2));
+      if (!Target || !Type || Type->getValue().ugt(UINT16_MAX) || !Addend ||
+          !Addend->getValue().isSignedIntN(64))
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC function marker relocation metadata is invalid");
+      switch (Type->getZExtValue()) {
+      case GoObj::R_USEFIELD:
+      case GoObj::R_USEIFACE:
+      case GoObj::R_USEIFACEMETHOD:
+      case GoObj::R_USENAMEDMETHOD:
+      case GoObj::R_INITORDER:
+        break;
+      default:
+        return createStringError(
+            std::errc::invalid_argument,
+            "GoALLC function marker relocation metadata has an unsupported "
+            "type");
+      }
+      // Compare values, including distinct metadata nodes with equal payloads.
+      // Keep the first occurrence so attachment order stays deterministic.
+      if (Seen.insert({Target, Type->getZExtValue(), Addend->getSExtValue()})
+              .second)
+        Relocs.push_back(MD);
+      return Error::success();
+    };
     if (MDNode *MD = F.getMetadata("goobj.marker_relocs"))
       for (const MDOperand &Op : MD->operands())
-        Relocs.push_back(Op.get());
+        if (Error Err = AppendMarker(dyn_cast_or_null<MDNode>(Op.get())))
+          return Err;
     for (Instruction &I : instructions(F)) {
       auto *II = dyn_cast<IntrinsicInst>(&I);
       if (!II || II->getIntrinsicID() != Intrinsic::sideeffect)
@@ -4447,36 +4487,9 @@ Error materializeFunctionMarkers(Module &M) {
           Markers.push_back(&I);
         continue;
       }
-      if (MD->getNumOperands() != 3)
-        return createStringError(
-            std::errc::invalid_argument,
-            "GoALLC function marker relocation metadata must have three "
-            "operands");
-      auto *TargetMD = dyn_cast<ValueAsMetadata>(MD->getOperand(0));
-      auto *Target =
-          TargetMD ? dyn_cast<GlobalValue>(TargetMD->getValue()) : nullptr;
-      auto *Type = mdconst::dyn_extract<ConstantInt>(MD->getOperand(1));
-      auto *Addend = mdconst::dyn_extract<ConstantInt>(MD->getOperand(2));
-      if (!Target || !Type || Type->getValue().ugt(UINT16_MAX) || !Addend)
-        return createStringError(
-            std::errc::invalid_argument,
-            "GoALLC function marker relocation metadata is invalid");
-      switch (Type->getZExtValue()) {
-      case GoObj::R_USEFIELD:
-      case GoObj::R_USEIFACE:
-      case GoObj::R_USEIFACEMETHOD:
-      case GoObj::R_USENAMEDMETHOD:
-      case GoObj::R_INITORDER:
-        break;
-      default:
-        return createStringError(
-            std::errc::invalid_argument,
-            "GoALLC function marker relocation metadata has an unsupported "
-            "type");
-      }
       // The marker has followed inlining to its final owning definition.
-      // Its three operands already match the definition attachment format.
-      Relocs.push_back(MD);
+      if (Error Err = AppendMarker(MD))
+        return Err;
       Markers.push_back(&I);
     }
     if (!Relocs.empty())
