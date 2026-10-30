@@ -348,18 +348,15 @@ func TestLLVMBuiltinDeclarationKeepsCallSiteSignatures(t *testing.T) {
 func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer
-	oldCompilerUsed := goObjCompilerUsed
 	oldCompilerUsedNames := goObjCompilerUsedNames
 	oldData := base.Ctxt.Data
 	module := GlobalCtxt.NewModule("goobj_external_data_roots")
 	CurrentModule = module
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
-	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
 	t.Cleanup(func() {
 		base.Ctxt.Data = oldData
 		goObjCompilerUsedNames = oldCompilerUsedNames
-		goObjCompilerUsed = oldCompilerUsed
 		currentLLVMDataLowerer = oldLowerer
 		CurrentModule = oldModule
 		module.Dispose()
@@ -375,6 +372,7 @@ func TestLLVMGoObjCompilerUsedOnlyKeepsExternalDataRoots(t *testing.T) {
 	base.Ctxt.Data = []*obj.LSym{externalRoot, ordinaryLocal}
 	MarkGoObjDataReferencedOutsideLLVM(externalRoot)
 	LowerGoObjData()
+	emitGoObjCompilerUsed()
 
 	var used string
 	for _, line := range strings.Split(module.String(), "\n") {
@@ -492,16 +490,13 @@ func TestLLVMGoObjAnonymousDataIdentity(t *testing.T) {
 func TestLLVMGoObjFunctionArgInfoMetadata(t *testing.T) {
 	oldModule := CurrentModule
 	oldLowerer := currentLLVMDataLowerer
-	oldCompilerUsed := goObjCompilerUsed
 	oldCompilerUsedNames := goObjCompilerUsedNames
 	module := GlobalCtxt.NewModule("goobj_function_arginfo")
 	CurrentModule = module
 	currentLLVMDataLowerer = nil
-	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
 	t.Cleanup(func() {
 		goObjCompilerUsedNames = oldCompilerUsedNames
-		goObjCompilerUsed = oldCompilerUsed
 		currentLLVMDataLowerer = oldLowerer
 		CurrentModule = oldModule
 		module.Dispose()
@@ -1078,18 +1073,15 @@ func TestLLVMGoObjReferenceNames(t *testing.T) {
 
 func TestEmitLateGoObjBuiltinDeclarations(t *testing.T) {
 	oldModule := CurrentModule
-	oldCompilerUsed := goObjCompilerUsed
 	oldCompilerUsedNames := goObjCompilerUsedNames
 	oldLinkshared := base.Ctxt.Flag_linkshared
 	module := GlobalCtxt.NewModule("late_goobj_builtins")
 	CurrentModule = module
-	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
 	base.Ctxt.Flag_linkshared = false
 	t.Cleanup(func() {
 		base.Ctxt.Flag_linkshared = oldLinkshared
 		goObjCompilerUsedNames = oldCompilerUsedNames
-		goObjCompilerUsed = oldCompilerUsed
 		CurrentModule = oldModule
 		module.Dispose()
 	})
@@ -1111,7 +1103,7 @@ func TestEmitLateGoObjBuiltinDeclarations(t *testing.T) {
 			t.Errorf("late builtin declaration %q is absent", storageName)
 		}
 	}
-	if got := len(goObjCompilerUsed); got != lateCount {
+	if got := len(goObjCompilerUsedNames); got != lateCount {
 		t.Fatalf("compiler-used late builtin count = %d, want %d", got, lateCount)
 	}
 	memmove, ok := goobj.BuiltinSymbolName("runtime.memmove", int(obj.ABIInternal))
@@ -2474,5 +2466,39 @@ func TestLLVMStaticCallCgoCheckSignatures(t *testing.T) {
 				t.Fatal("unrelated uintptr signature changed")
 			}
 		})
+	}
+}
+
+// Data lowering and debug finalization can retain the same symbol. Collect
+// one root across phases and resolve a provisional declaration's replacement.
+func TestLLVMGoObjCompilerUsedDeduplicatesPhases(t *testing.T) {
+	oldModule := CurrentModule
+	oldNames := goObjCompilerUsedNames
+	module := GlobalCtxt.NewModule("goobj_compiler_used_phases")
+	CurrentModule = module
+	goObjCompilerUsedNames = make(map[string]bool)
+	t.Cleanup(func() {
+		goObjCompilerUsedNames = oldNames
+		CurrentModule = oldModule
+		module.Dispose()
+	})
+
+	declaration := llvm.AddGlobal(module, GlobalCtxt.Int8Type(), "root")
+	preserveGoObjMetadataValues(declaration)
+	replacement := llvm.AddGlobal(module, GlobalCtxt.Int64Type(), "replacement")
+	declaration.ReplaceAllUsesWith(replacement)
+	declaration.EraseFromParentAsGlobal()
+	replacement.SetName("root")
+	fn := llvm.AddFunction(module, "fn", llvm.FunctionType(GlobalCtxt.VoidType(), nil, false))
+	preserveGoObjMetadataValues(fn, replacement, fn)
+	emitGoObjCompilerUsed()
+
+	used := module.NamedGlobal("llvm.compiler.used")
+	init := used.Initializer()
+	if init.OperandsCount() != 2 || init.Operand(0) != fn || init.Operand(1) != replacement {
+		t.Fatalf("unexpected compiler roots: %s", used.String())
+	}
+	if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid compiler-used array: %v", err)
 	}
 }

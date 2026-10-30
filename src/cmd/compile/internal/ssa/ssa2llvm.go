@@ -5685,7 +5685,6 @@ var goObjConfigWritten bool
 var goObjImportsWritten bool
 var llvmModuleFinalized bool
 var currentLLVMDataLowerer *llvmDataLowerer
-var goObjCompilerUsed []llvm.Value
 var goObjCompilerUsedNames map[string]bool
 
 var GlobalCtxt = llvm.GlobalContext()
@@ -5860,7 +5859,6 @@ func InitModule(pkg *types.Pkg) {
 	llvmModuleFinalized = false
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
 	llvmGoFunctionSymbols = llvmFunctionSymbolIndex{}
-	goObjCompilerUsed = nil
 	goObjCompilerUsedNames = make(map[string]bool)
 	initLLVMGoObjLocalDefinitions()
 	emitLateGoObjBuiltinDeclarations()
@@ -5956,6 +5954,7 @@ func finalizeLLVMModule() {
 		goObjImportsWritten = true
 	}
 	finalizeLLVMDebugInfo()
+	emitGoObjCompilerUsed()
 	llvmModuleFinalized = true
 }
 

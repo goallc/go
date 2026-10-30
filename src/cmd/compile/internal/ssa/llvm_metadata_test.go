@@ -86,6 +86,18 @@ func NoSplit(x uintptr) { Call(x) }
 								t.Fatal(err)
 							}
 							ir := string(data)
+							used := regexp.MustCompile(`(?m)^@llvm\.compiler\.used = .*`).FindString(ir)
+							roots := regexp.MustCompile(`ptr @("[^"\n]*"|[^,\] ]+)`).FindAllString(used, -1)
+							if len(roots) == 0 {
+								t.Errorf("%s has no compiler-used roots", suffix)
+							}
+							seen := make(map[string]bool)
+							for _, root := range roots {
+								if seen[root] {
+									t.Errorf("%s has duplicate compiler-used root %s", suffix, root)
+								}
+								seen[root] = true
+							}
 							if strings.Contains(ir, "!goobj.gotype =") {
 								t.Errorf("%s still has a global gotype table", suffix)
 							}

@@ -125,7 +125,6 @@ func finalizeLLVMDebugInfo() {
 		}))
 	}
 	emitGoObjDebugGlobals()
-	emitGoObjCompilerUsed()
 	llvmDIBuilder.Finalize()
 	llvmDIBuilder.Destroy()
 	llvmDIBuilder = nil

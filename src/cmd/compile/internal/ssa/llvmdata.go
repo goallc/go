@@ -279,7 +279,6 @@ func LowerGoObjData() {
 	}
 
 	if len(closure) == 0 {
-		emitGoObjCompilerUsed()
 		return
 	}
 
@@ -349,7 +348,6 @@ func LowerGoObjData() {
 			base.Fatalf("GoObj data referenced outside LLVM was not lowered: %s", s.Name)
 		}
 	}
-	emitGoObjCompilerUsed()
 }
 
 // MarkGoObjDataReferencedOutsideLLVM marks compiler data definitions whose
@@ -1181,36 +1179,38 @@ func preserveGoObjMetadataValues(values ...llvm.Value) {
 		if v.IsNil() || v.Name() == "" {
 			base.Fatalf("invalid LLVM value in GoObj metadata relationship")
 		}
-		if goObjCompilerUsedNames[v.Name()] {
-			continue
-		}
 		goObjCompilerUsedNames[v.Name()] = true
-		goObjCompilerUsed = append(goObjCompilerUsed, v)
 	}
 }
 
+// Emit once after data and debug metadata have collected all roots. Resolve
+// names here because lowering can replace provisional declarations while
+// keeping their final storage name.
 func emitGoObjCompilerUsed() {
-	if len(goObjCompilerUsed) == 0 {
+	if len(goObjCompilerUsedNames) == 0 {
 		return
 	}
-	sort.Slice(goObjCompilerUsed, func(i, j int) bool {
-		return goObjCompilerUsed[i].Name() < goObjCompilerUsed[j].Name()
-	})
-	values := append([]llvm.Value(nil), goObjCompilerUsed...)
-	if old := CurrentModule.NamedGlobal("llvm.compiler.used"); !old.IsNil() {
-		init := old.Initializer()
-		for i := 0; i < init.OperandsCount(); i++ {
-			values = append(values, init.Operand(i))
+	names := make([]string, 0, len(goObjCompilerUsedNames))
+	for name := range goObjCompilerUsedNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	values := make([]llvm.Value, 0, len(names))
+	for _, name := range names {
+		v := CurrentModule.NamedGlobal(name)
+		if v.IsNil() {
+			v = CurrentModule.NamedFunction(name)
 		}
-		old.EraseFromParentAsGlobal()
+		if v.IsNil() {
+			base.Fatalf("missing LLVM value in GoObj metadata relationship: %s", name)
+		}
+		values = append(values, v)
 	}
 	init := llvm.ConstArray(GlobalCtxt.PointerType(0), values)
 	used := llvm.AddGlobal(CurrentModule, init.Type(), "llvm.compiler.used")
 	used.SetLinkage(llvm.AppendingLinkage)
 	used.SetSection("llvm.metadata")
 	used.SetInitializer(init)
-	goObjCompilerUsed = nil
-	goObjCompilerUsedNames = make(map[string]bool)
 }
 
 func llvmDataStorageRelocs(s *obj.LSym) []obj.Reloc {
