@@ -297,6 +297,7 @@ func LowerGoObjData() {
 
 	globals := lowerer.values
 	for _, s := range syms {
+		delete(lowerer.genericLayouts, s)
 		lowerer.lowered[s] = true
 		t := lowerer.dataType(s)
 		g := globals[s]
@@ -585,25 +586,32 @@ func llvmDataSymbolKindSupported(kind objabi.SymKind) bool {
 	}
 }
 
-func llvmDataType(s *obj.LSym, contents []byte) llvm.Type {
-	fields := llvmDataFields(s, contents, nil, nil)
-	return GlobalCtxt.ConstStruct(fields, true).Type()
+// llvmDataLayout describes the packed byte runs and relocation slots of a
+// generic LSym. Types need only the run lengths, not copies of their contents.
+type llvmDataLayout struct {
+	size   int
+	relocs []obj.Reloc
 }
 
-func llvmDataInitializer(s *obj.LSym, contents []byte, globals map[*obj.LSym]llvm.Value, data map[*obj.LSym]bool) llvm.Value {
-	fields := llvmDataFields(s, contents, globals, data)
-	return GlobalCtxt.ConstStruct(fields, true)
-}
-
-// llvmDataFields models an LSym as a packed aggregate. Byte runs preserve the
-// frontend's exact layout while relocation slots retain their LLVM constants.
-// Using a packed aggregate is necessary because descriptors contain 32-bit
-// offsets adjacent to pointer-sized fields.
-func llvmDataFields(s *obj.LSym, contents []byte, globals map[*obj.LSym]llvm.Value, data map[*obj.LSym]bool) []llvm.Value {
-	dataSize64 := s.Size
-	if dataSize64 < int64(len(contents)) {
-		dataSize64 = int64(len(contents))
+func (l *llvmDataLowerer) dataLayout(s *obj.LSym) llvmDataLayout {
+	if layout, ok := l.genericLayouts[s]; ok {
+		return layout
 	}
+	layout := makeLLVMDataLayout(s, len(l.dataBytes(s)))
+	// Early OpAddr references can precede the final LSym layout. Reuse only
+	// layouts prepared by LowerGoObjData, across its declaration/initializer
+	// passes. Relocation-free layouts need no sorting or retained slice.
+	if l.lowered[s] && len(layout.relocs) != 0 {
+		if l.genericLayouts == nil {
+			l.genericLayouts = make(map[*obj.LSym]llvmDataLayout)
+		}
+		l.genericLayouts[s] = layout
+	}
+	return layout
+}
+
+func makeLLVMDataLayout(s *obj.LSym, contentSize int) llvmDataLayout {
+	dataSize64 := max(s.Size, int64(contentSize))
 	if dataSize64 < 0 || uint64(dataSize64) > uint64(^uint(0)>>1) {
 		base.Fatalf("invalid LLVM data symbol size %d for %s", dataSize64, s.Name)
 	}
@@ -611,37 +619,63 @@ func llvmDataFields(s *obj.LSym, contents []byte, globals map[*obj.LSym]llvm.Val
 		base.Errorf("%s: symbol too large (%d bytes > %d bytes)", s.Name, dataSize64, obj.MaxSymSize)
 		base.ErrorExit()
 	}
-	dataSize := int(dataSize64)
-	bytes := make([]byte, dataSize)
-	copy(bytes, contents)
-	relocs := llvmDataStorageRelocs(s)
-	sort.Slice(relocs, func(i, j int) bool { return relocs[i].Off < relocs[j].Off })
-
-	fields := make([]llvm.Value, 0, len(relocs)*2+1)
+	layout := llvmDataLayout{size: int(dataSize64), relocs: llvmDataStorageRelocs(s)}
+	sort.Slice(layout.relocs, func(i, j int) bool { return layout.relocs[i].Off < layout.relocs[j].Off })
 	pos := 0
-	for _, r := range relocs {
+	for _, r := range layout.relocs {
 		off := int(r.Off)
 		end := off + int(r.Siz)
-		if off < pos || end > dataSize {
-			base.Fatalf("invalid relocation [%d,%d) in Go data symbol %s of size %d", off, end, s.Name, dataSize)
-		}
-		if off > pos {
-			fields = append(fields, llvmDataBytes(bytes[pos:off]))
-		}
-		if globals == nil {
-			fields = append(fields, llvmDataRelocZero(r))
-		} else {
-			fields = append(fields, llvmDataRelocValue(s, r, globals, data))
+		if off < pos || end > layout.size {
+			base.Fatalf("invalid relocation [%d,%d) in Go data symbol %s of size %d", off, end, s.Name, layout.size)
 		}
 		pos = end
 	}
-	if pos < dataSize {
-		fields = append(fields, llvmDataBytes(bytes[pos:]))
+	return layout
+}
+
+func (layout llvmDataLayout) llvmType() llvm.Type {
+	fields := make([]llvm.Type, 0, len(layout.relocs)*2+1)
+	pos := 0
+	for _, r := range layout.relocs {
+		off := int(r.Off)
+		if off > pos {
+			fields = append(fields, llvm.ArrayType(GlobalCtxt.Int8Type(), off-pos))
+		}
+		fields = append(fields, llvmDataRelocType(r))
+		pos = off + int(r.Siz)
 	}
-	if len(fields) == 0 {
-		fields = append(fields, llvmDataBytes(nil))
+	if pos < layout.size || len(fields) == 0 {
+		fields = append(fields, llvm.ArrayType(GlobalCtxt.Int8Type(), layout.size-pos))
 	}
-	return fields
+	return GlobalCtxt.StructType(fields, true)
+}
+
+func (layout llvmDataLayout) initializer(s *obj.LSym, contents []byte, globals map[*obj.LSym]llvm.Value, data map[*obj.LSym]bool) llvm.Value {
+	byteRun := func(start, end int) llvm.Value {
+		if start >= len(contents) {
+			return llvm.ConstNull(llvm.ArrayType(GlobalCtxt.Int8Type(), end-start))
+		}
+		if end <= len(contents) {
+			return llvmDataBytes(contents[start:end])
+		}
+		padded := make([]byte, end-start)
+		copy(padded, contents[start:])
+		return llvmDataBytes(padded)
+	}
+	fields := make([]llvm.Value, 0, len(layout.relocs)*2+1)
+	pos := 0
+	for _, r := range layout.relocs {
+		off := int(r.Off)
+		if off > pos {
+			fields = append(fields, byteRun(pos, off))
+		}
+		fields = append(fields, llvmDataRelocValue(s, r, globals, data))
+		pos = off + int(r.Siz)
+	}
+	if pos < layout.size || len(fields) == 0 {
+		fields = append(fields, byteRun(pos, layout.size))
+	}
+	return GlobalCtxt.ConstStruct(fields, true)
 }
 
 func (l *llvmDataLowerer) dataBytes(s *obj.LSym) []byte {
@@ -704,20 +738,24 @@ func llvmDataBytes(b []byte) llvm.Value {
 }
 
 func llvmDataRelocZero(r obj.Reloc) llvm.Value {
+	return llvm.ConstNull(llvmDataRelocType(r))
+}
+
+func llvmDataRelocType(r obj.Reloc) llvm.Type {
 	switch r.Type {
 	case objabi.R_ADDR, objabi.R_WEAKADDR:
 		if r.Siz != uint8(base.Ctxt.Arch.PtrSize) {
 			base.Fatalf("unsupported address relocation size %d", r.Siz)
 		}
-		return llvm.ConstPointerNull(GlobalCtxt.PointerType(0))
+		return GlobalCtxt.PointerType(0)
 	case objabi.R_ADDROFF, objabi.R_WEAKADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
 		if r.Siz != 4 {
 			base.Fatalf("unsupported offset relocation size %d", r.Siz)
 		}
-		return llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false)
+		return GlobalCtxt.Int32Type()
 	default:
 		base.Fatalf("unsupported Go data relocation %s", r.Type)
-		return llvm.Value{}
+		return llvm.Type{}
 	}
 }
 
