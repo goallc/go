@@ -5681,8 +5681,6 @@ func LLVMCompile(f *Func) {
 
 var CurrentModule llvm.Module
 var type2lTypes = map[*types.Type]llvm.Type{}
-var goObjConfigWritten bool
-var goObjImportsWritten bool
 var llvmModuleFinalized bool
 var currentLLVMDataLowerer *llvmDataLowerer
 var goObjCompilerUsedNames map[string]bool
@@ -5854,8 +5852,6 @@ func InitModule(pkg *types.Pkg) {
 
 	CurrentModule = GlobalCtxt.NewModule(pkg.Path)
 	CurrentModule.SetTarget(goObjTargetTriple())
-	goObjConfigWritten = false
-	goObjImportsWritten = false
 	llvmModuleFinalized = false
 	currentLLVMDataLowerer = newLLVMDataLowerer(make(map[*obj.LSym]bool))
 	llvmGoFunctionSymbols = llvmFunctionSymbolIndex{}
@@ -5944,15 +5940,9 @@ func finalizeLLVMModule() {
 	if llvmModuleFinalized {
 		return
 	}
-	if !goObjConfigWritten {
-		addGoObjConfigMetadata(types.LocalPkg)
-		goObjConfigWritten = true
-	}
-	if !goObjImportsWritten {
-		emitGoObjImportMetadata()
-		emitGoObjCgoModuleAsm()
-		goObjImportsWritten = true
-	}
+	addGoObjConfigMetadata(types.LocalPkg)
+	emitGoObjImportMetadata()
+	emitGoObjCgoModuleAsm()
 	finalizeLLVMDebugInfo()
 	emitGoObjCompilerUsed()
 	llvmModuleFinalized = true
