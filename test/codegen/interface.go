@@ -11,7 +11,6 @@ package codegen
 // LLVM-DAG: ptr @"codegen.(*llvmInterfaceValue).Double"
 // LLVM-DAG: ptr @"codegen.(*llvmInterfaceValue).Value"
 // LLVM-DAG: !goobj.relocs
-// LLVM-DAG: !goobj.weak_relocs
 // LLVM-DAG: @llvm.compiler.used = appending global
 // LLVM-LABEL: define goabiinternal i64 @codegen.useLLVMInterface(
 // LLVM: call void @llvm.sideeffect(), !goobj.marker_reloc ![[USE_IFACE:[0-9]+]]
@@ -41,6 +40,9 @@ package codegen
 // LLVM-DAG: ![[DOUBLE_METHOD]] = !{ptr @"type:codegen.llvmInterface", i32 24, i64 {{[0-9]+}}}
 // LLVM-DAG: ![[ITAB_FLAGS]] = !{i32 0, i32 2}
 // LLVM-DAG: !{i32 {{[0-9]+}}, i32 5}
+// Weak address and section-offset kinds share the residual relocation table.
+// LLVM-DAG: !{i32 {{[0-9]+}}, i32 32769}
+// LLVM-DAG: !{i32 {{[0-9]+}}, i32 32773}
 
 type llvmInterface interface {
 	Double() int
