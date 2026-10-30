@@ -68,10 +68,10 @@ LLVM IR 优先使用原生 linkage 和语义类型交接这些属性：Local 对
 metadata 复制同一份信息。`R_ADDROFF` 是 GoObj 的 32 位 section offset；
 `R_METHODOFF` 还额外控制 Go linker 的 dead-method elimination。LLVM 原生
 relocation 均没有这两种对象格式语义，因此用 `!goobj.relocs` 精确标出它们的
-relocation offset 和类型；`R_WEAKADDROFF` 的基础类型同样在该表中标为
-`R_ADDROFF`。这避免让通用 LLVM backend 依赖 GoType flag、target symbol
-命名、`%go.runtime.Method` 的名字或字段布局来猜测 offset relocation。
-`!goobj.weak_relocs` 只记录 LLVM 无法表达的逐 relocation weak 属性。这样 LLVM
+relocation offset 和完整类型，包括 `R_WEAKADDR`、`R_WEAKADDROFF` 的
+`R_WEAK` 位，不再使用单独的 weak-offset 表。这避免让通用 LLVM backend
+依赖 GoType flag、target symbol 命名、`%go.runtime.Method` 的名字或字段布局
+来猜测 offset relocation。LLVM
 initializer 始终是地址关系的 source of truth，metadata 只承载对象格式特有的
 剩余语义。零宽度的 linker
 保活边 `R_KEEP` 不伪装为地址常量，而以 `!goobj.keep !{ptr @target, ...}`
@@ -88,6 +88,13 @@ writer 从最终定义的 attachment 恢复 GoObj relocation/aux。LLVM 和 Go p
 需要一起更新；旧的模块级 keep/marker 表会被明确拒绝。最终链路仍只有
 `__.PKGDEF + _go_.o` 两个有意义的 archive members；不会生成或合并 native data
 object。
+
+可移除的 map initializer 调用同样以 `!goobj.weak_calls !{ptr @callee, ...}`
+附着在所属 package init 定义上；已丢弃定义的调用边不会污染胜出的定义。
+只有最终机器码中该 caller 到目标的直接调用被标为 weak，取地址和其他 caller
+的调用仍为 strong。outlined callee 保持 noinline；caller 被克隆时 attachment
+随定义复制，被内联到其他函数时不扩大 weak 契约，调用保守地保持 strong。
+旧的模块级 weak-call 表会被明确拒绝。
 
 静态 interface conversion 还会把带有 `ItabInfo` 的 roots 纳入同一数据闭包。
 itab 使用 `%go.runtime.ITab` 和按实际方法数扩展的 packed LLVM struct 表达；

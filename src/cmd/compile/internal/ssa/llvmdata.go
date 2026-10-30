@@ -279,7 +279,6 @@ func LowerGoObjData() {
 	}
 
 	if len(closure) == 0 {
-		emitGoObjCompilerUsed()
 		return
 	}
 
@@ -332,8 +331,7 @@ func LowerGoObjData() {
 		g := globals[s]
 		g.SetInitializer(lowerer.dataInitializer(s, globals))
 		setGoObjDataFlags(g, s)
-		setGoObjOffsetRelocMetadata(g, s)
-		setGoObjWeakRelocMetadata(g, s)
+		setGoObjRelocMetadata(g, s)
 		setGoObjKeepMetadata(g, s)
 		setGoObjGotypeMetadata(g, s)
 		setGoObjMarkerRelocMetadata(g, s)
@@ -350,7 +348,6 @@ func LowerGoObjData() {
 			base.Fatalf("GoObj data referenced outside LLVM was not lowered: %s", s.Name)
 		}
 	}
-	emitGoObjCompilerUsed()
 }
 
 // MarkGoObjDataReferencedOutsideLLVM marks compiler data definitions whose
@@ -1001,51 +998,27 @@ func setGoObjFunctionArgInfo(fn llvm.Value, s *obj.LSym, abiInfo *abi.ABIParamRe
 	fn.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.func.arginfo"), GlobalCtxt.MDNode(md))
 }
 
-// LLVM can express the address relationship but not GoObj's 32-bit section
-// offsets. Record the object-format-specific relocation type explicitly;
-// weakness remains orthogonal in !goobj.weak_relocs.
-func setGoObjOffsetRelocMetadata(g llvm.Value, s *obj.LSym) {
-	entries := make([]llvm.Metadata, 0)
-	for _, r := range s.R {
-		var typ objabi.RelocType
-		switch r.Type {
-		case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
-			typ = r.Type
-		case objabi.R_WEAKADDROFF:
-			typ = objabi.R_ADDROFF
-		default:
-			continue
-		}
-		entries = append(entries, GlobalCtxt.MDNode([]llvm.Metadata{
-			llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata(),
-			llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(typ), false).ConstantAsMetadata(),
-		}))
-	}
-	if len(entries) != 0 {
-		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.relocs"), GlobalCtxt.MDNode(entries))
-	}
-}
-
-func setGoObjWeakRelocMetadata(g llvm.Value, s *obj.LSym) {
-	entries := make([]llvm.Metadata, 0)
+// LLVM constants carry the offset, size, target, and addend. Record only
+// GoObj-specific relocation types and weakness that LLVM cannot infer.
+func setGoObjRelocMetadata(g llvm.Value, s *obj.LSym) {
+	var entries []llvm.Metadata
 	for _, r := range s.R {
 		switch r.Type {
-		case objabi.R_WEAKADDR, objabi.R_WEAKADDROFF:
-			entries = append(entries,
-				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata())
-		case objabi.R_ADDR, objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
-			// LLVM constants carry the offset, size, target, and addend.
-			// Offset relocation types are recorded separately in
-			// !goobj.relocs.
-		case objabi.R_KEEP, objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD,
-			objabi.R_USENAMEDMETHOD, objabi.R_INITORDER:
+		case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF,
+			objabi.R_WEAKADDR, objabi.R_WEAKADDROFF:
+			entries = append(entries, GlobalCtxt.MDNode([]llvm.Metadata{
+				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata(),
+				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint16(r.Type)), false).ConstantAsMetadata(),
+			}))
+		case objabi.R_ADDR, objabi.R_KEEP, objabi.R_USEIFACE,
+			objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD, objabi.R_INITORDER:
 			continue
 		default:
 			base.Fatalf("unsupported Go data relocation %s in %s", r.Type, s.Name)
 		}
 	}
 	if len(entries) != 0 {
-		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.weak_relocs"), GlobalCtxt.MDNode(entries))
+		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.relocs"), GlobalCtxt.MDNode(entries))
 	}
 }
 
@@ -1128,7 +1101,7 @@ func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 }
 
 // R_KEEP is a zero-width linker reachability edge, not a storage relocation.
-// Keep it separate from !goobj.weak_relocs so llc can synthesize the GoObj record
+// Keep it separate from !goobj.relocs so llc can synthesize the GoObj record
 // without inventing bytes or a target-address expression in the global.
 func setGoObjKeepMetadata(g llvm.Value, s *obj.LSym) {
 	var targets []llvm.Metadata
@@ -1156,6 +1129,7 @@ func SetLLVMWeakCallTargets(source *obj.LSym, targets []*obj.LSym) {
 	if caller.IsNil() {
 		return
 	}
+	var callees []llvm.Metadata
 	for _, target := range targets {
 		callee := CurrentModule.NamedFunction(llvmFunctionStorageName(target.Name, llvmCallConv(target.ABI())))
 		if callee.IsNil() {
@@ -1163,9 +1137,11 @@ func SetLLVMWeakCallTargets(source *obj.LSym, targets []*obj.LSym) {
 		}
 		callee.AddFunctionAttr(llvmNoInlineAttribute())
 		preserveGoObjMetadataValues(caller, callee)
-		CurrentModule.AddNamedMetadataOperand("goobj.weak_calls", GlobalCtxt.MDNode([]llvm.Metadata{
-			caller.ConstantAsMetadata(), callee.ConstantAsMetadata(),
-		}))
+		callees = append(callees, callee.ConstantAsMetadata())
+	}
+	if len(callees) != 0 {
+		// The selected caller definition owns its removable call edges.
+		caller.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.weak_calls"), GlobalCtxt.MDNode(callees))
 	}
 }
 
@@ -1203,36 +1179,38 @@ func preserveGoObjMetadataValues(values ...llvm.Value) {
 		if v.IsNil() || v.Name() == "" {
 			base.Fatalf("invalid LLVM value in GoObj metadata relationship")
 		}
-		if goObjCompilerUsedNames[v.Name()] {
-			continue
-		}
 		goObjCompilerUsedNames[v.Name()] = true
-		goObjCompilerUsed = append(goObjCompilerUsed, v)
 	}
 }
 
+// Emit once after data and debug metadata have collected all roots. Resolve
+// names here because lowering can replace provisional declarations while
+// keeping their final storage name.
 func emitGoObjCompilerUsed() {
-	if len(goObjCompilerUsed) == 0 {
+	if len(goObjCompilerUsedNames) == 0 {
 		return
 	}
-	sort.Slice(goObjCompilerUsed, func(i, j int) bool {
-		return goObjCompilerUsed[i].Name() < goObjCompilerUsed[j].Name()
-	})
-	values := append([]llvm.Value(nil), goObjCompilerUsed...)
-	if old := CurrentModule.NamedGlobal("llvm.compiler.used"); !old.IsNil() {
-		init := old.Initializer()
-		for i := 0; i < init.OperandsCount(); i++ {
-			values = append(values, init.Operand(i))
+	names := make([]string, 0, len(goObjCompilerUsedNames))
+	for name := range goObjCompilerUsedNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	values := make([]llvm.Value, 0, len(names))
+	for _, name := range names {
+		v := CurrentModule.NamedGlobal(name)
+		if v.IsNil() {
+			v = CurrentModule.NamedFunction(name)
 		}
-		old.EraseFromParentAsGlobal()
+		if v.IsNil() {
+			base.Fatalf("missing LLVM value in GoObj metadata relationship: %s", name)
+		}
+		values = append(values, v)
 	}
 	init := llvm.ConstArray(GlobalCtxt.PointerType(0), values)
 	used := llvm.AddGlobal(CurrentModule, init.Type(), "llvm.compiler.used")
 	used.SetLinkage(llvm.AppendingLinkage)
 	used.SetSection("llvm.metadata")
 	used.SetInitializer(init)
-	goObjCompilerUsed = nil
-	goObjCompilerUsedNames = make(map[string]bool)
 }
 
 func llvmDataStorageRelocs(s *obj.LSym) []obj.Reloc {
