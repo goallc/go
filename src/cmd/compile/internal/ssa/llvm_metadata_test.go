@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -239,5 +240,83 @@ var Map = map[int]int{
 				}
 			})
 		}
+	}
+}
+
+// Weak data references must preserve their full relocation contract while
+// sharing the residual type table with section-relative offsets.
+func TestLLVMWeakDataRelocations(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	source := filepath.Join(t.TempDir(), "p.go")
+	if err := os.WriteFile(source, []byte(`package p
+type T struct { X int }
+func (t T) M() int { return t.X }
+type I interface { M() int }
+var Value I = T{X: 7}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			var baseline []string
+			for _, enableLLVM := range []bool{false, true} {
+				output := filepath.Join(t.TempDir(), "p.a")
+				args := []string{"tool", "compile", fmt.Sprintf("-enablellvm=%t", enableLLVM), "-p=p", "-o", output}
+				if enableLLVM {
+					args = append(args, "-llvm-keep-ir")
+				}
+				cmd := testenv.Command(t, testenv.GoToolPath(t), append(args, source)...)
+				cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile: %v\n%s", err, out)
+				}
+				r := readDwarfTestObject(t, output)
+				var records []string
+				found := map[objabi.RelocType]bool{}
+				for i := uint32(0); i < uint32(r.NSym()+r.NHashed64def()+r.NHasheddef()+r.NNonpkgdef()); i++ {
+					for _, reloc := range r.Relocs(i) {
+						typ := objabi.RelocType(reloc.Type())
+						if typ != objabi.R_WEAKADDR && typ != objabi.R_WEAKADDROFF {
+							continue
+						}
+						ref := reloc.Sym()
+						index := ref.SymIdx
+						switch ref.PkgIdx {
+						case goobj.PkgIdxSelf:
+						case goobj.PkgIdxHashed64:
+							index += uint32(r.NSym())
+						case goobj.PkgIdxHashed:
+							index += uint32(r.NSym() + r.NHashed64def())
+						case goobj.PkgIdxNone:
+							index += uint32(r.NSym() + r.NHashed64def() + r.NHasheddef())
+						default:
+							t.Fatalf("unexpected weak reference %+v", ref)
+						}
+						records = append(records, fmt.Sprintf("%s:%d:%d:%d:%d:%s", r.Sym(i).Name(r), reloc.Off(), reloc.Siz(), typ, reloc.Add(), r.Sym(index).Name(r)))
+						found[typ] = true
+					}
+				}
+				if !found[objabi.R_WEAKADDR] || !found[objabi.R_WEAKADDROFF] {
+					t.Fatalf("missing weak data relocation kinds: %v", found)
+				}
+				slices.Sort(records)
+				if !enableLLVM {
+					baseline = records
+					continue
+				}
+				if !slices.Equal(records, baseline) {
+					t.Errorf("weak relocations differ:\nLLVM %v\nnative %v", records, baseline)
+				}
+				for _, suffix := range []string{".ll", ".opt.ll"} {
+					data, err := os.ReadFile(output + suffix)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if strings.Contains(string(data), "!goobj.weak_relocs") {
+						t.Errorf("%s still has a separate weak relocation table", suffix)
+					}
+				}
+			}
+		})
 	}
 }

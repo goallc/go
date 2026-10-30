@@ -332,8 +332,7 @@ func LowerGoObjData() {
 		g := globals[s]
 		g.SetInitializer(lowerer.dataInitializer(s, globals))
 		setGoObjDataFlags(g, s)
-		setGoObjOffsetRelocMetadata(g, s)
-		setGoObjWeakRelocMetadata(g, s)
+		setGoObjRelocMetadata(g, s)
 		setGoObjKeepMetadata(g, s)
 		setGoObjGotypeMetadata(g, s)
 		setGoObjMarkerRelocMetadata(g, s)
@@ -1001,51 +1000,27 @@ func setGoObjFunctionArgInfo(fn llvm.Value, s *obj.LSym, abiInfo *abi.ABIParamRe
 	fn.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.func.arginfo"), GlobalCtxt.MDNode(md))
 }
 
-// LLVM can express the address relationship but not GoObj's 32-bit section
-// offsets. Record the object-format-specific relocation type explicitly;
-// weakness remains orthogonal in !goobj.weak_relocs.
-func setGoObjOffsetRelocMetadata(g llvm.Value, s *obj.LSym) {
-	entries := make([]llvm.Metadata, 0)
-	for _, r := range s.R {
-		var typ objabi.RelocType
-		switch r.Type {
-		case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
-			typ = r.Type
-		case objabi.R_WEAKADDROFF:
-			typ = objabi.R_ADDROFF
-		default:
-			continue
-		}
-		entries = append(entries, GlobalCtxt.MDNode([]llvm.Metadata{
-			llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata(),
-			llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(typ), false).ConstantAsMetadata(),
-		}))
-	}
-	if len(entries) != 0 {
-		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.relocs"), GlobalCtxt.MDNode(entries))
-	}
-}
-
-func setGoObjWeakRelocMetadata(g llvm.Value, s *obj.LSym) {
-	entries := make([]llvm.Metadata, 0)
+// LLVM constants carry the offset, size, target, and addend. Record only
+// GoObj-specific relocation types and weakness that LLVM cannot infer.
+func setGoObjRelocMetadata(g llvm.Value, s *obj.LSym) {
+	var entries []llvm.Metadata
 	for _, r := range s.R {
 		switch r.Type {
-		case objabi.R_WEAKADDR, objabi.R_WEAKADDROFF:
-			entries = append(entries,
-				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata())
-		case objabi.R_ADDR, objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF:
-			// LLVM constants carry the offset, size, target, and addend.
-			// Offset relocation types are recorded separately in
-			// !goobj.relocs.
-		case objabi.R_KEEP, objabi.R_USEIFACE, objabi.R_USEIFACEMETHOD,
-			objabi.R_USENAMEDMETHOD, objabi.R_INITORDER:
+		case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_DWARFSECREF,
+			objabi.R_WEAKADDR, objabi.R_WEAKADDROFF:
+			entries = append(entries, GlobalCtxt.MDNode([]llvm.Metadata{
+				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(r.Off), false).ConstantAsMetadata(),
+				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(uint16(r.Type)), false).ConstantAsMetadata(),
+			}))
+		case objabi.R_ADDR, objabi.R_KEEP, objabi.R_USEIFACE,
+			objabi.R_USEIFACEMETHOD, objabi.R_USENAMEDMETHOD, objabi.R_INITORDER:
 			continue
 		default:
 			base.Fatalf("unsupported Go data relocation %s in %s", r.Type, s.Name)
 		}
 	}
 	if len(entries) != 0 {
-		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.weak_relocs"), GlobalCtxt.MDNode(entries))
+		g.SetGlobalMetadata(GlobalCtxt.MDKindID("goobj.relocs"), GlobalCtxt.MDNode(entries))
 	}
 }
 
@@ -1128,7 +1103,7 @@ func emitGoObjFunctionMarkerRelocs(b llvm.Builder, s *obj.LSym) {
 }
 
 // R_KEEP is a zero-width linker reachability edge, not a storage relocation.
-// Keep it separate from !goobj.weak_relocs so llc can synthesize the GoObj record
+// Keep it separate from !goobj.relocs so llc can synthesize the GoObj record
 // without inventing bytes or a target-address expression in the global.
 func setGoObjKeepMetadata(g llvm.Value, s *obj.LSym) {
 	var targets []llvm.Metadata

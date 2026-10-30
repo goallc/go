@@ -68,10 +68,10 @@ LLVM IR 优先使用原生 linkage 和语义类型交接这些属性：Local 对
 metadata 复制同一份信息。`R_ADDROFF` 是 GoObj 的 32 位 section offset；
 `R_METHODOFF` 还额外控制 Go linker 的 dead-method elimination。LLVM 原生
 relocation 均没有这两种对象格式语义，因此用 `!goobj.relocs` 精确标出它们的
-relocation offset 和类型；`R_WEAKADDROFF` 的基础类型同样在该表中标为
-`R_ADDROFF`。这避免让通用 LLVM backend 依赖 GoType flag、target symbol
-命名、`%go.runtime.Method` 的名字或字段布局来猜测 offset relocation。
-`!goobj.weak_relocs` 只记录 LLVM 无法表达的逐 relocation weak 属性。这样 LLVM
+relocation offset 和完整类型，包括 `R_WEAKADDR`、`R_WEAKADDROFF` 的
+`R_WEAK` 位，不再使用单独的 weak-offset 表。这避免让通用 LLVM backend
+依赖 GoType flag、target symbol 命名、`%go.runtime.Method` 的名字或字段布局
+来猜测 offset relocation。LLVM
 initializer 始终是地址关系的 source of truth，metadata 只承载对象格式特有的
 剩余语义。零宽度的 linker
 保活边 `R_KEEP` 不伪装为地址常量，而以 `!goobj.keep !{ptr @target, ...}`
