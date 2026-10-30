@@ -314,7 +314,7 @@ func Caller(x int) int { return Add(x) }
 				}
 				// Disabling DWARF must retain the locations and inline stacks
 				// that the GoObj writer uses for runtime traceback metadata.
-				for _, marker := range []string{`!"pcln-v1"`, `!"Dwarf Version"`, "!DIGlobalVariable(", "!DIBasicType(", "!DISubprogram(", "!DILocation(", "inlinedAt:"} {
+				for _, marker := range []string{`!DIModule(`, `!"Dwarf Version"`, "!DIGlobalVariable(", "!DIBasicType(", "!DISubprogram(", "!DILocation(", "inlinedAt:"} {
 					if !strings.Contains(ir, marker) {
 						t.Errorf("%s: missing %s", suffix, marker)
 					}

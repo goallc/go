@@ -51,6 +51,71 @@ LLVMMemoryBufferRef LLVMGoWriteThinLTOBitcodeToMemoryBuffer(LLVMModuleRef M) {
   return llvm::wrap(llvm::MemoryBuffer::getMemBufferCopy(OS.str()).release());
 }
 
+LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,
+    LLVMBool AlwaysPreserve, LLVMDIFlags Flags, uint32_t AlignInBits,
+    LLVMMetadataRef Annotations) {
+  auto *D = llvm::unwrap(Builder);
+  auto *S = llvm::unwrap<llvm::DILocalScope>(Scope);
+  auto *F = llvm::unwrap<llvm::DIFile>(File);
+  auto *T = llvm::unwrap<llvm::DIType>(Type);
+  auto DIFlags = static_cast<llvm::DINode::DIFlags>(Flags);
+  if (!Annotations)
+    return llvm::wrap(D->createAutoVariable(S, llvm::StringRef(Name, NameLen),
+                                           F, LineNo, T, AlwaysPreserve,
+                                           DIFlags, AlignInBits));
+
+  // DILocalVariable already supports annotations, but createAutoVariable
+  // does not expose them. Use the native node API without changing DIBuilder.
+  auto *Var = llvm::DILocalVariable::get(
+      S->getContext(), S, llvm::StringRef(Name, NameLen), F, LineNo, T,
+      /*Arg=*/0, DIFlags, AlignInBits,
+      llvm::DINodeArray(llvm::unwrap<llvm::MDTuple>(Annotations)));
+  if (AlwaysPreserve) {
+    auto *SP = S->getSubprogram();
+    // finalizeSubprogram merges existing retainedNodes with builder-tracked
+    // nodes. Keep the variable there even if optimization removes all uses.
+    if (!llvm::is_contained(SP->getRetainedNodes(), Var)) {
+      llvm::Metadata *Node = Var;
+      SP->retainNodes(&Node, &Node + 1);
+    }
+  }
+  return llvm::wrap(Var);
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateParameterVariable(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, unsigned ArgNo, LLVMMetadataRef File, unsigned LineNo,
+    LLVMMetadataRef Type, LLVMBool AlwaysPreserve, LLVMDIFlags Flags,
+    LLVMMetadataRef Annotations) {
+  return llvm::wrap(llvm::unwrap(Builder)->createParameterVariable(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen), ArgNo,
+      llvm::unwrap<llvm::DIFile>(File), LineNo, llvm::unwrap<llvm::DIType>(Type),
+      AlwaysPreserve, static_cast<llvm::DINode::DIFlags>(Flags),
+      llvm::DINodeArray(Annotations ? llvm::unwrap<llvm::MDTuple>(Annotations)
+                                   : nullptr)));
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateArrayType(
+    LLVMDIBuilderRef Builder, const char *Name, size_t NameLen, uint64_t Size,
+    uint32_t AlignInBits, LLVMMetadataRef ElementType,
+    LLVMMetadataRef *Subscripts, unsigned NumSubscripts) {
+  auto *D = llvm::unwrap(Builder);
+  return llvm::wrap(D->createArrayType(
+      nullptr, llvm::StringRef(Name, NameLen), nullptr, 0, Size, AlignInBits,
+      llvm::unwrap<llvm::DIType>(ElementType),
+      D->getOrCreateArray({llvm::unwrap(Subscripts), NumSubscripts})));
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateModule(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, LLVMMetadataRef File) {
+  return llvm::wrap(llvm::unwrap(Builder)->createModule(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen), {}, {},
+      {}, llvm::unwrap<llvm::DIFile>(File)));
+}
+
 void LLVMGoDIBuilderInsertDbgValueRecordAtEnd(
     LLVMDIBuilderRef Builder, LLVMValueRef Val, LLVMMetadataRef VarInfo,
     LLVMMetadataRef Expr, LLVMMetadataRef DebugLoc, LLVMBasicBlockRef Block) {

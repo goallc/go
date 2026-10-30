@@ -115,7 +115,7 @@ exit:
 }
 
 !llvm.dbg.cu = !{!0}
-!llvm.module.flags = !{!7}
+!llvm.module.flags = !{!7, !8}
 !0 = distinct !DICompileUnit(language: DW_LANG_Go, file: !1, producer: "goallc", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug)
 !1 = !DIFile(filename: "result.go", directory: "/src")
 !2 = !DIBasicType(name: "int", size: 64, encoding: DW_ATE_signed)
@@ -124,3 +124,5 @@ exit:
 !5 = !DILocalVariable(name: "value", scope: !4, file: !1, line: 2, type: !2)
 !6 = !DILocation(line: 2, column: 1, scope: !4)
 !7 = !{i32 2, !"Debug Info Version", i32 3}
+
+!8 = !{i32 2, !"Dwarf Version", i32 5}

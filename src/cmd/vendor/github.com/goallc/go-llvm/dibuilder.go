@@ -254,6 +254,21 @@ func (d *DIBuilder) InsertLabelAtEnd(label, location Metadata, bb BasicBlock) {
 	C.LLVMDIBuilderInsertLabelAtEnd(d.ref, label.C, location.C, bb.C)
 }
 
+// CreateModule creates a named source-language module scope.
+func (d *DIBuilder) CreateModule(scope Metadata, name string, file Metadata) Metadata {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	return Metadata{C.LLVMGoDIBuilderCreateModule(d.ref, scope.C,
+		cname, C.size_t(len(name)), file.C)}
+}
+
+// CreateImportedModule records a compile unit's relationship to a module.
+// This also retains the module when the compile unit has no definitions.
+func (d *DIBuilder) CreateImportedModule(scope, module, file Metadata, line uint) Metadata {
+	return Metadata{C.LLVMDIBuilderCreateImportedModuleFromModule(d.ref,
+		scope.C, module.C, file.C, C.unsigned(line), nil, 0)}
+}
+
 // DIFunction holds the values for creating function debug metadata.
 type DIFunction struct {
 	Name         string
@@ -337,13 +352,14 @@ type DIAutoVariable struct {
 	AlwaysPreserve bool
 	Flags          int
 	AlignInBits    uint32
+	Annotations    Metadata
 }
 
 // CreateAutoVariable creates local variable debug metadata.
 func (d *DIBuilder) CreateAutoVariable(scope Metadata, v DIAutoVariable) Metadata {
 	name := C.CString(v.Name)
 	defer C.free(unsafe.Pointer(name))
-	result := C.LLVMDIBuilderCreateAutoVariable(
+	result := C.LLVMGoDIBuilderCreateAutoVariable(
 		d.ref,
 		scope.C,
 		name, C.size_t(len(v.Name)),
@@ -353,6 +369,7 @@ func (d *DIBuilder) CreateAutoVariable(scope Metadata, v DIAutoVariable) Metadat
 		C.LLVMBool(boolToCInt(v.AlwaysPreserve)),
 		C.LLVMDIFlags(v.Flags),
 		C.uint32_t(v.AlignInBits),
+		v.Annotations.C,
 	)
 	return Metadata{C: result}
 }
@@ -365,6 +382,7 @@ type DIParameterVariable struct {
 	Type           Metadata
 	AlwaysPreserve bool
 	Flags          int
+	Annotations    Metadata
 
 	// ArgNo is the 1-based index of the argument in the function's
 	// parameter list.
@@ -375,7 +393,7 @@ type DIParameterVariable struct {
 func (d *DIBuilder) CreateParameterVariable(scope Metadata, v DIParameterVariable) Metadata {
 	name := C.CString(v.Name)
 	defer C.free(unsafe.Pointer(name))
-	result := C.LLVMDIBuilderCreateParameterVariable(
+	result := C.LLVMGoDIBuilderCreateParameterVariable(
 		d.ref,
 		scope.C,
 		name, C.size_t(len(v.Name)),
@@ -385,6 +403,7 @@ func (d *DIBuilder) CreateParameterVariable(scope Metadata, v DIParameterVariabl
 		v.Type.C,
 		C.LLVMBool(boolToCInt(v.AlwaysPreserve)),
 		C.LLVMDIFlags(v.Flags),
+		v.Annotations.C,
 	)
 	return Metadata{C: result}
 }
@@ -581,6 +600,7 @@ type DISubrange struct {
 
 // DIArrayType holds the values for creating array type debug metadata.
 type DIArrayType struct {
+	Name        string
 	SizeInBits  uint64
 	AlignInBits uint32
 	ElementType Metadata
@@ -594,8 +614,11 @@ func (d *DIBuilder) CreateArrayType(t DIArrayType) Metadata {
 		subscriptsSlice[i] = d.getOrCreateSubrange(s.Lo, s.Count)
 	}
 	subscripts, length := llvmMetadataRefs(subscriptsSlice)
-	result := C.LLVMDIBuilderCreateArrayType(
+	name := C.CString(t.Name)
+	defer C.free(unsafe.Pointer(name))
+	result := C.LLVMGoDIBuilderCreateArrayType(
 		d.ref,
+		name, C.size_t(len(t.Name)),
 		C.uint64_t(t.SizeInBits),
 		C.uint32_t(t.AlignInBits),
 		t.ElementType.C,
