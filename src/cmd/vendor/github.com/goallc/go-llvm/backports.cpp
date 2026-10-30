@@ -51,6 +51,51 @@ LLVMMemoryBufferRef LLVMGoWriteThinLTOBitcodeToMemoryBuffer(LLVMModuleRef M) {
   return llvm::wrap(llvm::MemoryBuffer::getMemBufferCopy(OS.str()).release());
 }
 
+LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,
+    LLVMBool AlwaysPreserve, LLVMDIFlags Flags, uint32_t AlignInBits,
+    LLVMMetadataRef Annotations) {
+  return llvm::wrap(llvm::unwrap(Builder)->createAutoVariable(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen),
+      llvm::unwrap<llvm::DIFile>(File), LineNo, llvm::unwrap<llvm::DIType>(Type),
+      AlwaysPreserve, static_cast<llvm::DINode::DIFlags>(Flags), AlignInBits,
+      llvm::DINodeArray(Annotations ? llvm::unwrap<llvm::MDTuple>(Annotations)
+                                   : nullptr)));
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateParameterVariable(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, unsigned ArgNo, LLVMMetadataRef File, unsigned LineNo,
+    LLVMMetadataRef Type, LLVMBool AlwaysPreserve, LLVMDIFlags Flags,
+    LLVMMetadataRef Annotations) {
+  return llvm::wrap(llvm::unwrap(Builder)->createParameterVariable(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen), ArgNo,
+      llvm::unwrap<llvm::DIFile>(File), LineNo, llvm::unwrap<llvm::DIType>(Type),
+      AlwaysPreserve, static_cast<llvm::DINode::DIFlags>(Flags),
+      llvm::DINodeArray(Annotations ? llvm::unwrap<llvm::MDTuple>(Annotations)
+                                   : nullptr)));
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateArrayType(
+    LLVMDIBuilderRef Builder, const char *Name, size_t NameLen, uint64_t Size,
+    uint32_t AlignInBits, LLVMMetadataRef ElementType,
+    LLVMMetadataRef *Subscripts, unsigned NumSubscripts) {
+  auto *D = llvm::unwrap(Builder);
+  return llvm::wrap(D->createArrayType(
+      nullptr, llvm::StringRef(Name, NameLen), nullptr, 0, Size, AlignInBits,
+      llvm::unwrap<llvm::DIType>(ElementType),
+      D->getOrCreateArray({llvm::unwrap(Subscripts), NumSubscripts})));
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateModule(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, LLVMMetadataRef File) {
+  return llvm::wrap(llvm::unwrap(Builder)->createModule(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen), {}, {},
+      {}, llvm::unwrap<llvm::DIFile>(File)));
+}
+
 void LLVMGoDIBuilderInsertDbgValueRecordAtEnd(
     LLVMDIBuilderRef Builder, LLVMValueRef Val, LLVMMetadataRef VarInfo,
     LLVMMetadataRef Expr, LLVMMetadataRef DebugLoc, LLVMBasicBlockRef Block) {

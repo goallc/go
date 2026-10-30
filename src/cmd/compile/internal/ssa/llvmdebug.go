@@ -19,6 +19,7 @@ import (
 	"internal/buildcfg"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/goallc/go-llvm"
@@ -31,6 +32,7 @@ import (
 var (
 	llvmDIBuilder        *llvm.DIBuilder
 	llvmDICompileUnit    llvm.Metadata
+	llvmDIPackage        llvm.Metadata
 	llvmDIFiles          map[string]llvm.Metadata
 	llvmDISubprograms    map[*obj.LSym]llvm.Metadata
 	llvmDISubprogramVals map[*obj.LSym]llvm.Value
@@ -68,14 +70,15 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 		Optimized:    base.Flag.N == 0,
 		EmissionKind: emission,
 	})
-	// Dwarf Version below selects the object encoding. Each compile unit's
-	// emission kind selects minimal or full DWARF, including after LTO combines
-	// units compiled with different -dwarf settings.
-	config := []llvm.Metadata{
-		GlobalCtxt.MDString("pcln-v1"),
-		GlobalCtxt.MDString(pkg.Name),
+	// Each CU belongs to its native source module. Keep the relationship in
+	// CU.imports so even an empty package retains its real name. CU.file is the
+	// import path; function and variable files remain their source locations.
+	llvmDIPackage = llvmDICompileUnit
+	if pkg.Path != "" {
+		file := llvmDICompileUnit.ScopeFile()
+		llvmDIPackage = llvmDIBuilder.CreateModule(llvmDICompileUnit, pkg.Name, file)
+		llvmDIBuilder.CreateImportedModule(llvmDICompileUnit, llvmDIPackage, file, 0)
 	}
-	CurrentModule.AddNamedMetadataOperand("goobj.debug.config", GlobalCtxt.MDNode(config))
 
 	flag := func(name string, value uint64) {
 		CurrentModule.AddNamedMetadataOperand("llvm.module.flags", GlobalCtxt.MDNode([]llvm.Metadata{
@@ -331,6 +334,7 @@ func llvmDIType(t *types.Type, file llvm.Metadata) llvm.Metadata {
 		return typ
 	case types.TARRAY:
 		typ := llvmDIBuilder.CreateArrayType(llvm.DIArrayType{
+			Name:       name,
 			SizeInBits: size, AlignInBits: align,
 			ElementType: llvmDIType(t.Elem(), file),
 			Subscripts:  []llvm.DISubrange{{Lo: 0, Count: t.NumElem()}},
@@ -440,7 +444,7 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 	if f != nil && base.Flag.Dwarf {
 		typ = llvmDebugFunctionType(f, file)
 	}
-	sp := llvmDIBuilder.CreateFunction(llvmDICompileUnit, llvm.DIFunction{
+	sp := llvmDIBuilder.CreateFunction(llvmDIPackage, llvm.DIFunction{
 		Name:         sym.Name,
 		LinkageName:  llvmFunctionStorageName(sym.Name, llvmCallConv(sym.ABI())),
 		File:         file,
@@ -527,8 +531,9 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 				scope = llvmDebugSubprogram(callee, pos, nil)
 			}
 		}
-		isReturn := name.Class == ir.PPARAMOUT
+		isReturn := llvmDebugIsReturn(name, inlIndex)
 		isParam := name.Class == ir.PPARAM || isReturn || name.InlFormal()
+		annotations := llvmDebugVariableAnnotations(isReturn, name.DictIndex)
 		var diVar llvm.Metadata
 		if isParam {
 			argNos[inlIndex]++
@@ -536,26 +541,17 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 				llvm.DIParameterVariable{
 					Name: name.Sym().Name, File: file, Line: line,
 					Type: diType, AlwaysPreserve: true,
-					ArgNo: argNos[inlIndex],
+					ArgNo:       argNos[inlIndex],
+					Annotations: annotations,
 				})
 		} else {
 			diVar = llvmDIBuilder.CreateAutoVariable(scope,
 				llvm.DIAutoVariable{
 					Name: name.Sym().Name, File: file, Line: line,
 					Type: diType, AlwaysPreserve: true,
+					Annotations: annotations,
 				})
 		}
-		flags := uint64(0)
-		if isReturn {
-			flags = 1
-		}
-		CurrentModule.AddNamedMetadataOperand("goobj.debug.vars",
-			GlobalCtxt.MDNode([]llvm.Metadata{
-				diVar,
-				GlobalCtxt.MDString(types.TypeSymName(name.Type())),
-				llvm.ConstInt(GlobalCtxt.Int32Type(), flags, false).ConstantAsMetadata(),
-				llvm.ConstInt(GlobalCtxt.Int32Type(), uint64(name.DictIndex), false).ConstantAsMetadata(),
-			}))
 
 		// NamedValues already maps source variables (including split pieces) to
 		// SSA values. Describe these directly instead of an optional ABI home
@@ -612,20 +608,58 @@ func (lfc *LLVMFuncContext) emitDebugVariables() {
 		file := llvmDIFile(pos)
 		argNos[-1]++
 		goType := types.Types[types.TUNSAFEPTR]
-		context := llvmDIBuilder.CreateParameterVariable(lfc.DISubprogram,
+		llvmDIBuilder.CreateParameterVariable(lfc.DISubprogram,
 			llvm.DIParameterVariable{
 				Name: ".closureptr", File: file, Line: int(pos.RelLine()),
 				Type: llvmDIType(goType, file), AlwaysPreserve: true,
 				Flags: llvm.FlagArtificial, ArgNo: argNos[-1],
 			})
-		CurrentModule.AddNamedMetadataOperand("goobj.debug.vars",
-			GlobalCtxt.MDNode([]llvm.Metadata{
-				context,
-				GlobalCtxt.MDString(types.TypeSymName(goType)),
-				llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false).ConstantAsMetadata(),
-				llvm.ConstInt(GlobalCtxt.Int32Type(), 0, false).ConstantAsMetadata(),
-			}))
 	}
+}
+
+// The inliner turns both inputs and results into PAUTOs. Recover the original
+// declaration before choosing annotations, so an inline instance and the
+// out-of-line definition intern the same DILocalVariable in a shared scope.
+func llvmDebugIsReturn(name *ir.Name, inlIndex int) bool {
+	if name.Class == ir.PPARAMOUT {
+		return true
+	}
+	if !name.InlFormal() || inlIndex < 0 || base.Ctxt.DwFixups == nil {
+		return false
+	}
+	callee := base.Ctxt.InlTree.InlinedFunction(inlIndex)
+	fn, ok := base.Ctxt.DwFixups.GetPrecursorFunc(callee).(*ir.Func)
+	if !ok || fn.Inl == nil {
+		return false
+	}
+	for _, decl := range fn.Inl.Dcl {
+		if decl.Class == ir.PPARAMOUT && decl.Sym().Name == name.Sym().Name {
+			return true
+		}
+	}
+	return false
+}
+
+// Native retainedNodes and debug records carry the variable through cloning
+// and inlining. Only Go-specific facts need annotations; its DIType already
+// carries the exact type name used by the Go DWARF linker.
+func llvmDebugVariableAnnotations(isReturn bool, dictIndex uint16) llvm.Metadata {
+	var annotations []llvm.Metadata
+	add := func(name, value string) {
+		annotations = append(annotations, GlobalCtxt.MDNode([]llvm.Metadata{
+			GlobalCtxt.MDString(name), GlobalCtxt.MDString(value),
+		}))
+	}
+	if isReturn {
+		add("go.return", "1")
+	}
+	if dictIndex != 0 {
+		add("go.dictindex", strconv.Itoa(int(dictIndex)))
+	}
+	if len(annotations) == 0 {
+		return llvm.Metadata{}
+	}
+	return GlobalCtxt.MDNode(annotations)
 }
 
 func llvmInlineChain(inlIndex int) []int {

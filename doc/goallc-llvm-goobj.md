@@ -248,8 +248,18 @@ LTO 必须保存包身份与依赖图，不能把这些记录简单合并成 mai
 普通编译直接将 `!goobj.gotype !{ptr @type.T}` 附在定义上；LLVM 合并时随胜出
 定义保留类型引用。GoObj writer 直接读取定义上的 attachment。NoSplit 从已有的
 `go-nosplit` 函数属性生成，不再重复写入 symbol flags。
- `!goobj.debug.config = !{!{!"pcln-v1", !"main"}}` 只保存 PCLN
-协议和包名，DWARF 编码版本由标准 `Dwarf Version` module flag 指定。
+DWARF 编码版本由标准 `Dwarf Version` module flag 指定，开启程度由各个
+`DICompileUnit.emissionKind` 指定，不再生成 `goobj.debug.config`。
+每个 Go CU 的 `file.filename` 是原始 import path；源包的 `DIModule` 保存真实
+package 名，并使用同一 file。CU 的 imported-module 关系将它保留在原生 debug
+图中，空包也不会丢失包名。GoObj 为各个 CU 生成对应的 package-name carrier，
+同路径重复记录必须同名，输出按 package prefix 排序。函数和变量仍使用真实源文件。
+
+变量从 `DISubprogram.retainedNodes` 和原生 debug records 收集，不再生成
+`goobj.debug.vars`。所有 `DIType`（包括数组）携带精确 Go 类型名。
+`DILocalVariable.annotations` 只保存非默认的 Go 语义：`go.return = "1"`
+标记返回值，`go.dictindex` 保存十进制的非零字典索引（最大 65535）。这些信息
+随原生变量节点经过克隆和内联，无需另一张模块级变量表。
 
 对应 LLVM 测试为
 `llvm/test/CodeGen/AArch64/goobj-ir-config.ll`。LLVM 侧实现位于

@@ -1217,7 +1217,9 @@ func mkinlcall(callerfn *ir.Func, n *ir.CallExpr, fn *ir.Func, bigCaller, closur
 
 	closureInitLSym(n, fn)
 
-	if base.Flag.GenDwarfInl > 0 {
+	// LLVM native debug variables need the original parameter/result class
+	// even when native DWARF inline DIE generation is disabled.
+	if base.Flag.GenDwarfInl > 0 || (base.Flag.EnableLLVM && base.Flag.Dwarf) {
 		if !sym.WasInlined() {
 			base.Ctxt.DwFixups.SetPrecursorFunc(sym, fn)
 			sym.Set(obj.AttrWasInlined, true)
