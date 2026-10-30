@@ -13,5 +13,9 @@ define goabiinternal i64 @dep.AssemblyOnly() gc "goallc" !goobj.symbol.index !1 
 !1 = !{i32 8}
 !goobj.config = !{!900}
 !goobj.imports = !{}
-!900 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"codegen-dep-id", !"codegen-dep", !"0", !"0", !"0", !901, !"0100000000000000"}
+!900 = !{!"codegen-dep-id", !"codegen-dep", !"0", !"0", !"0100000000000000"}
 !901 = !{}
+
+!llvm.module.flags = !{!902}
+!902 = !{i32 1, !"goobj.abi", !903}
+!903 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !901}

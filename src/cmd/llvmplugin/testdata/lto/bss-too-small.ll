@@ -5,5 +5,9 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:1
 !0 = !{i1 true}
 
 !goobj.config = !{!900}
-!900 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"definition-id", !"definition", !"0", !"0", !"0", !901, !"0200000000000000"}
+!900 = !{!"definition-id", !"definition", !"0", !"0", !"0200000000000000"}
 !901 = !{}
+
+!llvm.module.flags = !{!902}
+!902 = !{i32 1, !"goobj.abi", !903}
+!903 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !901}

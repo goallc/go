@@ -25,17 +25,25 @@ The adapter checks the Go-specific minimum storage requirement and permits
 a function only for linkname placeholders. After linking, it restores the
 selected Go BSS section and ordinary linkage for GoObj emission.
 
-The existing `goobj.gotype` relation is attached to its definition while
-linking. LLVM carries the winning definition's type reference; the adapter
-restores the normal named-metadata form after optimization. Type references
-are retained with `llvm.compiler.used`. No package-owner operand is added
-to gotype records, and no custom winner-filtering pass is needed.
+The frontend already attaches `goobj.gotype`, keep edges and linker markers
+to their source definitions. LLVM preserves the selected definition's
+attachments and remaps their references; LTO performs no table-to-attachment
+or attachment-to-table conversion. The frontend's `llvm.compiler.used` roots
+retain values that are referenced only by Go metadata.
+
+The shared `goobj.abi` contract uses LLVM's `Error` module flag, so LLVM rejects
+incompatible inputs without a separate field-by-field comparison. Native
+compile units, source modules, retained variables and debug records merge
+directly. LTO neither reconstructs a debug-variable table nor selects a single
+package's DWARF configuration for the whole program. Declared package names
+in the manifest come from each input's native source module.
 
 ## Go identities and output
 
 Package configurations, import DAGs, cgo directives and linkname origins
-remain in a C++ side table. Inputs require compatible GoObj configurations,
-target triples and data layouts, unique package prefixes, and one main.
+remain in a C++ side table. Inputs require the current five-field package configuration and `goobj.abi`
+module flag, compatible target triples and data layouts, unique package
+prefixes, and one main.
 CPU-feature preparation runs before combining packages.
 
 During linking, definitions receive unique temporary indices using the
@@ -65,7 +73,10 @@ FileCheck covers optimization, package manifests, local renaming, strong/weak
 selection, common size/alignment/type selection in both input orders, ABI0,
 closures, BSS errors and linkname function placeholders. Downstream llc and
 objview tests check amd64/arm64 statepoints, stack maps, safepoints, retained
-symbols and merged variable layout/type references.
+symbols and merged variable layout/type references. Native debug graph tests
+cover declared package names, retained result annotations and LLVM inlining
+in both input orders; strong/weak tests check that only the winning
+definition supplies gotype, keep and marker relations.
 
 ```sh
 cmake --build <build-dir> --target GoALLCStatepoints goallc-lto-test

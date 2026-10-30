@@ -114,3 +114,15 @@ if(GOALLC_OBJVIEW_EXECUTABLE)
       "'${GOALLC_LLC_EXECUTABLE}' '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>' -verify-machineinstrs -filetype=obj '${CMAKE_CURRENT_BINARY_DIR}/full-lto-common/program.bc' -o '${CMAKE_CURRENT_BINARY_DIR}/full-lto-common/program.goobj' && '${GOALLC_OBJVIEW_EXECUTABLE}' -json '${CMAKE_CURRENT_BINARY_DIR}/full-lto-common/program.goobj' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=OBJ '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/bss-large.ll'")
   set_tests_properties(full-lto-common-goobj PROPERTIES DEPENDS full-lto-common)
 endif()
+
+# Native DI nodes and Go relation attachments need no LTO transport tables.
+foreach(ORDER IN ITEMS forward reversed)
+  set(DEBUG_INPUTS "'${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-main.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-dep.ll'")
+  if(ORDER STREQUAL "reversed")
+    set(DEBUG_INPUTS "'${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-dep.ll' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-main.ll'")
+  endif()
+  set(DEBUG_OUT "${CMAKE_CURRENT_BINARY_DIR}/full-lto-native-debug-${ORDER}")
+  add_test(NAME full-lto-native-debug-${ORDER}
+    COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+      "'$<TARGET_FILE:goallc-lto-test>' --output-dir='${DEBUG_OUT}' ${DEBUG_INPUTS} && '${GOALLC_FILECHECK_EXECUTABLE}' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-main.ll' --check-prefix=NATIVE --implicit-check-not='!goobj.debug.config =' --implicit-check-not='!goobj.debug.vars =' --implicit-check-not='!goobj.debug.funcs =' --input-file='${DEBUG_OUT}/program.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-main.ll' --check-prefix=MANIFEST --input-file='${DEBUG_OUT}/program.json'")
+endforeach()

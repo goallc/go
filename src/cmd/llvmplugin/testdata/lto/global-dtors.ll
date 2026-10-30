@@ -7,5 +7,9 @@ define void @destructor() {
 }
 
 !goobj.config = !{!900}
-!900 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"dtors-id", !"dtors", !"0", !"0", !"0", !901, !"0100000000000000"}
+!900 = !{!"dtors-id", !"dtors", !"0", !"0", !"0100000000000000"}
 !901 = !{}
+
+!llvm.module.flags = !{!902}
+!902 = !{i32 1, !"goobj.abi", !903}
+!903 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !901}

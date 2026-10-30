@@ -11,8 +11,12 @@ define goabiinternal i64 @dep.Opaque() noinline !goobj.symbol.index !2 {
 }
 !goobj.config = !{!0}
 !goobj.imports = !{}
-!0 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"dep-id", !"dep", !"0", !"0", !"0", !3, !"0200000000000000"}
+!0 = !{!"dep-id", !"dep", !"0", !"0", !"0200000000000000"}
 !1 = !{i32 7}
 !2 = !{i32 8}
 !3 = !{}
 !4 = !{i32 9}
+
+!llvm.module.flags = !{!5}
+!5 = !{i32 1, !"goobj.abi", !6}
+!6 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !3}

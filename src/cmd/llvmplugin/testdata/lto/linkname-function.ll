@@ -6,5 +6,9 @@ define goabiinternal i64 @target() !goobj.symbol.index !0 {
 !0 = !{i32 7}
 !goobj.config = !{!900}
 !goobj.imports = !{}
-!900 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"linkname-function-id", !"linkname-function", !"0", !"0", !"0", !901, !"0100000000000000"}
+!900 = !{!"linkname-function-id", !"linkname-function", !"0", !"0", !"0100000000000000"}
 !901 = !{}
+
+!llvm.module.flags = !{!902}
+!902 = !{i32 1, !"goobj.abi", !903}
+!903 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !901}

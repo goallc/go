@@ -26,10 +26,14 @@ declare !goobj.import !3 goabiinternal i64 @dep.Add(i64)
 declare !goobj.import !4 goabiinternal i64 @dep.Opaque()
 !goobj.config = !{!0}
 !goobj.imports = !{!5}
-!0 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"main-id", !"main", !"1", !"0", !"0", !6, !"0100000000000000"}
+!0 = !{!"main-id", !"main", !"1", !"0", !"0100000000000000"}
 !1 = !{i32 7}
 !2 = !{i32 8}
 !3 = !{!"dep", i32 7, i8 0}
 !4 = !{!"dep", i32 8, i8 0}
 !5 = !{!"dep", !"dep", !"0200000000000000"}
 !6 = !{}
+
+!llvm.module.flags = !{!7}
+!7 = !{i32 1, !"goobj.abi", !8}
+!8 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !6}

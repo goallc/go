@@ -8,6 +8,7 @@
 #include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/InstIterator.h"
@@ -35,18 +36,10 @@ using namespace llvm;
 static constexpr uint32_t GoSymFlagLinknameStd = 1u << 5;
 
 enum ConfigField {
-  Format,
-  OS,
-  Arch,
-  Version,
-  ArchKey,
-  ArchValue,
   BuildID,
   PackagePrefix,
   IsMain,
-  Shared,
   StandardLibrary,
-  Experiments,
   Fingerprint,
   ConfigFields
 };
@@ -58,8 +51,10 @@ static Error fail(const Twine &Message) {
 struct Package {
   MDNode *Config;
   std::string Prefix;
+  std::string Name;
   std::vector<Module::GlobalAsmFragment> ModuleAsm;
-  StringMap<SmallVector<MDNode *>> Settings;
+  SmallVector<MDNode *> Imports;
+  MDNode *CPUConfig = nullptr;
   SmallVector<std::pair<std::string, unsigned>> Linknames;
 };
 
@@ -173,22 +168,14 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
       Cgo.push_back(StringRef(Fragment.Asm)
                         .trim()
                         .drop_front(StringRef(".goobj.cgo ").size()));
-    auto It = P.Settings.find("goobj.imports");
-    if (It != P.Settings.end())
-      for (MDNode *E : It->second)
-        Imports.push_back(json::Object{
-            {"path", cast<MDString>(E->getOperand(0))->getString()},
-            {"prefix", cast<MDString>(E->getOperand(1))->getString()},
-            {"fingerprint", cast<MDString>(E->getOperand(2))->getString()}});
-    StringRef PackageName;
-    auto DebugIt = P.Settings.find("goobj.debug.config");
-    if (DebugIt != P.Settings.end() && !DebugIt->second.empty() &&
-        DebugIt->second.front()->getNumOperands() >= 4)
-      PackageName =
-          cast<MDString>(DebugIt->second.front()->getOperand(3))->getString();
+    for (MDNode *E : P.Imports)
+      Imports.push_back(json::Object{
+          {"path", cast<MDString>(E->getOperand(0))->getString()},
+          {"prefix", cast<MDString>(E->getOperand(1))->getString()},
+          {"fingerprint", cast<MDString>(E->getOperand(2))->getString()}});
     PackageRecords.push_back(json::Object{
         {"prefix", P.Prefix},
-        {"name", PackageName},
+        {"name", P.Name},
         {"std",
          cast<MDString>(P.Config->getOperand(StandardLibrary))->getString() ==
              "1"},
@@ -249,38 +236,12 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
   }
 
   const Package &P = Packages[Main];
-  for (StringRef Name :
-       {"goobj.config", "goobj.static_rodata_type", "goallc.cpu.config"}) {
-    auto It = P.Settings.find(Name);
-    if (It != P.Settings.end())
-      for (MDNode *E : It->second)
-        M.getOrInsertNamedMetadata(Name)->addOperand(E);
-  }
+  M.getOrInsertNamedMetadata("goobj.config")->addOperand(P.Config);
+  if (P.CPUConfig)
+    M.getOrInsertNamedMetadata("goallc.cpu.config")->addOperand(P.CPUConfig);
   // Library loading and the original import DAG are supplied by the manifest.
   // Putting the union of imports on main would introduce spurious cycles.
   M.getOrInsertNamedMetadata("goobj.imports");
-  MDNode *DebugConfig = nullptr;
-  auto MainDebug = P.Settings.find("goobj.debug.config");
-  if (MainDebug != P.Settings.end() && !MainDebug->second.empty())
-    DebugConfig = MainDebug->second.front();
-  for (const Package &Pkg : Packages) {
-    auto It = Pkg.Settings.find("goobj.debug.config");
-    if (It != Pkg.Settings.end() && !It->second.empty()) {
-      MDNode *N = It->second.front();
-      if (!DebugConfig || N->getNumOperands() > DebugConfig->getNumOperands())
-        DebugConfig = N;
-    }
-  }
-  if (DebugConfig)
-    M.getOrInsertNamedMetadata("goobj.debug.config")->addOperand(DebugConfig);
-  for (StructType *T : M.getIdentifiedStructTypes())
-    if (T->hasName() && (T->getName() == "go.abi.pad" ||
-                         T->getName().starts_with("go.abi.pad."))) {
-      if (auto *Old = StructType::getTypeByName(C, "go.abi.pad");
-          Old && Old != T)
-        Old->setName("go.abi.pad.saved");
-      T->setName("go.abi.pad");
-    }
   if (verifyModule(M, &errs()))
     return fail("invalid single-object FullLTO module");
   if (std::error_code EC = sys::fs::create_directories(OutDir))
@@ -414,13 +375,22 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
             P.Linknames.emplace_back(G.getName().str(), GoObj::SymABI0);
         }
     P.Config = Config->getOperand(0);
-    for (unsigned Field = 0; Field != ConfigFields; ++Field)
-      if (Field == Experiments ? !isa<MDNode>(P.Config->getOperand(Field))
-                               : !isa<MDString>(P.Config->getOperand(Field)))
+    for (const MDOperand &Field : P.Config->operands())
+      if (!isa<MDString>(Field))
         return fail("invalid GoObj configuration field");
-    if (cast<MDString>(P.Config->getOperand(Format))->getString() !=
-        "goallc.goobj")
-      return fail("unsupported GoObj configuration format");
+    if (!M->getModuleFlag("goobj.abi"))
+      return fail("input requires a goobj.abi module flag");
+    // The native source module carries the declared package name, including
+    // empty packages. Keep it in the manifest; LLVM merges the debug graph.
+    for (const DICompileUnit *CU : M->debug_compile_units())
+      for (const DIImportedEntity *Import : CU->getImportedEntities())
+        if (const auto *Source = dyn_cast_or_null<DIModule>(Import->getEntity());
+            Import->getScope() == CU && Source && !Source->getScope() &&
+            !Source->getIsDecl() && Source->getFile() == CU->getFile()) {
+          if (!P.Name.empty() && P.Name != Source->getName())
+            return fail("conflicting Go source package names");
+          P.Name = Source->getName().str();
+        }
     P.Prefix = cast<MDString>(P.Config->getOperand(PackagePrefix))->getString();
     if (P.Prefix.empty())
       return fail("empty package prefix");
@@ -438,12 +408,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         return fail("duplicate package prefix: " + P.Prefix);
     if (M->getNamedMetadata("goobj.dynlink"))
       return fail("dynamic Go linking is not supported");
-    if (!Packages.empty())
-      for (unsigned Field :
-           {Format, OS, Arch, Version, ArchKey, ArchValue, Shared, Experiments})
-        if (P.Config->getOperand(Field) !=
-            Packages[0].Config->getOperand(Field))
-          return fail("incompatible GoObj configuration in " + P.Prefix);
+    // LLVM's Error module flag checks the shared goobj.abi contract.
     llvm::append_range(P.ModuleAsm, M->getModuleInlineAsm());
     for (const auto &Fragment : P.ModuleAsm) {
       StringRef Asm = StringRef(Fragment.Asm).trim();
@@ -452,15 +417,18 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         return fail("unsupported module assembly in " + P.Prefix);
     }
     M->removeModuleInlineAsm();
-    // These records describe the output package, not the combined program.
-    for (StringRef Name :
-         {"goobj.config", "goobj.imports", "goobj.debug.config",
-          "goobj.static_rodata_type", "goallc.cpu.config"}) {
-      if (auto *N = M->getNamedMetadata(Name)) {
-        for (MDNode *E : N->operands())
-          P.Settings[Name].push_back(E);
-        M->eraseNamedMetadata(N);
-      }
+    // Package identity and the original import DAG are manifest state.
+    // Native debug metadata and ABI module flags merge directly in LLVM.
+    M->eraseNamedMetadata(Config);
+    if (auto *Imports = M->getNamedMetadata("goobj.imports")) {
+      llvm::append_range(P.Imports, Imports->operands());
+      M->eraseNamedMetadata(Imports);
+    }
+    if (auto *CPU = M->getNamedMetadata("goallc.cpu.config")) {
+      if (CPU->getNumOperands() != 1)
+        return fail("input requires one CPU configuration");
+      P.CPUConfig = CPU->getOperand(0);
+      M->eraseNamedMetadata(CPU);
     }
     if (!M->alias_empty() || !M->ifunc_empty())
       return fail("aliases and ifuncs are not supported in " + P.Prefix);
@@ -557,26 +525,6 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         }
       }
     }
-    if (auto *N = M->getNamedMetadata("goobj.gotype")) {
-      for (MDNode *E : N->operands()) {
-        if (E->getNumOperands() != 2)
-          return fail("invalid gotype record");
-        auto *G = dyn_cast<GlobalObject>(
-            cast<ValueAsMetadata>(E->getOperand(0))->getValue());
-        if (!G)
-          return fail("invalid gotype source");
-        // Attach the type to its definition while linking. LLVM remaps the
-        // reference and keeps the winning definition's attachment, rather
-        // than concatenating conflicting per-module type records.
-        auto *Type = dyn_cast<GlobalValue>(
-            cast<ValueAsMetadata>(E->getOperand(1))->getValue());
-        if (!Type)
-          return fail("invalid gotype target");
-        Retained.push_back(Type);
-        G->setMetadata("goobj.gotype", MDNode::get(C, {E->getOperand(1)}));
-      }
-      M->eraseNamedMetadata(N);
-    }
     appendToCompilerUsed(*M, Retained);
     Packages.push_back(std::move(P));
     M->setModuleIdentifier(Inputs[I]);
@@ -629,17 +577,9 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
     return fail(Diagnostics);
   if (Error E = checkSymbolIdentities(*Combined, Symbols))
     return E;
-  for (GlobalObject &G : Combined->global_objects()) {
+  for (GlobalObject &G : Combined->global_objects())
     if (G.hasLocalLinkage() && G.getMetadata("goobj.symbol.index"))
       G.setLinkage(GlobalValue::ExternalLinkage);
-    if (!G.isDeclaration())
-      if (auto *Type = G.getMetadata("goobj.gotype")) {
-        Combined->getOrInsertNamedMetadata("goobj.gotype")
-            ->addOperand(MDNode::get(
-                C, {ValueAsMetadata::get(&G), Type->getOperand(0)}));
-        G.setMetadata("goobj.gotype", nullptr);
-      }
-  }
   return writeSingleModule(*Combined, Packages, OutDir, SaveIR, Symbols);
 }
 
