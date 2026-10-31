@@ -54,17 +54,6 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 	if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
 		return nil, fmt.Errorf("verify LLVM module before optimization: %w", err)
 	}
-	if base.Flag.LLVMKeepIR {
-		if err := llvm.LLVMPrintModuleToFile(CurrentModule, outputFile+".ll"); err != nil {
-			return nil, fmt.Errorf("write pre-optimization LLVM IR: %w", err)
-		}
-	}
-
-	if base.Flag.LLVMLTO {
-		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
-		defer buffer.Dispose()
-		return append([]byte(nil), buffer.Bytes()...), nil
-	}
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
 		plugin, err = llvmbackend.PassPlugin()
@@ -77,6 +66,20 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 	}
 	// The early IR plugin verifies after mutation and propagates failures.
 	// Its no-op paths leave the module verified above unchanged.
+
+	// Functional lowering is required for both object emission and LTO.
+	// Publish only prepared IR; ordinary optimization remains below.
+	if base.Flag.LLVMKeepIR {
+		if err := llvm.LLVMPrintModuleToFile(CurrentModule, outputFile+".ll"); err != nil {
+			return nil, fmt.Errorf("write pre-optimization LLVM IR: %w", err)
+		}
+	}
+
+	if base.Flag.LLVMLTO {
+		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
+		defer buffer.Dispose()
+		return append([]byte(nil), buffer.Bytes()...), nil
+	}
 
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
 	if pipeline == "auto" {

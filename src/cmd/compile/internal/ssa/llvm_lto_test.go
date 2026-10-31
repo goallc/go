@@ -64,12 +64,18 @@ func TestLLVMSlimArchive(t *testing.T) {
 			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("verify bitcode: %v", err)
 			}
+			if !strings.Contains(module.String(), "!goallc.cpu.fmv.done") {
+				t.Fatal("bitcode bypassed required early IR preparation")
+			}
 			if module.NamedFunction("p.F").IsNil() {
 				t.Fatal("bitcode lost package function")
 			}
 			ir, err := os.ReadFile(output + ".ll")
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !bytes.Contains(ir, []byte("!goallc.cpu.fmv.done")) {
+				t.Fatal("text IR bypassed required early IR preparation")
 			}
 			if !bytes.Contains(ir, []byte("!goobj.config")) {
 				t.Fatal("pre-optimization IR lost GoObj configuration")
