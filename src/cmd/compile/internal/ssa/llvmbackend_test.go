@@ -200,8 +200,10 @@ func TestLLVMEmissionPreparesLTOIR(t *testing.T) {
 				if len(data) != 0 {
 					t.Fatal("invalid FMV profile produced bitcode")
 				}
-				if _, err := os.Stat(output + ".ll"); !os.IsNotExist(err) {
-					t.Fatalf("invalid FMV profile reached IR output: %v", err)
+				for _, suffix := range []string{".ll", ".raw.ll"} {
+					if _, err := os.Stat(output + suffix); !os.IsNotExist(err) {
+						t.Fatalf("invalid FMV profile reached %s output: %v", suffix, err)
+					}
 				}
 				return
 			}
@@ -225,6 +227,13 @@ func TestLLVMEmissionPreparesLTOIR(t *testing.T) {
 			ir, err := os.ReadFile(output + ".ll")
 			if err != nil {
 				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(output + ".raw.ll")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "goallc.cpu.multiversion") || strings.Contains(string(raw), "!goallc.cpu.fmv.done") {
+				t.Fatal("frontend diagnostic snapshot lost the original FMV request")
 			}
 			for kind, text := range map[string]string{"bitcode": prepared.String(), "text IR": string(ir)} {
 				for _, want := range []string{"p.F<goallc.fmv.baseline>", "p.F<goallc.fmv.resolve>", "p.F.goallc.fmv.slot", "!goallc.cpu.fmv.done"} {
