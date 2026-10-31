@@ -52,7 +52,6 @@ struct Package {
   std::string Prefix;
   std::vector<Module::GlobalAsmFragment> ModuleAsm;
   SmallVector<MDNode *> Imports;
-  MDNode *CPUConfig = nullptr;
   SmallVector<std::pair<std::string, unsigned>> Linknames;
 };
 
@@ -236,8 +235,6 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
 
   const Package &P = Packages[Main];
   M.getOrInsertNamedMetadata("goobj.config")->addOperand(P.Config);
-  if (P.CPUConfig)
-    M.getOrInsertNamedMetadata("goallc.cpu.config")->addOperand(P.CPUConfig);
   // Library loading and the original import DAG are supplied by the manifest.
   // Putting the union of imports on main would introduce spurious cycles.
   M.getOrInsertNamedMetadata("goobj.imports");
@@ -334,6 +331,18 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       Diag.print("LTO", OS);
       return fail(Message);
     }
+    if (SaveIR) {
+      std::string Dir = (OutDir + "/inputs").str();
+      if (std::error_code EC = sys::fs::create_directories(Dir))
+        return fail(EC.message());
+      std::error_code EC;
+      ToolOutputFile IR(Dir + "/" + std::to_string(I) + ".ll", EC,
+                        sys::fs::OF_Text);
+      if (EC)
+        return fail(EC.message());
+      M->print(IR.os(), nullptr);
+      IR.keep();
+    }
     if (!Modules.empty() &&
         (Modules.front()->getTargetTriple() != M->getTargetTriple() ||
          Modules.front()->getDataLayout() != M->getDataLayout()))
@@ -409,7 +418,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
     if (auto *CPU = M->getNamedMetadata("goallc.cpu.config")) {
       if (CPU->getNumOperands() != 1)
         return fail("input requires one CPU configuration");
-      P.CPUConfig = CPU->getOperand(0);
+      // Preparation is complete; function attributes carry the target policy.
       M->eraseNamedMetadata(CPU);
     }
     if (!M->alias_empty() || !M->ifunc_empty())

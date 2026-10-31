@@ -13,29 +13,12 @@ import "C"
 import (
 	"cmd/internal/llvmbackend"
 	"fmt"
-	"strings"
 	"unsafe"
 
 	"github.com/goallc/go-llvm"
 )
 
 func optimize(inputs []string, out string, keep bool) error {
-	if keep {
-		for _, input := range inputs {
-			c := llvm.NewContext()
-			m, err := c.ParseBitcodeFile(input)
-			if err != nil {
-				c.Dispose()
-				return err
-			}
-			err = llvm.LLVMPrintModuleToFile(m, strings.TrimSuffix(input, ".bc")+".ll")
-			m.Dispose()
-			c.Dispose()
-			if err != nil {
-				return err
-			}
-		}
-	}
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
 		var err error

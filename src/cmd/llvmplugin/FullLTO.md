@@ -2,8 +2,9 @@
 
 `goallc::runLTO` uses LLVM's IR `Linker` to combine compiler bitcode and
 `llvm::lto::backend` to run target-aware FullLTO optimization. It writes
-`program.bc` and a version 1 `program.json` manifest, plus `program.ll` when
-`SaveIR` is enabled. The C entry point `GoALLCLTO` selects `lto<O2>` and
+`program.bc` and a version 1 `program.json` manifest. When `SaveIR` is enabled,
+it also writes `program.ll` and snapshots each parsed input in `inputs/`,
+before adapting its Go metadata. The C entry point `GoALLCLTO` selects `lto<O2>` and
 returns either null or an error string that the caller releases with `free`.
 
 The backend returns optimized IR to cmd/link's in-process GoObj code generator.
@@ -46,9 +47,11 @@ Package configurations, import DAGs, cgo directives and linkname origins
 remain in a C++ side table. Inputs require the current five-field package configuration and `goobj.abi`
 module flag, compatible target triples and data layouts, unique package
 prefixes, and one main.
-The compiler completes functional early IR lowering before serializing each
-input. LTO does not run a CPU-feature preparation pipeline; it rejects CPU
-configuration without the existing completion marker.
+The compiler completes functional early IR lowering and `lto-pre-link<O2>`
+before serializing each input. LTO rejects CPU configuration without the
+existing completion marker, then discards the consumed configuration.
+Function attributes carry the prepared target policy into whole-program
+optimization and code generation.
 
 During linking, definitions receive unique temporary indices using the
 existing `goobj.symbol.index` attachment. LLVM carries the selected index

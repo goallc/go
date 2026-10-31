@@ -8,9 +8,10 @@ go build -lto=full -buildmode=pie ./path/to/main
 ```
 
 `cmd/go` selects `-llvm-lto` compilation and includes the LLVM/plugin identity
-in the link cache key. The compiler writes export data and pre-optimization
+in the link cache key. The compiler writes export data and pre-link optimized
 bitcode (`__.LLVMBC`) into each package archive after required early IR
-lowering, including CPU/FMV preparation. Assembly and native members
+lowering, including CPU/FMV preparation, and LLVM's `lto-pre-link<O2>` pipeline.
+Assembly and native members
 remain ordinary objects. FIPS packages retain ordinary object compilation so
 their code and synthesized constants keep their original FIPS classification.
 
@@ -43,8 +44,9 @@ object. Temporary work is removed on success and failure, unless requested:
 go build -lto=full -ldflags=-lto-keep ./path/to/main
 ```
 
-The linker prints `LTO_WORK=<directory>`, containing input bitcode/IR, optimized
-IR, the manifest, generated object, and replacement archives. Ordinary links
+The linker prints `LTO_WORK=<directory>`, containing input bitcode, input IR
+in `optimized/inputs`, optimized IR, the manifest, generated object, and
+replacement archives. Ordinary links
 reject bitcode archives with a diagnostic requesting `-lto=full`.
 
 This path supports FullLTO at O2 for executable and PIE builds. ThinLTO,

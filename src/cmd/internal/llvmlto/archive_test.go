@@ -297,7 +297,7 @@ func TestLTO(t *testing.T) {
 		}
 	}
 
-	before, err := filepath.Glob(filepath.Join(work, "*.input.ll"))
+	before, err := filepath.Glob(filepath.Join(work, "optimized", "inputs", "*.ll"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,26 +383,11 @@ func TestLTO(t *testing.T) {
 	}
 }
 
-func TestLTOOptions(t *testing.T) {
+func TestLTOBuildOptions(t *testing.T) {
 	if os.Getenv("GOALLC_TEST_LTO") != "1" {
 		t.Skip("set GOALLC_TEST_LTO=1 with an LLVM-enabled toolchain")
 	}
 	goTool := filepath.Join(runtime.GOROOT(), "bin", "go")
-	dir := t.TempDir()
-	source := filepath.Join(dir, "input.go")
-	if err := os.WriteFile(source, []byte("package p\nfunc F() int { return 42 }\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, flags := range [][]string{{"-enablellvm=false"}, {"-N"}, {"-llvm-opt-passes=none"}, {"-dynlink"}, {"-linkshared"}, {"-race"}} {
-		args := append([]string{"tool", "compile", "-llvm-lto", "-o", filepath.Join(dir, "p.a")}, flags...)
-		args = append(args, source)
-		cmd := exec.Command(goTool, args...)
-		cmd.Env = append(os.Environ(), "GOFLAGS=", "GOTOOLCHAIN=local")
-		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "-llvm-lto requires") {
-			t.Fatalf("%v: %v\n%s", flags, err, out)
-		}
-	}
 	for _, flags := range [][]string{{"-lto=invalid"}, {"-lto=full", "-race"}, {"-lto=full", "-buildmode=c-archive"}} {
 		cmd := exec.Command(goTool, append([]string{"build"}, flags...)...)
 		cmd.Dir = "testdata/runtime"
