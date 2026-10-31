@@ -17,8 +17,8 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
-// EmitLLVMObject returns a GoObj linker object, or pre-optimization bitcode
-// when -llvm-lto defers optimization and code generation to cmd/link.
+// EmitLLVMObject returns a GoObj linker object, or pre-link optimized bitcode
+// when -llvm-lto defers whole-program optimization and code generation to cmd/link.
 func EmitLLVMObject(outputFile string) ([]byte, error) {
 	finalizeLLVMModule()
 	if err := llvm.ConfigureGoObjFromModule(CurrentModule); err != nil {
@@ -84,14 +84,11 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 		}
 	}
 
-	if base.Flag.LLVMLTO {
-		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
-		defer buffer.Dispose()
-		return append([]byte(nil), buffer.Bytes()...), nil
-	}
-
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
-	if pipeline == "auto" {
+	if base.Flag.LLVMLTO {
+		// Use LLVM's pre-link policy, leaving whole-program decisions to LTO.
+		pipeline = "lto-pre-link<O2>"
+	} else if pipeline == "auto" {
 		pipeline = "default<O2>"
 		if base.Flag.N != 0 {
 			pipeline = "default<O0>"
@@ -108,6 +105,15 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 		if err := llvm.LLVMPrintModuleToFile(CurrentModule, outputFile+".opt.ll"); err != nil {
 			return nil, fmt.Errorf("write optimized LLVM IR: %w", err)
 		}
+	}
+
+	if base.Flag.LLVMLTO {
+		if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
+			return nil, fmt.Errorf("verify LLVM module after pre-link optimization: %w", err)
+		}
+		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
+		defer buffer.Dispose()
+		return append([]byte(nil), buffer.Bytes()...), nil
 	}
 
 	if err := tm.RunPassPluginPreCodeGen(CurrentModule, llvm.ObjectFile, plugin); err != nil {

@@ -12,6 +12,7 @@ import (
 	"internal/testenv"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,11 +25,11 @@ func TestLLVMSlimArchive(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			dir := t.TempDir()
 			source := filepath.Join(dir, "p.go")
-			if err := os.WriteFile(source, []byte("package p\nfunc F(x int) int { return x + 1 }\n"), 0600); err != nil {
+			if err := os.WriteFile(source, []byte("package p\nfunc constant(x int) int { return 42 }\nfunc F(x int) int { return constant(x) }\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			output := filepath.Join(dir, "p.a")
-			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-llvm-lto", "-llvm-keep-ir", "-p=p", "-o", output, source)
+			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-llvm-lto", "-llvm-keep-ir", "-l", "-p=p", "-o", output, source)
 			cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
@@ -80,8 +81,39 @@ func TestLLVMSlimArchive(t *testing.T) {
 			if !bytes.Contains(ir, []byte("!goobj.config")) {
 				t.Fatal("pre-optimization IR lost GoObj configuration")
 			}
-			if _, err := os.Stat(output + ".opt.ll"); !os.IsNotExist(err) {
-				t.Fatalf("LTO unexpectedly produced optimized IR: %v", err)
+			// Disable inlining above so this pure constant-returning call can only
+			// disappear through LLVM constant propagation and dead-call elimination in
+			// the package-level pipeline, before the archive is linked.
+			if !bytes.Contains(ir, []byte("call goabiinternal i64 @p.constant(")) {
+				t.Fatal("prepared IR has no call to exercise pre-link constant propagation")
+			}
+			if body := module.NamedFunction("p.F").String(); strings.Contains(body, "@p.constant(") || !strings.Contains(body, "ret i64 42") {
+				t.Fatal("serialized bitcode bypassed pre-link optimization")
+			}
+			optimized, err := os.ReadFile(output + ".opt.ll")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(optimized, []byte("call goabiinternal i64 @p.constant(")) {
+				t.Fatal("optimized IR still contains the package-local call")
+			}
+			index := func(ir, name string) string {
+				t.Helper()
+				definition := regexp.MustCompile(`(?m)^define [^\n]*@` + regexp.QuoteMeta(name) + `\([^\n]*!goobj.symbol.index !([0-9]+)`)
+				ref := definition.FindStringSubmatch(ir)
+				if ref == nil {
+					t.Fatalf("missing indexed definition %s", name)
+				}
+				node := regexp.MustCompile(`(?m)^!` + ref[1] + ` = !\{([^\n]+)\}$`).FindStringSubmatch(ir)
+				if node == nil {
+					t.Fatalf("missing symbol index metadata for %s", name)
+				}
+				return node[1]
+			}
+			for _, name := range []string{"p.F", "p.constant"} {
+				if got, want := index(module.String(), name), index(string(ir), name); got != want {
+					t.Fatalf("pre-link optimization changed %s index from %s to %s", name, want, got)
+				}
 			}
 
 			// Export data must remain usable without asking the importer to read
