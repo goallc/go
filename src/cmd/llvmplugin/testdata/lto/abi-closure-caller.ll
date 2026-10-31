@@ -19,10 +19,6 @@ declare !goobj.import !3 goabiinternal ptr @callee.GetClosure()
 !1 = !{i32 1}
 !2 = !{i1 true}
 
-; ABI0-LABEL: define goabiinternal {{.*}}ptr @caller.ABI0()
-; ABI0: ret ptr @"callee.ABI0.goallc.lto.callee<ABI0>"
-; ABI0: declare !goobj.import ![[REF:[0-9]+]] goabi0 void @"callee.ABI0.goallc.lto.callee<ABI0>"()
-; ABI0: ![[REF]] = !{!"callee", i32 4, i8 0}
 define goabiinternal ptr @caller.ABI0() !goobj.symbol.index !10 {
  %p = call goabiinternal ptr @callee.ABI0Getter()
  ret ptr %p

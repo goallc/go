@@ -4,6 +4,7 @@
 #include "GoALLCLTO.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
@@ -16,8 +17,6 @@
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Support/Base64.h"
-#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/SourceMgr.h"
@@ -58,32 +57,14 @@ struct Package {
 // The native Go compiler already gives content-addressed function copies a
 // #base64(8 bytes)# storage discriminator. GoObj removes it before computing
 // the final text hash and writing names. Reuse that contract for distinct LTO
-// copies: their storage identities must not become package-qualified symbols.
-static std::string contentName(StringRef Name) {
+// copies. The compiler scopes these names to the producing package, so LTO
+// preserves them and only strips the discriminator for manifest output.
+static std::string trimInlineHash(StringRef Name) {
   size_t Begin = Name.find('#');
   if (Begin != StringRef::npos && Name.size() >= Begin + 14 &&
       Name[Begin + 13] == '#')
     return (Name.take_front(Begin) + Name.drop_front(Begin + 14)).str();
   return Name.str();
-}
-
-static void giveContentName(GlobalObject &G, uint64_t &NextID) {
-  std::string Canonical = contentName(G.getName());
-  StringRef Name = Canonical;
-  bool ABI0 = Name.consume_back(GoObj::ABI0SymbolSuffix);
-  StringRef Variant = GoObj::getSymbolSuffix(Name);
-  if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
-    Name = Name.drop_back(Variant.size());
-  else
-    Variant = {};
-  std::string Storage;
-  do {
-    char Bytes[8];
-    support::endian::write64le(Bytes, NextID++);
-    Storage = (Name + "#" + encodeBase64(StringRef(Bytes, 8)) + "#" + Variant +
-               (ABI0 ? GoObj::ABI0SymbolSuffix : StringRef())).str();
-  } while (G.getParent()->getNamedValue(Storage) && Storage != G.getName());
-  G.setName(Storage);
 }
 
 static bool clonedConstant(const GlobalValue &G) {
@@ -205,7 +186,7 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
     std::string Canonical;
     unsigned Owner = Origin.Package;
     if (isa<Function>(G) && G.getMetadata("goobj.content_addressable")) {
-      Canonical = contentName(Name);
+      Canonical = trimInlineHash(Name);
       Name = Canonical;
       // Content-addressed copies have no package-indexed external identity.
       // Attribute them to their source package when present, independently of
@@ -316,7 +297,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
   std::vector<Package> Packages;
   std::vector<std::unique_ptr<Module>> Modules;
   std::vector<SymbolIdentity> InputSymbols;
-  uint64_t NextContentID = 0;
+  StringSet<> ContentNames;
   struct BSSRequirement {
     uint64_t Size = 0;
     bool FunctionAllowed = true;
@@ -449,8 +430,9 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         continue;
       bool HashedFunction =
           isa<Function>(G) && G.getMetadata("goobj.content_addressable");
-      if (HashedFunction)
-        giveContentName(G, NextContentID);
+      if (HashedFunction && !ContentNames.insert(G.getName()).second)
+        return fail("duplicate content-addressable function identity: " +
+                    G.getName());
       if (G.hasLocalLinkage() && !HashedFunction && !clonedConstant(G) &&
           !G.getMetadata("goobj.symbol.index")) {
         if (NextIndex >= UINT32_MAX)

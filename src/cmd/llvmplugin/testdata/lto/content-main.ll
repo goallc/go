@@ -1,10 +1,9 @@
-; Three same-name copies: two equal bodies from different packages and one
-; different body. The existing inline-hash spelling deliberately collides
-; with the first generated discriminator. Storage renaming must avoid .1.
+; Three copies with the same final name: two equal bodies and one different.
+; The input names already distinguish them; LTO must preserve those names.
 ;
-; IR-DAG: @main.closure = {{.*}}ptr @"dep.Closure#[[A:[^#]+]]#"
-; IR-DAG: @main.different = {{.*}}ptr @"dep.Closure#[[B:[^#]+]]#"
-; IR-DAG: @dep.closure = {{.*}}ptr @"dep.Closure#[[C:[^#]+]]#"
+; IR-DAG: @main.closure = {{.*}}ptr @"dep.Closure#[[A:AQAAAAAAAAA=]]#"
+; IR-DAG: @main.different = {{.*}}ptr @"dep.Closure#[[B:AgAAAAAAAAA=]]#"
+; IR-DAG: @dep.closure = {{.*}}ptr @"dep.Closure#[[C:AwAAAAAAAAA=]]#"
 ; IR: define {{.*}} @"dep.Closure#[[A]]#"()
 ; IR-SAME: !goobj.content_addressable
 ; IR: ret i64 11
@@ -35,12 +34,12 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:1
 !llvm.module.flags = !{!4}
 !4 = !{i32 1, !"goobj.abi", !5}
 !5 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !3}
-@main.closure = global ptr @dep.Closure, !goobj.symbol.index !2
-define goabiinternal i64 @dep.Closure() noinline !goobj.content_addressable !1 {
+@main.closure = global ptr @"dep.Closure#AQAAAAAAAAA=#", !goobj.symbol.index !2
+define goabiinternal i64 @"dep.Closure#AQAAAAAAAAA=#"() noinline !goobj.content_addressable !1 {
   ret i64 11
 }
-@main.different = global ptr @"dep.Closure#AAAAAAAAAAA=#", !goobj.symbol.index !6
-define goabiinternal i64 @"dep.Closure#AAAAAAAAAAA=#"() noinline !goobj.content_addressable !1 {
+@main.different = global ptr @"dep.Closure#AgAAAAAAAAA=#", !goobj.symbol.index !6
+define goabiinternal i64 @"dep.Closure#AgAAAAAAAAA=#"() noinline !goobj.content_addressable !1 {
   ret i64 22
 }
 !6 = !{i32 1}

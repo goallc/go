@@ -48,13 +48,17 @@
 ; ABI: %callee.Byte = type { i8 }
 ; ABI-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Padded(%go.abi.pad
 ; ABI-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.Closure()
-; ABI: ret ptr @"callee.Closure#{{[^#]+}}#"
+; ABI: ret ptr @"callee.Closure#BAAAAAAAAAA=#"
 ; ABI-LABEL: define dso_local goabiinternal {{.*}}i8 @callee.Byte(%callee.Byte
-; ABI: define dso_local goabiinternal {{.*}}i64 @"callee.Closure#{{[^#]+}}#"(i64
+; ABI: define dso_local goabiinternal {{.*}}i64 @"callee.Closure#BAAAAAAAAAA=#"(i64
 ; ABI-SAME: !goobj.content_addressable
 ; ABI0-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.ABI0()
-; ABI0: ret ptr @"callee.ABI0#{{[^#]+}}#<ABI0>"
-; ABI0-LABEL: define dso_local goabi0 void @"callee.ABI0#{{[^#]+}}#<ABI0>"()
+; ABI0: ret ptr @"callee.ABI0#BQAAAAAAAAA=#<ABI0>"
+; ABI0-LABEL: define dso_local goabiinternal {{.*}}ptr @callee.VariantGetter()
+; ABI0: ret ptr @"callee.ABI0#BQAAAAAAAAA=#<goallc.fmv.baseline><ABI0>"
+; ABI0-LABEL: define internal goabi0 void @"callee.ABI0#BQAAAAAAAAA=#<goallc.fmv.baseline><ABI0>"()
+; ABI0-SAME: !goobj.content_addressable
+; ABI0-LABEL: define dso_local goabi0 void @"callee.ABI0#BQAAAAAAAAA=#<ABI0>"()
 ; ABI0-SAME: !goobj.content_addressable
 ;
 ; MANIFEST-DAG: "imports":[{"fingerprint":"0200000000000000","path":"callee","prefix":"callee"}]

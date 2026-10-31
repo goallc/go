@@ -28,8 +28,9 @@ physical object. Original package-indexed references from ordinary dependency
 objects and assembly remain valid. Linkname permissions are checked against the
 originating package, including references in functions inlined across packages.
 
-Content-addressed functions stay content-addressed. Distinct IR copies use the
-existing Go inline-hash storage spelling; GoObj removes this discriminator
+Content-addressed functions stay content-addressed. The compiler distinguishes
+closure copies across packages with the existing Go inline-hash storage
+spelling. LTO preserves these names; GoObj removes the discriminator
 before computing final machine-code hashes and writing names. The linker can
 therefore merge identical copies across packages while keeping different code
 or relocations distinct. The driver does not rewrite output symbol names or

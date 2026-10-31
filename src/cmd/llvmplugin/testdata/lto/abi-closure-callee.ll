@@ -6,9 +6,9 @@ define goabiinternal i8 @callee.Byte(%callee.Byte %p) !goobj.symbol.index !0 {
  ret i8 %v
 }
 define goabiinternal ptr @callee.GetClosure() !goobj.symbol.index !1 {
- ret ptr @callee.Closure
+ ret ptr @"callee.Closure#BAAAAAAAAAA=#"
 }
-define goabiinternal i64 @callee.Closure(i64 %n) noinline !goobj.content_addressable !2 {
+define goabiinternal i64 @"callee.Closure#BAAAAAAAAAA=#"(i64 %n) noinline !goobj.content_addressable !2 {
  ret i64 %n
 }
 !goobj.config = !{!900}
@@ -18,16 +18,21 @@ define goabiinternal i64 @callee.Closure(i64 %n) noinline !goobj.content_address
 !1 = !{i32 1}
 !2 = !{i1 true}
 
-; ABI0-LABEL: define goabi0 void @"callee.ABI0<ABI0>"()
-; ABI0-SAME: !goobj.symbol.index ![[IDX:[0-9]+]]
-; ABI0: ![[IDX]] = !{i32 4, i16 0}
 define goabiinternal ptr @callee.ABI0Getter() !goobj.symbol.index !10 {
- ret ptr @"callee.ABI0<ABI0>"
+ ret ptr @"callee.ABI0#BQAAAAAAAAA=#<ABI0>"
 }
-define goabi0 void @"callee.ABI0<ABI0>"() noinline !goobj.content_addressable !2 {
+define goabi0 void @"callee.ABI0#BQAAAAAAAAA=#<ABI0>"() noinline !goobj.content_addressable !2 {
  ret void
 }
 !10 = !{i32 2}
+
+define goabiinternal ptr @callee.VariantGetter() !goobj.symbol.index !11 {
+ ret ptr @"callee.ABI0#BQAAAAAAAAA=#<goallc.fmv.baseline><ABI0>"
+}
+define internal goabi0 void @"callee.ABI0#BQAAAAAAAAA=#<goallc.fmv.baseline><ABI0>"() noinline !goobj.content_addressable !2 {
+ ret void
+}
+!11 = !{i32 3}
 
 !llvm.module.flags = !{!902}
 !902 = !{i32 1, !"goobj.abi", !903}

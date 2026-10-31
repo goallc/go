@@ -156,3 +156,5 @@ foreach(ARCH IN ITEMS x86_64 aarch64)
 endforeach()
 
 add_lto_error_test(full-lto-unprepared-input unprepared ERROR "lto<O2>" unprepared)
+add_lto_error_test(full-lto-content-collision content-collision ERROR "lto<O2>" content-main content-collision)
+add_lto_error_test(full-lto-content-collision-reversed content-collision ERROR "lto<O2>" content-collision content-main)

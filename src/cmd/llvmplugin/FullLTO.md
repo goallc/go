@@ -61,10 +61,13 @@ optimization. Indexed symbols and assembly-visible definitions are retained
 with `llvm.compiler.used`; post-optimization checks reject lost identities,
 unsupported new definitions, aliases and ifuncs.
 
-Content-addressed functions retain their native hash classification. Distinct
-copies use Go's existing #base64# inline-hash storage discriminator, which
-GoObj strips before writing names and hashing final machine code. Go ABI
-suffixes remain at the end. Identical code and relocations can deduplicate
+Content-addressed functions retain their native hash classification. The
+compiler scopes closure names to the compiling package using Go's existing
+#base64# inline-hash storage discriminator, including original closures and
+imported inline copies. LTO preserves these names and rejects duplicate
+content-addressed identities rather than renumbering them. GoObj strips the
+discriminator before writing names and hashing final machine code. Go ABI
+and FMV suffixes remain at the end. Identical code and relocations can deduplicate
 across packages in the ordinary linker; different bodies remain distinct.
 Their logical debug owner is the source package when it participates in LTO,
 or main for compiler helpers without such an owner. No output name patching
