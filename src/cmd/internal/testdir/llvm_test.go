@@ -236,7 +236,7 @@ func runLLVMCodegenTest(t *testing.T, source string, flags, runenv []string) err
 	}
 	fileCheck := llvmToolPath(t, "FileCheck", "GOALLC_FILECHECK")
 	if hasLLVMFileCheckPrefix(src, "LLVM") {
-		irBytes, err := os.ReadFile(archive + ".ll")
+		irBytes, err := os.ReadFile(archive + ".raw.ll")
 		if err != nil {
 			return err
 		}

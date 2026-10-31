@@ -155,3 +155,93 @@ func TestLLVMEmissionReportsLateStatepointDiagnostic(t *testing.T) {
 		t.Fatalf("LLVM target emission error = %q", err)
 	}
 }
+
+// Functional lowering must finish before either textual IR or LTO bitcode is
+// published. Exercise actual FMV definitions, not only the completion marker.
+func TestLLVMEmissionPreparesLTOIR(t *testing.T) {
+	profile := map[string]string{"amd64": "x86.popcnt", "arm64": "arm64.lse"}[buildcfg.GOARCH]
+	if profile == "" {
+		t.Skip("FMV fixture requires amd64 or arm64")
+	}
+	for _, invalid := range []bool{false, true} {
+		name := "prepared"
+		requested := profile
+		if invalid {
+			name, requested = "invalid", "invalid.profile"
+		}
+		t.Run(name, func(t *testing.T) {
+			module := GlobalCtxt.NewModule(name)
+			defer module.Dispose()
+			module.SetTarget(goObjTargetTriple())
+			oldModule, oldFinalized := CurrentModule, llvmModuleFinalized
+			oldShared, oldKeepIR, oldLTO := base.Flag.Shared, base.Flag.LLVMKeepIR, base.Flag.LLVMLTO
+			defer func() {
+				CurrentModule, llvmModuleFinalized = oldModule, oldFinalized
+				base.Flag.Shared, base.Flag.LLVMKeepIR, base.Flag.LLVMLTO = oldShared, oldKeepIR, oldLTO
+			}()
+			CurrentModule, llvmModuleFinalized = module, true
+			shared := false
+			base.Flag.Shared, base.Flag.LLVMKeepIR, base.Flag.LLVMLTO = &shared, true, true
+			addGoObjConfigMetadata(types.NewPkg("p", "p"))
+			llvm.AddGlobal(module, GlobalCtxt.Int64Type(), "runtime.goallcCPUFeatures")
+			f := llvm.AddFunction(module, "p.F", llvm.FunctionType(GlobalCtxt.Int64Type(), []llvm.Type{GlobalCtxt.Int64Type()}, false))
+			f.AddAttributeAtIndex(llvmAttributeFunctionIndex, GlobalCtxt.CreateStringAttribute("goallc.cpu.multiversion", requested))
+			builder := GlobalCtxt.NewBuilder()
+			defer builder.Dispose()
+			builder.SetInsertPointAtEnd(llvm.AddBasicBlock(f, "entry"))
+			builder.CreateRet(f.Param(0))
+
+			output := filepath.Join(t.TempDir(), "p.a")
+			data, err := EmitLLVMObject(output)
+			if invalid {
+				if err == nil || !strings.Contains(err.Error(), "run GoALLC early IR plugin") {
+					t.Fatalf("invalid FMV profile: got %v, want early IR failure", err)
+				}
+				if len(data) != 0 {
+					t.Fatal("invalid FMV profile produced bitcode")
+				}
+				for _, suffix := range []string{".ll", ".raw.ll"} {
+					if _, err := os.Stat(output + suffix); !os.IsNotExist(err) {
+						t.Fatalf("invalid FMV profile reached %s output: %v", suffix, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			bc := output + ".bc"
+			if err := os.WriteFile(bc, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			context := llvm.NewContext()
+			defer context.Dispose()
+			prepared, err := context.ParseBitcodeFile(bc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Dispose()
+			if err := llvm.VerifyModule(prepared, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			ir, err := os.ReadFile(output + ".ll")
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(output + ".raw.ll")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "goallc.cpu.multiversion") || strings.Contains(string(raw), "!goallc.cpu.fmv.done") {
+				t.Fatal("frontend diagnostic snapshot lost the original FMV request")
+			}
+			for kind, text := range map[string]string{"bitcode": prepared.String(), "text IR": string(ir)} {
+				for _, want := range []string{"p.F<goallc.fmv.baseline>", "p.F<goallc.fmv.resolve>", "p.F.goallc.fmv.slot", "!goallc.cpu.fmv.done"} {
+					if !strings.Contains(text, want) {
+						t.Errorf("%s missing %s", kind, want)
+					}
+				}
+			}
+		})
+	}
+}

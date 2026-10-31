@@ -130,7 +130,7 @@ type CmdFlags struct {
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
 	EnableLLVM         bool         "help:\"compile with the in-process LLVM backend\""
 	LLVMLTO            bool         `flag:"llvm-lto" help:"emit LLVM bitcode for LTO at link time"`
-	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep pre-optimization and optimized LLVM IR beside the output archive\""
+	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep frontend (.raw.ll), prepared (.ll), and optimized (.opt.ll) LLVM IR beside the output archive\""
 	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline (auto selects O0 with -N, O2 otherwise)\""
 	// Configuration derived from flags; not a flag itself.
 	Cfg struct {

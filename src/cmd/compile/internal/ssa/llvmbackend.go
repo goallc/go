@@ -11,6 +11,7 @@ import (
 	"cmd/internal/llvmbackend"
 	"fmt"
 	"internal/buildcfg"
+	"os"
 	"strings"
 
 	"github.com/goallc/go-llvm"
@@ -54,16 +55,10 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 	if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
 		return nil, fmt.Errorf("verify LLVM module before optimization: %w", err)
 	}
+	// Keep the frontend diagnostic snapshot separate from prepared IR.
+	var rawIR string
 	if base.Flag.LLVMKeepIR {
-		if err := llvm.LLVMPrintModuleToFile(CurrentModule, outputFile+".ll"); err != nil {
-			return nil, fmt.Errorf("write pre-optimization LLVM IR: %w", err)
-		}
-	}
-
-	if base.Flag.LLVMLTO {
-		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
-		defer buffer.Dispose()
-		return append([]byte(nil), buffer.Bytes()...), nil
+		rawIR = CurrentModule.String()
 	}
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
@@ -77,6 +72,23 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 	}
 	// The early IR plugin verifies after mutation and propagates failures.
 	// Its no-op paths leave the module verified above unchanged.
+
+	// Functional lowering is required for both object emission and LTO.
+	// Publish IR only after preparation succeeds; optimization remains below.
+	if base.Flag.LLVMKeepIR {
+		if err := os.WriteFile(outputFile+".raw.ll", []byte(rawIR), 0666); err != nil {
+			return nil, fmt.Errorf("write frontend LLVM IR: %w", err)
+		}
+		if err := llvm.LLVMPrintModuleToFile(CurrentModule, outputFile+".ll"); err != nil {
+			return nil, fmt.Errorf("write pre-optimization LLVM IR: %w", err)
+		}
+	}
+
+	if base.Flag.LLVMLTO {
+		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
+		defer buffer.Dispose()
+		return append([]byte(nil), buffer.Bytes()...), nil
+	}
 
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
 	if pipeline == "auto" {
