@@ -46,7 +46,9 @@ Package configurations, import DAGs, cgo directives and linkname origins
 remain in a C++ side table. Inputs require the current five-field package configuration and `goobj.abi`
 module flag, compatible target triples and data layouts, unique package
 prefixes, and one main.
-CPU-feature preparation runs before combining packages.
+The compiler completes functional early IR lowering before serializing each
+input. LTO does not run a CPU-feature preparation pipeline; it rejects CPU
+configuration without the existing completion marker.
 
 During linking, definitions receive unique temporary indices using the
 existing `goobj.symbol.index` attachment. LLVM carries the selected index

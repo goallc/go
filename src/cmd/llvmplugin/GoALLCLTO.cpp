@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license.
 
 #include "GoALLCLTO.h"
-#include "GoALLCPlugin.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/BinaryFormat/GoObj.h"
@@ -140,27 +139,6 @@ static bool referencesLinkname(const Value *V) {
     return GoObj::getSymbolSuffix(Name) == GoObj::LinknameSymbolSuffix;
   }
   return false;
-}
-
-static Error prepareInput(Module &M) {
-  LoopAnalysisManager LAM;
-  FunctionAnalysisManager FAM;
-  CGSCCAnalysisManager CGAM;
-  ModuleAnalysisManager MAM;
-  PassBuilder PB;
-  registerGoALLCPassBuilderCallbacks(PB);
-  PB.registerModuleAnalyses(MAM);
-  PB.registerCGSCCAnalyses(CGAM);
-  PB.registerFunctionAnalyses(FAM);
-  PB.registerLoopAnalyses(LAM);
-  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-  ModulePassManager PM;
-  if (Error E = PB.parsePassPipeline(PM, "goallc-cpu-features"))
-    return fail(toString(std::move(E)));
-  PM.run(M, MAM);
-  if (verifyModule(M, &errs()))
-    return fail("invalid optimized module");
-  return Error::success();
 }
 
 static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
@@ -360,8 +338,11 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         (Modules.front()->getTargetTriple() != M->getTargetTriple() ||
          Modules.front()->getDataLayout() != M->getDataLayout()))
       return fail("incompatible target or data layout");
-    if (Error E = prepareInput(*M))
-      return E;
+    // Functional lowering belongs to the compiler, before IR serialization.
+    // Do not silently accept old bitcode that bypassed CPU/FMV preparation.
+    if (M->getNamedMetadata("goallc.cpu.config") &&
+        !M->getNamedMetadata("goallc.cpu.fmv.done"))
+      return fail("input requires compiler early IR preparation");
     // Linkname access checks use each original reference package in the
     // manifest. Optimization may inline bodies across package boundaries.
     auto *Config = M->getNamedMetadata("goobj.config");

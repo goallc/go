@@ -9,7 +9,8 @@ go build -lto=full -buildmode=pie ./path/to/main
 
 `cmd/go` selects `-llvm-lto` compilation and includes the LLVM/plugin identity
 in the link cache key. The compiler writes export data and pre-optimization
-bitcode (`__.LLVMBC`) into each package archive. Assembly and native members
+bitcode (`__.LLVMBC`) into each package archive after required early IR
+lowering, including CPU/FMV preparation. Assembly and native members
 remain ordinary objects. FIPS packages retain ordinary object compilation so
 their code and synthesized constants keep their original FIPS classification.
 

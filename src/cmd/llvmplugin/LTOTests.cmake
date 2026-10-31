@@ -154,3 +154,5 @@ foreach(ARCH IN ITEMS x86_64 aarch64)
     set_tests_properties(full-lto-content-goobj-${ARCH} PROPERTIES DEPENDS full-lto-content-${ARCH})
   endif()
 endforeach()
+
+add_lto_error_test(full-lto-unprepared-input unprepared ERROR "lto<O2>" unprepared)
