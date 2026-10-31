@@ -6,10 +6,11 @@
 `SaveIR` is enabled. The C entry point `GoALLCLTO` selects `lto<O2>` and
 returns either null or an error string that the caller releases with `free`.
 
-The output is optimized IR for later single-object GoObj code generation.
-This stage does not connect to cmd/link, produce an executable, or enable
-ThinLTO. A post-optimization hook stops the standard LTO backend before
+The backend returns optimized IR to cmd/link's in-process GoObj code generator.
+A post-optimization hook stops the standard LLVM LTO backend before native
 code generation; the caller still owns the module and writes it directly.
+The complete build/link flow is documented in
+[cmd/internal/llvmlto](../internal/llvmlto/README.md).
 
 ## Native LLVM merging
 
@@ -36,7 +37,8 @@ incompatible inputs without a separate field-by-field comparison. Native
 compile units, source modules, retained variables and debug records merge
 directly. LTO neither reconstructs a debug-variable table nor selects a single
 package's DWARF configuration for the whole program. Declared package names
-in the manifest come from each input's native source module.
+stay in the native debug graph; the linker reads them from GoObj rather than
+from a second manifest copy.
 
 ## Go identities and output
 
@@ -54,11 +56,19 @@ optimization. Indexed symbols and assembly-visible definitions are retained
 with `llvm.compiler.used`; post-optimization checks reject lost identities,
 unsupported new definitions, aliases and ifuncs.
 
-Content-addressed functions receive distinct package-qualified identities
-before optimization. Go ABI suffixes must remain at the end of storage
-names. Bodies with restricted linkname references remain out of cross-package
-inlining; the original reference package is preserved for access checks.
-FIPS packages, dynamic Go linking and arbitrary module assembly are rejected.
+Content-addressed functions retain their native hash classification. Distinct
+copies use Go's existing #base64# inline-hash storage discriminator, which
+GoObj strips before writing names and hashing final machine code. Go ABI
+suffixes remain at the end. Identical code and relocations can deduplicate
+across packages in the ordinary linker; different bodies remain distinct.
+Their logical debug owner is the source package when it participates in LTO,
+or main for compiler helpers without such an owner. No output name patching
+or artificial package indices are needed for these copies.
+
+Linkname origins are validated by the linker's manifest consumer, so LTO does
+not add noinline restrictions to bodies containing linkname references.
+FIPS bitcode inputs, dynamic Go linking and arbitrary module assembly are
+rejected. The build driver leaves FIPS packages as ordinary objects.
 
 The manifest records the main package, original packages/imports/cgo data,
 surviving symbol owners and ABI/index mappings, and linkname access checks.

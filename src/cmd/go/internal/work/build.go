@@ -119,6 +119,8 @@ and test commands:
 		print the commands.
 	-asmflags '[pattern=]arg list'
 		arguments to pass on each go tool asm invocation.
+	-lto mode
+		LLVM link-time optimization mode: full (experimental).
 	-buildmode mode
 		build mode to use. See 'go help buildmode' for more.
 	-buildvcs
@@ -321,6 +323,7 @@ func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 	cmd.Flag.BoolVar(&cfg.BuildASan, "asan", false, "")
 	cmd.Flag.Var(&load.BuildAsmflags, "asmflags", "")
 	cmd.Flag.Var(buildCompiler{}, "compiler", "")
+	cmd.Flag.StringVar(&cfg.BuildLTO, "lto", "", "")
 	cmd.Flag.StringVar(&cfg.BuildBuildmode, "buildmode", "default", "")
 	cmd.Flag.Var((*buildvcsFlag)(&cfg.BuildBuildvcs), "buildvcs", "")
 	cmd.Flag.Var(&load.BuildGcflags, "gcflags", "")

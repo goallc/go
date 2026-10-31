@@ -20,6 +20,9 @@ function(add_full_lto_test NAME PREFIX)
   if(PREFIX STREQUAL "META")
     string(APPEND COMMAND " && '${GOALLC_FILECHECK_EXECUTABLE}' '${CHECK}' --check-prefix=MANIFEST --input-file='${OUT}/program.json'")
   endif()
+  if(PREFIX STREQUAL "CROSS")
+    string(APPEND COMMAND " && '${GOALLC_FILECHECK_EXECUTABLE}' '${CHECK}' --check-prefix=CROSS-MANIFEST --input-file='${OUT}/program.json'")
+  endif()
   add_test(NAME ${NAME} COMMAND ${GOALLC_BASH_EXECUTABLE} -o pipefail -c "${COMMAND}")
 endfunction()
 
@@ -62,6 +65,21 @@ add_full_lto_test(full-lto-resolution RESOLVE weak strong)
 add_full_lto_test(full-lto-resolution-reversed RESOLVE strong weak)
 add_lto_error_test(full-lto-duplicate-symbol duplicate-symbol ERROR "lto<O2>" caller duplicate-symbol)
 
+function(configure_lto_arch SOURCE OUTPUT ARCH)
+  file(READ "${SOURCE}" INPUT)
+  if(ARCH STREQUAL "aarch64")
+    string(REPLACE "x86_64" "aarch64" INPUT "${INPUT}")
+    string(REPLACE "amd64" "arm64" INPUT "${INPUT}")
+    string(REPLACE "GOAMD64" "GOARM64" INPUT "${INPUT}")
+    string(REPLACE "v1" "v8.0" INPUT "${INPUT}")
+    string(REPLACE "i64:64-i128:128-n8:16:32:64-S128"
+      "i8:8:32-i16:16:32-i64:64-i128:128-v128:64:64-n32:64-S128-Fn32"
+      INPUT "${INPUT}")
+  endif()
+  file(WRITE "${OUTPUT}" "${INPUT}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SOURCE}")
+endfunction()
+
 # Exercise the real optimized bitcode through the downstream GoObj producer.
 # This stage intentionally stops LTO before codegen; llc supplies that next step.
 set(LTO_CODEGEN_MAIN "${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/codegen-main.ll")
@@ -69,19 +87,8 @@ foreach(ARCH IN ITEMS x86_64 aarch64)
   set(LTO_CODEGEN_OUT "${CMAKE_CURRENT_BINARY_DIR}/full-lto-codegen-${ARCH}")
   file(MAKE_DIRECTORY "${LTO_CODEGEN_OUT}")
   foreach(PART IN ITEMS main dep)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/codegen-${PART}.ll" INPUT)
-    if(ARCH STREQUAL "aarch64")
-      string(REPLACE "x86_64" "aarch64" INPUT "${INPUT}")
-      string(REPLACE "amd64" "arm64" INPUT "${INPUT}")
-      string(REPLACE "GOAMD64" "GOARM64" INPUT "${INPUT}")
-      string(REPLACE "v1" "v8.0" INPUT "${INPUT}")
-      string(REPLACE "i64:64-i128:128-n8:16:32:64-S128"
-        "i8:8:32-i16:16:32-i64:64-i128:128-v128:64:64-n32:64-S128-Fn32"
-        INPUT "${INPUT}")
-    endif()
-    file(WRITE "${LTO_CODEGEN_OUT}/${PART}.ll" "${INPUT}")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/codegen-${PART}.ll")
+    configure_lto_arch("${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/codegen-${PART}.ll"
+      "${LTO_CODEGEN_OUT}/${PART}.ll" "${ARCH}")
   endforeach()
   add_test(NAME full-lto-codegen-ir-${ARCH}
     COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
@@ -125,4 +132,25 @@ foreach(ORDER IN ITEMS forward reversed)
   add_test(NAME full-lto-native-debug-${ORDER}
     COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
       "'$<TARGET_FILE:goallc-lto-test>' --output-dir='${DEBUG_OUT}' ${DEBUG_INPUTS} && '${GOALLC_FILECHECK_EXECUTABLE}' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-main.ll' --check-prefix=NATIVE --implicit-check-not='!goobj.debug.config =' --implicit-check-not='!goobj.debug.vars =' --implicit-check-not='!goobj.debug.funcs =' --input-file='${DEBUG_OUT}/program.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/native-debug-main.ll' --check-prefix=MANIFEST --input-file='${DEBUG_OUT}/program.json'")
+endforeach()
+
+# Content-addressed text keeps native cross-package hashing after a single
+# codegen pass. Same-name bodies must not resolve by LLVM linkage alone.
+foreach(ARCH IN ITEMS x86_64 aarch64)
+  set(CONTENT_OUT "${CMAKE_CURRENT_BINARY_DIR}/full-lto-content-${ARCH}")
+  set(CONTENT_CHECK "${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/content-main.ll")
+  file(MAKE_DIRECTORY "${CONTENT_OUT}")
+  foreach(PART IN ITEMS main dep)
+    configure_lto_arch("${CMAKE_CURRENT_SOURCE_DIR}/testdata/lto/content-${PART}.ll"
+      "${CONTENT_OUT}/${PART}.ll" "${ARCH}")
+  endforeach()
+  add_test(NAME full-lto-content-${ARCH}
+    COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+      "'$<TARGET_FILE:goallc-lto-test>' --output-dir='${CONTENT_OUT}' '${CONTENT_OUT}/main.ll' '${CONTENT_OUT}/dep.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${CONTENT_CHECK}' --check-prefix=IR --implicit-check-not='.goallc.lto.' --input-file='${CONTENT_OUT}/program.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${CONTENT_CHECK}' --check-prefix=MANIFEST --input-file='${CONTENT_OUT}/program.json'")
+  if(GOALLC_OBJVIEW_EXECUTABLE)
+    add_test(NAME full-lto-content-goobj-${ARCH}
+      COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+        "'${GOALLC_LLC_EXECUTABLE}' -filetype=obj '${CONTENT_OUT}/program.bc' -o '${CONTENT_OUT}/program.goobj' && '${GOALLC_OBJVIEW_EXECUTABLE}' -format=raw '${CONTENT_OUT}/program.goobj' | '${GOALLC_FILECHECK_EXECUTABLE}' '${CONTENT_CHECK}' --check-prefix=OBJ --implicit-check-not='dep.Closure.1'")
+    set_tests_properties(full-lto-content-goobj-${ARCH} PROPERTIES DEPENDS full-lto-content-${ARCH})
+  endif()
 endforeach()

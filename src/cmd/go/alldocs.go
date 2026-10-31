@@ -163,6 +163,8 @@
 //		print the commands.
 //	-asmflags '[pattern=]arg list'
 //		arguments to pass on each go tool asm invocation.
+//	-lto mode
+//		LLVM link-time optimization mode: full (experimental).
 //	-buildmode mode
 //		build mode to use. See 'go help buildmode' for more.
 //	-buildvcs

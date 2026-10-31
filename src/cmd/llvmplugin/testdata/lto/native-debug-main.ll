@@ -8,8 +8,8 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:1
 ; NATIVE-DAG: !DILocalVariable(name: "result", arg: 2, {{.*}}annotations:
 ; NATIVE-DAG: !{!"go.return", !"1"}
 ; NATIVE-DAG: inlinedAt:
-; MANIFEST-DAG: "name":"main"
-; MANIFEST-DAG: "name":"declareddep"
+; MANIFEST-DAG: "prefix":"main"
+; MANIFEST-DAG: "prefix":"dep"
 
 declare goabiinternal i64 @dep.Add(i64)
 define goabiinternal i64 @main.Answer(i64 %x) gc "goallc" !dbg !10 !goobj.symbol.index !0 {

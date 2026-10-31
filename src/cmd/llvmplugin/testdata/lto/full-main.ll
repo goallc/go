@@ -13,11 +13,12 @@
 ; CROSS-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Opaque
 ; CROSS: call goabiinternal i64 @callee.Opaque
 ; CROSS-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Restricted
-; CROSS: call goabiinternal i64 @callee.Restricted
+; CROSS: call goabiinternal i64 @"runtime.private<linkname>"
 ; CROSS: define dso_local goabiinternal {{.*}}i64 @callee.Opaque
 ; CROSS: define dso_local goabiinternal {{.*}}i64 @callee.Restricted
 ; CROSS: call goabiinternal i64 @"runtime.private<linkname>"
 ; CROSS-NOT: goallc.lto.owner
+; CROSS-MANIFEST: "linknames":[{"abi":1,"name":"runtime.private","package":1}]
 ;
 ; META-DAG: @leaf.counter = {{.*}}global i64 41, {{.*}}!goobj.{{(keep|gotype)}} ![[KEEP:[0-9]+]], !goobj.{{(keep|gotype)}} ![[KEEP]]
 ; META-DAG: @leaf.identity = {{.*}}constant i8 7
@@ -47,15 +48,14 @@
 ; ABI: %callee.Byte = type { i8 }
 ; ABI-LABEL: define dso_local goabiinternal {{.*}}i64 @caller.Padded(%go.abi.pad
 ; ABI-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.Closure()
-; ABI: ret ptr @callee.Closure.goallc.lto.callee
+; ABI: ret ptr @"callee.Closure#{{[^#]+}}#"
 ; ABI-LABEL: define dso_local goabiinternal {{.*}}i8 @callee.Byte(%callee.Byte
-; ABI: define dso_local goabiinternal {{.*}}i64 @callee.Closure.goallc.lto.callee(i64
-; ABI-NOT: !goobj.content_addressable
+; ABI: define dso_local goabiinternal {{.*}}i64 @"callee.Closure#{{[^#]+}}#"(i64
+; ABI-SAME: !goobj.content_addressable
 ; ABI0-LABEL: define dso_local goabiinternal {{.*}}ptr @caller.ABI0()
-; ABI0: ret ptr @"callee.ABI0.goallc.lto.callee<ABI0>"
-; ABI0-LABEL: define dso_local goabi0 void @"callee.ABI0.goallc.lto.callee<ABI0>"()
-; ABI0-SAME: !goobj.symbol.index ![[ABI0INDEX:[0-9]+]]
-; ABI0: ![[ABI0INDEX]] = !{i32 {{[0-9]+}}, i16 0}
+; ABI0: ret ptr @"callee.ABI0#{{[^#]+}}#<ABI0>"
+; ABI0-LABEL: define dso_local goabi0 void @"callee.ABI0#{{[^#]+}}#<ABI0>"()
+; ABI0-SAME: !goobj.content_addressable
 ;
 ; MANIFEST-DAG: "imports":[{"fingerprint":"0200000000000000","path":"callee","prefix":"callee"}]
 ; MANIFEST-DAG: "imports":[{"fingerprint":"0300000000000000","path":"leaf","prefix":"leaf"}]

@@ -8,10 +8,8 @@
 #include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -19,6 +17,8 @@
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Base64.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/SourceMgr.h"
@@ -51,23 +51,41 @@ static Error fail(const Twine &Message) {
 struct Package {
   MDNode *Config;
   std::string Prefix;
-  std::string Name;
   std::vector<Module::GlobalAsmFragment> ModuleAsm;
   SmallVector<MDNode *> Imports;
   MDNode *CPUConfig = nullptr;
   SmallVector<std::pair<std::string, unsigned>> Linknames;
 };
 
-static void givePackageName(GlobalObject &G, StringRef Prefix) {
-  StringRef Name = G.getName();
+// The native Go compiler already gives content-addressed function copies a
+// #base64(8 bytes)# storage discriminator. GoObj removes it before computing
+// the final text hash and writing names. Reuse that contract for distinct LTO
+// copies: their storage identities must not become package-qualified symbols.
+static std::string contentName(StringRef Name) {
+  size_t Begin = Name.find('#');
+  if (Begin != StringRef::npos && Name.size() >= Begin + 14 &&
+      Name[Begin + 13] == '#')
+    return (Name.take_front(Begin) + Name.drop_front(Begin + 14)).str();
+  return Name.str();
+}
+
+static void giveContentName(GlobalObject &G, uint64_t &NextID) {
+  std::string Canonical = contentName(G.getName());
+  StringRef Name = Canonical;
   bool ABI0 = Name.consume_back(GoObj::ABI0SymbolSuffix);
   StringRef Variant = GoObj::getSymbolSuffix(Name);
   if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
     Name = Name.drop_back(Variant.size());
   else
     Variant = {};
-  G.setName(Name + ".goallc.lto." + Prefix + Variant +
-            (ABI0 ? GoObj::ABI0SymbolSuffix : StringRef()));
+  std::string Storage;
+  do {
+    char Bytes[8];
+    support::endian::write64le(Bytes, NextID++);
+    Storage = (Name + "#" + encodeBase64(StringRef(Bytes, 8)) + "#" + Variant +
+               (ABI0 ? GoObj::ABI0SymbolSuffix : StringRef())).str();
+  } while (G.getParent()->getNamedValue(Storage) && Storage != G.getName());
+  G.setName(Storage);
 }
 
 static bool clonedConstant(const GlobalValue &G) {
@@ -84,7 +102,6 @@ static bool clonedConstant(const GlobalValue &G) {
 struct SymbolIdentity {
   unsigned Package;
   MDNode *Index;
-  std::string OriginalName;
   std::string Section;
 };
 
@@ -122,10 +139,6 @@ static bool referencesLinkname(const Value *V) {
     Name.consume_back(GoObj::ABI0SymbolSuffix);
     return GoObj::getSymbolSuffix(Name) == GoObj::LinknameSymbolSuffix;
   }
-  if (auto *K = dyn_cast<Constant>(V))
-    for (const Value *Op : K->operands())
-      if (referencesLinkname(Op))
-        return true;
   return false;
 }
 
@@ -175,7 +188,6 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
           {"fingerprint", cast<MDString>(E->getOperand(2))->getString()}});
     PackageRecords.push_back(json::Object{
         {"prefix", P.Prefix},
-        {"name", P.Name},
         {"std",
          cast<MDString>(P.Config->getOperand(StandardLibrary))->getString() ==
              "1"},
@@ -213,15 +225,24 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
       ABI = GoObj::SymABIstatic;
       Name = Name.drop_back(Suffix.size());
     }
-    json::Object S{{"package", Origin.Package}, {"name", Name}, {"abi", ABI}};
-    if (!Origin.OriginalName.empty()) {
-      StringRef OriginalName = Origin.OriginalName;
-      OriginalName.consume_back(GoObj::ABI0SymbolSuffix);
-      StringRef Variant = GoObj::getSymbolSuffix(OriginalName);
-      if (Variant.starts_with(GoObj::FMVSymbolSuffixPrefix))
-        OriginalName = OriginalName.drop_back(Variant.size());
-      S["original_name"] = OriginalName;
+    std::string Canonical;
+    unsigned Owner = Origin.Package;
+    if (isa<Function>(G) && G.getMetadata("goobj.content_addressable")) {
+      Canonical = contentName(Name);
+      Name = Canonical;
+      // Content-addressed copies have no package-indexed external identity.
+      // Attribute them to their source package when present, independently of
+      // which importer supplied a copy. Anonymous compiler helpers use main.
+      Owner = Main;
+      size_t PrefixSize = 0;
+      for (unsigned I = 0; I != Packages.size(); ++I)
+        if (Name.starts_with(Packages[I].Prefix + ".") &&
+            Packages[I].Prefix.size() > PrefixSize) {
+          Owner = I;
+          PrefixSize = Packages[I].Prefix.size();
+        }
     }
+    json::Object S{{"package", Owner}, {"name", Name.str()}, {"abi", ABI}};
     if (Index) {
       S["original_index"] =
           mdconst::extract<ConstantInt>(Index->getOperand(0))->getZExtValue();
@@ -302,9 +323,7 @@ static Error optimize(Module &M, StringRef Pipeline, lto::Config &Conf) {
 }
 
 Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
-                     StringRef Pipeline, bool SaveIR, bool Thin) {
-  if (Thin)
-    return fail("ThinLTO is not available in this backend yet");
+                     StringRef Pipeline, bool SaveIR) {
   if (Inputs.empty())
     return fail("LTO requires at least one input");
   lto::Config Conf;
@@ -322,6 +341,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
   std::vector<Package> Packages;
   std::vector<std::unique_ptr<Module>> Modules;
   std::vector<SymbolIdentity> InputSymbols;
+  uint64_t NextContentID = 0;
   struct BSSRequirement {
     uint64_t Size = 0;
     bool FunctionAllowed = true;
@@ -342,16 +362,8 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       return fail("incompatible target or data layout");
     if (Error E = prepareInput(*M))
       return E;
-    // A linkname can be legal only from its originating package (including
-    // runtime's private allowlist). Keep such bodies in that package instead
-    // of disabling the Go linker's checks after cross-package inlining.
-    for (Function &F : *M)
-      for (Instruction &Inst : instructions(F))
-        for (const Value *Op : Inst.operands())
-          if (referencesLinkname(Op)) {
-            F.removeFnAttr(Attribute::AlwaysInline);
-            F.addFnAttr(Attribute::NoInline);
-          }
+    // Linkname access checks use each original reference package in the
+    // manifest. Optimization may inline bodies across package boundaries.
     auto *Config = M->getNamedMetadata("goobj.config");
     if (!Config || Config->getNumOperands() != 1 ||
         Config->getOperand(0)->getNumOperands() != ConfigFields)
@@ -380,17 +392,6 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         return fail("invalid GoObj configuration field");
     if (!M->getModuleFlag("goobj.abi"))
       return fail("input requires a goobj.abi module flag");
-    // The native source module carries the declared package name, including
-    // empty packages. Keep it in the manifest; LLVM merges the debug graph.
-    for (const DICompileUnit *CU : M->debug_compile_units())
-      for (const DIImportedEntity *Import : CU->getImportedEntities())
-        if (const auto *Source = dyn_cast_or_null<DIModule>(Import->getEntity());
-            Import->getScope() == CU && Source && !Source->getScope() &&
-            !Source->getIsDecl() && Source->getFile() == CU->getFile()) {
-          if (!P.Name.empty() && P.Name != Source->getName())
-            return fail("conflicting Go source package names");
-          P.Name = Source->getName().str();
-        }
     P.Prefix = cast<MDString>(P.Config->getOperand(PackagePrefix))->getString();
     if (P.Prefix.empty())
       return fail("empty package prefix");
@@ -456,19 +457,11 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
     for (GlobalObject &G : M->global_objects()) {
       if (G.isDeclaration() || G.getName().starts_with("llvm."))
         continue;
-      std::string OriginalName;
-      // Content-addressed functions normally remain in their compiler
-      // package. LTO can expose references to them in other packages before
-      // their machine-code hashes exist. Give each original copy an indexed
-      // identity; this preserves distinct bodies and package-local data.
       bool HashedFunction =
           isa<Function>(G) && G.getMetadata("goobj.content_addressable");
-      if (HashedFunction) {
-        OriginalName = G.getName().str();
-        givePackageName(G, P.Prefix);
-        G.setMetadata("goobj.content_addressable", nullptr);
-      }
-      if ((G.hasLocalLinkage() || HashedFunction) && !clonedConstant(G) &&
+      if (HashedFunction)
+        giveContentName(G, NextContentID);
+      if (G.hasLocalLinkage() && !HashedFunction && !clonedConstant(G) &&
           !G.getMetadata("goobj.symbol.index")) {
         if (NextIndex >= UINT32_MAX)
           return fail("too many package symbols");
@@ -477,11 +470,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
                 ConstantInt::get(Type::getInt32Ty(C), NextIndex++)),
             ConstantAsMetadata::get(ConstantInt::get(
                 Type::getInt16Ty(C),
-                HashedFunction
-                    ? (cast<Function>(G).getCallingConv() == CallingConv::GoABI0
-                           ? GoObj::SymABI0
-                           : GoObj::SymABIInternal)
-                    : GoObj::SymABIstatic))};
+                GoObj::SymABIstatic))};
         G.setMetadata("goobj.symbol.index", MDNode::get(C, Index));
         G.setMetadata("goobj.symbol.nonpackage", nullptr);
       }
@@ -489,12 +478,12 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       // linking. LLVM keeps the selected definition's attachment (and renames
       // colliding locals); the side table supplies its original package/index.
       // Restore the compiler's index before optimizing or emitting GoObj IR.
-      bool Retain = !clonedConstant(G);
+      bool Retain = !clonedConstant(G) && !HashedFunction;
       MDNode *Index = G.getMetadata("goobj.symbol.index");
       if (InputSymbols.size() >= UINT32_MAX)
         return fail("too many combined symbols");
       InputSymbols.push_back(
-          {I, Index, std::move(OriginalName), G.getSection().str()});
+          {I, Index, G.getSection().str()});
       G.setMetadata(
           "goobj.symbol.index",
           MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(
@@ -585,12 +574,11 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
 
 // The caller owns the returned error string and frees it with free().
 extern "C" char *GoALLCLTO(const char *const *Inputs, size_t Count,
-                           const char *OutDir, int SaveIR, int Thin) {
+                           const char *OutDir, int SaveIR) {
   std::vector<std::string> Paths;
   for (size_t I = 0; I != Count; ++I)
     Paths.emplace_back(Inputs[I]);
-  if (Error E = goallc::runLTO(Paths, OutDir, Thin ? "thinlto<O2>" : "lto<O2>",
-                               SaveIR, Thin))
+  if (Error E = goallc::runLTO(Paths, OutDir, "lto<O2>", SaveIR))
     return strdup(toString(std::move(E)).c_str());
   return nullptr;
 }
