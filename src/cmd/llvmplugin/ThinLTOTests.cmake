@@ -7,7 +7,7 @@ set(THIN_FIXTURES "${CMAKE_CURRENT_SOURCE_DIR}/testdata/thinlto")
 set(THIN_OUT "${CMAKE_CURRENT_BINARY_DIR}/thinlto-cross-package")
 add_test(NAME thinlto-cross-package
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
-  "'$<TARGET_FILE:goallc-thinlto-test>' --output-dir='${THIN_OUT}' '${THIN_FIXTURES}/caller.ll' '${THIN_FIXTURES}/callee.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/caller.ll' --input-file='${THIN_OUT}/0.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/callee.ll' --input-file='${THIN_OUT}/1.ll'")
+  "'$<TARGET_FILE:goallc-thinlto-test>' --output-dir='${THIN_OUT}' '${THIN_FIXTURES}/caller.ll' '${THIN_FIXTURES}/callee.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' --implicit-check-not='define available_externally' '${THIN_FIXTURES}/caller.ll' --input-file='${THIN_OUT}/0.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/callee.ll' --input-file='${THIN_OUT}/1.ll'")
 
 set(THIN_DEBUG "${CMAKE_CURRENT_BINARY_DIR}/thinlto-debug")
 add_test(NAME thinlto-debug
@@ -41,3 +41,20 @@ add_test(NAME thinlto-memory-objects
 add_test(NAME thinlto-duplicate-input
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
   "'${GOALLC_NOT_EXECUTABLE}' '$<TARGET_FILE:goallc-thinlto-test>' --save-temps=false --output-dir='${THIN_OUT}/duplicate' '${THIN_FIXTURES}/caller.ll' '${THIN_FIXTURES}/caller.ll' 2>&1 | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=DUPLICATE '${THIN_FIXTURES}/caller.ll'")
+
+add_test(NAME thinlto-module-asm
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+  "'${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=ASM '${THIN_FIXTURES}/debug-caller.ll' --input-file='${THIN_DEBUG}/0.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=ASM '${THIN_FIXTURES}/debug-callee.ll' --input-file='${THIN_DEBUG}/1.ll'")
+set_tests_properties(thinlto-module-asm PROPERTIES FIXTURES_REQUIRED thinlto-debug-ir)
+foreach(ARCH IN ITEMS x86_64 aarch64)
+  if(GOALLC_OBJVIEW_EXECUTABLE)
+    add_test(NAME thinlto-cgo-${ARCH}-object
+      COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+      "'${GOALLC_OBJVIEW_EXECUTABLE}' -json '${THIN_DEBUG}/${ARCH}.o' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=CGO '${THIN_FIXTURES}/debug-caller.ll'")
+    set_tests_properties(thinlto-cgo-${ARCH}-object PROPERTIES
+      FIXTURES_REQUIRED thinlto-debug-${ARCH}-obj)
+  endif()
+endforeach()
+add_test(NAME thinlto-symver-rejected
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+  "'${GOALLC_NOT_EXECUTABLE}' '$<TARGET_FILE:goallc-thinlto-test>' --emit-objects --save-temps=false --output-dir='${THIN_OUT}/symver' '${THIN_FIXTURES}/symver.ll' 2>&1 | '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/symver.ll'")

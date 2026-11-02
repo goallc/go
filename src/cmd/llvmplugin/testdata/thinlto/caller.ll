@@ -6,6 +6,9 @@
 ; CHECK: load volatile i64, ptr @dep.slot
 ; CHECK: tail call goabiinternal void @dep.marked()
 ; CHECK-NOT: !goobj.marker_reloc
+; CHECK-LABEL: define {{.*}}@main.noinlineCaller(
+; CHECK: call goabiinternal i64 @dep.add(i64 %v)
+; CHECK: declare !goobj.import {{.*}}goabiinternal i64 @dep.add(i64)
 ; CHECK: !goobj.config = !{![[CONFIG:[0-9]+]]}
 ; CHECK-DAG: ![[CONFIG]] = !{!"main-id", !"main", !"1", !"0", !"0100000000000000"}
 target triple = "x86_64-unknown-linux-goobj"
@@ -37,3 +40,11 @@ declare !goobj.import !9 goabiinternal void @dep.marked()
 !8 = !{!"dep", i32 1, i32 0}
 !9 = !{!"dep", i32 2, i32 0}
 ; CHECK-DAG: ![[REF]] = !{!"dep", i32 3, i32 0}
+
+; Keep one imported callee referenced after optimization. The standard ThinLTO
+; pipeline must discard its available_externally body without our own rewrite.
+define goabiinternal i64 @main.noinlineCaller(i64 %v) noinline optnone !goobj.symbol.index !11 {
+  %r = call goabiinternal i64 @dep.add(i64 %v)
+  ret i64 %r
+}
+!11 = !{i32 2, i16 1}

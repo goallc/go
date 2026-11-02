@@ -9,6 +9,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetSelect.h"
 using namespace llvm;
 static cl::opt<std::string> Out("output-dir", cl::Required);
 static cl::opt<bool> SaveTemps("save-temps", cl::init(true));
@@ -18,6 +19,11 @@ static cl::opt<unsigned> Jobs("jobs", cl::init(2));
 static cl::list<std::string> Inputs(cl::Positional, cl::OneOrMore);
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv);
+  // Summary writing parses module assembly, just as the compiler does.
+  InitializeAllTargetInfos();
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmParsers();
   std::vector<std::unique_ptr<MemoryBuffer>> Buffers;
   SmallVector<MemoryBufferRef> Modules;
   for (unsigned I = 0; I < Inputs.size(); ++I) {
