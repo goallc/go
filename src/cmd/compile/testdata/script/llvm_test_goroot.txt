@@ -1,6 +1,6 @@
-# Compiler runtime files follow the host tools into the temporary GOROOT,
-# including when compile is replaced by the compiler test executable.
-exists $GOROOT/pkg/tool/${GOOS}_${GOARCH}/lib
+# The compiler works in the temporary GOROOT even when replaced by the test
+# executable. TestLLVMTestGoRoot checks that dynamic runtime libraries follow
+# the tools and that static builds carry no runtime library directory.
 ! exists $GOROOT/pkg/goallc-llvmplugin
 ! exists $GOROOT/pkg/goallc-llvm-payload
 env GOALLC_LLVM_DIR=
