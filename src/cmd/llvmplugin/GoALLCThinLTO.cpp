@@ -237,33 +237,20 @@ static Error finishGoObjModule(Module &M, StringRef Prefix,
         return fail("ThinLTO changed package symbol identity: " + G.getName());
     }
   }
-  // Rebuild only debug scopes reachable in the optimized module. In
-  // particular, do not make every unimported source function a debug root.
-  if (auto *Funcs = M.getNamedMetadata("goobj.debug.funcs")) {
-    SmallVector<MDNode *> Live;
-    for (MDNode *Entry : Funcs->operands()) {
-      if (Entry->getNumOperands() != 2)
-        return fail("invalid ThinLTO debug function mapping");
-      if (Entry->getOperand(1))
-        Live.push_back(Entry);
-    }
-    Funcs->clearOperands();
-    for (MDNode *Entry : Live)
-      Funcs->addOperand(Entry);
-  }
+  // Rebuild once from the saved identities, including compiler-inlined scopes.
+  // Keep only scopes reachable in the optimized module, not old mapping roots.
+  if (auto *Funcs = M.getNamedMetadata("goobj.debug.funcs"))
+    M.eraseNamedMetadata(Funcs);
   DebugInfoFinder Finder;
   Finder.processModule(M);
   SmallPtrSet<const DISubprogram *, 32> Needed;
   for (auto *SP : Finder.subprograms())
     Needed.insert(SP);
-  SmallPtrSet<const DISubprogram *, 32> Mapped;
   auto *Funcs = M.getOrInsertNamedMetadata("goobj.debug.funcs");
-  for (MDNode *Entry : Funcs->operands())
-    Mapped.insert(cast<DISubprogram>(Entry->getOperand(0)));
   if (auto *Debug = M.getNamedMetadata("goallc.thin.debug.funcs")) {
     for (MDNode *Entry : Debug->operands()) {
       auto *SP = cast<DISubprogram>(Entry->getOperand(0));
-      if (!Needed.count(SP) || !Mapped.insert(SP).second)
+      if (!Needed.erase(SP))
         continue;
       StringRef Name = cast<MDString>(Entry->getOperand(1))->getString();
       GlobalValue *G = M.getNamedValue(Name);
@@ -412,13 +399,14 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
           F.keep();
         }
         // EliminateAvailableExternally deletes function bodies and their
-        // metadata. Preserve Go reference identities after importing, while
-        // LLVM still knows each promoted/imported symbol's final name.
+        // metadata. Snapshot only those imported definitions; declarations and
+        // local definitions keep their attachments without our intervention.
         StringMap<TrackingMDNodeRef> ImportRefs;
         Conf.PostImportModuleHook = [&](unsigned, const Module &Imported) {
           for (const GlobalObject &G : Imported.global_objects())
-            if (auto *Ref = G.getMetadata("goobj.import"))
-              ImportRefs.try_emplace(G.getName(), Ref);
+            if (G.hasAvailableExternallyLinkage())
+              if (auto *Ref = G.getMetadata("goobj.import"))
+                ImportRefs.try_emplace(G.getName(), Ref);
           return true;
         };
         Conf.PostOptModuleHook = [](unsigned, const Module &) { return false; };
