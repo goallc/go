@@ -164,7 +164,7 @@ jobs:
           set -euo pipefail
           llvm_version="$("$LLVM_ROOT/bin/llvm-config" --version)"
           test "$("$LLVM_ROOT/bin/llvm-config" --prefix)" = "$LLVM_ROOT"
-          [[ "$llvm_version" == 23.1.0* ]]
+          [[ "$llvm_version" == 23.1.* ]]
           test "$("$LLVM_ROOT/bin/llvm-config" --build-mode)" = Release
           grep -Fx "llvm_revision=$LLVM_REVISION" "$LLVM_ROOT/share/goallc/build-manifest"
           grep -Fx "llvm_version=$llvm_version" "$LLVM_ROOT/share/goallc/build-manifest"

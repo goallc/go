@@ -23,7 +23,7 @@ func TestLookupOrZero(t *testing.T) {
 
 func TestClMul(t *testing.T) {
 	if !archsimd.ARM64.PMULL() {
-		t.Skip("Test requires ARM64.PMULL, not available on this hardware")
+		t.Skip("no carryless multiply")
 	}
 	var x = archsimd.LoadUint64x2([]uint64{1, 5})
 	var y = archsimd.LoadUint64x2([]uint64{3, 9})
