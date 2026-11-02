@@ -14,6 +14,37 @@ add_test(NAME thinlto-debug
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
   "'$<TARGET_FILE:goallc-thinlto-test>' --output-dir='${THIN_DEBUG}' '${THIN_FIXTURES}/debug-caller.ll' '${THIN_FIXTURES}/debug-callee.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/debug-caller.ll' --input-file='${THIN_DEBUG}/0.ll'")
 set_tests_properties(thinlto-debug PROPERTIES FIXTURES_SETUP thinlto-debug-ir)
+
+set(THIN_FIPS "${CMAKE_CURRENT_BINARY_DIR}/thinlto-fips")
+add_test(NAME thinlto-fips
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+  "'$<TARGET_FILE:goallc-thinlto-test>' --output-dir='${THIN_FIPS}' '${THIN_FIXTURES}/fips-caller.ll' '${THIN_FIXTURES}/fips-callee.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' --implicit-check-not='!goobj.static_rodata_type' '${THIN_FIXTURES}/fips-caller.ll' --input-file='${THIN_FIPS}/0.ll' && '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/fips-callee.ll' --input-file='${THIN_FIPS}/1.ll'")
+set_tests_properties(thinlto-fips PROPERTIES FIXTURES_SETUP thinlto-fips-ir)
+foreach(ARCH IN ITEMS x86_64 aarch64)
+  foreach(INDEX RANGE 0 1)
+    if(INDEX EQUAL 0)
+      set(FIXTURE fips-caller.ll)
+    else()
+      set(FIXTURE fips-callee.ll)
+    endif()
+    add_test(NAME thinlto-fips-${ARCH}-${INDEX}
+      COMMAND "${GOALLC_LLC_EXECUTABLE}"
+        "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+        "-mtriple=${ARCH}-unknown-linux-goobj"
+        -frame-pointer=all -verify-machineinstrs -filetype=obj
+        -o "${THIN_FIPS}/${ARCH}-${INDEX}.o" "${THIN_FIPS}/${INDEX}.bc")
+    set_tests_properties(thinlto-fips-${ARCH}-${INDEX} PROPERTIES
+      FIXTURES_REQUIRED thinlto-fips-ir FIXTURES_SETUP thinlto-fips-${ARCH}-${INDEX}-obj)
+    if(GOALLC_OBJVIEW_EXECUTABLE)
+      add_test(NAME thinlto-fips-${ARCH}-${INDEX}-object
+        COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+        "'${GOALLC_OBJVIEW_EXECUTABLE}' -json '${THIN_FIPS}/${ARCH}-${INDEX}.o' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=OBJ '${THIN_FIXTURES}/${FIXTURE}'")
+      set_tests_properties(thinlto-fips-${ARCH}-${INDEX}-object PROPERTIES
+        FIXTURES_REQUIRED thinlto-fips-${ARCH}-${INDEX}-obj)
+    endif()
+  endforeach()
+endforeach()
+
 foreach(ARCH IN ITEMS x86_64 aarch64)
   add_test(NAME thinlto-debug-${ARCH}
     COMMAND "${GOALLC_LLC_EXECUTABLE}"

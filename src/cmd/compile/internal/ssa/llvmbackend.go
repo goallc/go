@@ -86,7 +86,7 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 	}
 
 	pipeline := strings.TrimSpace(base.Flag.LLVMOptPasses)
-	if base.Flag.LLVMLTO == "thin" || base.Flag.LLVMLTO == "full" {
+	if base.Flag.LLVMLTO != "" {
 		// Use LLVM's pre-link policy, leaving whole-program decisions to LTO.
 		pipeline = "lto-pre-link<O2>"
 		if base.Flag.LLVMLTO == "thin" {
@@ -111,7 +111,7 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 		}
 	}
 
-	if base.Flag.LLVMLTO == "thin" || base.Flag.LLVMLTO == "full" {
+	if base.Flag.LLVMLTO != "" {
 		if err := llvm.VerifyModule(CurrentModule, llvm.ReturnStatusAction); err != nil {
 			return nil, fmt.Errorf("verify LLVM module after pre-link optimization: %w", err)
 		}
