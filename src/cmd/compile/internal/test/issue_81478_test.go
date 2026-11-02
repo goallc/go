@@ -31,10 +31,19 @@ func TestIssue81478(t *testing.T) {
 		t.Fatalf("could not write file: %v", err)
 	}
 
-	cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-race", "-p=main", "-S", "-o", filepath.Join(dir, "x.o"), src)
+	obj := filepath.Join(dir, "x.o")
+	cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-race", "-p=main", "-o", obj, src)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile failed: %v\n%s", err, out)
+	}
+
+	// Inspect the emitted object so the same check covers both the native and
+	// LLVM backends, independently of the compiler's -S output format.
+	cmd = testenv.Command(t, testenv.GoToolPath(t), "tool", "objdump", obj)
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("objdump failed: %v\n%s", err, out)
 	}
 
 	// W.F tail calls through an interface, S.G tail calls a static function.
@@ -56,16 +65,16 @@ func TestIssue81478(t *testing.T) {
 	}
 }
 
-// funcBody returns the part of the -S output that belongs to the symbol fn:
-// its header line plus the indented instruction and relocation lines below it.
+// funcBody returns the part of the objdump output that belongs to the symbol fn:
+// its header line plus the indented instructions and their relocation annotations.
 func funcBody(out, fn string) (string, bool) {
 	lines := strings.Split(out, "\n")
 	for i, line := range lines {
-		if !strings.HasPrefix(line, fn+" STEXT") {
+		if !strings.HasPrefix(line, "TEXT "+fn+"(SB)") {
 			continue
 		}
 		end := i + 1
-		for end < len(lines) && strings.HasPrefix(lines[end], "\t") {
+		for end < len(lines) && strings.HasPrefix(lines[end], "  ") {
 			end++
 		}
 		return strings.Join(lines[i:end], "\n"), true
