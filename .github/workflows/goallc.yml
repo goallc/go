@@ -479,8 +479,10 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then
             mkdir -p "$binding/llvm"
             cp -R .goallc/llvm/include "$binding/llvm/"
-            echo "GOROOT=$(cygpath -m "$GOROOT")" >> "$GITHUB_ENV"
-            echo "GOCACHE=$(cygpath -m "$GOCACHE")" >> "$GITHUB_ENV"
+            # Shell archive operations above use slash paths. Go's script
+            # tests compare GOCACHE with native paths emitted by go list.
+            echo "GOROOT=$(cygpath -w "$GOROOT")" >> "$GITHUB_ENV"
+            echo "GOCACHE=$(cygpath -w "$GOCACHE")" >> "$GITHUB_ENV"
           else
             ln -sfn "$GITHUB_WORKSPACE/.goallc/llvm" "$binding/llvm"
           fi
@@ -502,19 +504,24 @@ jobs:
       - name: Check Darwin DNS negative responses
         if: runner.os == 'macOS' && matrix.group == 'stdlib'
         run: |
-          # Some hosted macOS VM DNS proxies time out for .invalid instead of
-          # returning NXDOMAIN, which breaks the existing net resolver tests.
+          # The hosted VM proxy may answer A queries but time out for other
+          # record types. Use public resolvers for the existing net tests.
           dig +time=3 +tries=1 invalid.invalid. A > "$RUNNER_TEMP/dns-before.log" || true
           cat "$RUNNER_TEMP/dns-before.log"
-          if ! grep -q 'status: NXDOMAIN' "$RUNNER_TEMP/dns-before.log"; then
-            while IFS= read -r service; do
-              [[ "$service" == \** ]] && continue
-              sudo networksetup -setdnsservers "$service" 1.1.1.1 8.8.8.8
-            done < <(networksetup -listallnetworkservices | tail -n +2)
-            sudo dscacheutil -flushcache
-          fi
-          dig +time=5 +tries=2 invalid.invalid. A | tee "$RUNNER_TEMP/dns-after.log"
-          grep -q 'status: NXDOMAIN' "$RUNNER_TEMP/dns-after.log"
+          while IFS= read -r service; do
+            [[ "$service" == \** ]] && continue
+            sudo networksetup -setdnsservers "$service" 1.1.1.1 8.8.8.8
+          done < <(networksetup -listallnetworkservices | tail -n +2)
+          sudo dscacheutil -flushcache
+          sudo killall -HUP mDNSResponder
+          cat /etc/resolv.conf | tee "$RUNNER_TEMP/dns-after.log"
+          for type in A AAAA MX NS TXT; do
+            answer=$(dig +time=5 +tries=2 invalid.invalid. "$type")
+            printf '%s\n' "$answer" | tee -a "$RUNNER_TEMP/dns-after.log"
+            grep -q 'status: NXDOMAIN' <<< "$answer"
+          done
+          ./bin/go test -short -count=1 -v -run '^TestLookupNoSuchHost$' net \
+            2>&1 | tee "$RUNNER_TEMP/dns-go-test.log"
 
       - name: Run all.bash test stage without rebuilding
         working-directory: src
@@ -562,6 +569,7 @@ jobs:
             ${{ runner.temp }}/kernel.log
             ${{ runner.temp }}/dns-before.log
             ${{ runner.temp }}/dns-after.log
+            ${{ runner.temp }}/dns-go-test.log
             test/llvm_known_failures.json
 
   release:

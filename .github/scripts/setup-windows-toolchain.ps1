@@ -20,6 +20,22 @@ foreach ($package in $packages) {
     }
     Expand-Archive $archive -DestinationPath $env:RUNNER_TEMP -Force
 }
+# Use a native pkg-config executable; the runner's Strawberry Perl .bat
+# wrapper does not work when invoked by the Go command's cgo tests.
+$pkgconfArchive = Join-Path $env:RUNNER_TEMP 'pkgconf-x64-3.0.10.msi'
+$pkgconfRoot = Join-Path $env:RUNNER_TEMP 'pkgconf-3.0.10'
+& curl.exe --fail --location --retry 5 --output $pkgconfArchive 'https://github.com/pkgconf/pkgconf/releases/download/pkgconf-3.0.10/pkgconf-x64-3.0.10.msi'
+if ($LASTEXITCODE -ne 0) { throw 'pkgconf download failed' }
+if ((Get-FileHash $pkgconfArchive -Algorithm SHA256).Hash -ne '28cc9e44473a3ef277260f3dac20f58e2a667760393bd47dc309b6426e9bd727') {
+    throw 'pkgconf SHA-256 mismatch'
+}
+$install = Start-Process msiexec.exe -ArgumentList @('/a', ('"' + $pkgconfArchive + '"'), '/qn', ('TARGETDIR="' + $pkgconfRoot + '"')) -Wait -PassThru
+if ($install.ExitCode -ne 0) { throw "pkgconf extraction failed: $($install.ExitCode)" }
+$pkgconf = Get-ChildItem $pkgconfRoot -Recurse -Filter pkg-config.exe | Select-Object -First 1
+if (-not $pkgconf) { throw 'pkg-config.exe is missing from the pkgconf package' }
+& $pkgconf.FullName --version
+if ($LASTEXITCODE -ne 0) { throw 'pkg-config.exe could not run' }
+$pkgconf.DirectoryName | Out-File $env:GITHUB_PATH -Append -Encoding utf8
 $bin = "$env:RUNNER_TEMP/$($packages[0].Name)/bin".Replace('\', '/')
 $cache = "$env:RUNNER_TEMP/$($packages[1].Name)".Replace('\', '/')
 $bin, $cache | Out-File $env:GITHUB_PATH -Append -Encoding utf8
