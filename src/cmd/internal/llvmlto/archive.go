@@ -41,8 +41,9 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int, 
 	sort.Slice(names, func(i, j int) bool { return paths[names[i]] < paths[names[j]] })
 	var inputs [][]byte
 	var originals []string
+	var layouts [][]archive.Entry
 	for _, path := range names {
-		ir, err := readIR(path)
+		ir, entries, err := readIR(path)
 		if err != nil {
 			return "", nil, cleanup, err
 		}
@@ -51,6 +52,7 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int, 
 		}
 		inputs = append(inputs, ir)
 		originals = append(originals, path)
+		layouts = append(layouts, entries)
 	}
 	if len(inputs) == 0 {
 		return "", nil, cleanup, fmt.Errorf("ThinLTO requires packages compiled with -llvm-lto=thin")
@@ -67,7 +69,7 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int, 
 	replacements := make(map[string]string)
 	for i, path := range originals {
 		archive := filepath.Join(work, fmt.Sprintf("%d.a", i))
-		if err := rewriteArchive(path, archive, objects[i]); err != nil {
+		if err := rewriteArchive(path, archive, layouts[i], objects[i]); err != nil {
 			return "", nil, cleanup, err
 		}
 		replacements[path] = archive
@@ -85,36 +87,49 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int, 
 	return main, result, cleanup, nil
 }
 
-func readIR(path string) ([]byte, error) {
+// readIR validates slim archives before optimization and retains their layout
+// for rewriting. Archives without bitcode pass through the ordinary Go linker.
+func readIR(path string) ([]byte, []archive.Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 	a, err := archive.Parse(f, false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var ir []byte
-	for _, e := range a.Entries {
-		if e.Name != irMember {
-			continue
-		}
-		if ir != nil {
-			return nil, fmt.Errorf("%s: duplicate %s member", path, irMember)
-		}
-		if e.Size == 0 {
-			return nil, fmt.Errorf("%s: empty %s member", path, irMember)
-		}
-		ir, err = io.ReadAll(io.NewSectionReader(f, e.Offset, e.Size))
-		if err != nil {
-			return nil, err
-		}
-		if int64(len(ir)) != e.Size {
-			return nil, io.ErrUnexpectedEOF
+	var bitcode *archive.Entry
+	objects := 0
+	for i := range a.Entries {
+		e := &a.Entries[i]
+		switch e.Name {
+		case "_go_.o":
+			objects++
+		case irMember:
+			if bitcode != nil {
+				return nil, nil, fmt.Errorf("%s: duplicate %s member", path, irMember)
+			}
+			bitcode = e
 		}
 	}
-	return ir, nil
+	if bitcode == nil {
+		return nil, nil, nil
+	}
+	if objects != 0 {
+		return nil, nil, fmt.Errorf("%s: expected a slim bitcode archive with no compiler GoObj member, found %d", path, objects)
+	}
+	if bitcode.Size == 0 {
+		return nil, nil, fmt.Errorf("%s: empty %s member", path, irMember)
+	}
+	ir, err := io.ReadAll(io.NewSectionReader(f, bitcode.Offset, bitcode.Size))
+	if err != nil {
+		return nil, nil, err
+	}
+	if int64(len(ir)) != bitcode.Size {
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+	return ir, a.Entries, nil
 }
 
 // writeArchiveEntry uses the same header as cmd/pack, but propagates write
@@ -140,31 +155,12 @@ func writeArchiveEntry(out io.Writer, name string, size int64, content io.Reader
 	return nil
 }
 
-func rewriteArchive(src, dst string, object []byte) (err error) {
+func rewriteArchive(src, dst string, entries []archive.Entry, object []byte) (err error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	a, err := archive.Parse(f, false)
-	if err != nil {
-		return err
-	}
-	count, bitcode := 0, 0
-	for _, e := range a.Entries {
-		if e.Name == irMember {
-			bitcode++
-		}
-		if e.Name == "_go_.o" {
-			count++
-		}
-	}
-	if count != 0 {
-		return fmt.Errorf("%s: expected a slim bitcode archive with no compiler GoObj member, found %d", src, count)
-	}
-	if bitcode != 1 {
-		return fmt.Errorf("%s: expected one bitcode member, found %d", src, bitcode)
-	}
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
@@ -180,7 +176,7 @@ func rewriteArchive(src, dst string, object []byte) (err error) {
 	if _, err := archive.New(out); err != nil {
 		return err
 	}
-	for _, e := range a.Entries {
+	for _, e := range entries {
 		if e.Name == irMember {
 			if err := writeArchiveEntry(out, "_go_.o", int64(len(object)), bytes.NewReader(object)); err != nil {
 				return err

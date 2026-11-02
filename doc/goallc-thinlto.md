@@ -60,8 +60,11 @@ Native debug metadata follows LLVM importing and inlining. Temporary
 as names and package references, including linknamed functions. After
 optimization, reachable scopes regain exact GoObj debug symbol mappings;
 unimported null references are discarded. Package configuration, import DAG,
-CPU configuration, and cgo assembly directives remain owned by each original
-module. LLVM already keeps ordinary module assembly, including `.goobj.cgo`,
+CPU configuration, generated read-only data classification, and cgo assembly
+directives remain owned by each original module. FIPS packages participate in
+ThinLTO while retaining their FIPS symbol sections; their classification of
+generated static data must not propagate into importing packages.
+LLVM already keeps ordinary module assembly, including `.goobj.cgo`,
 in its owning module during importing. GoALLC does not copy it back after
 optimization. The GoObj parser rejects `.symver`, so LLVM's ELF symbol-version
 import exception does not apply.
@@ -69,8 +72,8 @@ import exception does not apply.
 Archive rewriting preserves export data, assembly, cgo objects, member order,
 and member headers. Ordinary archives can participate in the same link. For
 example, `-gcflags='example.com/app/pkg=-enablellvm=false'`
-compiles one package with the native Go backend. FIPS packages automatically use
-ordinary LLVM objects to preserve their generated-data boundary.
+compiles one package with the native Go backend. Archive layout and slim-member
+validation are collected before optimization and reused when writing objects.
 
 ## Supported configurations
 

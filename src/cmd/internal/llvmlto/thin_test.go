@@ -87,6 +87,27 @@ func thinLTOEnv() []string {
 	return append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOFLAGS=", "GOWORK=off", "GOOS="+runtime.GOOS, "GOARCH="+runtime.GOARCH)
 }
 
+func TestThinLTOFIPS(t *testing.T) {
+	goTool := thinLTOToolchain(t)
+	for _, mode := range []string{"exe", "pie"} {
+		t.Run(mode, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "fips.test")
+			cmd := exec.Command(goTool, "test", "-c", "-lto=thin", "-buildmode="+mode, "-o", output, "crypto/internal/fips140test")
+			cmd.Env = thinLTOEnv()
+			if data, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("FIPS build: %v\n%s", err, data)
+			}
+			// Check the intact binary, rejection of a modified checksum, and
+			// the placement of FIPS and non-FIPS symbols in the final image.
+			cmd = exec.Command(output, "-test.run=^TestIntegrityCheck", "-test.v", "-test.count=1")
+			cmd.Env = append(thinLTOEnv(), "GODEBUG=fips140=on")
+			if data, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("FIPS integrity: %v\n%s", err, data)
+			}
+		})
+	}
+}
+
 // Both successful standard-library references and forbidden main-package
 // pulls must retain their original package identity across ThinLTO imports.
 func TestThinLTOLinkname(t *testing.T) {
