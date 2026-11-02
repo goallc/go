@@ -123,6 +123,11 @@ func (gcToolchain) gc(b *Builder, a *Action, archive string, importcfg, embedcfg
 	}
 
 	gcflags := str.StringList(forcedGcflags, p.Internal.Gcflags)
+	// FIPS-generated constants require their original module boundary.
+	// Keep these packages as ordinary objects in an otherwise FullLTO link.
+	if cfg.BuildLTO != "" && (p.ImportPath == "crypto/internal/fips140" || strings.HasPrefix(p.ImportPath, "crypto/internal/fips140/")) {
+		gcflags = append(gcflags, "-llvm-lto=false")
+	}
 	if p.Internal.FuzzInstrument {
 		gcflags = append(gcflags, fuzzInstrumentFlags()...)
 	}

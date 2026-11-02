@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCPreCodeGen.h"
+#include "GoALLCPlugin.h"
 #include "GoALLCCPUFeatures.h"
 #include "GoALLCStatepoints.h"
 #include "GoALLCWriteBarriers.h"
@@ -61,6 +62,8 @@ struct LowerWriteBarrierRecordsPass : PassInfoMixin<LowerWriteBarrierRecordsPass
   }
 };
 
+} // namespace
+
 void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
@@ -81,6 +84,8 @@ void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
         return false;
       });
 }
+
+namespace {
 
 bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
                            raw_pwrite_stream &) {

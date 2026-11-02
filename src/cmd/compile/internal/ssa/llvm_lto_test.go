@@ -9,15 +9,84 @@ package ssa
 import (
 	"bytes"
 	"cmd/internal/archive"
+	"cmd/internal/obj"
 	"internal/testenv"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/goallc/go-llvm"
 )
+
+// The original closure and each imported inline copy must enter LTO with
+// distinct storage names, while preserving the same final GoObj name.
+func TestLLVMLTOClosureNames(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			dir := t.TempDir()
+			goTool := testenv.GoToolPath(t)
+			compile := func(pkg, source, output string) []string {
+				t.Helper()
+				file := filepath.Join(dir, pkg+".go")
+				if err := os.WriteFile(file, []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{"tool", "compile", "-enablellvm", "-llvm-lto", "-llvm-keep-ir", "-p=" + pkg, "-o", output}
+				if pkg != "p" {
+					args = append(args, "-importcfg", filepath.Join(dir, "importcfg"))
+				}
+				cmd := testenv.Command(t, goTool, append(args, file)...)
+				cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile %s: %v\n%s", pkg, err, out)
+				}
+				data, err := os.ReadFile(output + ".opt.ll")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var names []string
+				for _, match := range regexp.MustCompile(`(?m)^define [^\n]*@"?(p\.Make\.func1[^"(]*)"?\([^\n]*!goobj.content_addressable`).FindAllStringSubmatch(string(data), -1) {
+					name := match[1]
+					if name == "p.Make.func1" || obj.TrimInlineHash(name) != "p.Make.func1" {
+						t.Fatalf("closure lacks a removable storage discriminator: %s", name)
+					}
+					names = append(names, name)
+				}
+				slices.Sort(names)
+				return names
+			}
+			p := filepath.Join(dir, "p.a")
+			original := compile("p", "package p\nfunc Make(n int) func(int) int { return func(x int) int { return x+n } }\n", p)
+			if len(original) != 1 {
+				t.Fatalf("original closure names: %v", original)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "importcfg"), []byte("packagefile p="+p+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]bool{original[0]: true}
+			for _, pkg := range []string{"q", "r"} {
+				source := "package " + pkg + "\nimport \"p\"\nvar F = p.Make(3)\nvar G = p.Make(4)\n"
+				names := compile(pkg, source, filepath.Join(dir, pkg+".a"))
+				if len(names) != 2 {
+					t.Fatalf("%s: want two imported inline copies, got %v", pkg, names)
+				}
+				for _, name := range names {
+					if seen[name] {
+						t.Fatalf("closure storage name collides across copies: %s", name)
+					}
+					seen[name] = true
+				}
+				if again := compile(pkg, source, filepath.Join(dir, pkg+"-again.a")); !slices.Equal(names, again) {
+					t.Fatalf("closure names depend on compilation order or output path: %v != %v", names, again)
+				}
+			}
+		})
+	}
+}
 
 func TestLLVMSlimArchive(t *testing.T) {
 	testenv.MustHaveGoBuild(t)

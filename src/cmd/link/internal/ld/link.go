@@ -32,6 +32,7 @@ package ld
 
 import (
 	"bufio"
+	"cmd/internal/goobj"
 	"cmd/internal/objabi"
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
@@ -102,6 +103,7 @@ type Link struct {
 
 	PackageFile  map[string]string
 	PackageShlib map[string]string
+	ltoManifest  *goobj.LTOManifest
 
 	tramps []loader.Sym // trampolines
 

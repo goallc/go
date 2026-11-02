@@ -462,23 +462,8 @@ func closureName(outerfn *Func, pos src.XPos, why Op, gen int) *types.Sym {
 
 	// If this closure was created due to inlining, find the original
 	// outer function's name for the closure (#60324).
-	var inlHash string
-	if inlIndex := base.Ctxt.InnermostPos(pos).Base().InliningIndex(); inlIndex >= 0 {
-		// The compiler doesn't like multiple symbols with the same
-		// name. We make a unique suffix temporarily for the
-		// compiler, and strip it during object file writing, so
-		// it will not be the linker symbol name. For linking,
-		// we use a content hash to disambiguate instead.
-		// We choose the suffix as a hash of the inline call stack.
-		h := hash.New32()
-		fmt.Fprint(h, inlIndex)
-		base.Ctxt.InlTree.AllParents(inlIndex, func(call obj.InlinedCall) {
-			if call.Parent >= 0 {
-				fmt.Fprint(h, " ", call.Parent)
-			}
-		})
-		inlHash = base64.StdEncoding.EncodeToString(h.Sum(nil)[:8])
-
+	inlIndex := base.Ctxt.InnermostPos(pos).Base().InliningIndex()
+	if inlIndex >= 0 {
 		outer = base.Ctxt.InlTree.InlinedFuncName(inlIndex)
 		if pkgPath := base.Ctxt.InlTree.InlinedFuncPkg(inlIndex); pkgPath != "" {
 			pkg = types.NewPkg(pkgPath, "")
@@ -502,7 +487,25 @@ func closureName(outerfn *Func, pos src.XPos, why Op, gen int) *types.Sym {
 	}
 
 	name := fmt.Sprintf("%s%s%d", outer, suffix, gen)
-	if inlHash != "" {
+	if inlIndex >= 0 || base.Flag.LLVMLTO {
+		// Use a temporary hash of the inline call stack to distinguish copies.
+		// Object writing strips it; linking uses the final content hash instead.
+		h := hash.New32()
+		if base.Flag.LLVMLTO {
+			// LTO combines packages before object writing. Include the compiling
+			// package and give original closures a suffix too, so the merger can
+			// preserve each copy's identity without renaming it a second time.
+			fmt.Fprintf(h, "%s\x00%s\x00", types.LocalPkg.Path, name)
+		}
+		fmt.Fprint(h, inlIndex)
+		if inlIndex >= 0 {
+			base.Ctxt.InlTree.AllParents(inlIndex, func(call obj.InlinedCall) {
+				if call.Parent >= 0 {
+					fmt.Fprint(h, " ", call.Parent)
+				}
+			})
+		}
+		inlHash := base64.StdEncoding.EncodeToString(h.Sum(nil)[:8])
 		// Attach the inline hash (see the comment above).
 		// If it already has a hash, trim it, so we don't include
 		// two hashes for nested closures. The new hash should be

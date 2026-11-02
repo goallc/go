@@ -87,6 +87,9 @@ type oReader struct {
 	nhashed64def int      // cache goobj.Reader.NHashed64Def()
 	nhasheddef   int      // cache goobj.Reader.NHashedDef()
 	objidx       uint32   // index of this reader in the objs slice
+	lto          *ltoObject
+	ltoStd       *bool                     // original package identity for a manifest reference
+	pkgRemap     map[uint32]map[uint32]Sym // original indices of merged packages
 }
 
 // Total number of defined symbols (package symbols, hashed symbols, and
@@ -270,7 +273,12 @@ type Loader struct {
 	// larger size.
 	sizeFixups []symAndSize
 
-	flags uint32
+	flags        uint32
+	ltoManifest  *goobj.LTOManifest
+	ltoLibraries map[string]*sym.Library
+	ltoReader    *oReader
+	ltoImports   map[string]map[uint32]Sym
+	ltoUnits     map[Sym]*sym.CompilationUnit
 
 	strictDupMsgs int // number of strict-dup warning/errors, when FlagStrictDups is enabled
 
@@ -722,6 +730,12 @@ func (l *Loader) resolve(r *oReader, s goobj.SymRef) Sym {
 	case goobj.PkgIdxSelf:
 		rr = r
 	default:
+		if remap := r.pkgRemap[p]; remap != nil {
+			if target := remap[s.SymIdx]; target != 0 {
+				return target
+			}
+			log.Fatalf("%s: missing FullLTO symbol %s[%d]", r.unit.Lib.Pkg, r.Pkg(int(p)), s.SymIdx)
+		}
 		rr = l.objs[r.pkg[p]]
 	}
 	return l.toGlobal(rr, s.SymIdx)
@@ -1635,6 +1649,9 @@ func (l *Loader) SymGoType(i Sym) Sym { return l.aux1(i, goobj.AuxGotype) }
 // SymUnit returns the compilation unit for a given symbol (which will
 // typically be nil for external or linker-manufactured symbols).
 func (l *Loader) SymUnit(i Sym) *sym.CompilationUnit {
+	if unit := l.ltoUnits[i]; unit != nil {
+		return unit
+	}
 	if l.IsExternal(i) {
 		pp := l.getPayload(i)
 		if pp.objidx != 0 {
@@ -1655,6 +1672,9 @@ func (l *Loader) SymUnit(i Sym) *sym.CompilationUnit {
 func (l *Loader) SymPkg(i Sym) string {
 	if f, ok := l.symPkg[i]; ok {
 		return f
+	}
+	if unit := l.ltoUnits[i]; unit != nil {
+		return unit.Lib.Pkg
 	}
 	if l.IsExternal(i) {
 		pp := l.getPayload(i)
@@ -2231,6 +2251,9 @@ func (l *Loader) Preload(localSymVersion int, f *bio.Reader, lib *sym.Library, u
 	for i := range unit.FileTable {
 		unit.FileTable[i] = r.File(i)
 	}
+	if l.ltoManifest != nil && lib.File == l.ltoManifest.Archive && !r.FromAssembly() {
+		l.attachLTO(or)
+	}
 
 	l.addObj(lib.Pkg, or)
 
@@ -2276,8 +2299,8 @@ func (st *loadState) preloadSyms(r *oReader, kind int) {
 		panic("preloadSyms: bad kind")
 	}
 	l.growAttrBitmaps(len(l.objSyms) + int(end-start))
-	loadingRuntimePkg := r.unit.Lib.Pkg == "runtime"
 	for i := start; i < end; i++ {
+		loadingRuntimePkg := r.unitFor(i).Lib.Pkg == "runtime"
 		osym := r.Sym(i)
 		var name string
 		var v int
@@ -2298,7 +2321,7 @@ func (st *loadState) preloadSyms(r *oReader, kind int) {
 			// This use of linkname is usually for referencing C symbols, so allow symbols
 			// with no "." in its name (not a regular Go symbol).
 			// Linkname is always a non-package reference.
-			st.linknameVarRefs = append(st.linknameVarRefs, linknameVarRef{r, name, gi})
+			st.linknameVarRefs = append(st.linknameVarRefs, linknameVarRef{r.referenceReader(i), name, gi})
 		}
 		if osym.Local() {
 			l.SetAttrLocal(gi, true)
@@ -2355,10 +2378,12 @@ func (l *Loader) LoadSyms(arch *sys.Arch) {
 	for _, vr := range st.linknameVarRefs {
 		l.checkLinkname(vr.pkg, vr.name, vr.sym)
 	}
+	l.prepareLTOImports()
 	l.nhashedsyms = len(st.hashed64Syms) + len(st.hashedSyms)
 	for _, r := range l.objs[goObjStart:] {
 		loadObjRefs(l, r, arch)
 	}
+	l.checkLTOLinknames()
 	for _, sf := range l.sizeFixups {
 		pp := l.cloneToExternal(sf.sym)
 		pp.size = int64(sf.size)
@@ -2376,7 +2401,7 @@ func loadObjRefs(l *Loader, r *oReader, arch *sys.Arch) {
 		v := abiToVer(osym.ABI(), r.version)
 		gi := l.LookupOrCreateSym(name, v)
 		r.syms[ndef+i] = gi
-		if osym.IsLinkname() || osym.IsLinknameStd() || r.FromAssembly() {
+		if r.lto == nil && (osym.IsLinkname() || osym.IsLinknameStd() || r.FromAssembly()) {
 			// Check if a linkname reference is allowed.
 			// Only check references (pull), not definitions (push),
 			// so push is always allowed.
@@ -2396,6 +2421,14 @@ func loadObjRefs(l *Loader, r *oReader, arch *sys.Arch) {
 	r.pkg = make([]uint32, npkg)
 	for i := 1; i < npkg; i++ { // PkgIdx 0 is a dummy invalid package
 		pkg := r.Pkg(i)
+		if remap, ok := l.ltoImports[pkg]; ok {
+			if r.pkgRemap == nil {
+				r.pkgRemap = make(map[uint32]map[uint32]Sym)
+			}
+			r.pkgRemap[uint32(i)] = remap
+			r.pkg[i] = l.ltoReader.objidx
+			continue
+		}
 		objidx, ok := l.objByPkg[pkg]
 		if !ok {
 			log.Fatalf("%v: reference to nonexistent package %s", r.unit.Lib, pkg)
@@ -2552,10 +2585,10 @@ func (l *Loader) checkLinkname(refpkg *oReader, name string, s Sym) {
 	if r == l.extReader { // referencing external symbol is okay
 		return
 	}
-	if !r.Std() { // For now, only check for symbols defined in std
+	if !r.stdFor(li) { // For now, only check for symbols defined in std
 		return
 	}
-	if r.unit.Lib.Pkg == pkg { // assembly reference from same package
+	if r.unitFor(li).Lib.Pkg == pkg { // assembly reference from same package
 		return
 	}
 	osym := r.Sym(li)
@@ -2827,8 +2860,8 @@ func (l *Loader) AssignTextSymbolOrder(libs []*sym.Library, intlibs []bool, exts
 	// Walk through all text symbols from Go object files and append
 	// them to their corresponding library's textp list.
 	for _, r := range l.objs[goObjStart:] {
-		lib := r.unit.Lib
 		for i, n := uint32(0), uint32(r.NAlldef()); i < n; i++ {
+			lib := r.unitFor(i).Lib
 			gi := l.toGlobal(r, i)
 			if !l.attrReachable.Has(gi) {
 				continue

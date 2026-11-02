@@ -21,6 +21,7 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
 set(GOALLC_STATEPOINT_SOURCES
+  GoALLCLTO.cpp
   GoALLCCPUFeatures.cpp
   GoALLCAsyncPreemption.cpp
   GoALLCStackMapPrinter.cpp
@@ -69,6 +70,7 @@ if(BUILD_TESTING)
     REQUIRED
   )
   find_program(GOALLC_BASH_EXECUTABLE NAMES bash REQUIRED)
+  include(LTOTests.cmake)
 
   # CTest does not model pipelines directly. Keep the shell glue here and put
   # every assertion in the LLVM input next to the IR that it describes.
