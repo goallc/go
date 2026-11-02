@@ -5,6 +5,7 @@
 package main
 
 import (
+	"internal/runtime/sys"
 	"runtime"
 	"runtime/debug"
 	"unsafe"
@@ -42,6 +43,15 @@ func badLR2(arg int) {
 		lrOff = 32 // FIXED_FRAME or sys.MinFrameSize
 	}
 	lrPtr := (*uintptr)(unsafe.Pointer(uintptr(unsafe.Pointer(&arg)) - lrOff))
+	// An address-taken register argument may have a local spill rather than
+	// occupy its ABI argument home. Use the caller SP to locate the actual
+	// return slot on the register-ABI platforms tested here.
+	switch runtime.GOARCH {
+	case "amd64":
+		lrPtr = (*uintptr)(unsafe.Pointer(sys.GetCallerSP() - unsafe.Sizeof(uintptr(0))))
+	case "arm64":
+		lrPtr = (*uintptr)(unsafe.Pointer(sys.GetCallerSP()))
+	}
 	*lrPtr = 0xbad
 
 	runtime.KeepAlive(lrPtr) // prevent dead store elimination
