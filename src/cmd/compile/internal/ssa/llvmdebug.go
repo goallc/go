@@ -259,7 +259,8 @@ func llvmDIFile(pos src.Pos) llvm.Metadata {
 	}
 	dir, name := filepath.Split(path)
 	if dir != "" {
-		dir = filepath.Clean(dir)
+		// Go's PCLN and DWARF paths use forward slashes on every host.
+		dir = filepath.ToSlash(filepath.Clean(dir))
 	}
 	file := llvmDIBuilder.CreateFile(name, dir)
 	llvmDIFiles[path] = file

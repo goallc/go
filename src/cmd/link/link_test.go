@@ -394,7 +394,14 @@ func TestBuildForTvOS(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	ar := filepath.Join(tmpDir, "lib.a")
-	cmd := goCmd(t, "build", "-buildmode=c-archive", "-o", ar, lib)
+	args := []string{"build", "-buildmode=c-archive", "-o", ar}
+	if testenv.GoCompilerUsesLLVM(t) {
+		// This exercises the Mach-O linker for tvOS, which is outside the
+		// LLVM backend's supported targets. Keep that linker coverage using
+		// the native backend instead of dropping the test on Darwin hosts.
+		args = append(args, "-gcflags=all=-enablellvm=false")
+	}
+	cmd := goCmd(t, append(args, lib)...)
 	env := []string{
 		"CGO_ENABLED=1",
 		"GOOS=ios",

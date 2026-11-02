@@ -77,10 +77,18 @@ func TestConvertCPUProfileNoSamples(t *testing.T) {
 }
 
 //go:noinline
-func f1() { f1() }
+func f1() {
+	// The synthetic profiles below use offsets up to three bytes from entry.
+	// Keep observable work so recursion cannot become a two-byte jump loop.
+	runtime.Gosched()
+	f1()
+}
 
 //go:noinline
-func f2() { f2() }
+func f2() {
+	runtime.Gosched()
+	f2()
+}
 
 // testPCs returns two PCs and two corresponding memory mappings
 // to use in test profiles.

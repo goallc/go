@@ -499,6 +499,23 @@ jobs:
           cat "$RUNNER_TEMP/selected-tests.txt"
           echo "GO_TEST_SHORT=$GO_TEST_SHORT; selected $(wc -l < "$RUNNER_TEMP/selected-tests.txt") dist tests" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check Darwin DNS negative responses
+        if: runner.os == 'macOS' && matrix.group == 'stdlib'
+        run: |
+          # Some hosted macOS VM DNS proxies time out for .invalid instead of
+          # returning NXDOMAIN, which breaks the existing net resolver tests.
+          dig +time=3 +tries=1 invalid.invalid. A > "$RUNNER_TEMP/dns-before.log" || true
+          cat "$RUNNER_TEMP/dns-before.log"
+          if ! grep -q 'status: NXDOMAIN' "$RUNNER_TEMP/dns-before.log"; then
+            while IFS= read -r service; do
+              [[ "$service" == \** ]] && continue
+              sudo networksetup -setdnsservers "$service" 1.1.1.1 8.8.8.8
+            done < <(networksetup -listallnetworkservices | tail -n +2)
+            sudo dscacheutil -flushcache
+          fi
+          dig +time=5 +tries=2 invalid.invalid. A | tee "$RUNNER_TEMP/dns-after.log"
+          grep -q 'status: NXDOMAIN' "$RUNNER_TEMP/dns-after.log"
+
       - name: Run all.bash test stage without rebuilding
         working-directory: src
         shell: bash
@@ -543,6 +560,8 @@ jobs:
             ${{ runner.temp }}/selected-tests.txt
             ${{ runner.temp }}/resources.log
             ${{ runner.temp }}/kernel.log
+            ${{ runner.temp }}/dns-before.log
+            ${{ runner.temp }}/dns-after.log
             test/llvm_known_failures.json
 
   release:
