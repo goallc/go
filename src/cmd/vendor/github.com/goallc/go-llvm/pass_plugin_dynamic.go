@@ -11,10 +11,7 @@ package llvm
 */
 import "C"
 
-import (
-	"errors"
-	"unsafe"
-)
+import "unsafe"
 
 // UsesLinkedPassPlugin reports whether the GoALLC pass implementation is
 // linked into the current process instead of loaded from a shared library.
@@ -25,13 +22,7 @@ func UsesLinkedPassPlugin() bool { return false }
 func (m Module) RunPassPluginEarlyIR(plugin string) error {
 	cplugin := C.CString(plugin)
 	defer C.free(unsafe.Pointer(cplugin))
-	err := C.LLVMRunPassPluginEarlyIR(m.C, cplugin)
-	if err == nil {
-		return nil
-	}
-	cstr := C.LLVMGetErrorMessage(err)
-	defer C.LLVMDisposeErrorMessage(cstr)
-	return errors.New(C.GoString(cstr))
+	return passPluginError(C.LLVMRunPassPluginEarlyIR(m.C, cplugin))
 }
 
 // RunPassPluginPreCodeGen loads a pass plugin into the current process and
@@ -39,11 +30,17 @@ func (m Module) RunPassPluginEarlyIR(plugin string) error {
 func (tm TargetMachine) RunPassPluginPreCodeGen(m Module, ft CodeGenFileType, plugin string) error {
 	cplugin := C.CString(plugin)
 	defer C.free(unsafe.Pointer(cplugin))
-	err := C.LLVMRunPassPluginPreCodeGen(m.C, tm.C, C.LLVMCodeGenFileType(ft), cplugin)
-	if err == nil {
-		return nil
-	}
-	cstr := C.LLVMGetErrorMessage(err)
-	defer C.LLVMDisposeErrorMessage(cstr)
-	return errors.New(C.GoString(cstr))
+	return passPluginError(C.LLVMRunPassPluginPreCodeGen(m.C, tm.C, C.LLVMCodeGenFileType(ft), cplugin))
+}
+
+func runPassPluginThinLTO(inputs *C.LLVMMemoryBufferRef, count C.size_t, diagnostics *C.char, pic C.LLVMBool, jobs C.unsigned, outputs *C.LLVMMemoryBufferRef, plugin string) error {
+	cplugin := C.CString(plugin)
+	defer C.free(unsafe.Pointer(cplugin))
+	return passPluginError(C.LLVMRunPassPluginThinLTO(inputs, count, diagnostics, pic, jobs, outputs, cplugin))
+}
+
+func writePassPluginThinBitcode(module C.LLVMModuleRef, output *C.LLVMMemoryBufferRef, plugin string) error {
+	cplugin := C.CString(plugin)
+	defer C.free(unsafe.Pointer(cplugin))
+	return passPluginError(C.LLVMWritePassPluginThinBitcode(module, output, cplugin))
 }

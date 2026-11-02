@@ -1,7 +1,7 @@
 // Copyright 2026 The GoALLC Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 #include "GoALLCThinLTO.h"
-#include "GoALLCThinLTOC.h"
+#include "SupportBindings.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
@@ -54,26 +54,30 @@ int main(int argc, char **argv) {
     Modules.push_back(Buffers.back()->getMemBufferRef());
   }
   if (EmitObjects) {
-    std::vector<GoALLCLTOInput> Inputs;
-    std::vector<GoALLCLTOBuffer> Outputs(Modules.size());
-    for (auto B : Modules)
-      Inputs.push_back({B.getBufferIdentifier().data(), B.getBufferStart(),
-                        B.getBufferSize()});
-    char *Error = GoALLCThinLTOBuffers(Inputs.data(), Inputs.size(),
-                                       SaveTemps ? Out.c_str() : "", 0, Jobs,
-                                       Outputs.data());
+    std::vector<LLVMMemoryBufferRef> Inputs;
+    std::vector<LLVMMemoryBufferRef> Outputs(Modules.size());
+    for (auto &B : Buffers)
+      Inputs.push_back(wrap(B.get()));
+    LLVMErrorRef Error = LLVMGoALLCThinLTO(
+        Inputs.data(), Inputs.size(), SaveTemps ? Out.c_str() : "", 0, Jobs,
+        Outputs.data());
     bool Valid = Error == nullptr;
     for (size_t I = 0; I != Outputs.size(); ++I) {
-      StringRef Object(Outputs[I].data, Outputs[I].size);
+      if (!Outputs[I]) {
+        Valid = false;
+        continue;
+      }
+      StringRef Object = unwrap(Outputs[I])->getBuffer();
       if (!Error && !Object.starts_with("go object "))
         Valid = false;
       if (!Error)
         outs() << "object " << I << ": " << Object.take_front(9) << '\n';
-      free(Outputs[I].data);
+      LLVMDisposeMemoryBuffer(Outputs[I]);
     }
     if (Error) {
-      errs() << Error << '\n';
-      free(Error);
+      char *Message = LLVMGetErrorMessage(Error);
+      errs() << Message << '\n';
+      LLVMDisposeErrorMessage(Message);
     }
     if (!SaveTemps && sys::fs::exists(Out)) {
       errs() << "unexpected intermediate output directory\n";
