@@ -729,10 +729,10 @@ func (gcToolchain) cc(b *Builder, a *Action, ofile, cfile string) error {
 }
 
 // forcedGcflagsFor includes LTO only for packages participating in the ThinLTO
-// link. FIPS data and explicit native-backend overrides use ordinary objects.
+// link. Explicit native-backend overrides use ordinary objects.
 // Both compilation and the action ID must use the same effective flags.
 func forcedGcflagsFor(p *load.Package) []string {
-	if cfg.BuildLTO == "" || p.ImportPath == "crypto/internal/fips140" || strings.HasPrefix(p.ImportPath, "crypto/internal/fips140/") {
+	if cfg.BuildLTO == "" {
 		return forcedGcflags
 	}
 	if enabled, explicit := boolToolFlag(p.Internal.Gcflags, "-enablellvm"); explicit && !enabled {

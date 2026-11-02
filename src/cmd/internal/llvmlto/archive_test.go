@@ -30,7 +30,11 @@ func TestArchiveReplacement(t *testing.T) {
 		a.AddEntry(archive.EntryNativeObj, e.name, 0, 0, 0, 0644, int64(len(e.data)), strings.NewReader(e.data))
 	}
 	f.Close()
-	if err := rewriteArchive(src, dst, []byte("new object")); err != nil {
+	_, entries, err := readIR(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteArchive(src, dst, entries, []byte("new object")); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(dst)
@@ -47,7 +51,7 @@ func TestArchiveReplacement(t *testing.T) {
 			t.Errorf("retained %q", drop)
 		}
 	}
-	original, err := readIR(src)
+	original, _, err := readIR(src)
 	if err != nil || string(original) != "IR bytes" {
 		t.Fatalf("input modified: %q %v", original, err)
 	}
@@ -75,7 +79,11 @@ func TestArchivePreservesMembers(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteArchive(src, dst, []byte("new object!")); err != nil {
+	_, entries, err := readIR(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteArchive(src, dst, entries, []byte("new object!")); err != nil {
 		t.Fatal(err)
 	}
 	readMembers := func(path string) (names []string, preserved [][]byte) {
@@ -117,16 +125,19 @@ func TestInvalidArchiveMembers(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		members []string
-		readIR  bool
+		data    string
 		want    string
 	}{
-		{"missing-bitcode", []string{"__.PKGDEF"}, false, "found 0"},
-		{"duplicate-object", []string{"_go_.o", "_go_.o"}, false, "found 2"},
-		{"duplicate-ir", []string{irMember, irMember}, true, "duplicate"},
+		{"missing-bitcode", []string{"__.PKGDEF"}, "export data", "requires packages compiled"},
+		{"mixed-object", []string{"_go_.o", irMember}, "IR bytes", "found 1"},
+		{"duplicate-object", []string{"_go_.o", "_go_.o", irMember}, "IR bytes", "found 2"},
+		{"duplicate-ir", []string{irMember, irMember}, "IR bytes", "duplicate"},
+		{"empty-bitcode", []string{irMember, "__.PKGDEF"}, "", "empty " + irMember},
+		{"empty-final-member", []string{irMember}, "", "unexpected EOF"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src, dst := filepath.Join(dir, "input.a"), filepath.Join(dir, "output.a")
+			src := filepath.Join(dir, "input.a")
 			f, err := os.Create(src)
 			if err != nil {
 				t.Fatal(err)
@@ -135,21 +146,16 @@ func TestInvalidArchiveMembers(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, name := range test.members {
-				if err := writeArchiveEntry(f, name, 9, strings.NewReader("abcdefghi")); err != nil {
+				if err := writeArchiveEntry(f, name, int64(len(test.data)), strings.NewReader(test.data)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			f.Close()
-			if test.readIR {
-				_, err = readIR(src)
-			} else {
-				err = rewriteArchive(src, dst, nil)
-			}
+			// Invalid members must fail before the fake bitcode reaches LLVM.
+			_, _, cleanup, err := Prepare(src, nil, false, false, 1, "amd64")
+			defer cleanup()
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("got %v, want %q", err, test.want)
-			}
-			if _, err := os.Stat(dst); !os.IsNotExist(err) {
-				t.Fatalf("invalid archive created an output: %v", err)
 			}
 		})
 	}

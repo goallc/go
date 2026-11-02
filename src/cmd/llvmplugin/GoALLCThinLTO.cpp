@@ -51,10 +51,6 @@ static Expected<StringRef> packagePrefix(Module &M) {
   auto *Prefix = dyn_cast<MDString>(Config->getOperand(0)->getOperand(1));
   if (!Prefix || Prefix->getString().empty())
     return fail("invalid ThinLTO package prefix");
-  if (Prefix->getString() == "crypto/internal/fips140" ||
-      Prefix->getString().starts_with("crypto/internal/fips140/") ||
-      M.getNamedMetadata("goobj.static_rodata_type"))
-    return fail("FIPS packages must use ordinary object compilation");
   if (!M.getModuleFlag("goobj.abi"))
     return fail("ThinLTO input requires a goobj.abi module flag");
   if (M.getNamedMetadata("goallc.cpu.config") &&
@@ -335,11 +331,9 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
         return External.count(VI.getGUID()) || Exports[Module].count(VI);
       },
       KeepDefinition);
-  // Populate maps before workers access them concurrently.
-  for (MemoryBufferRef Input : Inputs) {
-    Imports[Input.getBufferIdentifier()];
+  // Even modules without definitions need an entry before workers use find.
+  for (MemoryBufferRef Input : Inputs)
     Defined[Input.getBufferIdentifier()];
-  }
 
   std::vector<std::string> Errors(Inputs.size());
   DefaultThreadPool Pool(hardware_concurrency(Jobs));
@@ -378,9 +372,12 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
         // output package's configuration; imported debug graphs remain intact.
         // Ordinary module asm, including .goobj.cgo, is not imported by LLVM.
         // The importer's .symver exception is unsupported by the GoObj parser.
+        // Generated read-only data follows its owning package's FIPS policy.
+        static constexpr StringLiteral PackageMetadataNames[] = {
+            "goobj.config", "goobj.imports", "goobj.static_rodata_type",
+            "goallc.cpu.config", "goallc.cpu.fmv.done"};
         StringMap<SmallVector<MDNode *>> PackageMetadata;
-        for (StringRef Name : {"goobj.config", "goobj.imports",
-                               "goallc.cpu.config", "goallc.cpu.fmv.done"})
+        for (StringRef Name : PackageMetadataNames)
           if (auto *MD = M.getNamedMetadata(Name))
             llvm::append_range(PackageMetadata[Name], MD->operands());
         if (SaveIR) {
@@ -421,8 +418,7 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
           return E;
         if (!Diagnostics.empty())
           return fail(Diagnostics);
-        for (StringRef Name : {"goobj.config", "goobj.imports",
-                               "goallc.cpu.config", "goallc.cpu.fmv.done"}) {
+        for (StringRef Name : PackageMetadataNames) {
           if (auto *MD = M.getNamedMetadata(Name))
             M.eraseNamedMetadata(MD);
           for (auto *MD : PackageMetadata[Name])
