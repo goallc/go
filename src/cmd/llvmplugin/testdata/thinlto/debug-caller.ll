@@ -1,3 +1,9 @@
+; CGO: "text_header": {{.*}}-lthin_caller
+; CGO-NOT: -lthin_callee
+; ASM-NOT: -lthin_callee
+; ASM: module asm
+; ASM: -lthin_caller
+; ASM-NOT: -lthin_callee
 ; BUFFER: object 0: go object
 ; BUFFER-NEXT: object 1: go object
 ; CHECK-LABEL: define {{.*}}@main.result(
@@ -36,3 +42,5 @@ declare !goobj.import !1 goabiinternal i64 @dep.public()
 !14 = !DILocation(line: 2, scope: !13)
 !15 = !{i32 7, !"Dwarf Version", i32 4}
 !16 = !{i32 2, !"Debug Info Version", i32 3}
+
+module asm ".goobj.cgo \22[[\5C\22cgo_ldflag\5C\22,\5C\22-lthin_caller\5C\22]]\22\0A"
