@@ -6,47 +6,74 @@ package llvmlto
 
 /*
 #include <stdlib.h>
+#include "../../llvmplugin/GoALLCThinLTOC.h"
 #cgo linux LDFLAGS: -ldl
-char *goallcLTO(const char *, const char *const *, size_t, const char *, int, int);
+char *goallcLTO(const char *, const GoALLCLTOInput *, size_t, const char *, int, int, GoALLCLTOBuffer *);
 char *goallcThinWrite(const char *, void *, char **, size_t *);
 */
 import "C"
 import (
 	"cmd/internal/llvmbackend"
 	"fmt"
+	"sync"
 	"unsafe"
 
 	"github.com/goallc/go-llvm"
 )
 
-func optimize(inputs []string, out string, keep bool, jobs int) error {
+var initialize sync.Once
+
+// Output slices borrow C allocations until release. Inputs are copied into C
+// memory so LLVM workers can retain their buffers throughout importing.
+func optimize(names []string, inputs [][]byte, diagnostics string, pic bool, jobs int, arch string) ([][]byte, func(), error) {
+	initialize.Do(func() {
+		llvm.ParseCommandLineOptions(append([]string{"cmd/link LTO"}, llvmbackend.CodeGenOptions(arch)...), "GoALLC LTO")
+	})
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
 		var err error
 		plugin, err = llvmbackend.PassPlugin()
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
 	path := C.CString(plugin)
 	defer C.free(unsafe.Pointer(path))
-	dir := C.CString(out)
+	dir := C.CString(diagnostics)
 	defer C.free(unsafe.Pointer(dir))
-	values := make([]*C.char, len(inputs))
+	values := make([]C.GoALLCLTOInput, len(inputs))
 	for i, input := range inputs {
-		values[i] = C.CString(input)
-		defer C.free(unsafe.Pointer(values[i]))
+		values[i].name = C.CString(names[i])
+		values[i].data = (*C.char)(C.CBytes(input))
+		values[i].size = C.size_t(len(input))
+		defer C.free(unsafe.Pointer(values[i].name))
+		defer C.free(unsafe.Pointer(values[i].data))
 	}
-	save := C.int(0)
-	if keep {
-		save = 1
+	outputs := make([]C.GoALLCLTOBuffer, len(inputs))
+	release := func() {
+		for _, output := range outputs {
+			C.free(unsafe.Pointer(output.data))
+		}
 	}
-	message := C.goallcLTO(path, (**C.char)(unsafe.Pointer(&values[0])), C.size_t(len(values)), dir, save, C.int(jobs))
+	var reloc C.int
+	if pic {
+		reloc = 1
+	}
+	message := C.goallcLTO(path, &values[0], C.size_t(len(values)), dir, reloc, C.int(jobs), &outputs[0])
 	if message != nil {
 		defer C.free(unsafe.Pointer(message))
-		return fmt.Errorf("LTO: %s", C.GoString(message))
+		release()
+		return nil, nil, fmt.Errorf("LTO: %s", C.GoString(message))
 	}
-	return nil
+	objects := make([][]byte, len(outputs))
+	for i, output := range outputs {
+		if uint64(output.size) > uint64(^uint(0)>>1) {
+			release()
+			return nil, nil, fmt.Errorf("ThinLTO object exceeds addressable memory")
+		}
+		objects[i] = unsafe.Slice((*byte)(unsafe.Pointer(output.data)), int(output.size))
+	}
+	return objects, release, nil
 }
 
 // WriteThinBitcode writes LLVM summaries with the Go export identities needed

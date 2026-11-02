@@ -20,8 +20,15 @@ go build -lto=thin -ldflags='-lto-jobs=4 -lto-keep' ./cmd/app
 ```
 
 `-lto-jobs` controls parallel LLVM optimization (default: `GOMAXPROCS`).
-`-lto-keep` prints `LTO_WORK` and retains input bitcode, optimized IR, and
-rewritten package archives for inspection. The package build cache includes
+Archive bitcode is passed to LLVM in memory. Each worker imports and optimizes
+its module, then emits a GoObj from that same module and context. Object buffers
+are written directly into replacement archives. LLVM's process-global GoObj
+configuration requires serial code generation; module optimization stays
+parallel. Modules are released as their workers finish.
+
+By default, ThinLTO preparation writes only replacement archives. `-lto-keep`
+prints `LTO_WORK` and additionally saves input/optimized bitcode and IR, and
+individual Go objects for inspection. The package build cache includes
 LLVM/plugin identities; there is currently no persistent ThinLTO backend cache.
 
 ## Package identity and imports

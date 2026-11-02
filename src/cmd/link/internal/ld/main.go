@@ -370,7 +370,7 @@ func Main(arch *sys.Arch, theArch Arch) {
 		}
 		var cleanup func()
 		var err error
-		mainFile, ctxt.PackageFile, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE, jobs)
+		mainFile, ctxt.PackageFile, cleanup, err = llvmlto.Prepare(mainFile, ctxt.PackageFile, *flagLTOKeep, ctxt.BuildMode == BuildModePIE, jobs, ctxt.Arch.Name)
 		AtExit(cleanup)
 		if err != nil {
 			Exitf("%v", err)
