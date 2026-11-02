@@ -464,7 +464,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP"); fi
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP")
+            GOROOT=$(cygpath -m "$GOROOT")
+            GOCACHE=$(cygpath -m "$GOCACHE")
+          fi
           mkdir -p "$GOCACHE"
           tar --zstd -xf "$RUNNER_TEMP/sdk/go-build-cache.tar.zst" -C "$GOCACHE"
           tar --zstd -xf "$RUNNER_TEMP/sdk/goallc-sdk.tar.zst"
