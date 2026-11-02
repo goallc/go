@@ -31,3 +31,13 @@ foreach(ARCH IN ITEMS x86_64 aarch64)
       FIXTURES_REQUIRED thinlto-debug-${ARCH}-obj)
   endif()
 endforeach()
+
+# Exercise the production buffer ABI with synthetic module identifiers:
+# inputs and optimized modules must never be reopened from disk. No diagnostic
+# directory may be created when save-temps is disabled.
+add_test(NAME thinlto-memory-objects
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+  "rm -rf '${THIN_OUT}/no-files' && '$<TARGET_FILE:goallc-thinlto-test>' --emit-objects --save-temps=false --output-dir='${THIN_OUT}/no-files' '${THIN_FIXTURES}/debug-caller.ll' '${THIN_FIXTURES}/debug-callee.ll' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=BUFFER '${THIN_FIXTURES}/debug-caller.ll'")
+add_test(NAME thinlto-duplicate-input
+  COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+  "'${GOALLC_NOT_EXECUTABLE}' '$<TARGET_FILE:goallc-thinlto-test>' --save-temps=false --output-dir='${THIN_OUT}/duplicate' '${THIN_FIXTURES}/caller.ll' '${THIN_FIXTURES}/caller.ll' 2>&1 | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=DUPLICATE '${THIN_FIXTURES}/caller.ll'")

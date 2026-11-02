@@ -1,3 +1,4 @@
+; DUPLICATE: ThinLTO requires unique nonempty module identifiers
 ; CHECK: @dep.slot = external global i64, {{.*}}!goobj.import ![[REF:[0-9]+]]
 ; CHECK-LABEL: define {{.*}}@main.result(
 ; CHECK: ret i64 42

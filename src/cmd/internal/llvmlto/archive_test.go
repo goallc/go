@@ -17,7 +17,7 @@ import (
 
 func TestArchiveReplacement(t *testing.T) {
 	dir := t.TempDir()
-	src, dst, obj := filepath.Join(dir, "input.a"), filepath.Join(dir, "output.a"), filepath.Join(dir, "new.o")
+	src, dst := filepath.Join(dir, "input.a"), filepath.Join(dir, "output.a")
 	f, err := os.Create(src)
 	if err != nil {
 		t.Fatal(err)
@@ -30,10 +30,7 @@ func TestArchiveReplacement(t *testing.T) {
 		a.AddEntry(archive.EntryNativeObj, e.name, 0, 0, 0, 0644, int64(len(e.data)), strings.NewReader(e.data))
 	}
 	f.Close()
-	if err := os.WriteFile(obj, []byte("new object"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := rewriteArchive(src, dst, obj); err != nil {
+	if err := rewriteArchive(src, dst, []byte("new object")); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(dst)
@@ -58,7 +55,7 @@ func TestArchiveReplacement(t *testing.T) {
 
 func TestArchivePreservesMembers(t *testing.T) {
 	dir := t.TempDir()
-	src, dst, obj := filepath.Join(dir, "input.a"), filepath.Join(dir, "output.a"), filepath.Join(dir, "new.o")
+	src, dst := filepath.Join(dir, "input.a"), filepath.Join(dir, "output.a")
 	f, err := os.Create(src)
 	if err != nil {
 		t.Fatal(err)
@@ -78,10 +75,7 @@ func TestArchivePreservesMembers(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(obj, []byte("new object!"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := rewriteArchive(src, dst, obj); err != nil {
+	if err := rewriteArchive(src, dst, []byte("new object!")); err != nil {
 		t.Fatal(err)
 	}
 	readMembers := func(path string) (names []string, preserved [][]byte) {
@@ -149,7 +143,7 @@ func TestInvalidArchiveMembers(t *testing.T) {
 			if test.readIR {
 				_, err = readIR(src)
 			} else {
-				err = rewriteArchive(src, dst, "unused.o")
+				err = rewriteArchive(src, dst, nil)
 			}
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("got %v, want %q", err, test.want)
