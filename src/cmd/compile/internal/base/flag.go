@@ -129,8 +129,7 @@ type CmdFlags struct {
 	PgoProfile         string       "help:\"read profile or pre-process profile from `file`\""
 	ErrorURL           bool         "help:\"print explanatory URL with error message if applicable\""
 	EnableLLVM         bool         "help:\"compile with the in-process LLVM backend\""
-	LLVMThinLTO        bool         `flag:"llvm-thinlto" help:"emit LLVM bitcode and summaries for ThinLTO at link time"`
-	LLVMLTO            bool         `flag:"llvm-lto" help:"emit pre-link optimized LLVM bitcode for LTO at link time"`
+	LLVMLTO            string       `flag:"llvm-lto" help:"LLVM link-time optimization mode: thin or full (disabled when omitted)"`
 	LLVMKeepIR         bool         "flag:\"llvm-keep-ir\" help:\"keep frontend (.raw.ll), prepared (.ll), and optimized (.opt.ll) LLVM IR beside the output archive\""
 	LLVMOptPasses      string       "flag:\"llvm-opt-passes\" help:\"LLVM optimization pipeline (auto selects O0 with -N, O2 otherwise)\""
 	// Configuration derived from flags; not a flag itself.
@@ -208,6 +207,12 @@ func ParseFlags() {
 	objabi.AddVersionFlag() // -V
 	registerFlags()
 	objabi.Flagparse(usage)
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "llvm-lto" && Flag.LLVMLTO != "thin" && Flag.LLVMLTO != "full" {
+			Errorf("invalid -llvm-lto mode %q: want thin or full", Flag.LLVMLTO)
+			ErrorExit()
+		}
+	})
 	counter.CountFlags("compile/flag:", *flag.CommandLine)
 
 	if gcd := os.Getenv("GOCOMPILEDEBUG"); gcd != "" {

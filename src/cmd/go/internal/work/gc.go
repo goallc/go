@@ -122,12 +122,7 @@ func (gcToolchain) gc(b *Builder, a *Action, archive string, importcfg, embedcfg
 		defaultGcFlags = append(defaultGcFlags, "-symabis", symabis)
 	}
 
-	gcflags := str.StringList(forcedGcflags, p.Internal.Gcflags)
-	// FIPS-generated constants require their original module boundary.
-	// Keep these packages as ordinary objects in an otherwise ThinLTO link.
-	if cfg.BuildLTO != "" && (p.ImportPath == "crypto/internal/fips140" || strings.HasPrefix(p.ImportPath, "crypto/internal/fips140/")) {
-		gcflags = append(gcflags, "-llvm-thinlto=false")
-	}
+	gcflags := str.StringList(forcedGcflagsFor(p), p.Internal.Gcflags)
 	if p.Internal.FuzzInstrument {
 		gcflags = append(gcflags, fuzzInstrumentFlags()...)
 	}
@@ -731,4 +726,17 @@ func (gcToolchain) ldShared(b *Builder, root *Action, toplevelactions []*Action,
 
 func (gcToolchain) cc(b *Builder, a *Action, ofile, cfile string) error {
 	return fmt.Errorf("%s: C source files not supported without cgo", mkAbs(a.Package.Dir, cfile))
+}
+
+// forcedGcflagsFor includes LTO only for packages participating in the ThinLTO
+// link. FIPS data and explicit native-backend overrides use ordinary objects.
+// Both compilation and the action ID must use the same effective flags.
+func forcedGcflagsFor(p *load.Package) []string {
+	if cfg.BuildLTO == "" || p.ImportPath == "crypto/internal/fips140" || strings.HasPrefix(p.ImportPath, "crypto/internal/fips140/") {
+		return forcedGcflags
+	}
+	if enabled, explicit := boolToolFlag(p.Internal.Gcflags, "-enablellvm"); explicit && !enabled {
+		return forcedGcflags
+	}
+	return str.StringList(forcedGcflags, "-llvm-lto="+cfg.BuildLTO)
 }

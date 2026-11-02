@@ -55,7 +55,7 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int) 
 		originals = append(originals, path)
 	}
 	if len(inputs) == 0 {
-		return "", nil, cleanup, fmt.Errorf("ThinLTO requires packages compiled with -llvm-thinlto")
+		return "", nil, cleanup, fmt.Errorf("ThinLTO requires packages compiled with -llvm-lto=thin")
 	}
 	out := filepath.Join(work, "optimized")
 	if err := optimize(inputs, out, keep, jobs); err != nil {
@@ -166,19 +166,14 @@ func rewriteArchive(src, dst, object string) (err error) {
 	if bitcode != 1 {
 		return fmt.Errorf("%s: expected one bitcode member, found %d", src, bitcode)
 	}
-	var obj *os.File
-	var objectSize int64
-	if object != "" {
-		obj, err = os.Open(object)
-		if err != nil {
-			return err
-		}
-		defer obj.Close()
-		info, err := obj.Stat()
-		if err != nil {
-			return err
-		}
-		objectSize = info.Size()
+	obj, err := os.Open(object)
+	if err != nil {
+		return err
+	}
+	defer obj.Close()
+	info, err := obj.Stat()
+	if err != nil {
+		return err
 	}
 	out, err := os.Create(dst)
 	if err != nil {
@@ -197,10 +192,7 @@ func rewriteArchive(src, dst, object string) (err error) {
 	}
 	for _, e := range a.Entries {
 		if e.Name == irMember {
-			if obj == nil {
-				continue
-			}
-			if err := writeArchiveEntry(out, "_go_.o", objectSize, obj); err != nil {
+			if err := writeArchiveEntry(out, "_go_.o", info.Size(), obj); err != nil {
 				return err
 			}
 		} else {
