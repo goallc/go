@@ -7,7 +7,6 @@
 package base
 
 import (
-	"cmd/internal/llvmbackend"
 	"cmd/internal/objabi"
 	"crypto/sha256"
 	"encoding/hex"
@@ -25,7 +24,7 @@ func compileVersionFlagFullSuffix(buildID string) string {
 	if !llvmVersionEnabled(os.Args[1:]) {
 		return " buildID=" + buildID
 	}
-	identity, err := llvmbackend.Identity()
+	identity, err := llvmVersionBackendIdentity()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "compile: resolving in-process LLVM backend identity: %v\n", err)
 		os.Exit(2)

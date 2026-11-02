@@ -1895,7 +1895,11 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 		fatalf("static LLVM linking requires %s: %v", llvmAR, err)
 	}
 
-	archives := strings.Fields(llvmConfigOutput(llvmConfig, "--link-static", "--libfiles"))
+	// --libnames avoids splitting an installed prefix containing spaces.
+	archives := strings.Fields(llvmConfigOutput(llvmConfig, "--link-static", "--libnames"))
+	for i, name := range archives {
+		archives[i] = filepath.Join(goallcLLVMDir, "lib", name)
+	}
 	if len(archives) == 0 {
 		fatalf("%s returned no static component archives", llvmConfig)
 	}
@@ -1913,8 +1917,8 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 	var stamp strings.Builder
 	fmt.Fprintf(&stamp, "version=%s\ncomponents=%s\n", version, strings.Join(goallcLLVMStaticComponents, ","))
 	for _, archive := range archives {
-		if strings.ContainsAny(archive, " \t\r\n") {
-			fatalf("LLVM static archive paths may not contain whitespace: %q", archive)
+		if strings.ContainsAny(archive, "\"\r\n;*") {
+			fatalf("LLVM static archive path contains MRI control characters: %q", archive)
 		}
 		info, err := os.Stat(archive)
 		if err != nil {
@@ -1924,8 +1928,8 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 	}
 
 	output := pathf("%s/libLLVMGoALLC.a", bindingDir)
-	if strings.ContainsAny(output, " \t\r\n") {
-		fatalf("Go root path may not contain whitespace for static LLVM linking: %q", goroot)
+	if strings.ContainsAny(output, "\"\r\n;*") {
+		fatalf("Go root path contains MRI control characters: %q", goroot)
 	}
 	stampFile := output + ".stamp"
 	if oldStamp, err := os.ReadFile(stampFile); err == nil && string(oldStamp) == stamp.String() {
@@ -1937,9 +1941,9 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 	temporary := fmt.Sprintf("%s.tmp.%d", output, os.Getpid())
 	xremove(temporary)
 	var mri strings.Builder
-	fmt.Fprintf(&mri, "CREATE %s\n", temporary)
+	fmt.Fprintf(&mri, "CREATE \"%s\"\n", temporary)
 	for _, archive := range archives {
-		fmt.Fprintf(&mri, "ADDLIB %s\n", archive)
+		fmt.Fprintf(&mri, "ADDLIB \"%s\"\n", archive)
 	}
 	mri.WriteString("SAVE\nEND\n")
 
@@ -1971,9 +1975,6 @@ func llvmConfigOutput(llvmConfig string, options ...string) string {
 func isGoallcLLVMSystemLibrary(library string) bool {
 	allowed := map[string]bool{
 		"-lm":       true,
-		"-lz":       true,
-		"-lzstd":    true,
-		"-lxml2":    true,
 		"-ldl":      true,
 		"-lpthread": true,
 		"-lrt":      true,
@@ -1984,7 +1985,12 @@ func isGoallcLLVMSystemLibrary(library string) bool {
 func goallcLLVMStaticSystemArchive(library string) string {
 	if !strings.HasPrefix(library, "-l") || len(library) == 2 {
 		if filepath.Ext(library) == ".a" {
-			return library
+			// llvm-config may retain the dependency's build-time absolute path.
+			// Installed payloads carry the matching archive beside LLVM's libs.
+			path := filepath.Join(goallcLLVMDir, "lib", filepath.Base(library))
+			if isFile(path) {
+				return path
+			}
 		}
 		return ""
 	}
@@ -1992,15 +1998,6 @@ func goallcLLVMStaticSystemArchive(library string) string {
 	filename := "lib" + name + ".a"
 	if path := pathf("%s/lib/%s", goallcLLVMDir, filename); isFile(path) {
 		return path
-	}
-	for _, pkg := range []string{name, "lib" + name} {
-		output, err := exec.Command(defaultpkgconfig, "--variable=libdir", pkg).Output()
-		if err != nil {
-			continue
-		}
-		if path := filepath.Join(strings.TrimSpace(string(output)), filename); isFile(path) {
-			return path
-		}
 	}
 	return ""
 }

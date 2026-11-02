@@ -11,12 +11,15 @@ import (
 )
 
 func TestInstallGoallcRuntime(t *testing.T) {
-	oldRoot, oldTool, oldLLVM, oldOS := goroot, tooldir, goallcLLVMDir, gohostos
-	defer func() { goroot, tooldir, goallcLLVMDir, gohostos = oldRoot, oldTool, oldLLVM, oldOS }()
+	oldRoot, oldTool, oldLLVM, oldOS, oldLink := goroot, tooldir, goallcLLVMDir, gohostos, goallcLLVMLink
+	defer func() {
+		goroot, tooldir, goallcLLVMDir, gohostos, goallcLLVMLink = oldRoot, oldTool, oldLLVM, oldOS, oldLink
+	}()
 	goroot = t.TempDir()
 	tooldir = filepath.Join(goroot, "pkg", "tool", "linux_amd64")
 	goallcLLVMDir = t.TempDir()
 	gohostos = "linux"
+	goallcLLVMLink = "dynamic"
 	files := map[string]string{
 		filepath.Join(goroot, "pkg", "goallc-llvmplugin", "lib", "GoALLCStatepoints.so"): "plugin",
 		filepath.Join(goallcLLVMDir, "lib", "libLLVM.so.23.1"):                           "llvm",
@@ -50,4 +53,23 @@ func TestInstallGoallcRuntime(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
+}
+
+func TestStaticGoallcRuntimeRemovesDynamicInstallation(t *testing.T) {
+	oldTool, oldLink := tooldir, goallcLLVMLink
+	t.Cleanup(func() { tooldir, goallcLLVMLink = oldTool, oldLink })
+	tooldir, goallcLLVMLink = t.TempDir(), "static"
+	lib := filepath.Join(tooldir, "lib")
+	if err := os.Mkdir(lib, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lib, "GoALLCStatepoints.so"), []byte("old plugin"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	installGoallcRuntime()
+	if _, err := os.Stat(lib); !os.IsNotExist(err) {
+		t.Fatalf("static toolchain retained runtime directory: %v", err)
+	}
+	// Installation must also work without any plugin build or LLVM payload.
+	installGoallcRuntime()
 }

@@ -4,13 +4,14 @@ project(GoALLCStatepoints LANGUAGES C CXX)
 
 set(GOALLC_OBJVIEW_EXECUTABLE "" CACHE FILEPATH
   "optional objview executable for structured GoObj checks")
+option(GOALLC_BUILD_SHARED_PLUGIN "Build the dynamically loaded pass plugin" ON)
 
 find_package(LLVM REQUIRED CONFIG)
 if(NOT LLVM_VERSION_MAJOR EQUAL 23)
   message(FATAL_ERROR
     "GoALLCStatepoints requires LLVM 23, found ${LLVM_PACKAGE_VERSION}")
 endif()
-if(WIN32 OR CYGWIN)
+if(GOALLC_BUILD_SHARED_PLUGIN AND (WIN32 OR CYGWIN))
   message(FATAL_ERROR "GoALLCStatepoints does not support Windows plugins")
 endif()
 
@@ -31,16 +32,22 @@ set(GOALLC_STATEPOINT_SOURCES
   GoALLCWriteBarriers.cpp
 )
 
-add_llvm_pass_plugin(GoALLCStatepoints ${GOALLC_STATEPOINT_SOURCES})
+if(GOALLC_BUILD_SHARED_PLUGIN)
+  add_llvm_pass_plugin(GoALLCStatepoints ${GOALLC_STATEPOINT_SOURCES})
+endif()
 add_library(GoALLCStatepointsStatic STATIC ${GOALLC_STATEPOINT_SOURCES})
 llvm_update_compile_flags(GoALLCStatepointsStatic)
 
-set_target_properties(GoALLCStatepoints GoALLCStatepointsStatic PROPERTIES
+set(GOALLC_PLUGIN_TARGETS GoALLCStatepointsStatic)
+if(GOALLC_BUILD_SHARED_PLUGIN)
+  list(APPEND GOALLC_PLUGIN_TARGETS GoALLCStatepoints)
+endif()
+set_target_properties(${GOALLC_PLUGIN_TARGETS} PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS NO
 )
-if(APPLE)
+if(APPLE AND GOALLC_BUILD_SHARED_PLUGIN)
   target_link_options(GoALLCStatepoints PRIVATE
     "LINKER:-undefined,dynamic_lookup"
   )
@@ -48,6 +55,9 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  if(NOT GOALLC_BUILD_SHARED_PLUGIN)
+    message(FATAL_ERROR "FileCheck tests require GOALLC_BUILD_SHARED_PLUGIN=ON; use a separate test build for a static SDK")
+  endif()
   find_program(GOALLC_LLC_EXECUTABLE
     NAMES llc
     HINTS "${LLVM_TOOLS_BINARY_DIR}"
