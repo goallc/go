@@ -510,7 +510,11 @@ jobs:
             trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true; sudo -n dmesg -T > "$RUNNER_TEMP/kernel.log" || true' EXIT
           fi
           tests=()
-          while IFS= read -r test; do tests+=("$test"); done < "$RUNNER_TEMP/selected-tests.txt"
+          # Native Windows Python writes CRLF; dist expects bare test names.
+          while IFS= read -r test; do
+            test=${test%$'\r'}
+            tests+=("$test")
+          done < "$RUNNER_TEMP/selected-tests.txt"
           ../bin/go tool dist test -llvm-link=static --no-rebuild -k -json "${tests[@]}" \
             2>&1 | tee "$RUNNER_TEMP/test.log"
 
