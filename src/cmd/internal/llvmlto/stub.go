@@ -6,9 +6,6 @@ package llvmlto
 
 import "fmt"
 
-func optimize([]string, string, bool, int) error {
-	return fmt.Errorf("LTO requires a linker built with LLVM support")
-}
-func emit(string, string, bool) error {
-	return fmt.Errorf("LTO requires a linker built with LLVM support")
+func optimize([]string, [][]byte, string, bool, int, string) ([][]byte, func(), error) {
+	return nil, nil, fmt.Errorf("LTO requires a linker built with LLVM support")
 }

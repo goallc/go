@@ -1,3 +1,5 @@
+; BUFFER: object 0: go object
+; BUFFER-NEXT: object 1: go object
 ; CHECK-LABEL: define {{.*}}@main.result(
 ; CHECK-NOT: call {{.*}}@dep.public
 ; CHECK: load volatile i64, ptr @dep.slot

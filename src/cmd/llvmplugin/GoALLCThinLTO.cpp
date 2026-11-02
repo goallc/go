@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license.
 
 #include "GoALLCThinLTO.h"
+#include "GoALLCThinLTOC.h"
+#include "llvm-c/TargetMachine.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -10,19 +12,23 @@
 #include "llvm/BinaryFormat/GoObj.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/LTO/LTOBackend.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/FunctionImport.h"
 #include "llvm/Transforms/Utils/AssignGUID.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -273,8 +279,9 @@ static Error finishModule(Module &M, StringRef Prefix,
   return Error::success();
 }
 
-Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
-                         bool SaveIR, unsigned Jobs) {
+Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
+                         unsigned Jobs,
+                         function_ref<Error(unsigned, Module &)> Consume) {
   if (Inputs.empty() || Jobs == 0)
     return fail("ThinLTO requires inputs and a positive job count");
   static std::once_flag Initialize;
@@ -283,23 +290,24 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
     InitializeAllTargets();
     InitializeAllTargetMCs();
     InitializeAllAsmParsers();
+    InitializeAllAsmPrinters();
   });
-  if (std::error_code EC = sys::fs::create_directories(OutDir))
-    return fail(EC.message());
-  std::vector<std::unique_ptr<MemoryBuffer>> Buffers;
+  const bool SaveIR = !OutDir.empty();
+  if (SaveIR)
+    if (std::error_code EC = sys::fs::create_directories(OutDir))
+      return fail(EC.message());
   MapVector<StringRef, BitcodeModule> Modules;
   ModuleSummaryIndex Index(false);
-  for (const std::string &Path : Inputs) {
-    auto Buffer = MemoryBuffer::getFile(Path);
-    if (!Buffer)
-      return fail(Buffer.getError().message());
-    auto BM = lto::findThinLTOModule((*Buffer)->getMemBufferRef());
+  for (MemoryBufferRef Input : Inputs) {
+    StringRef Name = Input.getBufferIdentifier();
+    if (Name.empty() || Modules.count(Name))
+      return fail("ThinLTO requires unique nonempty module identifiers");
+    auto BM = lto::findThinLTOModule(Input);
     if (!BM)
       return BM.takeError();
-    if (Error E = BM->readSummary(Index, Path))
+    if (Error E = BM->readSummary(Index, Name))
       return E;
-    Modules.insert({Path, *BM});
-    Buffers.push_back(std::move(*Buffer));
+    Modules.insert({Name, *BM});
   }
   DenseSet<GlobalValue::GUID> External;
   for (auto &Entry : Index) {
@@ -333,9 +341,9 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       },
       KeepDefinition);
   // Populate maps before workers access them concurrently.
-  for (const std::string &Path : Inputs) {
-    Imports[Path];
-    Defined[Path];
+  for (MemoryBufferRef Input : Inputs) {
+    Imports[Input.getBufferIdentifier()];
+    Defined[Input.getBufferIdentifier()];
   }
 
   std::vector<std::string> Errors(Inputs.size());
@@ -355,11 +363,12 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
           }
         };
         lto::LTOLLVMContext C(Conf);
-        auto Parsed = Modules.find(Inputs[I])->second.parseModule(C);
+        StringRef Name = Inputs[I].getBufferIdentifier();
+        auto Parsed = Modules.find(Name)->second.parseModule(C);
         if (!Parsed)
           return Parsed.takeError();
         Module &M = **Parsed;
-        M.setModuleIdentifier(Inputs[I]);
+        M.setModuleIdentifier(Name);
         auto Prefix = packagePrefix(M);
         if (!Prefix)
           return Prefix.takeError();
@@ -381,6 +390,12 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
         llvm::append_range(Asm, M.getModuleInlineAsm());
         if (SaveIR) {
           std::error_code EC;
+          ToolOutputFile Input((OutDir + "/" + Twine(I) + ".input.bc").str(),
+                               EC, sys::fs::OF_None);
+          if (EC)
+            return fail(EC.message());
+          Input.os() << Inputs[I].getBuffer();
+          Input.keep();
           ToolOutputFile F((OutDir + "/" + Twine(I) + ".input.ll").str(), EC,
                            sys::fs::OF_Text);
           if (EC)
@@ -395,8 +410,8 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
                     -> Expected<std::unique_ptr<CachedFileStream>> {
                   return fail("unexpected ThinLTO native code generation");
                 },
-                M, Index, Imports.lookup(Inputs[I]),
-                Defined.find(Inputs[I])->second, &Modules, false, {}))
+                M, Index, Imports.lookup(Name), Defined.find(Name)->second,
+                &Modules, false, {}))
           return E;
         if (!Diagnostics.empty())
           return fail(Diagnostics);
@@ -412,14 +427,14 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
           M.appendModuleInlineAsm(Fragment);
         if (Error E = finishModule(M, Owner, ExpectedSlots))
           return E;
-        std::error_code EC;
-        ToolOutputFile BC((OutDir + "/" + Twine(I) + ".bc").str(), EC,
-                          sys::fs::OF_None);
-        if (EC)
-          return fail(EC.message());
-        WriteBitcodeToFile(M, BC.os());
-        BC.keep();
         if (SaveIR) {
+          std::error_code EC;
+          ToolOutputFile BC((OutDir + "/" + Twine(I) + ".bc").str(), EC,
+                            sys::fs::OF_None);
+          if (EC)
+            return fail(EC.message());
+          WriteBitcodeToFile(M, BC.os());
+          BC.keep();
           ToolOutputFile IR((OutDir + "/" + Twine(I) + ".ll").str(), EC,
                             sys::fs::OF_Text);
           if (EC)
@@ -427,6 +442,10 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
           M.print(IR.os(), nullptr);
           IR.keep();
         }
+        if (Error E = Consume(I, M))
+          return E;
+        if (!Diagnostics.empty())
+          return fail(Diagnostics);
         return Error::success();
       };
       if (Error E = Run())
@@ -440,12 +459,76 @@ Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
   return Error::success();
 }
 
-extern "C" char *GoALLCThinLTO(const char *const *Inputs, size_t Count,
-                               const char *OutDir, int SaveIR, int Jobs) {
-  std::vector<std::string> Paths;
+extern "C" LLVMErrorRef LLVMGoALLCRunPreCodeGen(LLVMModuleRef,
+                                                LLVMTargetMachineRef,
+                                                LLVMCodeGenFileType);
+
+static Error emitGoObj(Module &M, bool PIC, SmallVectorImpl<char> &Object) {
+  // LLVM's GoObj configuration and target-pass registration are process-global.
+  // Keep configuration, pre-codegen and emission in one critical section. Each
+  // worker retains its own Module; no bitcode round trip or context transfer.
+  static std::mutex CodeGenMutex;
+  std::lock_guard<std::mutex> Lock(CodeGenMutex);
+  if (Error E = codegen::configureGoObjFromModule(M))
+    return E;
+  std::string Message;
+  const Target *T = TargetRegistry::lookupTarget(M.getTargetTriple(), Message);
+  if (!T)
+    return fail(Message);
+  std::optional<Reloc::Model> Relocation;
+  if (PIC)
+    Relocation = Reloc::PIC_;
+  std::unique_ptr<TargetMachine> TM(T->createTargetMachine(
+      M.getTargetTriple(), "", "", TargetOptions(), Relocation, std::nullopt,
+      CodeGenOptLevel::Default));
+  if (!TM)
+    return fail("creating ThinLTO target machine");
+  if (Error E = unwrap(LLVMGoALLCRunPreCodeGen(
+          wrap(&M), reinterpret_cast<LLVMTargetMachineRef>(TM.get()),
+          LLVMObjectFile)))
+    return E;
+  if (verifyModule(M, &errs()))
+    return fail("invalid ThinLTO pre-codegen module");
+  M.setDataLayout(TM->createDataLayout());
+  raw_svector_ostream OS(Object);
+  legacy::PassManager Passes;
+  if (TM->addPassesToEmitFile(Passes, OS, nullptr, CodeGenFileType::ObjectFile))
+    return fail("ThinLTO target cannot emit Go objects");
+  Passes.run(M);
+  return Error::success();
+}
+
+extern "C" char *GoALLCThinLTOBuffers(const GoALLCLTOInput *Inputs,
+                                      size_t Count, const char *Diagnostics,
+                                      int PIC, int Jobs,
+                                      GoALLCLTOBuffer *Outputs) {
+  if (!Count || Jobs <= 0)
+    return strdup("ThinLTO requires inputs and a positive job count");
+  SmallVector<MemoryBufferRef> Buffers;
   for (size_t I = 0; I != Count; ++I)
-    Paths.emplace_back(Inputs[I]);
-  if (Error E = goallc::runThinLTO(Paths, OutDir, SaveIR, Jobs))
+    Buffers.emplace_back(StringRef(Inputs[I].data, Inputs[I].size),
+                         Inputs[I].name);
+  auto Consume = [&](unsigned I, Module &M) -> Error {
+    SmallVector<char, 0> Object;
+    if (Error E = emitGoObj(M, PIC, Object))
+      return E;
+    if (Diagnostics[0]) {
+      std::error_code EC;
+      ToolOutputFile F((Twine(Diagnostics) + "/" + Twine(I) + ".o").str(), EC,
+                       sys::fs::OF_None);
+      if (EC)
+        return fail(EC.message());
+      F.os().write(Object.data(), Object.size());
+      F.keep();
+    }
+    auto *Data = static_cast<char *>(malloc(Object.size()));
+    if (!Data)
+      return fail("allocating ThinLTO object buffer");
+    memcpy(Data, Object.data(), Object.size());
+    Outputs[I] = {Data, Object.size()};
+    return Error::success();
+  };
+  if (Error E = goallc::runThinLTO(Buffers, Diagnostics, Jobs, Consume))
     return strdup(toString(std::move(E)).c_str());
   return nullptr;
 }

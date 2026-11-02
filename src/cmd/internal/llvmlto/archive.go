@@ -5,6 +5,7 @@
 package llvmlto
 
 import (
+	"bytes"
 	"cmd/internal/archive"
 	"fmt"
 	"io"
@@ -17,7 +18,7 @@ const irMember = "__.LLVMBC"
 
 // Prepare preserves original archives and replaces each bitcode member with
 // its own optimized compiler object. The ordinary Go loader consumes them.
-func Prepare(main string, packages map[string]string, keep, pic bool, jobs int) (string, map[string]string, func(), error) {
+func Prepare(main string, packages map[string]string, keep, pic bool, jobs int, arch string) (string, map[string]string, func(), error) {
 	work, err := os.MkdirTemp("", "go-thinlto-")
 	if err != nil {
 		return "", nil, func() {}, err
@@ -38,7 +39,8 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int) 
 		names = append(names, path)
 	}
 	sort.Slice(names, func(i, j int) bool { return paths[names[i]] < paths[names[j]] })
-	var inputs, originals []string
+	var inputs [][]byte
+	var originals []string
 	for _, path := range names {
 		ir, err := readIR(path)
 		if err != nil {
@@ -47,28 +49,25 @@ func Prepare(main string, packages map[string]string, keep, pic bool, jobs int) 
 		if ir == nil {
 			continue
 		}
-		input := filepath.Join(work, fmt.Sprintf("%d.input.bc", len(inputs)))
-		if err := os.WriteFile(input, ir, 0600); err != nil {
-			return "", nil, cleanup, err
-		}
-		inputs = append(inputs, input)
+		inputs = append(inputs, ir)
 		originals = append(originals, path)
 	}
 	if len(inputs) == 0 {
 		return "", nil, cleanup, fmt.Errorf("ThinLTO requires packages compiled with -llvm-lto=thin")
 	}
-	out := filepath.Join(work, "optimized")
-	if err := optimize(inputs, out, keep, jobs); err != nil {
+	diagnostics := ""
+	if keep {
+		diagnostics = work
+	}
+	objects, release, err := optimize(originals, inputs, diagnostics, pic, jobs, arch)
+	if err != nil {
 		return "", nil, cleanup, err
 	}
+	defer release()
 	replacements := make(map[string]string)
 	for i, path := range originals {
-		object := filepath.Join(work, fmt.Sprintf("%d.o", i))
-		if err := emit(filepath.Join(out, fmt.Sprintf("%d.bc", i)), object, pic); err != nil {
-			return "", nil, cleanup, err
-		}
 		archive := filepath.Join(work, fmt.Sprintf("%d.a", i))
-		if err := rewriteArchive(path, archive, object); err != nil {
+		if err := rewriteArchive(path, archive, objects[i]); err != nil {
 			return "", nil, cleanup, err
 		}
 		replacements[path] = archive
@@ -141,7 +140,7 @@ func writeArchiveEntry(out io.Writer, name string, size int64, content io.Reader
 	return nil
 }
 
-func rewriteArchive(src, dst, object string) (err error) {
+func rewriteArchive(src, dst string, object []byte) (err error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -166,15 +165,6 @@ func rewriteArchive(src, dst, object string) (err error) {
 	if bitcode != 1 {
 		return fmt.Errorf("%s: expected one bitcode member, found %d", src, bitcode)
 	}
-	obj, err := os.Open(object)
-	if err != nil {
-		return err
-	}
-	defer obj.Close()
-	info, err := obj.Stat()
-	if err != nil {
-		return err
-	}
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
@@ -192,7 +182,7 @@ func rewriteArchive(src, dst, object string) (err error) {
 	}
 	for _, e := range a.Entries {
 		if e.Name == irMember {
-			if err := writeArchiveEntry(out, "_go_.o", info.Size(), obj); err != nil {
+			if err := writeArchiveEntry(out, "_go_.o", int64(len(object)), bytes.NewReader(object)); err != nil {
 				return err
 			}
 		} else {
