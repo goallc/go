@@ -23,9 +23,11 @@ func llvmChain(interceptors []llvmChainInterceptor, current int, final llvmChain
 	}
 }
 
+// The amd64 address materialization is absolute on ELF and PC-relative on PE.
+// Both edges must still resolve to the hashed symbols in the cycle.
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name="codegen.llvmChain.func1" kind=STEXT flags={{.*}} class=hashed hash={{[0-9a-f]+}}
 // LLVM-OBJSUMMARY-DAG: LLVM symbol name="codegen.llvmChain.1" kind=STEXT flags={{.*}} class=hashed hash={{[0-9a-f]+}}
-// LLVM-OBJSUMMARY-AMD64-DAG: LLVM relocation owner="codegen.llvmChain.func1" type=R_ADDR size=4 target_kind=hashed target_package="" target_name="codegen.llvmChain.1" target_index={{[0-9]+}}
-// LLVM-OBJSUMMARY-AMD64-DAG: LLVM relocation owner="codegen.llvmChain.1" type=R_ADDR size=4 target_kind=hashed target_package="" target_name="codegen.llvmChain.func1" target_index={{[0-9]+}}
+// LLVM-OBJSUMMARY-AMD64-DAG: LLVM relocation owner="codegen.llvmChain.func1" type=R_{{(ADDR|PCREL)}} size=4 target_kind=hashed target_package="" target_name="codegen.llvmChain.1" target_index={{[0-9]+}}
+// LLVM-OBJSUMMARY-AMD64-DAG: LLVM relocation owner="codegen.llvmChain.1" type=R_{{(ADDR|PCREL)}} size=4 target_kind=hashed target_package="" target_name="codegen.llvmChain.func1" target_index={{[0-9]+}}
 // LLVM-OBJSUMMARY-ARM64-DAG: LLVM relocation owner="codegen.llvmChain.func1" type=R_ADDRARM64 size=8 target_kind=hashed target_package="" target_name="codegen.llvmChain.1" target_index={{[0-9]+}}
 // LLVM-OBJSUMMARY-ARM64-DAG: LLVM relocation owner="codegen.llvmChain.1" type=R_ADDRARM64 size=8 target_kind=hashed target_package="" target_name="codegen.llvmChain.func1" target_index={{[0-9]+}}
