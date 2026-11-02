@@ -84,6 +84,9 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 
 	base.DebugSSA = ssa.PhaseOption
 	base.ParseFlags()
+	if base.Flag.LLVMThinLTO {
+		base.Flag.LLVMLTO = true
+	}
 	if base.Flag.LLVMLTO && (!base.Flag.EnableLLVM || base.Flag.N != 0 || base.Flag.LLVMOptPasses != "auto" ||
 		base.Flag.LinkObj != "" || *base.Flag.Dynlink || *base.Flag.LinkShared ||
 		base.Flag.Race || base.Flag.MSan || base.Flag.ASan) {
