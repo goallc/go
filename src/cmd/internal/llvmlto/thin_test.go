@@ -127,7 +127,7 @@ func TestThinLTOLinkname(t *testing.T) {
 func TestThinLTOMixedArchive(t *testing.T) {
 	goTool := thinLTOToolchain(t)
 	output := filepath.Join(t.TempDir(), "program")
-	cmd := exec.Command(goTool, "build", "-lto=thin", "-gcflags=example.com/lto/dep=-enablellvm=false -llvm-thinlto=false", "-o", output, ".")
+	cmd := exec.Command(goTool, "build", "-lto=thin", "-gcflags=example.com/lto/dep=-enablellvm=false", "-o", output, ".")
 	cmd.Dir = filepath.Join(runtime.GOROOT(), "src/cmd/internal/llvmlto/testdata/runtime")
 	cmd.Env = thinLTOEnv()
 	if data, err := cmd.CombinedOutput(); err != nil {
@@ -191,7 +191,7 @@ func TestLTOIndexedBSS(t *testing.T) {
 			} else {
 				args = append(args, "-lto=thin")
 				if mode == "mixed" {
-					args = append(args, "-gcflags=example.com/lto-bss/observer=-enablellvm=false -llvm-thinlto=false")
+					args = append(args, "-gcflags=example.com/lto-bss/observer=-enablellvm=false")
 				}
 			}
 			cmd := exec.Command(goTool, append(args, ".")...)

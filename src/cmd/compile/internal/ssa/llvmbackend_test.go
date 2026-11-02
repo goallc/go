@@ -181,7 +181,7 @@ func TestLLVMEmissionPreparesLTOIR(t *testing.T) {
 			}()
 			CurrentModule, llvmModuleFinalized = module, true
 			shared := false
-			base.Flag.Shared, base.Flag.LLVMKeepIR, base.Flag.LLVMLTO = &shared, true, true
+			base.Flag.Shared, base.Flag.LLVMKeepIR, base.Flag.LLVMLTO = &shared, true, "full"
 			addGoObjConfigMetadata(types.NewPkg("p", "p"))
 			llvm.AddGlobal(module, GlobalCtxt.Int64Type(), "runtime.goallcCPUFeatures")
 			f := llvm.AddFunction(module, "p.F", llvm.FunctionType(GlobalCtxt.Int64Type(), []llvm.Type{GlobalCtxt.Int64Type()}, false))

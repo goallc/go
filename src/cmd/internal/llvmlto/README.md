@@ -7,6 +7,12 @@ eligible function bodies, and optimizes modules in parallel. It then emits one
 ordinary Go object per package and uses the existing Go linker for the final
 executable. There is no merged whole-program IR module or custom loader.
 
+The compiler uses a single `-llvm-lto=thin|full` option. Omitting it selects
+ordinary object compilation; an explicit value must be `thin` or `full`.
+`thin` writes ThinLTO bitcode and summaries, while `full` preserves the
+existing FullLTO pre-link bitcode path. The build/link
+driver in this change supports `-lto=thin`.
+
 ```sh
 go build -lto=thin ./cmd/app
 go test -lto=thin -short ./...
@@ -46,7 +52,7 @@ module.
 
 Archive rewriting preserves export data, assembly, cgo objects, member order,
 and member headers. Ordinary archives can participate in the same link. For
-example, `-gcflags='example.com/app/pkg=-llvm-thinlto=false -enablellvm=false'`
+example, `-gcflags='example.com/app/pkg=-enablellvm=false'`
 compiles one package with the native Go backend. FIPS packages automatically use
 ordinary LLVM objects to preserve their generated-data boundary.
 
