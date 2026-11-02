@@ -73,3 +73,48 @@ func TestStaticGoallcRuntimeRemovesDynamicInstallation(t *testing.T) {
 	// Installation must also work without any plugin build or LLVM payload.
 	installGoallcRuntime()
 }
+
+func TestGoallcWindowsHeaders(t *testing.T) {
+	payload, binding := t.TempDir(), t.TempDir()
+	include := filepath.Join(payload, "include")
+	if err := os.Mkdir(include, 0755); err != nil {
+		t.Fatal(err)
+	}
+	header := filepath.Join(include, "test.h")
+	destination := filepath.Join(binding, "llvm")
+	for _, content := range []string{"old header", "updated header"} {
+		if err := os.WriteFile(header, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := copyGoallcLLVMHeaders(destination, payload); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(destination, "include", "test.h"))
+		if err != nil || string(got) != content {
+			t.Fatalf("copied header = %q, %v", got, err)
+		}
+	}
+	unowned := t.TempDir()
+	if err := copyGoallcLLVMHeaders(unowned, payload); err == nil {
+		t.Fatal("replaced an unowned directory")
+	}
+}
+
+func TestGoallcWindowsLLVMTool(t *testing.T) {
+	oldOS, oldDir := gohostos, goallcLLVMDir
+	defer func() { gohostos, goallcLLVMDir = oldOS, oldDir }()
+	gohostos, goallcLLVMDir = "windows", t.TempDir()
+	tool := goallcLLVMTool("llc")
+	if filepath.Base(tool) != "llc.exe" {
+		t.Fatalf("Windows LLVM tool = %s", tool)
+	}
+	if err := os.Mkdir(filepath.Dir(tool), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tool, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireExecutableFile(tool); err != nil {
+		t.Fatalf("Windows executables do not need Unix mode bits: %v", err)
+	}
+}

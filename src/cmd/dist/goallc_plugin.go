@@ -87,8 +87,8 @@ func ensureGoallcPassPlugin() {
 	sourceDir := pathf("%s/src/cmd/llvmplugin", goroot)
 	buildDir := pathf("%s/pkg/goallc-llvmplugin", goroot)
 	installDir := pathf("%s/lib", buildDir)
-	llc := pathf("%s/bin/llc", goallcLLVMDir)
-	llvmConfig := pathf("%s/bin/llvm-config", goallcLLVMDir)
+	llc := goallcLLVMTool("llc")
+	llvmConfig := goallcLLVMTool("llvm-config")
 	filename := goallcPassPluginFilename(gohostos)
 	target, shared := "GoALLCStatepoints", "ON"
 	if goallcLLVMLink == "static" {
@@ -302,7 +302,7 @@ func requireExecutableFile(path string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("not a regular file")
 	}
-	if info.Mode()&0o111 == 0 {
+	if gohostos != "windows" && info.Mode()&0o111 == 0 {
 		return fmt.Errorf("not executable")
 	}
 	return nil
@@ -407,4 +407,11 @@ func installGoallcPluginAtomically(source, destination string) error {
 		return err
 	}
 	return os.Rename(temporaryName, destination)
+}
+
+func goallcLLVMTool(name string) string {
+	if gohostos == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(goallcLLVMDir, "bin", name)
 }

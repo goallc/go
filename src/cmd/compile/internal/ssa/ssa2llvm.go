@@ -5872,6 +5872,8 @@ func goObjTargetTriple() string {
 		return "aarch64-unknown-linux-goobj"
 	case "linux/amd64":
 		return "x86_64-unknown-linux-goobj"
+	case "windows/amd64":
+		return "x86_64-pc-windows-goobj"
 	default:
 		base.Fatalf("LLVM GoObj target is not configured for %s/%s", buildcfg.GOOS, buildcfg.GOARCH)
 		return ""
