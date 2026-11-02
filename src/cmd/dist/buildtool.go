@@ -117,6 +117,9 @@ var ignorePrefixes = []string{
 var ignoreSuffixes = []string{
 	"_test.s",
 	"_test.go",
+	// Documentation is not a bootstrap input and may contain prose that looks
+	// like a Go import declaration to the import path rewriter.
+	".md",
 	// Skip PGO profile. No need to build toolchain1 compiler
 	// with PGO. And as it is not a text file the import path
 	// rewrite will break it.
