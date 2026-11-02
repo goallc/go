@@ -1410,9 +1410,8 @@ func toolenv() []string {
 		// as the original build system.
 		env = append(env, "CGO_ENABLED=0")
 	}
-	goallcTags := "llvm" + goallcLLVMVersion + "," + goallcLLVMLink + "llvm"
+	goallcTags := strings.Join(goallcBuildTags(), ",")
 	if goallcLLVMLink == "static" {
-		goallcTags += ",goallcplugin"
 		if goos == "linux" {
 			// The linked pass plugin must retain every archive member, but cgo
 			// rejects linker options from package directives unless they are
@@ -1438,6 +1437,14 @@ func toolenv() []string {
 		env = append(env, "GOFLAGS="+strings.Join(goFlags, " "))
 	}
 	return env
+}
+
+func goallcBuildTags() []string {
+	tags := []string{"llvm" + goallcLLVMVersion, goallcLLVMLink + "llvm"}
+	if goallcLLVMLink == "static" {
+		tags = append(tags, "goallcplugin")
+	}
+	return tags
 }
 
 var (

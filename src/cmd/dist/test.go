@@ -33,6 +33,7 @@ func cmdtest() {
 	t.asmflags = os.Getenv("GO_TEST_ASMFLAGS")
 
 	var noRebuild bool
+	flag.StringVar(&goallcLLVMLink, "llvm-link", goallcLLVMLink, "LLVM link mode: dynamic or static")
 	flag.BoolVar(&t.listMode, "list", false, "list available tests")
 	flag.BoolVar(&t.rebuild, "rebuild", false, "rebuild everything first")
 	flag.BoolVar(&noRebuild, "no-rebuild", false, "overrides -rebuild (historical dreg)")
@@ -48,6 +49,19 @@ func cmdtest() {
 	flag.BoolVar(&t.json, "json", false, "report test results in JSON")
 
 	xflagparse(-1) // any number of args
+	if goallcLLVMLink != "static" && goallcLLVMLink != "dynamic" {
+		fatalf("-llvm-link must be dynamic or static, not %q", goallcLLVMLink)
+	}
+	// Nested go commands must select the same LLVM bindings as the compiler
+	// under test. Do not inherit toolenv's CGO_ENABLED=0: these are also cgo tests.
+	os.Setenv("GOFLAGS", "-tags="+strings.Join(goallcBuildTags(), ","))
+	if goallcLLVMLink == "static" && gohostos == "linux" {
+		for _, setting := range toolenv() {
+			if name, value, ok := strings.Cut(setting, "="); ok && name == "CGO_LDFLAGS_ALLOW" {
+				os.Setenv(name, value)
+			}
+		}
+	}
 	if noRebuild {
 		t.rebuild = false
 	}
@@ -437,7 +451,7 @@ func (opts *goTest) buildArgs(t *tester) (build, run, pkgs, testFlags []string, 
 	if opts.short || t.short {
 		run = append(run, "-short")
 	}
-	var tags []string
+	tags := goallcBuildTags()
 	if noOpt {
 		tags = append(tags, "noopt")
 	}

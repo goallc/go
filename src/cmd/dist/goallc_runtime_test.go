@@ -7,8 +7,29 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
+
+func TestGoallcDistTestBuildTags(t *testing.T) {
+	oldLink, oldVersion := goallcLLVMLink, goallcLLVMVersion
+	t.Cleanup(func() { goallcLLVMLink, goallcLLVMVersion = oldLink, oldVersion })
+	goallcLLVMVersion = "23"
+	for _, mode := range []string{"dynamic", "static"} {
+		t.Run(mode, func(t *testing.T) {
+			goallcLLVMLink = mode
+			opts := goTest{pkg: "cmd/compile", tags: []string{"testtag"}}
+			build, _, _, _, _ := opts.buildArgs(&tester{timeoutScale: 1})
+			want := "-tags=llvm23,dynamicllvm,testtag"
+			if mode == "static" {
+				want = "-tags=llvm23,staticllvm,goallcplugin,testtag"
+			}
+			if !slices.Contains(build, want) {
+				t.Fatalf("test build flags %q do not retain LLVM mode and explicit test tags %q", build, want)
+			}
+		})
+	}
+}
 
 func TestInstallGoallcRuntime(t *testing.T) {
 	oldRoot, oldTool, oldLLVM, oldOS, oldLink := goroot, tooldir, goallcLLVMDir, gohostos, goallcLLVMLink
