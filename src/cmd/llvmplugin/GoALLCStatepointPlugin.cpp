@@ -31,6 +31,7 @@ using namespace llvm;
 
 Pass *createGoALLCInlineAnchorPass();
 void linkGoALLCStackMapPrinter();
+void linkGoALLCAsyncPreemption();
 
 namespace {
 
@@ -197,6 +198,7 @@ LLVMGoALLCRunPreCodeGen(LLVMModuleRef ModuleRef,
                         LLVMTargetMachineRef TargetMachineRef,
                         LLVMCodeGenFileType FileType) {
   linkGoALLCStackMapPrinter();
+  linkGoALLCAsyncPreemption();
   SmallVector<char, 0> CallbackOutput;
   raw_svector_ostream OS(CallbackOutput);
   Module &M = *unwrap(ModuleRef);

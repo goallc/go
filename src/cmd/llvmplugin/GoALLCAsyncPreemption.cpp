@@ -478,3 +478,9 @@ RegisterGoObjAsyncPreemptionCallback
     RegisterGoALLCAsyncPreemption(describeAsyncPreemption);
 
 } // namespace
+
+// Keep this registration-only translation unit in a statically linked pass
+// archive, just like the stack map printer. Ordinary archive extraction has
+// no reason to load it unless the linked code-generation entry point refers
+// to this anchor.
+void linkGoALLCAsyncPreemption() {}
