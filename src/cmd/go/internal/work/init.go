@@ -475,6 +475,6 @@ func ltoInit() {
 	default:
 		base.Fatalf("go: -lto=thin is not supported on %s/%s", cfg.Goos, cfg.Goarch)
 	}
-	forcedGcflags = append(forcedGcflags, "-enablellvm", "-llvm-thinlto")
+	forcedGcflags = append(forcedGcflags, "-enablellvm")
 	forcedLdflags = append(forcedLdflags, "-lto="+cfg.BuildLTO)
 }
