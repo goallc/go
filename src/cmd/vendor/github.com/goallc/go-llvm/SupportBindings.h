@@ -48,6 +48,29 @@ LLVMErrorRef LLVMRunPassPluginPreCodeGen(LLVMModuleRef Module,
                                          LLVMCodeGenFileType FileType,
                                          const char *Filename);
 
+// GoALLC plugin exports, shared by the dynamic loader and static bindings.
+LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef Module);
+LLVMErrorRef LLVMGoALLCRunPreCodeGen(LLVMModuleRef Module,
+                                     LLVMTargetMachineRef TargetMachine,
+                                     LLVMCodeGenFileType FileType);
+// Inputs are borrowed until the synchronous call returns. Callers initialize
+// Outputs to null and dispose every non-null buffer, including partial results
+// on failure, with LLVMDisposeMemoryBuffer. Buffer identifiers must be unique.
+LLVMErrorRef LLVMGoALLCThinLTO(LLVMMemoryBufferRef *Inputs, size_t Count,
+                               const char *Diagnostics, LLVMBool PIC,
+                               unsigned Jobs, LLVMMemoryBufferRef *Outputs);
+LLVMErrorRef LLVMGoALLCWriteThinBitcode(LLVMModuleRef Module,
+                                        LLVMMemoryBufferRef *Output);
+
+LLVMErrorRef LLVMRunPassPluginThinLTO(LLVMMemoryBufferRef *Inputs, size_t Count,
+                                      const char *Diagnostics, LLVMBool PIC,
+                                      unsigned Jobs,
+                                      LLVMMemoryBufferRef *Outputs,
+                                      const char *Filename);
+LLVMErrorRef LLVMWritePassPluginThinBitcode(LLVMModuleRef Module,
+                                            LLVMMemoryBufferRef *Output,
+                                            const char *Filename);
+
 #ifdef __cplusplus
 }
 #endif
