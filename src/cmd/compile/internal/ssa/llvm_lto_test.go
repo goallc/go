@@ -20,6 +20,12 @@ import (
 )
 
 func TestLLVMSlimArchive(t *testing.T) {
+	for _, mode := range []string{"-llvm-lto", "-llvm-thinlto"} {
+		t.Run(mode, func(t *testing.T) { testLLVMSlimArchive(t, mode) })
+	}
+}
+
+func testLLVMSlimArchive(t *testing.T, mode string) {
 	testenv.MustHaveGoBuild(t)
 	for _, arch := range []string{"amd64", "arm64"} {
 		t.Run(arch, func(t *testing.T) {
@@ -29,7 +35,7 @@ func TestLLVMSlimArchive(t *testing.T) {
 				t.Fatal(err)
 			}
 			output := filepath.Join(dir, "p.a")
-			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", "-llvm-lto", "-llvm-keep-ir", "-l", "-p=p", "-o", output, source)
+			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", mode, "-llvm-keep-ir", "-l", "-p=p", "-o", output, source)
 			cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
@@ -137,6 +143,12 @@ func TestLLVMSlimArchive(t *testing.T) {
 }
 
 func TestLLVMLTORejectsIncompatibleFlags(t *testing.T) {
+	for _, mode := range []string{"-llvm-lto", "-llvm-thinlto"} {
+		t.Run(mode, func(t *testing.T) { testLLVMLTORejectsIncompatibleFlags(t, mode) })
+	}
+}
+
+func testLLVMLTORejectsIncompatibleFlags(t *testing.T, mode string) {
 	testenv.MustHaveGoBuild(t)
 	dir := t.TempDir()
 	source := filepath.Join(dir, "p.go")
@@ -145,7 +157,7 @@ func TestLLVMLTORejectsIncompatibleFlags(t *testing.T) {
 	}
 	for _, flag := range []string{"-enablellvm=false", "-N", "-llvm-opt-passes=none", "-linkobj=" + filepath.Join(dir, "link.o"), "-dynlink", "-linkshared", "-race", "-msan", "-asan"} {
 		t.Run(strings.SplitN(flag, "=", 2)[0], func(t *testing.T) {
-			args := []string{"tool", "compile", "-enablellvm", "-llvm-lto", flag, "-o", filepath.Join(t.TempDir(), "p.a"), source}
+			args := []string{"tool", "compile", "-enablellvm", mode, flag, "-o", filepath.Join(t.TempDir(), "p.a"), source}
 			cmd := testenv.Command(t, testenv.GoToolPath(t), args...)
 			cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH=amd64")
 			out, err := cmd.CombinedOutput()

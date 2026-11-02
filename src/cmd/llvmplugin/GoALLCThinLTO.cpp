@@ -1,0 +1,466 @@
+// Copyright 2026 The GoALLC Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license.
+
+#include "GoALLCThinLTO.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/ModuleSummaryAnalysis.h"
+#include "llvm/Analysis/ProfileSummaryInfo.h"
+#include "llvm/BinaryFormat/GoObj.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DiagnosticPrinter.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/LTO/LTOBackend.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/ThreadPool.h"
+#include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Transforms/IPO/FunctionImport.h"
+#include "llvm/Transforms/Utils/AssignGUID.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
+
+using namespace llvm;
+
+static Error fail(const Twine &Message) {
+  return createStringError(inconvertibleErrorCode(), Message);
+}
+
+static Expected<StringRef> packagePrefix(Module &M) {
+  auto *Config = M.getNamedMetadata("goobj.config");
+  if (!Config || Config->getNumOperands() != 1 ||
+      Config->getOperand(0)->getNumOperands() != 5)
+    return fail("ThinLTO requires one compiler GoObj configuration");
+  auto *Prefix = dyn_cast<MDString>(Config->getOperand(0)->getOperand(1));
+  if (!Prefix || Prefix->getString().empty())
+    return fail("invalid ThinLTO package prefix");
+  if (Prefix->getString() == "crypto/internal/fips140" ||
+      Prefix->getString().starts_with("crypto/internal/fips140/") ||
+      M.getNamedMetadata("goobj.static_rodata_type"))
+    return fail("FIPS packages must use ordinary object compilation");
+  if (!M.getModuleFlag("goobj.abi"))
+    return fail("ThinLTO input requires a goobj.abi module flag");
+  if (M.getNamedMetadata("goallc.cpu.config") &&
+      !M.getNamedMetadata("goallc.cpu.fmv.done"))
+    return fail("ThinLTO input requires compiler early IR preparation");
+  if (M.getNamedMetadata("goobj.dynlink"))
+    return fail("ThinLTO does not support dynamic Go linking");
+  if (!M.alias_empty() || !M.ifunc_empty())
+    return fail("ThinLTO does not support aliases or ifuncs");
+  return Prefix->getString();
+}
+
+static bool hashed(const GlobalObject &G) {
+  return G.getMetadata("goobj.content_hash") ||
+         G.getMetadata("goobj.content_addressable");
+}
+
+// Native Go symbol resolution remains authoritative. Only import bodies whose
+// references can be represented in a different package's ordinary Go object.
+// In particular, a content-addressed local has no cross-package export index,
+// and a linkname reference must retain its original permission-checking owner.
+static bool exportableReference(const Value *V,
+                                SmallPtrSetImpl<const Value *> &Seen) {
+  if (!Seen.insert(V).second)
+    return true;
+  if (const auto *G = dyn_cast<GlobalValue>(V)) {
+    StringRef Name = G->getName();
+    Name.consume_back(GoObj::ABI0SymbolSuffix);
+    if (GoObj::getSymbolSuffix(Name) == GoObj::LinknameSymbolSuffix)
+      return false;
+    if (G->isDeclaration() || Name.starts_with("llvm."))
+      return true;
+    const auto *GO = dyn_cast<GlobalObject>(G);
+    if (!GO || hashed(*GO))
+      return false;
+    return GO->getMetadata("goobj.symbol.index") || !G->hasLocalLinkage();
+  }
+  if (const auto *C = dyn_cast<Constant>(V))
+    for (const Use &U : C->operands())
+      if (!exportableReference(U.get(), Seen))
+        return false;
+  return true;
+}
+
+static bool canImport(const Function &F) {
+  if (hashed(F) || F.isInterposable() || F.getMetadata("goobj.keep") ||
+      F.getMetadata("goobj.marker_relocs") || F.getMetadata("goobj.weak_calls"))
+    return false;
+  SmallPtrSet<const Value *, 32> Seen;
+  for (const BasicBlock &BB : F)
+    for (const Instruction &I : BB) {
+      // Relocation targets in metadata are not ThinLTO reference edges. Keep
+      // these bodies in their owning package until they have an importable
+      // representation; an imported null target would lose Go reachability.
+      if (I.getMetadata("goobj.marker_reloc"))
+        return false;
+      for (const Use &U : I.operands())
+        if (!exportableReference(U.get(), Seen))
+          return false;
+    }
+  return true;
+}
+
+Error goallc::writeThinBitcode(Module &M, raw_ostream &OS) {
+  auto Prefix = packagePrefix(M);
+  if (!Prefix)
+    return Prefix.takeError();
+  LLVMContext &C = M.getContext();
+  DenseSet<uint32_t> Indices;
+  for (GlobalObject &G : M.global_objects()) {
+    auto *Index = G.getMetadata("goobj.symbol.index");
+    if (!Index)
+      continue;
+    auto *I = Index->getNumOperands()
+                  ? mdconst::dyn_extract<ConstantInt>(Index->getOperand(0))
+                  : nullptr;
+    if (!I || !I->getType()->isIntegerTy(32) || G.isDeclaration() ||
+        !Indices.insert(I->getZExtValue()).second)
+      return fail("invalid ThinLTO package index: " + G.getName());
+  }
+  SmallVector<GlobalValue *> Retained;
+  for (GlobalObject &G : M.global_objects()) {
+    if (G.isDeclaration() || G.getName().starts_with("llvm."))
+      continue;
+    if (auto *Index = G.getMetadata("goobj.symbol.index")) {
+      unsigned Flags2 = 0;
+      if (auto *Flags = G.getMetadata("goobj.symbol.flags"))
+        Flags2 = mdconst::extract<ConstantInt>(Flags->getOperand(1))
+                     ->getZExtValue() &
+                 GoObj::SymFlagUsedInIface;
+      Metadata *Ref[] = {MDString::get(C, *Prefix), Index->getOperand(0),
+                         ConstantAsMetadata::get(
+                             ConstantInt::get(Type::getInt32Ty(C), Flags2))};
+      // During ThinLTO, this existing reference attachment also describes how
+      // an imported body may refer back to this definition. Remove it from
+      // local definitions before the GoObj writer consumes the output.
+      G.setMetadata("goobj.import", MDNode::get(C, Ref));
+      Retained.push_back(&G);
+    } else if (!G.hasLocalLinkage() && !hashed(G)) {
+      Retained.push_back(&G);
+    }
+  }
+  // ThinLTO drops references to unimported globals from named metadata.
+  // Preserve the exact debug identity as strings plus Go package references,
+  // including linknamed functions whose source name differs from the symbol.
+  auto *Debug = M.getOrInsertNamedMetadata("goallc.thin.debug.funcs");
+  auto Record = [&](DISubprogram *SP, GlobalObject &G) {
+    Metadata *Fields[] = {SP, MDString::get(C, G.getName()),
+                          G.getMetadata("goobj.import")};
+    Debug->addOperand(MDNode::get(C, Fields));
+  };
+  for (Function &F : M)
+    if (auto *SP = F.getSubprogram())
+      Record(SP, F);
+  if (auto *Funcs = M.getNamedMetadata("goobj.debug.funcs"))
+    for (MDNode *Entry : Funcs->operands()) {
+      auto *SP = dyn_cast_or_null<DISubprogram>(Entry->getOperand(0));
+      auto *G =
+          mdconst::dyn_extract_or_null<GlobalObject>(Entry->getOperand(1));
+      if (!SP || !G)
+        return fail("invalid ThinLTO debug function mapping");
+      Record(SP, *G);
+    }
+  appendToCompilerUsed(M, Retained);
+  AssignGUIDPass::runOnModule(M);
+  ProfileSummaryInfo PSI(M);
+  auto Index = buildModuleSummaryIndex(M, nullptr, &PSI);
+  for (GlobalObject &G : M.global_objects()) {
+    if (G.isDeclaration() || G.getName().starts_with("llvm."))
+      continue;
+    auto VI = Index.getValueInfo(G.getGUIDOrFallback());
+    if (!VI)
+      continue;
+    if (!isa<Function>(G) || !canImport(cast<Function>(G)))
+      for (auto &Summary : VI.getSummaryList())
+        Summary->setNotEligibleToImport();
+  }
+  if (verifyModule(M, &errs()))
+    return fail("invalid ThinLTO input module");
+  WriteBitcodeToFile(M, OS, false, &Index, true);
+  return Error::success();
+}
+
+static Error finishModule(Module &M, StringRef Prefix,
+                          const DenseSet<uint32_t> &ExpectedIndices) {
+  DenseSet<uint32_t> Indices;
+  SmallVector<StringRef> MetadataNames;
+  M.getContext().getMDKindNames(MetadataNames);
+  for (GlobalObject &G : M.global_objects()) {
+    if (G.hasAvailableExternallyLinkage())
+      convertToDeclaration(G);
+    auto *Ref = G.getMetadata("goobj.import");
+    if (G.isDeclaration()) {
+      // Imported declarations carry definition attachments from their source.
+      SmallVector<std::pair<unsigned, MDNode *>> MD;
+      G.getAllMetadata(MD);
+      for (const auto &Entry : MD)
+        if (MetadataNames[Entry.first].starts_with("goobj.") &&
+            MetadataNames[Entry.first] != "goobj.import")
+          G.setMetadata(Entry.first, nullptr);
+      continue;
+    }
+    if (Ref) {
+      auto *Owner = dyn_cast<MDString>(Ref->getOperand(0));
+      if (!Owner || Owner->getString() != Prefix)
+        return fail("ThinLTO emitted an imported definition: " + G.getName());
+      G.setMetadata("goobj.import", nullptr);
+    }
+    if (auto *Index = G.getMetadata("goobj.symbol.index")) {
+      uint32_t I =
+          mdconst::extract<ConstantInt>(Index->getOperand(0))->getZExtValue();
+      if (!ExpectedIndices.count(I) || !Indices.insert(I).second)
+        return fail("ThinLTO changed package symbol identity: " + G.getName());
+    }
+  }
+  // Rebuild only debug scopes reachable in the optimized module. In
+  // particular, do not make every unimported source function a debug root.
+  if (auto *Funcs = M.getNamedMetadata("goobj.debug.funcs")) {
+    SmallVector<MDNode *> Live;
+    for (MDNode *Entry : Funcs->operands()) {
+      if (Entry->getNumOperands() != 2)
+        return fail("invalid ThinLTO debug function mapping");
+      if (Entry->getOperand(1))
+        Live.push_back(Entry);
+    }
+    Funcs->clearOperands();
+    for (MDNode *Entry : Live)
+      Funcs->addOperand(Entry);
+  }
+  DebugInfoFinder Finder;
+  Finder.processModule(M);
+  SmallPtrSet<const DISubprogram *, 32> Needed;
+  for (auto *SP : Finder.subprograms())
+    Needed.insert(SP);
+  SmallPtrSet<const DISubprogram *, 32> Mapped;
+  auto *Funcs = M.getOrInsertNamedMetadata("goobj.debug.funcs");
+  for (MDNode *Entry : Funcs->operands())
+    Mapped.insert(cast<DISubprogram>(Entry->getOperand(0)));
+  if (auto *Debug = M.getNamedMetadata("goallc.thin.debug.funcs")) {
+    for (MDNode *Entry : Debug->operands()) {
+      auto *SP = cast<DISubprogram>(Entry->getOperand(0));
+      if (!Needed.count(SP) || !Mapped.insert(SP).second)
+        continue;
+      StringRef Name = cast<MDString>(Entry->getOperand(1))->getString();
+      GlobalValue *G = M.getNamedValue(Name);
+      if (!G) {
+        auto *F = Function::Create(
+            FunctionType::get(Type::getVoidTy(M.getContext()), false),
+            GlobalValue::ExternalLinkage, Name, M);
+        if (auto *Ref = dyn_cast_or_null<MDNode>(Entry->getOperand(2)))
+          F->setMetadata("goobj.import", Ref);
+        G = F;
+      }
+      Metadata *Fields[] = {SP, ValueAsMetadata::get(G)};
+      Funcs->addOperand(MDNode::get(M.getContext(), Fields));
+    }
+    M.eraseNamedMetadata(Debug);
+  }
+  if (Indices.size() != ExpectedIndices.size())
+    return fail("ThinLTO removed a retained package symbol");
+  if (!M.alias_empty() || !M.ifunc_empty() || verifyModule(M, &errs()))
+    return fail("invalid ThinLTO output module");
+  return Error::success();
+}
+
+Error goallc::runThinLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
+                         bool SaveIR, unsigned Jobs) {
+  if (Inputs.empty() || Jobs == 0)
+    return fail("ThinLTO requires inputs and a positive job count");
+  static std::once_flag Initialize;
+  std::call_once(Initialize, [] {
+    InitializeAllTargetInfos();
+    InitializeAllTargets();
+    InitializeAllTargetMCs();
+    InitializeAllAsmParsers();
+  });
+  if (std::error_code EC = sys::fs::create_directories(OutDir))
+    return fail(EC.message());
+  std::vector<std::unique_ptr<MemoryBuffer>> Buffers;
+  MapVector<StringRef, BitcodeModule> Modules;
+  ModuleSummaryIndex Index(false);
+  for (const std::string &Path : Inputs) {
+    auto Buffer = MemoryBuffer::getFile(Path);
+    if (!Buffer)
+      return fail(Buffer.getError().message());
+    auto BM = lto::findThinLTOModule((*Buffer)->getMemBufferRef());
+    if (!BM)
+      return BM.takeError();
+    if (Error E = BM->readSummary(Index, Path))
+      return E;
+    Modules.insert({Path, *BM});
+    Buffers.push_back(std::move(*Buffer));
+  }
+  DenseSet<GlobalValue::GUID> External;
+  for (auto &Entry : Index) {
+    auto Summaries = Index.getValueInfo(Entry).getSummaryList();
+    for (auto &S : Summaries) {
+      if (!GlobalValue::isLocalLinkage(S->linkage()))
+        External.insert(Entry.first);
+      // A Go linker may coalesce BSS or content-addressed definitions. Keep
+      // every input definition/slot and leave that choice to the native loader.
+      if (Summaries.size() > 1)
+        S->setNotEligibleToImport();
+    }
+  }
+  DenseMap<StringRef, GVSummaryMapTy> Defined;
+  Index.collectDefinedGVSummariesPerModule(Defined);
+  FunctionImporter::ImportListsTy Imports;
+  DenseMap<StringRef, FunctionImporter::ExportSetTy> Exports;
+  auto KeepDefinition = [](GlobalValue::GUID, const GlobalValueSummary *) {
+    return true;
+  };
+  ComputeCrossModuleImport(Index, Defined, KeepDefinition, Imports, Exports);
+  lto::Config Config;
+  Config.ShouldDiscardValueNames = false;
+  thinLTOResolvePrevailingInIndex(
+      Config, Index, KeepDefinition,
+      [](StringRef, GlobalValue::GUID, GlobalValue::LinkageTypes) {}, External);
+  thinLTOInternalizeAndPromoteInIndex(
+      Index,
+      [&](StringRef Module, ValueInfo VI) {
+        return External.count(VI.getGUID()) || Exports[Module].count(VI);
+      },
+      KeepDefinition);
+  // Populate maps before workers access them concurrently.
+  for (const std::string &Path : Inputs) {
+    Imports[Path];
+    Defined[Path];
+  }
+
+  std::vector<std::string> Errors(Inputs.size());
+  DefaultThreadPool Pool(hardware_concurrency(Jobs));
+  for (unsigned I = 0; I != Inputs.size(); ++I) {
+    Pool.async([&, I] {
+      auto Run = [&]() -> Error {
+        lto::Config Conf;
+        Conf.ShouldDiscardValueNames = false;
+        std::string Diagnostics;
+        Conf.DiagHandler = [&](const DiagnosticInfo &DI) {
+          if (DI.getSeverity() == DS_Error) {
+            raw_string_ostream OS(Diagnostics);
+            DiagnosticPrinterRawOStream Printer(OS);
+            DI.print(Printer);
+            OS << '\n';
+          }
+        };
+        lto::LTOLLVMContext C(Conf);
+        auto Parsed = Modules.find(Inputs[I])->second.parseModule(C);
+        if (!Parsed)
+          return Parsed.takeError();
+        Module &M = **Parsed;
+        M.setModuleIdentifier(Inputs[I]);
+        auto Prefix = packagePrefix(M);
+        if (!Prefix)
+          return Prefix.takeError();
+        std::string Owner = Prefix->str();
+        DenseSet<uint32_t> ExpectedSlots;
+        for (GlobalObject &G : M.global_objects())
+          if (auto *MD = G.getMetadata("goobj.symbol.index"))
+            ExpectedSlots.insert(
+                mdconst::extract<ConstantInt>(MD->getOperand(0))
+                    ->getZExtValue());
+        // Native debug graphs are imported normally. Package configuration,
+        // import DAG and cgo directives describe this output package alone.
+        StringMap<SmallVector<MDNode *>> PackageMetadata;
+        for (StringRef Name : {"goobj.config", "goobj.imports",
+                               "goallc.cpu.config", "goallc.cpu.fmv.done"})
+          if (auto *MD = M.getNamedMetadata(Name))
+            llvm::append_range(PackageMetadata[Name], MD->operands());
+        std::vector<Module::GlobalAsmFragment> Asm;
+        llvm::append_range(Asm, M.getModuleInlineAsm());
+        if (SaveIR) {
+          std::error_code EC;
+          ToolOutputFile F((OutDir + "/" + Twine(I) + ".input.ll").str(), EC,
+                           sys::fs::OF_Text);
+          if (EC)
+            return fail(EC.message());
+          M.print(F.os(), nullptr);
+          F.keep();
+        }
+        Conf.PostOptModuleHook = [](unsigned, const Module &) { return false; };
+        if (Error E = lto::thinBackend(
+                Conf, I,
+                [](unsigned, const Twine &)
+                    -> Expected<std::unique_ptr<CachedFileStream>> {
+                  return fail("unexpected ThinLTO native code generation");
+                },
+                M, Index, Imports.lookup(Inputs[I]),
+                Defined.find(Inputs[I])->second, &Modules, false, {}))
+          return E;
+        if (!Diagnostics.empty())
+          return fail(Diagnostics);
+        for (StringRef Name : {"goobj.config", "goobj.imports",
+                               "goallc.cpu.config", "goallc.cpu.fmv.done"}) {
+          if (auto *MD = M.getNamedMetadata(Name))
+            M.eraseNamedMetadata(MD);
+          for (auto *MD : PackageMetadata[Name])
+            M.getOrInsertNamedMetadata(Name)->addOperand(MD);
+        }
+        M.removeModuleInlineAsm();
+        for (const auto &Fragment : Asm)
+          M.appendModuleInlineAsm(Fragment);
+        if (Error E = finishModule(M, Owner, ExpectedSlots))
+          return E;
+        std::error_code EC;
+        ToolOutputFile BC((OutDir + "/" + Twine(I) + ".bc").str(), EC,
+                          sys::fs::OF_None);
+        if (EC)
+          return fail(EC.message());
+        WriteBitcodeToFile(M, BC.os());
+        BC.keep();
+        if (SaveIR) {
+          ToolOutputFile IR((OutDir + "/" + Twine(I) + ".ll").str(), EC,
+                            sys::fs::OF_Text);
+          if (EC)
+            return fail(EC.message());
+          M.print(IR.os(), nullptr);
+          IR.keep();
+        }
+        return Error::success();
+      };
+      if (Error E = Run())
+        Errors[I] = toString(std::move(E));
+    });
+  }
+  Pool.wait();
+  for (const std::string &Message : Errors)
+    if (!Message.empty())
+      return fail(Message);
+  return Error::success();
+}
+
+extern "C" char *GoALLCThinLTO(const char *const *Inputs, size_t Count,
+                               const char *OutDir, int SaveIR, int Jobs) {
+  std::vector<std::string> Paths;
+  for (size_t I = 0; I != Count; ++I)
+    Paths.emplace_back(Inputs[I]);
+  if (Error E = goallc::runThinLTO(Paths, OutDir, SaveIR, Jobs))
+    return strdup(toString(std::move(E)).c_str());
+  return nullptr;
+}
+
+extern "C" char *GoALLCWriteThinBitcode(void *Module, char **Data,
+                                        size_t *Size) {
+  SmallVector<char, 0> Buffer;
+  raw_svector_ostream OS(Buffer);
+  if (Error E =
+          goallc::writeThinBitcode(*static_cast<llvm::Module *>(Module), OS))
+    return strdup(toString(std::move(E)).c_str());
+  *Data = static_cast<char *>(malloc(Buffer.size()));
+  if (!*Data)
+    return strdup("allocating ThinLTO bitcode buffer");
+  memcpy(*Data, Buffer.data(), Buffer.size());
+  *Size = Buffer.size();
+  return nullptr;
+}
