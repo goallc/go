@@ -78,10 +78,16 @@ static bool clonedConstant(const GlobalValue &G) {
 // LLVM is free to optimize bodies, but cannot replace or duplicate the Go
 // linker symbols. In particular, a specialized clone must not inherit its
 // source function's package symbol index.
+struct PackageIndex {
+  unsigned Package;
+  uint32_t Index;
+};
+
 struct SymbolIdentity {
   unsigned Package;
   MDNode *Index;
   std::string Section;
+  SmallVector<PackageIndex, 1> Originals;
 };
 
 static Error checkSymbolIdentities(Module &M,
@@ -202,8 +208,11 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
     }
     json::Object S{{"package", Owner}, {"name", Name.str()}, {"abi", ABI}};
     if (Index) {
-      S["original_index"] =
-          mdconst::extract<ConstantInt>(Index->getOperand(0))->getZExtValue();
+      json::Array Originals;
+      for (const PackageIndex &Original : Origin.Originals)
+        Originals.push_back(json::Object{{"package", Original.Package},
+                                         {"index", Original.Index}});
+      S["originals"] = std::move(Originals);
       S["index"] = NextIndex;
       Metadata *Fields[] = {
           ConstantAsMetadata::get(
@@ -234,7 +243,7 @@ static Error writeSingleModule(Module &M, ArrayRef<Package> Packages,
   if (EC)
     return fail(EC.message());
   Manifest.os() << json::Value(
-      json::Object{{"version", 1},
+      json::Object{{"version", 2},
                    {"main", Main},
                    {"packages", std::move(PackageRecords)},
                    {"symbols", std::move(Symbols)},
@@ -301,6 +310,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
   struct BSSRequirement {
     uint64_t Size = 0;
     bool FunctionAllowed = true;
+    SmallVector<unsigned> IndexedInputs;
   };
   StringMap<BSSRequirement> BSSRequirements;
   for (unsigned I = 0; I != Inputs.size(); ++I) {
@@ -454,8 +464,11 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       MDNode *Index = G.getMetadata("goobj.symbol.index");
       if (InputSymbols.size() >= UINT32_MAX)
         return fail("too many combined symbols");
-      InputSymbols.push_back(
-          {I, Index, G.getSection().str()});
+      InputSymbols.push_back({I, Index, G.getSection().str(), {}});
+      if (Index)
+        InputSymbols.back().Originals.push_back(
+            {I, static_cast<uint32_t>(mdconst::extract<ConstantInt>(
+                                          Index->getOperand(0))->getZExtValue())});
       G.setMetadata(
           "goobj.symbol.index",
           MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(
@@ -463,7 +476,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       if (Retain)
         Retained.push_back(&G);
       if (auto *V = dyn_cast<GlobalVariable>(&G);
-          V && !Index && !V->hasLocalLinkage() && V->hasInitializer() &&
+          V && !V->hasLocalLinkage() && V->hasInitializer() &&
           V->getInitializer()->isNullValue()) {
         auto *Flags = V->getMetadata("goobj.symbol.flags");
         bool Linkname =
@@ -471,7 +484,7 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
                           ->getZExtValue() &
                       (GoObj::SymFlagLinkname | GoSymFlagLinknameStd));
         if (Linkname ||
-            (V->getMetadata("goobj.symbol.nonpackage") &&
+            ((Index || V->getMetadata("goobj.symbol.nonpackage")) &&
              (V->getSection() == ".bss" || V->getSection() == ".noptrbss"))) {
           auto &Requirement = BSSRequirements[G.getName()];
           Requirement.Size = std::max(Requirement.Size,
@@ -479,6 +492,8 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
                                           .getTypeAllocSize(V->getValueType())
                                           .getFixedValue());
           Requirement.FunctionAllowed &= Linkname;
+          if (Index)
+            Requirement.IndexedInputs.push_back(InputSymbols.size() - 1);
           // LLVM common linkage handles largest size/alignment, strong
           // definitions and linknamed function definitions automatically.
           V->setLinkage(GlobalValue::CommonLinkage);
@@ -521,9 +536,21 @@ Error goallc::runLTO(ArrayRef<std::string> Inputs, StringRef OutDir,
       return fail("linked definition lost its Go identity: " + G.getName());
     unsigned ID =
         mdconst::extract<ConstantInt>(Index->getOperand(0))->getZExtValue();
-    const SymbolIdentity &Origin = InputSymbols[ID];
+    SymbolIdentity Origin = InputSymbols[ID];
+    if (auto It = BSSRequirements.find(G.getName()); It != BSSRequirements.end())
+      for (unsigned Input : It->second.IndexedInputs) {
+        if (Input == ID)
+          continue;
+        // LLVM owns definition selection. Preserve every original package
+        // index independently of the selected definition's logical owner.
+        llvm::append_range(Origin.Originals, InputSymbols[Input].Originals);
+        if (!Origin.Index)
+          Origin.Index = InputSymbols[Input].Index;
+      }
     Symbols.try_emplace(G.getName(), Origin);
     G.setMetadata("goobj.symbol.index", Origin.Index);
+    if (Origin.Index)
+      G.setMetadata("goobj.symbol.nonpackage", nullptr);
     G.setMetadata("goobj.import", nullptr);
     if (G.hasCommonLinkage()) {
       G.setLinkage(GlobalValue::ExternalLinkage);

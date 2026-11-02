@@ -74,7 +74,7 @@ func Prepare(main string, packages map[string]string, keep, pic bool) (string, m
 	if err := json.Unmarshal(data, manifest); err != nil {
 		return "", nil, nil, cleanup, err
 	}
-	if manifest.Version != 1 || len(manifest.Packages) != len(originals) || manifest.Main < 0 || manifest.Main >= len(originals) || originals[manifest.Main] != main {
+	if manifest.Version != 2 || len(manifest.Packages) != len(originals) || manifest.Main < 0 || manifest.Main >= len(originals) || originals[manifest.Main] != main {
 		return "", nil, nil, cleanup, fmt.Errorf("invalid single-object LTO package manifest")
 	}
 	for i := range manifest.Packages {

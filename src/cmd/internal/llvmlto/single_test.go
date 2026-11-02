@@ -176,3 +176,34 @@ func TestLTOCgo(t *testing.T) {
 		})
 	}
 }
+
+// A package-indexed zero definition can be replaced by an initialized
+// linkname definition, as with runtime._cgo_clearenv on Linux. Ordinary Go
+// objects must still resolve the declaring package's original symbol index.
+func TestLTOIndexedBSS(t *testing.T) {
+	goTool := singleLTOToolchain(t)
+	for _, mode := range []string{"ordinary", "full", "mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "program")
+			args := []string{"build", "-o", output}
+			if mode == "ordinary" {
+				args = append(args, "-gcflags=all=-enablellvm=false")
+			} else {
+				args = append(args, "-lto=full")
+				if mode == "mixed" {
+					args = append(args, "-gcflags=example.com/lto-bss/observer=-enablellvm=false -llvm-lto=false")
+				}
+			}
+			cmd := exec.Command(goTool, append(args, ".")...)
+			cmd.Dir = filepath.Join(runtime.GOROOT(), "src/cmd/internal/llvmlto/testdata/bss")
+			cmd.Env = singleLTOEnv()
+			if data, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build: %v\n%s", err, data)
+			}
+			cmd = exec.Command(output)
+			if data, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(data), "LTO INDEXED BSS OK") {
+				t.Fatalf("runtime: %v\n%s", err, data)
+			}
+		})
+	}
+}

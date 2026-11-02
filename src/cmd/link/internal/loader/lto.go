@@ -171,17 +171,22 @@ func (l *Loader) prepareLTOImports() {
 		l.ltoImports[p.Prefix] = make(map[uint32]Sym)
 	}
 	for _, s := range l.ltoManifest.Symbols {
-		if s.OriginalIndex == nil {
+		if len(s.Originals) == 0 {
 			continue
 		}
 		if s.Index == nil {
 			log.Fatal("FullLTO symbol missing output index")
 		}
-		refs := l.ltoImports[l.ltoManifest.Packages[s.Package].Prefix]
-		if refs[*s.OriginalIndex] != 0 {
-			log.Fatal("duplicate FullLTO original symbol index")
+		for _, original := range s.Originals {
+			if original.Package < 0 || original.Package >= len(l.ltoManifest.Packages) {
+				log.Fatal("invalid FullLTO original symbol package")
+			}
+			refs := l.ltoImports[l.ltoManifest.Packages[original.Package].Prefix]
+			if refs[original.Index] != 0 {
+				log.Fatal("duplicate FullLTO original symbol index")
+			}
+			refs[original.Index] = l.toGlobal(r, *s.Index)
 		}
-		refs[*s.OriginalIndex] = l.toGlobal(r, *s.Index)
 	}
 	for i, owner := range r.lto.owners {
 		global := l.toGlobal(r, i)

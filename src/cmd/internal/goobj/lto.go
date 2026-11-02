@@ -35,11 +35,18 @@ type LTOImport struct {
 }
 
 type LTOSymbol struct {
-	Package       int     `json:"package"`
-	Name          string  `json:"name"`
-	ABI           uint16  `json:"abi"`
-	OriginalIndex *uint32 `json:"original_index,omitempty"`
-	Index         *uint32 `json:"index,omitempty"`
+	Package   int        `json:"package"`
+	Name      string     `json:"name"`
+	ABI       uint16     `json:"abi"`
+	Index     *uint32    `json:"index,omitempty"`
+	Originals []LTOIndex `json:"originals,omitempty"`
+}
+
+// LTOIndex identifies an input package's symbol slot. Multiple input slots
+// can resolve to one output symbol when LLVM coalesces BSS definitions.
+type LTOIndex struct {
+	Package int    `json:"package"`
+	Index   uint32 `json:"index"`
 }
 
 type LTOReference struct {

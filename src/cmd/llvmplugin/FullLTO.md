@@ -2,7 +2,7 @@
 
 `goallc::runLTO` uses LLVM's IR `Linker` to combine compiler bitcode and
 `llvm::lto::backend` to run target-aware FullLTO optimization. It writes
-`program.bc` and a version 1 `program.json` manifest. When `SaveIR` is enabled,
+`program.bc` and a version 2 `program.json` manifest. When `SaveIR` is enabled,
 it also writes `program.ll` and snapshots each parsed input in `inputs/`,
 before adapting its Go metadata. The C entry point `GoALLCLTO` selects `lto<O2>` and
 returns either null or an error string that the caller releases with `free`.
@@ -25,7 +25,12 @@ linking. LLVM selects the largest size and alignment, allows initialized
 strong definitions to win, and resolves linknamed placeholders to functions.
 The adapter checks the Go-specific minimum storage requirement and permits
 a function only for linkname placeholders. After linking, it restores the
-selected Go BSS section and ordinary linkage for GoObj emission.
+selected Go BSS section and ordinary linkage for GoObj emission. This also
+applies to package-indexed BSS, such as runtime cgo hooks. When definitions
+coalesce, the manifest retains every original package/index pair and maps
+them to the selected output symbol, independently of its logical owner.
+Ordinary objects can therefore still reference the declaring package
+after an initialized definition from another package wins.
 
 The frontend already attaches `goobj.gotype`, keep edges and linker markers
 to their source definitions. LLVM preserves the selected definition's

@@ -7,11 +7,11 @@
 ; CHECK: define dso_local goabiinternal i64 @dep.Opaque()
 ; CHECK: !goobj.config = !{
 ; CHECK-NOT: module asm
-; MANIFEST-DAG: "name":"main.Answer","original_index":7,"package":0
-; MANIFEST-DAG: "name":"dep.Add","original_index":7,"package":1
+; MANIFEST-DAG: "name":"main.Answer","originals":[{"index":7,"package":0}],"package":0
+; MANIFEST-DAG: "name":"dep.Add","originals":[{"index":7,"package":1}],"package":1
 ; MANIFEST-DAG: "prefix":"main"
 ; MANIFEST-DAG: "prefix":"dep"
-; MANIFEST-DAG: "version":1
+; MANIFEST-DAG: "version":2
 target triple = "x86_64-unknown-linux-goobj"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
 define goabiinternal i64 @main.Answer() !goobj.symbol.index !1 {

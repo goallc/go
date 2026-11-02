@@ -24,7 +24,9 @@ plugins use the same `GoALLCLTO` entry point. No external LLVM tools are needed.
 The temporary `program.json` manifest records package identities, fingerprints,
 imports, cgo directives, linkname origins, and the original-to-merged symbol
 index mapping. The loader maintains logical compilation units over the single
-physical object. Original package-indexed references from ordinary dependency
+physical object. Coalesced BSS definitions retain all original package/index
+pairs, even when an initialized definition from another package wins.
+Original package-indexed references from ordinary dependency
 objects and assembly remain valid. Linkname permissions are checked against the
 originating package, including references in functions inlined across packages.
 
