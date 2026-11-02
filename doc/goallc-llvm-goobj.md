@@ -6,17 +6,22 @@ compiler 原有的 Go package archive writer；不会把 IR 写成文本，也�
 `opt`、`llc` 或 `toolexec`。LLVM 动态/静态链接只改变 compiler 如何链接同一
 payload，不改变这条运行时数据流。
 
-这是一条受限的开发路径，不是社区 Go 后端的替代品。完整的项目背景、构建
-基线和更早的试验记录见 [../GOALLC.md](../GOALLC.md)。
+正常非 bootstrap compiler 默认选择 LLVM；原生对照需要显式
+`-enablellvm=false`。默认选择不意味着所有平台或模式都已获得兼容性资格。
+总体架构与实现边界见 [../GOALLC.md](../GOALLC.md)。
 
 ## 数据流
 
 ```text
 go build -gcflags=all=-enablellvm
   -> compile 构造内存中的 LLVM Module
-  -> Module::RunPasses（默认 default<O2>）
-  -> 调用进程内 GoALLCStatepoints pre-codegen callback
+  -> early IR 准备（CPU/FMV、write-barrier record 属性）
+  -> Module::RunPasses（默认 default<O2>，-N 使用 default<O0>）
+  -> pre-codegen callback：写屏障展开、模块准备、注册 target passes
   -> TargetMachine::EmitToMemoryBuffer
+       -> 标准 CodeGen IR 准备
+       -> late PreISel：逐函数 statepoint / relocation SSA
+       -> 指令选择、寄存器分配、Go 栈帧与机器码、GoObj
   -> compiler archive writer 写入 __.PKGDEF 和唯一的 _go_.o
   -> cmd/link 读取 __.PKGDEF 和 _go_.o
 ```
@@ -26,17 +31,18 @@ go build -gcflags=all=-enablellvm
 `_go_.o`。`-linkobj` 拆分输出也沿用原 compiler 语义。
 
 `-llvm-keep-ir` 只控制诊断输出：进程内 backend 仍完整生成 GoObj，同时保留
-`<archive>.ll` 和 `<archive>.opt.ll`。原生 backend 对照使用一次不带
-`-enablellvm` 的独立构建，不在同一 compiler invocation 中同时生成 native
-object 和 LLVM IR。
+`<archive>.raw.ll`（前端快照）、`<archive>.ll`（early IR 准备后）和
+`<archive>.opt.ll`（IR 优化后、late statepoint 重写前）。原生 backend
+对照使用一次显式 `-enablellvm=false` 的独立构建。
 
 ## 类型描述符和只读数据
 
 进程内 backend 不会跳过 compiler 的 `dumpdata` 准备阶段。`reflectdata` 仍按
 原生 compiler 的方式在 `base.Ctxt.Data` 中生成最终的 `obj.LSym` 布局；随后
-LLVM lowering 从带有 `TypeInfo` 的 runtime type descriptor roots 出发，收集
-仅由这些 roots 的 relocation 可达的数据闭包，并将其 lower 为 LLVM constant
-globals。descriptor 的主体由同一份 `rttype` runtime ABI layout 构造为 packed
+LLVM lowering 收集 `base.Ctxt.Data` 中受支持 symbol kind 的定义，以及 SSA/data
+lowerer 记录的额外 roots，沿 `Gotype` 和 relocation 收集数据闭包，再生成 LLVM
+globals。这包括类型描述符，也包括普通静态数据。descriptor 的主体由同一份
+`rttype` runtime ABI layout 构造为 packed
 named LLVM structs（例如 `%go.runtime.Type`、`%go.runtime.StructType`）；未建
 schema 的辅助数据仍以 bytes/relocations 表示。这个边界刻意位于 finalized LSym，
 而不是重写 reflectdata 布局逻辑。
@@ -138,10 +144,10 @@ padding，并通过 `!goobj.gotype` 恢复 compiler LSym 的 Go type auxiliary�
 reference；后者用于 builtin 或其他 package 拥有的 type symbol。
 否则 linker 无法为 `.data` 生成正确的 GC bitmap。
 
-当前实现只 lower type-rooted data closure，尚未把所有 `dumpdata` 产物泛化为
-LLVM data lowering。type descriptor 中未被当前 schema 覆盖的尾部数据，以及其他
-data roots，保守地维持 bytes/relocation fallback；新增 schema 或 root 前必须先明确
-其 relocation、GC 和 linker 契约，并为 writer 增加相应的 GoObj regression。
+数据 lowering 已不局限于 type-rooted closure；支持的 symbol kinds 由
+`llvmDataSymbolKindSupported` 明确列出。type descriptor 中未被 schema 覆盖的
+尾部和其他 generic data 仍使用 bytes/relocation layout。新增 schema、symbol kind
+或 root 必须明确其 relocation、GC 和 linker 契约，并增加对应 GoObj regression。
 
 ## 闭包调用 ABI
 
@@ -152,13 +158,14 @@ LLVM lowering 在 `AuxCall` 描述的普通参数之后追加一个 `ptr nest` �
 call site 和被调函数定义上保持相同签名。GoObj target 把该参数固定放入原生
 REGCTXT：amd64 使用 RDX，arm64 使用 X26，不把它计入普通参数寄存器或栈参数布局。
 
-闭包函数定义必须同时满足 `obj.NEEDCTXT` 和 SSA `OpGetClosurePtr`；两者不一致、
-closure callee/context 类型错误、code pointer 不是从同一 funcval 的单次
-`uintptr` load 获得，或 closure call 使用 ABI0 时，LLVM lowering 都会
-fail-fast。ABI0 的普通 static call 仍使用独立 calling convention，但当前没有
-安全的 ABI0 closure-context 契约。多返回值沿用 `AuxCall` 的 ABI 结果顺序，
-在 LLVM 中以 aggregate return 表达，再由 `OpSelectN` 提取；零结果和单结果不
-虚构 tuple。
+函数需要 context 的条件是 `NeedCtxt()` 或存活的 SSA `OpGetClosurePtr`，不是两者
+必须同时存在：即使 deadcode 删除了 context 读取，`NeedCtxt()` 仍保留调用契约。
+closure context 只支持 ABIInternal；不合法的 callee/context 类型或 ABI 被明确拒绝。
+ABI0 的普通 static call 仍使用独立 calling convention，但当前没有
+安全的 ABI0 closure-context 契约。结果沿用 `AuxCall` 的逻辑次序：寄存器结果
+通过直接 LLVM return（必要时 tuple）返回，内存结果通过 typed `goret` 参数和
+`goretindex` 对应 caller-owned homes。`OpSelectN` 取回相应结果；不能把所有
+多返回值都解释成 LLVM aggregate return。
 
 nil funcval 调用必须在 indirect call 前产生可恢复的 Go panic。原生 Go backend
 依赖 funcval 首字的机器 load 在零地址 fault；普通 LLVM null load 则允许优化器
@@ -168,13 +175,13 @@ nil funcval 调用必须在 indirect call 前产生可恢复的 Go panic。原�
 则阻止 LLVM 仅因 funcval 可能为 nil 就把该路径改写为 `unreachable`。最终
 机器代码与原生 Go backend 一样，依赖零页访问产生 fault。
 
-TODO：通用 `OpNilCheck` 当前仍 lower 为结果未使用的 `load volatile i8`。
-`null_pointer_is_valid` 只能消除 null dereference 的 undefined behavior，不能
-阻止 DCE 删除未使用的普通 load。后续应在 LLVM GoObj 路径中引入可分析的 Go
-nilcheck marker/intrinsic，并实现 target-aware nilcheck analysis：在 panic
-顺序、可恢复 fault、允许的 implicit-check offset 和 memory dependence 均满足时，
-把显式 nilcheck 合并到后续 faulting load；否则保留确定性的 check。完成该分析
-前不能删除通用 `OpNilCheck` 的 volatile side effect。
+通用 `OpNilCheck` 先用临时 marker 保持 SSA 翻译顺序，再在 CFG/PHI 完整后
+展开为 `p == nil` 分支、`runtime.panicmem` 调用和 `unreachable`。分支附带
+`!make.implicit !{!"goallc"}`。目标相关的 ImplicitNullChecks 仅在非负首个
+内存页偏移、访存依赖和调度等条件成立时，将其折叠为 Go signal 路径可处理的
+同步 fault；否则保留显式 panic 路径。panicmem 仍是参与 statepoint 的普通
+非 leaf 调用。替换指令保留 nilcheck 的 DILocation，包括 inlined-at 链。
+实现见 `src/cmd/compile/internal/ssa/ssa2llvm_nilcheck.go`。
 
 带 closure context 的 GoObj 函数发生 stack growth 时必须调用
 `runtime.morestack`，使 REGCTXT 在 slow path 中保留；普通函数仍调用
@@ -196,26 +203,22 @@ block 移到正常函数体和 `RET` 之后。这样热路径从 stack check 直
 use 的 local 不生成 LLVM 栈槽，避免无意义地增大 frame。
 
 GoObj stack growth、SP 恢复和当前 stack-map 路径只支持编译期固定 frame。
-因此 amd64 和 arm64 GoObj target 对 variable-sized `alloca` 都确定性报错，
-不能把动态栈分配交给 LLVM 通用 lowering。当前 GoObj writer 已为所有 GoObj Go
-函数生成类型推导的入口 ArgsPointerMaps，并为已支持的普通 statepoint 和固定
-`alloca` 生成 LocalsPointerMaps；这仍不代表已经支持完整 precise-GC stack maps、
-goroutine、defer 或 panic unwind。
+因此 amd64 和 arm64 GoObj target 对 variable-sized `alloca` 都确定性报错。
+固定存储的原始 base 是 frame identity，不生成普通 `gc.relocate`；同对象派生
+地址规范化为 base + integer offset，在实际使用处重建。typed `byval` 参数和
+`goret` 结果 homes 使用同一固定 frame 规则。
 
-对应回归包括：
+插件对优化后的固定对象进行 pointer-content liveness 分析；活跃内容进入
+Args/LocalsPointerMaps，地址可观察的对象另生成函数级 StackObjects，并通过
+`llvm.stackcoloring.no_merge` 保留 frame identity。对象身份不意味着每个调用点
+内容都活跃。若活跃区间的 producer 未能在 safepoint 前初始化所有 pointer slots，
+插件在相应起点插入 inline zero initialization。
 
-- `test/codegen/closure.go`：hidden context、tuple return、重复 funcval 调用和
-  entry-block alloca；
-- `test/llvm_closure.go`：逃逸 funcval、capture、重复调用和递归 stack growth；
-- LLVM `goobj-stack-growth-metadata.ll`：`morestack` 与
-  `morestack_noctxt` 的选择及 REGCTXT 保留；
-- LLVM `goobj-dynamic-alloca.ll`：两个已支持 GoObj target 上的动态 alloca
-  fail-fast。
-
-本阶段验证基线为 41/41 LLVM codegen whitelist 通过，run whitelist
-18/20 通过。剩余 `llvm_interface_assertion.go` 和
-`llvm_interface_conversion.go` 失败来自既有 panic/traceback unwind 限制，
-不是 closure ABI、alloca 或 GoObj relocation mismatch。
+相关回归包括 `test/llvm_closure.go`、`test/llvm_alloca_statepoint_gc.go`、
+`test/abi/llvm_args_results.go` 及 `src/cmd/llvmplugin/testdata` 中的固定 frame、
+aggregate、liveness 和 relocation 用例。支持边界见
+[plugin README](../src/cmd/llvmplugin/README.md)；不沿用早期 whitelist 计数推断
+当前运行时资格。
 
 ## LLVM IR 契约
 
@@ -283,9 +286,9 @@ limit each location's PC range. Variables without a frontend location,
 inlined-variable instances, and unsupported expressions remain unavailable;
 the backend does not infer locations from source names or ABI offsets.
 
-package 选择完全由 cmd/go 已有的 `-gcflags` 规则完成。无 pattern 的
-`-gcflags='-enablellvm'` 只作用于命令行 package；需要选择依赖时使用精确
-pattern，需要证明完整编译闭包时使用 `-gcflags=all=-enablellvm`。
+package 选择由 cmd/go 已有的 `-gcflags` 规则完成。无 pattern 的 flag 只覆盖
+命令行 package，但未覆盖的 package 仍默认 LLVM。只让一个包使用 LLVM 时，
+应先设置 `-gcflags=all=-enablellvm=false`，再用精确 pattern 覆盖目标包。
 
 compiler 所使用的 LLVM binding、动态 `libLLVM`（动态模式）和静态 archive
 （静态模式）必须来自 `make.bash` 记录的同一 payload；pass plugin 必须由
@@ -295,83 +298,63 @@ toolchain 自己的 `pkg/tool/<host>/lib` 中，动态 `libLLVM` 也安装在同
 `test/codegen` 驱动完成。外部 `opt`/`llc` 仍可用于 LLVM 仓库自身的格式级测试，
 但不再是 Go toolchain 的集成入口，也不参与 Go action cache identity。
 
-插件的功能性源码和测试位于 Go 仓库
-`src/cmd/llvmplugin`，不放入 LLVM 源码树。LLVM 提供通用的
-`-load-pass-plugin`、pre-codegen callback，以及 GoObj 对 Machine StackMaps
-的对象格式适配；GoALLC statepoint rewrite 及其 pass 顺序都应继续在这个
-Go-owned 工程中实现。当前
-`runPreCodeGenPipeline` 调用 Go-owned statepoint pass：它对 Go ABI 函数执行
-CFG 逆向数据流活跃性分析，为普通调用分配稳定 callsite ID，生成
-`gc.statepoint` / `gc.relocate`，并识别 `gc-leaf-function`。受管指针分类当前
-对 LLVM `ptr` 保守，不依赖 addrspace；活跃的 `alloca` 地址及其派生指针也
-进入 `gc-live`，不在 IR 层提前猜测其最终机器位置。第一阶段对 live pointer
-aggregate、`invoke`、`musttail` 和非 leaf inline asm fail closed。默认
-compile 已在进程内加载 plugin adapter 并调用同一 pre-codegen callback；core
-与 adapter 的分离继续支持独立单测和以后进一步静态集成。
+插件源码和测试位于 Go 仓库 `src/cmd/llvmplugin`。LLVM 提供通用插件回调、
+target-pass 扩展点和 GoObj 对 Machine StackMaps 的适配。正式流水线由
+`GoALLCStatepointPlugin.cpp` 编排：
 
-机器位置不通过修改 LLVM 通用 `StackMaps.cpp` 截获。SSA→LLVM IR 前端为 Go ABI
-函数声明 `gc "goallc"`；GoObj Go 函数默认采用原生 Go 的可扩栈策略，只有
-`go-nosplit`、`go-systemstack` 这样的例外策略需要额外属性。插件负责注册对应的
-GC strategy、执行 statepoint rewrite 并消费这些前端标记。在 LLVM GoObj
-AsmPrinter 模块收尾阶段
-读取标准 `FnInfos/CSInfos`，跳过 statepoint 的 CC、flags 和 deopt 前缀后，把
-原始 GC locations 写入 MCContext。GoObj writer 在最终 layout 后完成 SP
-校验、`Direct`/`Indirect` 解释、LocalsPointerMaps 和 PCDATA_StackMapIndex
-编码。GoALLC 要求 StackMaps 记录 CALL 起点；map 从 CALL 开始。LLVM target
-formal lowering 为每个 GoObj Go 函数推导入口参数 home，并用一个独立、零字节的
-`EntryArgsStackMapID` 表达函数级 ArgsPointerMaps；该记录不是调用点，不生成
-PCDATA。非 nosplit 函数在 PEI 阶段额外把 `runtime.morestack` 调用生成为物理、
-root-free 的 `StackGrowthStatepointID`，从 CALL 起点选择入口 ArgsPointerMaps 和
-空 locals bitmap。nosplit 函数不得包含这个 statepoint。这样普通调用与栈增长
-调用仍走同一 Machine StackMaps 链路，且不依赖 return PC 反推调用范围，同时
-函数级入口图不再伪装成 morestack 调用。GoObj 先写索引 0 的
-`PCDATA_UnsafePoint`（当前恒为 safe 的 `-1`），再写索引 1 的
-`PCDATA_StackMapIndex`；不能只写后一张表，否则 linker 会把它误认成索引 0。
-`Direct SP+offset` 是栈地址本身，不表示该 slot 存有 pointer，因此不会设置
-bitmap；`Indirect [SP+offset]` 才表示该槽保存指针值。最终 frame 内的间接槽
-设置 LocalsPointerMaps，最终 frame 之上的 caller-owned 参数 home 或栈结果槽
-设置 ArgsPointerMaps。这允许 IR 层保守追踪所有 alloca，同时避免把 alloca
-对象内容误当成指针。
+1. IR 优化前，配置 write-barrier records 并执行 CPU/FMV early IR 准备。
+2. pre-codegen callback 在优化后展开 write-barrier records，完成模块级 marker
+   准备，并注册 target passes。
+3. 标准 CodeGen IR 准备之后、指令选择之前，`GoALLCPreISelPass` 逐函数调用
+   `rewriteStatepoints`。callback 中直接重写完整 module 只用于 emit-IR 测试模式。
+4. LLVM 完成指令选择、寄存器分配和 frame lowering；Go-owned read-only callback
+   根据最终机器指令标记异步抢占保护区，LLVM 将标签转换为最终 PC 范围。
 
-普通栈入参不需要额外的旁路格式。SelectionDAG formal lowering 只在 Go ABI
-pointer part 是从 immutable fixed object 发出的 direct、non-extending load，
-且 IR aggregate offset、ABI `PartOffset`、load size 与 object size 完全一致时，
-记录这个精确 value home。若后续 `gc-live` 是该参数或其精确
-`extractvalue` pointer leaf，statepoint lowering 直接把同一个 fixed frame
-index 作为 indirect memory operand，允许 GC 更新该槽，并让 `gc.relocate`
-从同一位置重新加载；调用前不再复制到 locals spill。merge、派生值或任一尺寸/
-offset 无法证明一致时，继续走 LLVM 原有的 local statepoint spill。这仍是标准
-SelectionDAG statepoint operand，不引入 `byval`/`sret`，也不后移 GoALLC 生成
-LLVM IR 的时机。当前 GoObj/运行时精确资格边界仍是 darwin/arm64；相同 fixed
-home 选择路径另有 AArch64 与 X86 MIR lit 覆盖。
+前端给 Go ABI 函数声明 `gc "goallc"`；插件注册 GC strategy，并消费前端契约。
+普通调用根据 CFG 逆向活跃性生成 `gc.statepoint` / `gc.result` / `gc.relocate`。
+支持的 struct/array SSA aggregate 在定义旁提取 pointer leaves，在 use 处用当前
+值重建；固定 pointer vector 保留同类型 root。`gc-leaf-function` 按调用点分类，
+定义带该属性不代表函数体内所有调用被豁免。符合 Go ABI 的 `musttail` 没有
+caller continuation，不作为 caller safepoint；一般 `invoke` / 非 leaf `callbr`
+等不支持形态仍拒绝。`llvm.go.defer.edge` 是单独定义的零指令控制流契约。
 
-同源可执行回归 `test/abi/llvm_args_results.go` 还覆盖四种组合：第一个栈槽中的
-单个 pointer、由一个 non-pointer word 分隔的两个 pointer、含两个 pointer
-leaf 的三字 aggregate，以及该 aggregate 栈入参与两个 caller-owned pointer
-结果槽同时溢出。每个 callee 在读取这些 pointer 前执行 `runtime.GC`，caller
-随后再次执行 GC 并核对 pointer 身份、指向值和 scalar payload。差异测试同时
-固定 native/GoALLC 的 ArgsPointerMaps、LocalsPointerMaps、PCDATA 查询结果和
-最终 MIR，因此运行成功不能替代元数据证据。
+固定 alloca / byval / goret 的 base 保留为 FrameIndex 身份，地址在 use 处重建，
+不参与普通 relocation SSA；其内容由独立的 typed layout/liveness 描述。从这些
+homes 中加载的普通 pointer values 仍参与普通 root tracking。普通指针的 relocate
+定义通过临时 promotable alloca 与 `PromoteMemToReg` 构造 PHI，覆盖合流与循环。
+详细协议见 [plugin README](../src/cmd/llvmplugin/README.md)。
 
-AArch64 GoObj 的 prologue 采用 Go arm64 栈链约定，而不是平台 ABI 的
-in-frame `(FP, LR)` record。若最终物理 frame 大小为 `StackSize`，则
-`LR` 位于 `SP+0`，当前函数为未来 callee 写入的 FP link 位于 `SP-8`，
-caller 已写入的 FP link 占据 frame 顶部 `SP+StackSize-8`。因此 GoObj
-writer 直接由最终 `StackSize` 推导 `_func.locals=StackSize-8`，locals
-pointer bitmap 只描述 `[SP+8, SP+StackSize-8)`。这里不从 IR lowering
-额外传递 locals size：底部 LR 和顶部 FP link 是 target frame layout
-已经确定的两个保留槽。与原生 arm64 backend 一样，小 frame 用 pre-index
-`STR LR` 原子地保存 LR 并移动 SP；超过 `0xf0` 的大 frame 则先计算 NewSP，
-在移动 SP 前保存 `(FP, LR)`，避免异步 traceback 看到半构造的 frame。
+GoObj AsmPrinter 适配标准 Machine StackMaps，保留 deopt 布局和 GC locations
+到 MCContext。writer 在最终 layout 后解释 SP 位置，生成 pointer maps 与
+PCDATA。`Indirect [SP+offset]` 表示槽内存有 pointer：当前 frame 内对应 locals，
+caller-owned 参数/结果区对应 args。`Direct SP+offset` 是地址本身，不能当作该槽
+中的 pointer bit；在已验证的 fixed-object record 内，它才是展开内容 bitmap 的基址。
 
-当前 ArgsPointerMaps 的第 0 项描述 ABIInternal/ABI0 的入口 pointer 参数
-home；普通 statepoint 则按最终机器位置把 caller-owned 参数/结果区中的间接
-pointer 槽写入对应 ArgsPointerMaps 项，其中可证明的栈入参直接使用原 fixed
-home，而不是另建 locals spill。Args 和 Locals 表按完整 pair 一起去重，
-并由同一个 `PCDATA_StackMapIndex` 选择。writer 不按声明类型预先标记所有结果槽：
-只有 statepoint 真实报告其中存有 live pointer 的栈结果槽才置位，尚未物化或尚未
-初始化的结果槽保持为空。StackObjects 仍未生成；追踪 alloca 地址也不能描述
-alloca 对象内部保存的指针字段。
+LLVM formal-argument lowering 从存活函数的参数类型与 Go ABI 布局推导入口参数
+homes，以零字节 `EntryArgsStackMapID` 保存函数级入口图。pair 0 是 EntryArgs 与
+empty locals，`PCDATA_StackMapIndex` 从 0 开始。PCSP 回到入口栈深时选择 pair 0；
+普通 statepoint 在 CALL 起点选择实际活跃 pair，覆盖同 PC 的入口深度转换。
+`morestack` 是 frame lowering 插入的普通 ABI0 MIR call，不再制造专门的
+stack-growth statepoint。
+
+writer 按完整 `(Args, Locals)` pair 去重。精确匹配的栈输入 pointer 可复用
+canonical ABI home，`gc.relocate` 从同一位置 reload；无法证明的普通值使用正常
+statepoint spill。活跃 fixed-object 内容也可按 typed bitmap 扩展到 args 或 locals。
+地址可观察的 alloca 另外产生 `FUNCDATA_StackObjects`。`PCDATA_ArgLiveIndex`
+从最终机器 CFG 已存在的 home stores 推导可见性，不为 traceback 凭空添加 spills，
+也不替代 GC 的 pointer maps。
+
+GoObj 依次写出索引 0 的 `PCDATA_UnsafePoint` 和索引 1 的
+`PCDATA_StackMapIndex`。UnsafePoint 并非恒为 safe：普通支持形态可细化为区间，
+写屏障、stack check/morestack、inline asm 与 arm64 REGTMP 活跃范围等受保护。
+runtime、reflect、nosplit、systemstack、显式 whole-function 策略和无法识别的
+协议保守保持全函数 unsafe。
+
+AArch64 GoObj 使用 Go 栈链：LR 在 `SP+0`，当前函数为未来 callee 写入的 FP link
+在 `SP-8`，caller 已写入的 FP link 在 `SP+StackSize-8`。writer 由最终物理
+`StackSize` 推导 `_func.locals=StackSize-8`，locals bitmap 范围是
+`[SP+8, SP+StackSize-8)`。小 frame 通过 pre-index 保存 LR 并更新 SP；大 frame
+先保存 frame record 再切换 SP，避免异步 traceback 观察半构造的 frame。
 
 `make.bash` 会使用同一个 LLVM payload 的 CMake config 构建插件，并以新 inode
 原子安装到 Go toolchain 自己的目录。规范的 LLVM payload、plugin、Go 构建和验证流程见
@@ -409,10 +392,12 @@ cd /path/to/simple-main-package
 
 | 参数 | 行为 |
 | --- | --- |
-| `-enablellvm` | 选择进程内 LLVM backend |
+| `-enablellvm` | 正常 compiler 的默认值；选择进程内 LLVM backend |
+| `-enablellvm=false` | 选择原生 Go backend |
 | `-llvm-opt-passes` | Default `auto`: `default<O0>` with `-N`, otherwise `default<O2>`. An explicit pipeline overrides IR optimization selection; `none` skips IR optimization. |
-| `-llvm-keep-ir` | 保留 `<archive>.ll` 和 `<archive>.opt.ll` |
-| `-gcflags` package pattern | 精确选择需要 LLVM 的 package；`all=` 覆盖完整闭包 |
+| `-llvm-keep-ir` | 保留 `.raw.ll`、准备后 `.ll` 和优化后 `.opt.ll` |
+| `-llvm-lto` | 输出 pre-link O2 后的 `__.LLVMBC`；当前主线 linker 尚不能消费，见下节 |
+| `-gcflags` package pattern | 覆盖匹配包的 flags；未覆盖的包仍默认 LLVM |
 
 `-N` also disables machine-code optimization, independently of an explicit IR pipeline. `-l` disables both Go and LLVM inlining. Required ABI, GC/statepoint, and object emission passes still run at O0. The runtime package retains Go's existing exception to `-N`.
 
@@ -428,17 +413,18 @@ cd /path/to/simple-main-package
 
 ```sh
 "$GOROOT/bin/go" build \
+  -gcflags='all=-enablellvm=false' \
   -gcflags='example.com/project/internal/foo=-enablellvm' \
   .
 ```
 
-反过来，若大部分 package 走 LLVM、少数 package 保留原生 backend，可利用
+反过来，若大部分 package 走 LLVM、仅 runtime 包保留原生 backend，可利用
 `-gcflags` 的“最后一个匹配规则生效”语义：
 
 ```sh
 "$GOROOT/bin/go" build \
   -gcflags='all=-enablellvm' \
-  -gcflags='runtime=' \
+  -gcflags='runtime=-enablellvm=false' \
   .
 ```
 
@@ -458,13 +444,25 @@ llvm/cmake-build-debug/bin/llvm-lit -sv \
 IR、进程内 plugin/codegen、compiler archive writer 和 linker。动态/静态两种
 链接配置使用相同测试，不建立第二套运行入口。
 
+## LTO 编译输出与链接边界
+
+`-llvm-lto` 执行 early IR 准备，再运行 LLVM 原生 `lto-pre-link<O2>`，生成
+`__.PKGDEF + __.LLVMBC`。导出数据仍可用于后续包编译；pre-codegen、late
+statepoints 和机器码生成留到链接阶段。`.opt.ll` 对应写入包内的 pre-link 优化结果。
+
+截至 2026-11-02，主线 `cmd/link` 明确拒绝 bitcode archive。端到端
+`go build -lto=full`、whole-program `lto<O2>`、单一物理 GoObj 与逻辑包恢复在
+尚未合并的 [PR #347](https://github.com/goallc/go/pull/347) 中。主线 compiler
+的 bitcode 支持不能独立视为完整 LTO 使用入口。
+
 ## 标准库的分层构建和测试
 
 扩大到标准库时必须记录 LLVM 实际覆盖的依赖范围。以下三种命令不能混称为
 “标准库使用 LLVM”。每次使用新的 `GOCACHE`，避免上一层生成的 archive 掩盖
 本层的编译边界；`-x -work` 和 compiler 的 `-llvm-keep-ir` 可在调查失败时追加。
-本节各层默认只传 `-enablellvm`。需要和原生 backend 做对比时，执行一次不带
-`-enablellvm` 的独立构建，并保持相同的 package pattern。
+LLVM 已是默认后端，单包与部分依赖测试必须先指定
+`-gcflags=all=-enablellvm=false`，再覆盖选定包。原生对照使用
+`-gcflags=all=-enablellvm=false`；只省略 flag 不会回到原生后端。
 
 公共设置如下。`LLVM_ROOT` 必须是构建 toolchain 时使用的项目 payload；正式
 Linux 资格还必须核对 release manifest 的 revision 和 `llvm_dirty=false`。
@@ -482,6 +480,7 @@ PKG=unicode/utf16
 CACHE=$(mktemp -d)
 env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
   "$GOROOT/bin/go" test -count=1 -timeout=2m \
+  -gcflags='all=-enablellvm=false' \
   -gcflags="$PKG=-enablellvm" \
   "$PKG"
 ```
@@ -503,7 +502,7 @@ env GOROOT="$GOROOT" GOCACHE="$CACHE" \
   -f '{{if .Standard}}{{.ImportPath}}{{end}}' runtime |
   LC_ALL=C sort -u >"$RUNTIME_DEPS"
 
-LLVM_GCFLAGS=()
+LLVM_GCFLAGS=('-gcflags=all=-enablellvm=false')
 while IFS= read -r dep; do
   test -n "$dep" || continue
   if ! grep -Fxq "$dep" "$RUNTIME_DEPS"; then
@@ -547,99 +546,14 @@ LLVM 是默认后端；CI 在 amd64 和 arm64 上分别运行一次 `make.bash`�
 机制实现。未列出的失败会使 CI 失败。重新评估时设置
 `GOALLC_TEST_KNOWN_FAILURES=0`，详见 [构建说明](goallc-build.md)。
 
-### Darwin/arm64 开发载荷阶段结果
+### 历史资格记录
 
-2026-08-11 的本地扩面使用基于正式 v8 加 LLVM #64 的 Darwin/arm64 开发载荷，
-不能替代 Linux 正式 v8 资格。入口包共享同一个隔离 `GOCACHE`，
-`default<O2>` 和上述入口包命令，并在编译成功后运行完整包用例。
-
-以下 62 个包完成了 LLVM 编译、GoObj/archive、链接和包用例运行：
-
-```text
-cmp container/heap container/list container/ring
-crypto/md5 crypto/rand crypto/sha1 crypto/sha256 crypto/sha512 crypto/subtle
-encoding/ascii85 encoding/base64 encoding/binary encoding/csv encoding/hex
-encoding/base32 encoding/gob encoding/json encoding/pem encoding/xml
-go/scanner go/token hash hash/adler32 hash/crc32 hash/crc64 hash/maphash
-hash/fnv html image image/color mime mime/quotedprintable
-math math/bits math/cmplx math/rand math/rand/v2 net/netip net/url path
-regexp/syntax sort strconv unicode unicode/utf8 unicode/utf16
-archive/tar archive/zip
-bufio bytes compress/gzip compress/zlib index/suffixarray io io/fs
-path/filepath regexp strings text/scanner text/tabwriter text/template/parse
-```
-
-本轮通用修复后重新使用空缓存验证了后新增的 15 个包。其中：
-
-- `encoding/base32`、`math/rand/v2`、`net/netip`、`image`、`sort`、`hash/fnv`、
-  `encoding/json`、`encoding/xml`、`encoding/pem`、`net/url`、`math/rand`、
-  `archive/tar` 和 `archive/zip` 在保留 Go 栈地址观察的 `OpConvert` lowering 后，
-  均以 `default<O2>` 完整通过；这说明原先的数据破坏和超时来自同一个
-  `opt/statepoint` 地址活跃性问题，而不是各包的运行语义；
-- `regexp/syntax` 和 `encoding/gob` 越过了 O2 推断的 `readnone` 参数属性；
-  statepoint verifier 和 SelectionDAG 均原生支持这一非 ABI 属性，因此插件与
-  `readonly` 等属性一样直接保留它；
-- `encoding/gob` 还暴露了一个独立的聚合标量化问题：对部分初始化的
-  `insertvalue poison/undef` 聚合，插件曾为未定义指针叶制造 `extractvalue` 并
-  错误加入 `gc-live`。SelectionDAG 合法删除 undef spill 后，GoObj 栈图仍会扫描
-  未初始化槽。现在只用 `FindInsertedValue` 识别 poison/undef 叶；已定义叶仍保留
-  各自的 `extractvalue` SSA 身份，避免 statepoint relocation 修复把同一源值的
-  其他使用一并改写。常量 poison/undef 不进入活根；`TestTypeRace` 50 次和完整
-  `encoding/gob` 5 次复测均通过。
-
-### Linux/amd64 正式 v8 资格复测
-
-2026-08-11 在 Ubuntu 22.04 x86-64 上使用 PR 121 的 `de9dde3b60` 和正式 release
-`goallc-llvm23.1.0-20260811T022435Z`（revision
-`90e5e5c7c626e3072fc77ce69cb42d8c7bb1b4a4`）复测了全部 28 个有精确降级记录的
-入口包。每包先独立运行三次；通过的 20 个候选又追加两次，因此以下包均为 5/5：
-
-```text
-archive/tar archive/zip compress/gzip
-encoding/base32 encoding/binary encoding/gob encoding/json encoding/pem encoding/xml
-go/token hash/fnv hash/maphash image mime/quotedprintable
-net/netip net/url regexp regexp/syntax sort strings
-```
-
-这些包不再需要公共或 linux/amd64 降级。公共白名单由 46 个增加到 60 个；扣除
-当前 5 个 linux/amd64 平台降级后，该平台 CI 实际要求 55 个包连续三次通过。
-剩余失败均保留在最早边界：
-
-- `bytes`：`llc/GoObj` 拒绝含无效参数指针槽的栈增长 statepoint；
-- `compress/flate`：X86 与 AArch64 都在 `compress/flate.testBlock` 的
-  SelectionDAG instruction selection 中断言；
-- `crypto/md5`：链接后的测试在 `runtime.convTnoptr` 附近发生 interface 数据破坏；
-- `crypto/sha1`：`blockAVX2` 栈增长时报告未类型化参数 frame 缺少 stack map；
-- `io`：三次中两次通过，一次 `TestPipeConcurrent/Write` 把已写数据替换为零字节，
-  属于仍可复现的间歇性 runtime semantics 问题，不能升白；
-- `math`：x86-64 lowering 缺少 `ftrunc` 和 `ffloor` libcall；
-- `math/rand`、`math/rand/v2`：x86-64 lowering 缺少 `ffloor` libcall，Linux arm64
-  仍需由 CI 之外的显式资格测试确认，所以暂不升入公共白名单。
-
-当前入口包扩面的剩余失败按最早边界记录如下：
-
-- `compress/flate`：`llc` 在 `compress/flate.testBlock` 的 X86/AArch64
-  SelectionDAG instruction selection 中断言失败，属于 `llc/GoObj` 的 llc 子类；
-- 完整闭包已越过 atomic 8/64、`Mul{32,64}uover`、`GetClosurePtr`、`GetG`、
-  `PubBarrier`、prefetch，以及仅在 LLVM IR descriptor 重构时对预声明别名
-  `TypeInfo` 视图的 canonicalization；原生 `reflectdata` 逻辑保持不变。当前停止在
-  自动生成调用与已定义 `runtime.growslice` 的 LLVM 函数类型冲突。该问题属于
-  runtime ABI/声明的系统性建模边界，不在入口包扩面中旁路。
-
-amd64 的 `GetG` 目前只接受 ABIInternal 并读取 R14。ABI0 在原生 backend 中从
-TLS 读取 g，并在 ABIInternal/ABI0 跨越处显式修复 R14；LLVM 尚未建模这套转换，
-因此 amd64 ABI0 遇到 `OpGetG` 会 fail-closed，而不是误读一个未建立契约的 R14。
-
-调查 O2/statepoint 失败时，可保留完全相同的入口包范围，只移除优化 pipeline
-形成对照；这只是分类命令，不能作为 O2 资格结果：
-
-```sh
-CACHE=$(mktemp -d)
-env GOROOT="$GOROOT" GOCACHE="$CACHE" GOALLC_LLVM_DIR="$LLVM_ROOT" \
-  "$GOROOT/bin/go" test -count=1 -timeout=2m \
-  -gcflags="$PKG=-enablellvm -llvm-opt-passes=none" \
-  "$PKG"
-```
+2026-08-11 的 Darwin/arm64 开发载荷和 Linux/amd64 v8 复测是有日期、revision
+和 package scope 的历史记录，不代表当前失败清单或平台资格。原始记录见
+[此前文档快照](https://github.com/goallc/go/blob/42dc37cc80160e792a97df75221af57263fc6a2f/doc/goallc-llvm-goobj.md#darwinarm64-开发载荷阶段结果)。
+后端默认值、X86 ABI 状态修复、stack-map 协议和测试入口均已继续演进；复测应使用
+上面的显式选择命令和当前 `test/llvm_known_failures.json`，不要复制历史 whitelist
+数字或失败症状作为当前结论。
 
 ### 失败分类和证据
 
@@ -713,20 +627,16 @@ cd src && ./all.bash -llvm-dir=/path/to/llvm-payload
 
 ## 当前范围与后续工作
 
-- 当前 target triple 配置了 `darwin/arm64`、`linux/amd64` 和 `linux/arm64`。
-- LLVM SSA lowering 仍不完整；复杂 SSA op、GC pointer liveness、defer/panic、
-  closure、完整 ABI/DWARF 等尚未达到通用正确性。
-- 当前 interface 范围包括 compiler 能静态生成 itab 的 concrete-to-interface
-  conversion、对应的 ABIInternal 间接方法调用，以及 non-empty
-  interface-to-interface conversion；empty-interface 到 concrete/non-empty
-  interface 的 comma-ok/panic-form assertion，以及包含 concrete/interface cases
-  的 type switch 也已覆盖。
-- 每个经 LLVM 替换的 package 都必须由 `llc` 生成完整的 `_go_.o`，不能与
-  原生 compiler object 混合。
-- 新增 header 配置时先区分公共兼容性约束与每包身份，并更新 LLVM 公共解析器；
-  不要在 binding 或 wrapper 中另建一套 header 解析逻辑。
-- 类型 descriptor data 已覆盖，但这不等同于通用 static-data lowering；目前仅
-  支持 type-rooted readonly/data closure 中已验证的 relocation 类型。
-
-相关合入记录：Go [#3](https://github.com/goallc/go/pull/3)，LLVM
-[#3](https://github.com/goallc/llvm-project/pull/3)。
+- 当前 compiler target triple 覆盖 Darwin/arm64、Linux/amd64 和 Linux/arm64；
+  不能由 LLVM 支持其他 CPU 推断 GoALLC 已支持对应平台。
+- closure、interface、defer、pointer maps、StackObjects、异步抢占和 DWARF 已有
+  实现与回归。实现存在不等于全部组合获得运行时资格；按具体用例和当前测试记录判断。
+- 普通 LLVM package 由进程内 backend 生成完整 `_go_.o`，export data 由 Go writer
+  生成；不合并另一份原生 compiler 数据对象。汇编/native archive members 仍按其
+  正常协议处理。LTO 的 `__.LLVMBC` 是另一个明确的输出模式。
+- 动态/realigned frame、scalable pointer vectors、通用 moving-heap base/derived
+  推断及任意 invoke/EH 形态不在现有协议范围；不支持输入应被明确拒绝。
+- 支持的静态 data kinds 和额外 roots 的闭包已有 lowering；类型/itab 可用已知
+  schema，没有 schema 的内容保留 bytes/relocations。新增 root 必须验证相应契约。
+- 新增 GoObj metadata 时优先使用 LLVM 原生类型、initializer、linkage、module flags
+  和 debug graph；仅为没有原生表达的 GoObj 剩余语义定义 attachment。
