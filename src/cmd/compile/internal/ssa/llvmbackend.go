@@ -115,12 +115,11 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 			return nil, fmt.Errorf("verify LLVM module after pre-link optimization: %w", err)
 		}
 		if base.Flag.LLVMLTO == "thin" {
-			buffer, err := CurrentModule.WritePassPluginThinBitcode(plugin)
+			bitcode, err := llvmbackend.WriteThinBitcode(CurrentModule, plugin)
 			if err != nil {
 				return nil, fmt.Errorf("write ThinLTO bitcode: %w", err)
 			}
-			defer buffer.Dispose()
-			return append([]byte(nil), buffer.BytesView()...), nil
+			return bitcode, nil
 		}
 		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
 		defer buffer.Dispose()

@@ -8,7 +8,14 @@ package llvm
 
 #cgo windows LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -lGoALLCStatepointsStatic -lLLVMGoALLC
 
-#include "SupportBindings.h"
+#include "llvm-c/Core.h"
+#include "llvm-c/Error.h"
+#include "llvm-c/TargetMachine.h"
+
+LLVMErrorRef LLVMGoALLCRunPreCodeGen(LLVMModuleRef Module,
+                                     LLVMTargetMachineRef TargetMachine,
+                                     LLVMCodeGenFileType FileType);
+LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef Module);
 */
 import "C"
 
@@ -25,7 +32,13 @@ func (m Module) RunPassPluginEarlyIR(plugin string) error {
 	if plugin != "" {
 		return errors.New("linked GoALLC early IR callback does not accept a plugin path")
 	}
-	return passPluginError(C.LLVMGoALLCRunEarlyIR(m.C))
+	err := C.LLVMGoALLCRunEarlyIR(m.C)
+	if err == nil {
+		return nil
+	}
+	cstr := C.LLVMGetErrorMessage(err)
+	defer C.LLVMDisposeErrorMessage(cstr)
+	return errors.New(C.GoString(cstr))
 }
 
 // RunPassPluginPreCodeGen invokes the statically linked GoALLC pre-codegen
@@ -35,19 +48,11 @@ func (tm TargetMachine) RunPassPluginPreCodeGen(m Module, ft CodeGenFileType, pl
 	if plugin != "" {
 		return errors.New("linked GoALLC pre-codegen callback does not accept a plugin path")
 	}
-	return passPluginError(C.LLVMGoALLCRunPreCodeGen(m.C, tm.C, C.LLVMCodeGenFileType(ft)))
-}
-
-func runPassPluginThinLTO(inputs *C.LLVMMemoryBufferRef, count C.size_t, diagnostics *C.char, pic C.LLVMBool, jobs C.unsigned, outputs *C.LLVMMemoryBufferRef, plugin string) error {
-	if plugin != "" {
-		return errors.New("linked GoALLC ThinLTO callback does not accept a plugin path")
+	err := C.LLVMGoALLCRunPreCodeGen(m.C, tm.C, C.LLVMCodeGenFileType(ft))
+	if err == nil {
+		return nil
 	}
-	return passPluginError(C.LLVMGoALLCThinLTO(inputs, count, diagnostics, pic, jobs, outputs))
-}
-
-func writePassPluginThinBitcode(module C.LLVMModuleRef, output *C.LLVMMemoryBufferRef, plugin string) error {
-	if plugin != "" {
-		return errors.New("linked GoALLC ThinLTO bitcode callback does not accept a plugin path")
-	}
-	return passPluginError(C.LLVMGoALLCWriteThinBitcode(module, output))
+	cstr := C.LLVMGetErrorMessage(err)
+	defer C.LLVMDisposeErrorMessage(cstr)
+	return errors.New(C.GoString(cstr))
 }

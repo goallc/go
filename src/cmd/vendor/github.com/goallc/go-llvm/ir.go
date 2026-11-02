@@ -2135,21 +2135,6 @@ func NewMemoryBufferFromStdin() (b MemoryBuffer, err error) {
 	return
 }
 
-// NewMemoryBufferFromBytes copies data into an LLVM-owned buffer. name is its
-// identifier, which need not refer to a file. The caller must dispose it.
-func NewMemoryBufferFromBytes(data []byte, name string) MemoryBuffer {
-	cname := C.CString(name)
-	defer C.free(unsafe.Pointer(cname))
-	return MemoryBuffer{C.LLVMCreateMemoryBufferWithMemoryRangeCopy(
-		(*C.char)(unsafe.Pointer(unsafe.SliceData(data))), C.size_t(len(data)), cname)}
-}
-
-// BytesView borrows the buffer's contents without copying. The returned slice
-// must not be used after Dispose or any operation that transfers ownership.
-func (b MemoryBuffer) BytesView() []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(C.LLVMGetBufferStart(b.C))), C.LLVMGetBufferSize(b.C))
-}
-
 func (b MemoryBuffer) Bytes() []byte {
 	cstart := C.LLVMGetBufferStart(b.C)
 	csize := C.LLVMGetBufferSize(b.C)
