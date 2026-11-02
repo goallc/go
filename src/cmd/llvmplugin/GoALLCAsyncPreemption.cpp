@@ -339,6 +339,26 @@ bool isEncodedRegisterRead(const MachineInstr &MI, const TargetInstrInfo &TII,
          MI.getOperand(1).getImm() == Reg.id();
 }
 
+bool markWindowsGReloadRanges(const MachineFunction &MF,
+                             GoObjUnsafeInstructionMarker MarkUnsafe) {
+  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
+  MCRegister GReg = findPhysicalRegister(TRI, "R14");
+  if (!GReg)
+    return false;
+
+  // Windows ABI0 repair reloads g via the TLS offset, the current thread's
+  // TLS block, then its g slot. Between the latter two loads R14 points into
+  // the old thread's TLS. Preempting and migrating the goroutine there would
+  // resume the final load on another thread with that stale TLS address.
+  // Protect the reserved-register writes, leaving ordinary body PCs safe.
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB)
+      if (!MI.isMetaInstruction() && !MI.isCall() &&
+          MI.modifiesRegister(GReg, &TRI))
+        MarkUnsafe(MI);
+  return true;
+}
+
 bool markAArch64RegTmpRanges(const MachineFunction &MF,
                              GoObjUnsafeInstructionMarker MarkUnsafe) {
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
@@ -458,6 +478,13 @@ describeAsyncPreemption(const MachineFunction &MF,
   }
 
   markFrameTransitionRanges(MF, MarkUnsafe);
+
+  if (Arch == Triple::x86_64 &&
+      MF.getTarget().getTargetTriple().isOSWindows() &&
+      !markWindowsGReloadRanges(MF, MarkUnsafe)) {
+    emitUnsafeFallbackRemark(F, "Windows g register is unavailable");
+    return GoObjAsyncPreemptionMode::WholeFunctionUnsafe;
+  }
 
   StringRef StackRegName = Arch == Triple::x86_64 ? "RSP" : "SP";
   if (!markInlineAsmRanges(MF, StackRegName, MarkUnsafe)) {

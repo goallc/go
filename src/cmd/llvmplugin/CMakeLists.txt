@@ -572,7 +572,28 @@ if(BUILD_TESTING)
       -o "${CMAKE_CURRENT_BINARY_DIR}/async-preemption-writebarrier.goobj"
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/async-preemption-writebarrier.ll"
   )
+  add_test(
+    NAME GoALLCStatepoints.AsyncPreemptionWindowsGoObj
+    COMMAND
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs
+      -filetype=obj
+      -o "${CMAKE_CURRENT_BINARY_DIR}/async-preemption-windows.goobj"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/async-preemption-windows.ll"
+  )
   if(GOALLC_OBJVIEW_EXECUTABLE)
+    goallc_add_filecheck_test(
+      GoALLCStatepoints.AsyncPreemptionWindowsObjView
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/async-preemption-windows.ll"
+      OBJVIEW
+      "${GOALLC_OBJVIEW_EXECUTABLE}" -json
+      "${CMAKE_CURRENT_BINARY_DIR}/async-preemption-windows.goobj"
+    )
+    set_tests_properties(
+      GoALLCStatepoints.AsyncPreemptionWindowsObjView PROPERTIES
+      DEPENDS GoALLCStatepoints.AsyncPreemptionWindowsGoObj
+    )
     goallc_add_filecheck_test(
       GoALLCStatepoints.AsyncPreemptionObjView
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/async-preemption-goobj.ll"
