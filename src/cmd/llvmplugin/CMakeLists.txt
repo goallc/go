@@ -20,8 +20,6 @@ include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
-# Share the plugin C ABI with the Go binding's dynamic and static entry points.
-include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../vendor/github.com/goallc/go-llvm")
 
 set(GOALLC_STATEPOINT_SOURCES
   GoALLCThinLTO.cpp
