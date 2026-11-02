@@ -34,9 +34,11 @@ For example:
 
 The static command requires `libLLVMGoALLC.a` to have been assembled first.
 The GoALLC toolchain does this automatically for `-llvm-link=static`.
-The final link also consumes the system libraries reported by the selected
-LLVM build. On Darwin, zstd is resolved with `pkg-config libzstd`; the
-development package must be installed and discoverable through pkg-config.
+The aggregate archive must also contain the payload's non-system dependencies,
+including static zlib/zstd when enabled. The binding does not search pkg-config
+or link third-party shared libraries. The final executable links only host OS
+libraries; Linux additionally selects static C++ and GCC runtimes. Use a payload
+and `cmd/dist` that implement this dependency closure together.
 
 Do not select multiple version tags or multiple link-mode tags in one build.
 
