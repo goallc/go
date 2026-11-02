@@ -9,15 +9,20 @@
 ; CHECK-LABEL: define {{.*}}@main.result(
 ; CHECK-NOT: call {{.*}}@dep.public
 ; CHECK: load volatile i64, ptr @dep.slot
-; CHECK: !goobj.debug.funcs = !{![[MAP:[0-9]+]]{{.*}}}
+; CHECK: declare !goobj.import ![[LEAFREF:[0-9]+]] void @leaf.original()
+; CHECK: !goobj.debug.funcs = !{![[MAP:[0-9]+]], ![[DEPMAP:[0-9]+]], ![[LEAFMAP:[0-9]+]]}
 ; CHECK-DAG: ![[MAP]] = !{![[MAIN:[0-9]+]], ptr @main.result}
-; CHECK-DAG: !{![[DEP:[0-9]+]], ptr @dep.public}
+; CHECK-DAG: ![[DEPMAP]] = !{![[DEP:[0-9]+]], ptr @dep.public}
+; CHECK-DAG: ![[LEAFMAP]] = !{![[LEAF:[0-9]+]], ptr @leaf.original}
 ; CHECK-DAG: ![[DEP]] = distinct !DISubprogram(name: "dep.source", linkageName: "dep.source"
+; CHECK-DAG: ![[LEAF]] = distinct !DISubprogram(name: "leaf.source", linkageName: "leaf.source"
 ; CHECK-DAG: !DILocation(line: 20, {{.*}}inlinedAt:
+; CHECK-DAG: ![[LEAFREF]] = !{!"leaf", i32 0, i32 0}
 ; OBJ-LABEL: "name": "main.result",
 ; OBJ: "inline_tree": [
 ; OBJ: "name": "dep.public"
 ; OBJ: "file": "/tmp/thinlto/dep.go"
+; OBJ: "name": "leaf.original"
 target triple = "x86_64-unknown-linux-goobj"
 define goabiinternal i64 @main.result() !goobj.symbol.index !0 !dbg !13 {
   %v = call goabiinternal i64 @dep.public(), !dbg !14
