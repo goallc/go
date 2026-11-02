@@ -20,6 +20,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/TrackingMDRef.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/LTO/LTOBackend.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -98,7 +99,10 @@ static bool exportableReference(const Value *V,
   return true;
 }
 
-static bool canImport(const Function &F) {
+// Conservative import policy for the current GoObj representation, not a
+// ThinLTO requirement. Relax individual restrictions only when Go symbol
+// ownership and metadata-only reachability survive the importer.
+static bool canImportGoFunction(const Function &F) {
   if (hashed(F) || F.isInterposable() || F.getMetadata("goobj.keep") ||
       F.getMetadata("goobj.marker_relocs") || F.getMetadata("goobj.weak_calls"))
     return false;
@@ -177,6 +181,9 @@ Error goallc::writeThinBitcode(Module &M, raw_ostream &OS) {
         return fail("invalid ThinLTO debug function mapping");
       Record(SP, *G);
     }
+  // Keep original package slots and externally visible definitions until the
+  // Go linker resolves native objects and Go-only reachability. This is our
+  // current resolution policy; ThinLTO itself does not require retaining all.
   appendToCompilerUsed(M, Retained);
   AssignGUIDPass::runOnModule(M);
   ProfileSummaryInfo PSI(M);
@@ -187,7 +194,7 @@ Error goallc::writeThinBitcode(Module &M, raw_ostream &OS) {
     auto VI = Index.getValueInfo(G.getGUIDOrFallback());
     if (!VI)
       continue;
-    if (!isa<Function>(G) || !canImport(cast<Function>(G)))
+    if (!isa<Function>(G) || !canImportGoFunction(cast<Function>(G)))
       for (auto &Summary : VI.getSummaryList())
         Summary->setNotEligibleToImport();
   }
@@ -197,14 +204,15 @@ Error goallc::writeThinBitcode(Module &M, raw_ostream &OS) {
   return Error::success();
 }
 
-static Error finishModule(Module &M, StringRef Prefix,
-                          const DenseSet<uint32_t> &ExpectedIndices) {
+// The standard ThinLTO post-link pipeline already eliminates
+// available_externally bodies. Only adapt GoObj metadata here: LLVM's importer
+// and generic optimizations do not understand package indices or debug symbols.
+static Error finishGoObjModule(Module &M, StringRef Prefix,
+                               const DenseSet<uint32_t> &ExpectedIndices) {
   DenseSet<uint32_t> Indices;
   SmallVector<StringRef> MetadataNames;
   M.getContext().getMDKindNames(MetadataNames);
   for (GlobalObject &G : M.global_objects()) {
-    if (G.hasAvailableExternallyLinkage())
-      convertToDeclaration(G);
     auto *Ref = G.getMetadata("goobj.import");
     if (G.isDeclaration()) {
       // Imported declarations carry definition attachments from their source.
@@ -379,15 +387,15 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
             ExpectedSlots.insert(
                 mdconst::extract<ConstantInt>(MD->getOperand(0))
                     ->getZExtValue());
-        // Native debug graphs are imported normally. Package configuration,
-        // import DAG and cgo directives describe this output package alone.
+        // The importer merges arbitrary named metadata. Restore only the
+        // output package's configuration; imported debug graphs remain intact.
+        // Ordinary module asm, including .goobj.cgo, is not imported by LLVM.
+        // The importer's .symver exception is unsupported by the GoObj parser.
         StringMap<SmallVector<MDNode *>> PackageMetadata;
         for (StringRef Name : {"goobj.config", "goobj.imports",
                                "goallc.cpu.config", "goallc.cpu.fmv.done"})
           if (auto *MD = M.getNamedMetadata(Name))
             llvm::append_range(PackageMetadata[Name], MD->operands());
-        std::vector<Module::GlobalAsmFragment> Asm;
-        llvm::append_range(Asm, M.getModuleInlineAsm());
         if (SaveIR) {
           std::error_code EC;
           ToolOutputFile Input((OutDir + "/" + Twine(I) + ".input.bc").str(),
@@ -403,6 +411,16 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
           M.print(F.os(), nullptr);
           F.keep();
         }
+        // EliminateAvailableExternally deletes function bodies and their
+        // metadata. Preserve Go reference identities after importing, while
+        // LLVM still knows each promoted/imported symbol's final name.
+        StringMap<TrackingMDNodeRef> ImportRefs;
+        Conf.PostImportModuleHook = [&](unsigned, const Module &Imported) {
+          for (const GlobalObject &G : Imported.global_objects())
+            if (auto *Ref = G.getMetadata("goobj.import"))
+              ImportRefs.try_emplace(G.getName(), Ref);
+          return true;
+        };
         Conf.PostOptModuleHook = [](unsigned, const Module &) { return false; };
         if (Error E = lto::thinBackend(
                 Conf, I,
@@ -422,10 +440,11 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
           for (auto *MD : PackageMetadata[Name])
             M.getOrInsertNamedMetadata(Name)->addOperand(MD);
         }
-        M.removeModuleInlineAsm();
-        for (const auto &Fragment : Asm)
-          M.appendModuleInlineAsm(Fragment);
-        if (Error E = finishModule(M, Owner, ExpectedSlots))
+        for (GlobalObject &G : M.global_objects())
+          if (G.isDeclaration())
+            if (auto It = ImportRefs.find(G.getName()); It != ImportRefs.end())
+              G.setMetadata("goobj.import", It->second.get());
+        if (Error E = finishGoObjModule(M, Owner, ExpectedSlots))
           return E;
         if (SaveIR) {
           std::error_code EC;

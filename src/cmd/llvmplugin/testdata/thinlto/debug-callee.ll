@@ -1,3 +1,9 @@
+; CGO: "text_header": {{.*}}-lthin_callee
+; CGO-NOT: -lthin_caller
+; ASM-NOT: -lthin_caller
+; ASM: module asm
+; ASM: -lthin_callee
+; ASM-NOT: -lthin_caller
 ; The source function is linknamed: its DISubprogram name is not its IR name.
 ; The caller must recover the exact symbol even after the body is inlined away.
 target triple = "x86_64-unknown-linux-goobj"
@@ -23,3 +29,5 @@ define goabiinternal i64 @dep.public() !goobj.symbol.index !0 !dbg !13 {
 !14 = !DILocation(line: 20, scope: !13)
 !15 = !{i32 7, !"Dwarf Version", i32 4}
 !16 = !{i32 2, !"Debug Info Version", i32 3}
+
+module asm ".goobj.cgo \22[[\5C\22cgo_ldflag\5C\22,\5C\22-lthin_callee\5C\22]]\22\0A"

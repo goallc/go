@@ -37,12 +37,18 @@ Original compiler symbol indices and package fingerprints remain unchanged.
 An indexed definition is retained and gets a temporary `goobj.import`
 attachment identifying its package and index. Imported references retain that
 attachment; local definitions lose it before GoObj emission. Imported bodies
-are optimization-only and are converted back to declarations after optimization.
+are optimization-only; LLVM's standard ThinLTO post-link pipeline eliminates
+their `available_externally` definitions. GoALLC preserves package references
+across that elimination (which also clears function metadata), then normalizes
+the remaining GoObj metadata.
 Each output module must retain exactly its original set of indexed definitions.
 
-Native symbol resolution remains authoritative, including duplicate BSS and
-content-addressed symbols. Duplicate definitions, content-addressed bodies,
-references to unexportable local data, and functions with Go reachability-marker
+The current resolution policy leaves native symbol resolution authoritative,
+including duplicate BSS and content-addressed symbols. Retaining original
+package slots and the import restrictions below are conservative choices for
+this GoObj representation, not requirements of ThinLTO itself. Duplicate
+definitions, content-addressed bodies, references to unexportable local data,
+and functions with Go reachability-marker
 references are not imported. Such functions still receive ordinary per-module
 optimization and code generation. In particular, marker references stored only
 in metadata must not be lost through LLVM's summary-based importer. Global
@@ -55,7 +61,10 @@ as names and package references, including linknamed functions. After
 optimization, reachable scopes regain exact GoObj debug symbol mappings;
 unimported null references are discarded. Package configuration, import DAG,
 CPU configuration, and cgo assembly directives remain owned by each original
-module.
+module. LLVM already keeps ordinary module assembly, including `.goobj.cgo`,
+in its owning module during importing. GoALLC does not copy it back after
+optimization. The GoObj parser rejects `.symver`, so LLVM's ELF symbol-version
+import exception does not apply.
 
 Archive rewriting preserves export data, assembly, cgo objects, member order,
 and member headers. Ordinary archives can participate in the same link. For
