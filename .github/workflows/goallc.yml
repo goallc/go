@@ -363,6 +363,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # GNU tar treats a drive-letter archive path as a remote host.
+          if [[ "$RUNNER_OS" == Windows ]]; then RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP"); fi
           # Keep generated sources, executable modes, symlinks, and the compiler's
           # bundled plugin/libraries. The CMake build tree is not relocatable.
           test "$(./bin/go env GOVERSION)" = "$SDK_VERSION"
@@ -451,6 +453,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$RUNNER_OS" == Windows ]]; then RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP"); fi
           mkdir -p "$GOCACHE"
           tar --zstd -xf "$RUNNER_TEMP/sdk/go-build-cache.tar.zst" -C "$GOCACHE"
           tar --zstd -xf "$RUNNER_TEMP/sdk/goallc-sdk.tar.zst"

@@ -18,6 +18,11 @@ func CodeGenOptions(goarch string) []string {
 		"-disable-lsr",
 	}
 	if goarch == "arm64" {
+		// Use optimized register allocation even at -N. The fast allocator's extra
+		// spills make Darwin's nosplit syscall chains exceed Go's stack budget
+		// (test/fixedbugs/issue68525.go). This does not enable IR optimization
+		// or inlining, and leaves the runtime and linker stack limits intact.
+		options = append(options, "-optimize-regalloc")
 		// Keep page-relative references compatible with Go linkers that require
 		// one composite relocation instead of separate page and low-12 records.
 		options = append(options, "-aarch64-goobj-composite-relocations")
