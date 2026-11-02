@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license.
 
 #include "GoALLCThinLTO.h"
-#include "SupportBindings.h"
+#include "GoALLCThinLTOC.h"
+#include "llvm-c/TargetMachine.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -458,6 +459,10 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
       return fail(Message);
   return Error::success();
 }
+
+extern "C" LLVMErrorRef LLVMGoALLCRunPreCodeGen(LLVMModuleRef,
+                                              LLVMTargetMachineRef,
+                                              LLVMCodeGenFileType);
 
 static Error emitGoObj(Module &M, bool PIC, SmallVectorImpl<char> &Object) {
   // LLVM's GoObj configuration and target-pass registration are process-global.

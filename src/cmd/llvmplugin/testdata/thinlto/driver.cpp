@@ -1,7 +1,7 @@
 // Copyright 2026 The GoALLC Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 #include "GoALLCThinLTO.h"
-#include "SupportBindings.h"
+#include "GoALLCThinLTOC.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"

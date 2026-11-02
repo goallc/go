@@ -16,9 +16,9 @@ import (
 	"github.com/goallc/go-llvm"
 )
 
-// Exercise the same public binding with either a shared or linked plugin.
+// Exercise the backend adapter with either a shared or linked plugin.
 // The compiler and linker integrations additionally test real package archives.
-func TestThinLTOPluginBinding(t *testing.T) {
+func TestThinLTOPlugin(t *testing.T) {
 	thinLTOToolchain(t)
 	plugin := ""
 	if !llvm.UsesLinkedPassPlugin() {
@@ -34,7 +34,8 @@ func TestThinLTOPluginBinding(t *testing.T) {
 	llvm.InitializeAllAsmParsers()
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
-	var inputs []llvm.MemoryBuffer
+	var names []string
+	var inputs [][]byte
 	for _, name := range []string{"debug-caller", "debug-callee"} {
 		input, err := llvm.NewMemoryBufferFromFile(filepath.Join(runtime.GOROOT(), "src/cmd/llvmplugin/testdata/thinlto", name+".ll"))
 		if err != nil {
@@ -46,31 +47,31 @@ func TestThinLTOPluginBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer module.Dispose()
-		bitcode, err := module.WritePassPluginThinBitcode(plugin)
+		bitcode, err := llvmbackend.WriteThinBitcode(module, plugin)
 		if err != nil {
 			t.Fatal(err)
 		}
-		inputs = append(inputs, llvm.NewMemoryBufferFromBytes(bitcode.BytesView(), "memory:"+name))
-		bitcode.Dispose()
-		defer inputs[len(inputs)-1].Dispose()
+		names = append(names, "memory:"+name)
+		inputs = append(inputs, bitcode)
 		if name == "debug-caller" {
-			bad, err := module.WritePassPluginThinBitcode(filepath.Join(t.TempDir(), "missing-plugin"))
-			if err == nil || !bad.IsNil() {
+			bad, err := llvmbackend.WriteThinBitcode(module, filepath.Join(t.TempDir(), "missing-plugin"))
+			if err == nil || bad != nil {
 				t.Fatalf("invalid plugin: buffer=%v, error=%v", bad, err)
 			}
 		}
 	}
 	for _, tc := range []struct {
 		name   string
-		inputs []llvm.MemoryBuffer
+		names  []string
+		inputs [][]byte
 		plugin string
 	}{
-		{"objects", inputs, plugin},
-		{"duplicate", []llvm.MemoryBuffer{inputs[0], inputs[0]}, plugin},
-		{"invalid-plugin", inputs, filepath.Join(t.TempDir(), "missing-plugin")},
+		{"objects", names, inputs, plugin},
+		{"duplicate", []string{names[0], names[0]}, inputs, plugin},
+		{"invalid-plugin", names, inputs, filepath.Join(t.TempDir(), "missing-plugin")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			objects, err := llvm.RunPassPluginThinLTO(tc.inputs, tc.plugin, "", false, 2)
+			objects, release, err := llvmbackend.RunThinLTO(tc.names, tc.inputs, tc.plugin, "", false, 2)
 			if tc.name != "objects" {
 				if err == nil || objects != nil {
 					t.Fatalf("got %d objects, error=%v", len(objects), err)
@@ -83,12 +84,12 @@ func TestThinLTOPluginBinding(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer release()
 			if len(objects) != len(tc.inputs) {
 				t.Fatalf("got %d objects for %d inputs", len(objects), len(tc.inputs))
 			}
 			for _, object := range objects {
-				defer object.Dispose()
-				if !bytes.HasPrefix(object.BytesView(), []byte("go object ")) {
+				if !bytes.HasPrefix(object, []byte("go object ")) {
 					t.Fatal("plugin did not return a Go object buffer")
 				}
 			}
