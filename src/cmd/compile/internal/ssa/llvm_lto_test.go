@@ -104,7 +104,8 @@ func TestLLVMSlimArchive(t *testing.T) {
 				if ref == nil {
 					t.Fatalf("missing indexed definition %s", name)
 				}
-				node := regexp.MustCompile(`(?m)^!` + ref[1] + ` = !\{([^\n]+)\}$`).FindStringSubmatch(ir)
+				// LLVM's file output uses CRLF on Windows; module.String uses LF.
+				node := regexp.MustCompile(`(?m)^!` + ref[1] + ` = !\{([^\n]+)\}\r?$`).FindStringSubmatch(ir)
 				if node == nil {
 					t.Fatalf("missing symbol index metadata for %s", name)
 				}
