@@ -329,6 +329,13 @@ jobs:
           mv "$LLVM_ROOT" "$LLVM_ROOT.hidden"
           mv pkg/goallc-llvmplugin "$RUNNER_TEMP/plugin.hidden"
           trap 'mv "$LLVM_ROOT.hidden" "$LLVM_ROOT"; mv "$RUNNER_TEMP/plugin.hidden" pkg/goallc-llvmplugin' EXIT
+          detected_root="$(env -u GOROOT "$sdk/bin/go" env GOROOT)"
+          expected_root="$sdk"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            detected_root=$(cygpath -m "$detected_root")
+            expected_root=$(cygpath -m "$expected_root")
+          fi
+          test "$detected_root" = "$expected_root"
           (
             unset GOFLAGS GO_LLVM_PLUGIN GO_LLVM_EARLY_PLUGIN LD_LIBRARY_PATH DYLD_LIBRARY_PATH CGO_CFLAGS CGO_LDFLAGS
             export GOROOT="$sdk" GOCACHE="$RUNNER_TEMP/relocation-cache" CGO_ENABLED=0
@@ -347,7 +354,11 @@ jobs:
               GOOS=${target%/*} GOARCH=${target#*/} "$sdk/bin/go" build -o "$RUNNER_TEMP/cross-${target%/*}-${target#*/}" "$sdk/test/helloworld.go"
             done
           )
-          GOROOT="$sdk" GOCACHE="$RUNNER_TEMP/relocation-cgo-cache" CGO_ENABLED=1 \
+          for name in CC CXX; do
+            compiler="$(env -u CC -u CXX GOROOT="$sdk" "$sdk/bin/go" env "$name")"
+            [[ "$compiler" != */* && "$compiler" != *\\* ]]
+          done
+          env -u CC -u CXX GOROOT="$sdk" GOCACHE="$RUNNER_TEMP/relocation-cgo-cache" CGO_ENABLED=1 \
             "$sdk/bin/go" test -short -timeout=10m -ldflags=-linkmode=external \
               -run='^TestCallback$' cmd/cgo/internal/test
 

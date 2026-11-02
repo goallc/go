@@ -23,5 +23,7 @@ foreach ($package in $packages) {
 $bin = "$env:RUNNER_TEMP/$($packages[0].Name)/bin".Replace('\', '/')
 $cache = "$env:RUNNER_TEMP/$($packages[1].Name)".Replace('\', '/')
 $bin, $cache | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-"CC=$bin/clang.exe", "CXX=$bin/clang++.exe", "GOALLC_CCACHE=$cache/ccache.exe", "GOALLC_TOOLCHAIN_LICENSE=$bin/../LICENSE.TXT" |
+# dist records CC/CXX as the installed SDK's defaults. Resolve these through
+# PATH so a relocated SDK does not retain the build runner's temporary path.
+"CC=clang", "CXX=clang++", "GOALLC_CCACHE=$cache/ccache.exe", "GOALLC_TOOLCHAIN_LICENSE=$bin/../LICENSE.TXT" |
     Out-File $env:GITHUB_ENV -Append -Encoding utf8
