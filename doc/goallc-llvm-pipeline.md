@@ -8,7 +8,7 @@ The LLVM optimization pipeline itself is unchanged.
 | Go passes | LLVM path | Reason |
 | --- | --- | --- |
 | Early generic optimizations through `early fuse` | Run in their original order | Preserve Go-specific facts, inlining results, bounds proofs, and scalar simplification. |
-| `expand calls` | Defer until after LLVM emission | Its physical argument/result decomposition would destroy the logical calling convention consumed by LLVM lowering. |
+| `expand calls` | Skip for LLVM | Its physical argument/result decomposition would destroy the logical calling convention consumed by LLVM lowering. |
 | `decompose builtin`, `softfloat`, `late opt` | Run in their original order | Expose components of slices, strings, and interfaces before later analyses. Soft-float rewriting is inactive on the supported hard-float targets. |
 | `branchelim` | Skip for LLVM | Native conditional-select formation uses backend-specific assumptions. LLVM performs its own branch/select optimization; native formation can expose incompatible pointer/integer representations of interface words. |
 | `sccp`, `generic deadcode`, `late fuse`, `check bce`, `dse` | Run in their original order | Reuse the existing generic analyses instead of maintaining a parallel LLVM cleanup sequence. |
@@ -16,18 +16,19 @@ The LLVM optimization pipeline itself is unchanged.
 | `memcombine` | Skip for LLVM | Native combination relies on permitted unaligned accesses. LLVM lowering does not yet preserve that alignment contract for widened operations; LLVM performs its own memory combination. |
 | `writebarrier`, `cpufeatures` | Run in their original order | LLVM needs the Go GC barrier decisions and CPU-feature facts. |
 | `insert resched checks` | Skip for LLVM | These native stack-pointer checks were already outside the old LLVM emission boundary. LLVM retains its existing preemption implementation. |
-| `rewrite tern`, target lowering, scheduling, register allocation | Run after LLVM emission | Their target operations are not inputs to LLVM. The native continuation remains necessary for frontend frame allocation and metadata bookkeeping. |
+| `rewrite tern`, target lowering, scheduling, register allocation | Native backend only | The LLVM path exits the SSA pass loop after emission. LLVM owns machine code and frame layout; `ssagen` skips native `AllocFrame`. |
 
 At the emission boundary, direct-interface normalization handles logical
 aggregate forms that have not undergone native call expansion. One final CSE
 and deadcode cleanup share addresses introduced by the later generic passes.
 The early CSE remains necessary for `prove` and nil-check elimination.
 
-After emission, `llvm native calls` runs `expandCalls`, the existing aggregate
-cleanup for expanded calls, and deadcode. This second aggregate cleanup handles
-new constructors and selectors created by physical ABI expansion; it does not
-run another optimization pipeline over the LLVM input. The normal native
-lowering then continues so `ssagen` can call `AllocFrame` as before.
+After emission, `ssa.Compile` stops at the `llvm` pass. There is no second
+native call-expansion or target-lowering pipeline on this path, and `ssagen`
+returns before native `AllocFrame`. Frontend ABI analysis, ArgInfo generation,
+and package-level data preparation still run; they do not require native
+register allocation. See `src/cmd/compile/internal/ssa/compile.go` and
+`src/cmd/compile/internal/ssagen/ssa.go` for this boundary.
 
 `nativeOnly` and `llvmOnly` pass annotations select the paths without changing
 the relative order of the native Go passes. New generic Go optimizations added

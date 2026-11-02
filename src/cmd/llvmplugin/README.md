@@ -1,18 +1,26 @@
 # GoALLC LLVM pre-codegen plugin
 
 This directory owns the GoALLC-specific LLVM pass pipeline. It deliberately
-lives in the Go repository: LLVM only supplies the generic `llc`
-`-load-pass-plugin` and pre-codegen callback mechanism.
+lives in the Go repository: LLVM supplies plugin/target-pass callbacks and the
+Go ABI, target and GoObj mechanisms; the Go-specific policy is owned here.
 
-`GoALLCStatepointPlugin.cpp` adapts that callback to
-`goallc::runPreCodeGenPipeline`. GoALLC transformations belong in
+`GoALLCStatepointPlugin.cpp` wires the callbacks and target passes to the
+Go-owned implementation. GoALLC transformations belong in
 `GoALLCPreCodeGen.cpp` or other sources in this directory, not in the LLVM
 repository. The core entry point remains separate from the plugin adapter.
-The default `cmd/compile -enablellvm` path invokes the same pre-codegen callback
-in-process before constructing LLVM code generation. Dynamic LLVM builds load
-the module from the Go toolchain's `pkg/goallc-llvmplugin/lib` directory; static
-LLVM builds call the linked implementation directly. Both artifacts are built
-against the selected LLVM payload, but neither is installed in it.
+The normal non-bootstrap compiler defaults to LLVM. Its early-IR callback
+prepares CPU/FMV and write-barrier record contracts before ordinary IR
+optimization. The pre-codegen callback then lowers write-barrier records,
+materializes module-level markers and registers target passes. In production,
+`GoALLCPreISelPass` rewrites each function after standard CodeGen IR preparation
+and immediately before instruction selection. Calling `runPreCodeGenPipeline`
+for the whole module from the callback is the emit-IR test mode, not the
+production placement.
+
+Dynamic builds load the module from `pkg/tool/<host>/lib`; static builds call
+the linked implementation. Both are built against the selected LLVM payload,
+and neither is installed into it. `-enablellvm=false` selects the native Go
+backend. See `GoALLCStatepointPlugin.cpp` for the callback and target-pass order.
 
 Scalar write barriers retain Go SSA's `needwb` selection and zero-value proofs.
 The frontend emits the compiler-private declaration
@@ -63,7 +71,7 @@ and the hidden `nest` closure context are not entry pointer bits. Keeping this
 calculation at formal lowering prevents an inlined callee's entry contract from
 being cloned into its caller.
 
-The initial statepoint pass handles ordinary calls in Go ABI functions. It
+The late statepoint pass handles ordinary calls in Go ABI functions. It
 computes pointer liveness with a backwards CFG dataflow analysis, assigns
 stable callsite IDs, emits `gc.statepoint` and `gc.relocate`, and respects
 LLVM's `gc-leaf-function` attribute on callees and individual call sites.
@@ -117,17 +125,14 @@ The current SSA value and CFG rewrite support matrix is:
 | Pointer-containing `alloca` storage | GoObj qualified for fixed layouts | Fixed allocas stay in entry, but local `llvm.lifetime.start` placement follows grouped Go SSA `LocalAddr` definitions, memory order, and dominance; `VarDef` emits no LLVM operation. Parameter and result homes start at their initialization sites. Backward content liveness uses reads and conservative first-class address uses as gens; lifetime markers and definite pointer-slot overwrites kill old contents. Active contents contribute callsite `LocalsPointerMaps`; address-observable objects additionally get function-wide `FUNCDATA_StackObjects`. If an active interval's optimized producer does not definitely initialize every pointer slot before a safepoint, the plugin inserts an inline zero initialization at its start. Dead StackObjects need not contain valid pointers. Existing lifetime markers are preserved; no new lifetime ends are emitted. |
 | Scalable vectors | Unsupported | The generic LLVM statepoint rewrite assumes a fixed vector width when constructing relocates; fails closed. |
 | General moving-GC base/derived analysis | Unsupported | Base and derived indexes are identical in the current non-moving-heap phase. |
-| `invoke`, `callbr`, non-deopt operand bundles, and unsupported parameter attributes | Unsupported | One ordinary deopt bundle is preserved before the alloca suffix. `nest`, `captures`, and `readonly` parameter attributes are preserved; other shapes fail closed. |
-| Frontend-qualified `musttail` | Not a caller safepoint | A tail transfer has no caller continuation to relocate. The Go frontend currently emits only direct `void()` transfers; LLVM target lowering validates that initial frame-reuse shape. |
+| Non-leaf `invoke` / `callbr`, non-deopt bundles, and unsupported parameter attributes | Unsupported as ordinary safepoints | One ordinary deopt bundle is preserved before the layout suffix. Typed/aligned Go `byval` and `goret` carriers and supported semantic attributes are preserved. The zero-instruction `llvm.go.defer.edge` callbr has a separate leaf/control-flow contract. |
+| Frontend-qualified `musttail` | Not a caller safepoint | A tail transfer has no caller continuation to relocate. The frontend and target validate compatible same-ABI direct/indirect transfers, including matching result homes. The ABI0-to-ABIInternal special case remains argument-free and result-free; incompatible frontend tail calls use a call-and-return fallback. |
 
-This matrix describes verified IR rewriting, not full runtime qualification.
-The Darwin/arm64 Go execution whitelist additionally covers one unconditional
-`runtime.GC`, a conditional call/skip merge, two branch-local GC safepoints,
-and a nested conditional GC. Sequential safepoints in one activation, loop
-backedges, multiple simultaneously live pointers, and pointer-valued call
-results have IR and verifier coverage, but are not yet runtime-qualified:
-focused execution trials currently expose invalid post-call values or
-traceback/stack-map failures in those shapes.
+This matrix describes implementation contracts and regression coverage, not a
+complete runtime/platform qualification report. Use the current plugin fixtures,
+Go execution tests and `test/llvm_known_failures.json` with the exact Go and LLVM
+payload revisions. Early bring-up whitelist counts and historical failures are
+not evidence of the current matrix.
 
 The statepoint pass first computes aggregate-only liveness to find each
 supported pointer-containing aggregate that is live after a safepoint. Every
@@ -276,8 +281,9 @@ StackObjects provide native object identity and layout, but do not themselves
 make an object live. The lifetime-specific Locals bits retain active pointer
 contents, while inactive calls omit them. Constants are not roots in the
 general SSA model. Alloca records describe memory layout even when a slot
-contains null. Dynamic, multiple-element, scalable, or realigned allocas and
-pointer vectors still fail closed.
+contains null. Dynamic, multiple-element, scalable, or realigned allocas still
+fail closed.
+Supported fixed pointer-vector storage uses one bitmap bit per pointer lane.
 
 LLVM's generic `RewriteStatepointsForGC` pass is the design reference for
 liveness and relocation SSA formation. GoALLC does not run it directly:
@@ -442,13 +448,13 @@ is an args root only when a statepoint records a live pointer in that physical
 slot. A direct stack address is not a bitmap root.
 
 This phase fails closed for unsupported formal aggregate layouts; dynamic or
-realigned frames; raw register roots; pointer vectors or ABI layouts whose
+realigned frames; raw register roots; vector or other ABI layouts whose
 pointer words do not map to fixed homes; and ordinary statepoint stack
 locations outside either the GC locals range or the adjusted caller-owned
 argument/result range. Pointer-containing allocas additionally fail closed for
 dynamic or multiple-element allocation, scalable or realigned layout,
-non-default-address-space pointers, pointer vectors, and any deopt record that
-does not resolve to one unique direct frame object at offset zero.
+non-default-address-space pointers, scalable pointer vectors, and any deopt
+record that does not resolve to one unique direct frame object at offset zero.
 `PCDATA_ArgLiveIndex` starts register argument homes in an unavailable bitmap.
 After machine code and block layout are final, LLVM derives bitmap transitions
 only from stores already present to the corresponding canonical ABI homes. It
@@ -461,11 +467,11 @@ use locals-only records. A merged alloca address is an ordinary pointer root
 rather than object contents. ArgLive is not a replacement for the entry
 argument bitmap.
 
-TODO: LLVM opaque pointer types currently make the first itab/type word of a
-Go interface and pointers to `NotInHeap` types look like ordinary GC pointers.
-The type-derived entry map conservatively marks those words for now. A later
-change should give non-GC address words a distinct IR representation or a
-signature-level GC-shape attribute.
+The Go frontend represents interface type/itab words and pointers to NotInHeap
+objects with integer carriers where required, keeping unmanaged addresses out of
+ordinary movable-root classification. Pointer-address/from-address intrinsics
+preserve observation ordering until the late rewrite. Entry maps are derived
+from the actual surviving LLVM signature, not reconstructed from source names.
 
 The normal GoALLC build does not require a separate plugin install step.
 `make.bash -llvm-dir=...` builds this directory against that payload's CMake
@@ -480,20 +486,18 @@ cd "$GOROOT/src"
   -llvm-link=dynamic
 ```
 
-For standalone plugin development, build and test against the selected LLVM
-payload, but install it into the Go toolchain:
+For standalone plugin development, build and test against the selected payload.
+Use the normal Go build to install matching runtime artifacts; the standalone
+build directory below is not the compiler runtime lookup directory:
 
 ```sh
 LLVM_PAYLOAD=/path/to/goallc-llvm
 PLUGIN_BUILD=/path/to/empty/plugin-build
-PLUGIN_INSTALL="$GOROOT/pkg/goallc-llvmplugin"
 
 cmake -S "$GOROOT/src/cmd/llvmplugin" -B "$PLUGIN_BUILD" -G Ninja \
-  -DLLVM_DIR="$LLVM_PAYLOAD/lib/cmake/llvm" \
-  -DCMAKE_INSTALL_PREFIX="$PLUGIN_INSTALL"
+  -DLLVM_DIR="$LLVM_PAYLOAD/lib/cmake/llvm"
 cmake --build "$PLUGIN_BUILD"
 ctest --test-dir "$PLUGIN_BUILD" --output-on-failure
-cmake --install "$PLUGIN_BUILD"
 ```
 
 Build the canonical `cmd/objview` from this checkout and pass
@@ -508,8 +512,8 @@ stack growth and `runtime.GC`. Exact rewritten IR, MIR, Args/Locals pointer
 maps, and `PCDATA_StackMapIndex` remain fixture-local checks in this plugin's
 test suite.
 
-The installed file is `$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.dylib`
-on Darwin or `$GOROOT/pkg/goallc-llvmplugin/lib/GoALLCStatepoints.so` on Linux.
+The installed file is `$GOROOT/pkg/tool/<host>/lib/GoALLCStatepoints.dylib`
+on Darwin or `$GOROOT/pkg/tool/<host>/lib/GoALLCStatepoints.so` on Linux.
 The LLVM payload is not an installation or lookup location for the plugin. Do
 not build the plugin against a different LLVM installation and copy it into the
 Go toolchain.
