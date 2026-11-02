@@ -26,6 +26,14 @@ are written directly into replacement archives. LLVM's process-global GoObj
 configuration requires serial code generation; module optimization stays
 parallel. Modules are released as their workers finish.
 
+The vendored go-llvm binding owns plugin loading, static dispatch, and C ABI
+marshalling. Both modes share the declarations in `SupportBindings.h` and use
+LLVM errors and memory buffers, with one disposal API for partial and successful
+results. The plugin owns summary writing, importing, optimization, and codegen;
+`cmd/internal/llvmlto` only coordinates archives and borrows output buffer views
+until rewriting is complete. The compiler writes ThinLTO bitcode directly
+through the binding, without depending on the linker archive package.
+
 By default, ThinLTO preparation writes only replacement archives. `-lto-keep`
 prints `LTO_WORK` and additionally saves input/optimized bitcode and IR, and
 individual Go objects for inspection. The package build cache includes

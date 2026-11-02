@@ -9,7 +9,6 @@ package ssa
 import (
 	"cmd/compile/internal/base"
 	"cmd/internal/llvmbackend"
-	"cmd/internal/llvmlto"
 	"fmt"
 	"internal/buildcfg"
 	"os"
@@ -116,7 +115,12 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 			return nil, fmt.Errorf("verify LLVM module after pre-link optimization: %w", err)
 		}
 		if base.Flag.LLVMLTO == "thin" {
-			return llvmlto.WriteThinBitcode(CurrentModule)
+			buffer, err := CurrentModule.WritePassPluginThinBitcode(plugin)
+			if err != nil {
+				return nil, fmt.Errorf("write ThinLTO bitcode: %w", err)
+			}
+			defer buffer.Dispose()
+			return append([]byte(nil), buffer.BytesView()...), nil
 		}
 		buffer := llvm.WriteBitcodeToMemoryBuffer(CurrentModule)
 		defer buffer.Dispose()

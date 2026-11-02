@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license.
 
 #include "GoALLCThinLTO.h"
-#include "GoALLCThinLTOC.h"
-#include "llvm-c/TargetMachine.h"
+#include "SupportBindings.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -33,8 +32,6 @@
 #include "llvm/Transforms/IPO/FunctionImport.h"
 #include "llvm/Transforms/Utils/AssignGUID.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
-#include <cstdlib>
-#include <cstring>
 #include <mutex>
 
 using namespace llvm;
@@ -462,10 +459,6 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
   return Error::success();
 }
 
-extern "C" LLVMErrorRef LLVMGoALLCRunPreCodeGen(LLVMModuleRef,
-                                                LLVMTargetMachineRef,
-                                                LLVMCodeGenFileType);
-
 static Error emitGoObj(Module &M, bool PIC, SmallVectorImpl<char> &Object) {
   // LLVM's GoObj configuration and target-pass registration are process-global.
   // Keep configuration, pre-codegen and emission in one critical section. Each
@@ -501,16 +494,16 @@ static Error emitGoObj(Module &M, bool PIC, SmallVectorImpl<char> &Object) {
   return Error::success();
 }
 
-extern "C" char *GoALLCThinLTOBuffers(const GoALLCLTOInput *Inputs,
-                                      size_t Count, const char *Diagnostics,
-                                      int PIC, int Jobs,
-                                      GoALLCLTOBuffer *Outputs) {
-  if (!Count || Jobs <= 0)
-    return strdup("ThinLTO requires inputs and a positive job count");
+extern "C" LLVMErrorRef LLVMGoALLCThinLTO(LLVMMemoryBufferRef *Inputs,
+                                          size_t Count, const char *Diagnostics,
+                                          LLVMBool PIC, unsigned Jobs,
+                                          LLVMMemoryBufferRef *Outputs) {
+  if (!Count || !Jobs)
+    return LLVMCreateStringError(
+        "ThinLTO requires inputs and a positive job count");
   SmallVector<MemoryBufferRef> Buffers;
   for (size_t I = 0; I != Count; ++I)
-    Buffers.emplace_back(StringRef(Inputs[I].data, Inputs[I].size),
-                         Inputs[I].name);
+    Buffers.push_back(unwrap(Inputs[I])->getMemBufferRef());
   auto Consume = [&](unsigned I, Module &M) -> Error {
     SmallVector<char, 0> Object;
     if (Error E = emitGoObj(M, PIC, Object))
@@ -524,29 +517,24 @@ extern "C" char *GoALLCThinLTOBuffers(const GoALLCLTOInput *Inputs,
       F.os().write(Object.data(), Object.size());
       F.keep();
     }
-    auto *Data = static_cast<char *>(malloc(Object.size()));
-    if (!Data)
-      return fail("allocating ThinLTO object buffer");
-    memcpy(Data, Object.data(), Object.size());
-    Outputs[I] = {Data, Object.size()};
+    Outputs[I] = wrap(
+        MemoryBuffer::getMemBufferCopy(StringRef(Object.data(), Object.size()),
+                                       Buffers[I].getBufferIdentifier())
+            .release());
     return Error::success();
   };
-  if (Error E = goallc::runThinLTO(Buffers, Diagnostics, Jobs, Consume))
-    return strdup(toString(std::move(E)).c_str());
-  return nullptr;
+  return wrap(goallc::runThinLTO(Buffers, Diagnostics, Jobs, Consume));
 }
 
-extern "C" char *GoALLCWriteThinBitcode(void *Module, char **Data,
-                                        size_t *Size) {
+extern "C" LLVMErrorRef
+LLVMGoALLCWriteThinBitcode(LLVMModuleRef Module, LLVMMemoryBufferRef *Output) {
   SmallVector<char, 0> Buffer;
   raw_svector_ostream OS(Buffer);
-  if (Error E =
-          goallc::writeThinBitcode(*static_cast<llvm::Module *>(Module), OS))
-    return strdup(toString(std::move(E)).c_str());
-  *Data = static_cast<char *>(malloc(Buffer.size()));
-  if (!*Data)
-    return strdup("allocating ThinLTO bitcode buffer");
-  memcpy(*Data, Buffer.data(), Buffer.size());
-  *Size = Buffer.size();
-  return nullptr;
+  if (Error E = goallc::writeThinBitcode(*unwrap(Module), OS))
+    return wrap(std::move(E));
+  *Output = wrap(
+      MemoryBuffer::getMemBufferCopy(StringRef(Buffer.data(), Buffer.size()),
+                                     unwrap(Module)->getModuleIdentifier())
+          .release());
+  return LLVMErrorSuccess;
 }

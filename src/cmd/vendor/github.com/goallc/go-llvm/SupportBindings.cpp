@@ -27,6 +27,44 @@
 
 using namespace llvm;
 
+// LLVM retains plugin callbacks, so use its permanent library loader rather
+// than creating a separate dlopen/dlclose lifetime around each operation.
+template <typename Function>
+static Expected<Function> loadGoALLCPluginFunction(const char *Filename,
+                                                   const char *Name) {
+  std::string Message;
+  auto Library = sys::DynamicLibrary::getPermanentLibrary(Filename, &Message);
+  if (!Library.isValid())
+    return createStringError(inconvertibleErrorCode(), Message);
+  auto *Address = Library.getAddressOfSymbol(Name);
+  if (!Address)
+    return createStringError(inconvertibleErrorCode(),
+                             Twine("GoALLC plugin is missing ") + Name);
+  return reinterpret_cast<Function>(Address);
+}
+
+LLVMErrorRef LLVMRunPassPluginThinLTO(LLVMMemoryBufferRef *Inputs, size_t Count,
+                                      const char *Diagnostics, LLVMBool PIC,
+                                      unsigned Jobs,
+                                      LLVMMemoryBufferRef *Outputs,
+                                      const char *Filename) {
+  auto Run = loadGoALLCPluginFunction<decltype(&LLVMGoALLCThinLTO)>(
+      Filename, "LLVMGoALLCThinLTO");
+  if (!Run)
+    return wrap(Run.takeError());
+  return (*Run)(Inputs, Count, Diagnostics, PIC, Jobs, Outputs);
+}
+
+LLVMErrorRef LLVMWritePassPluginThinBitcode(LLVMModuleRef Module,
+                                            LLVMMemoryBufferRef *Output,
+                                            const char *Filename) {
+  auto Write = loadGoALLCPluginFunction<decltype(&LLVMGoALLCWriteThinBitcode)>(
+      Filename, "LLVMGoALLCWriteThinBitcode");
+  if (!Write)
+    return wrap(Write.takeError());
+  return (*Write)(Module, Output);
+}
+
 LLVMErrorRef LLVMRunPassPluginEarlyIR(LLVMModuleRef ModuleRef,
                                       const char *Filename) {
   Expected<PassPlugin> Plugin = PassPlugin::Load(Filename);
