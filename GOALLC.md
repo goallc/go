@@ -1,542 +1,169 @@
-# GoALLC 项目现状、架构与后续基线
+# GoALLC 架构与实现边界
 
-更新日期：2026-09-02
+更新日期：2026-11-02。本文描述 `go1.27.master` 的架构；具体版本、平台资格和
+测试结果以所用 Go revision、LLVM payload manifest 和对应测试记录为准。
+早期 sidecar/toolexec 原型及升级记录保留在 Git 历史中，不作为当前使用说明。
 
-> 2026-09-02 更新：`compile -enablellvm` 在进程内完成 IR 优化、
-> GoALLC plugin pre-codegen callback、LLVM codegen 和 GoObj archive 写入。
-> LLVM 动态/静态链接模式都保留，构建时由 `make.bash -llvm-link` 选择；
-> 运行时只有 `cmd/compile` 这一条集成入口，不再安装或支持外部 toolexec
-> codegen 链路。原入口覆盖的运行测试已经迁入统一 testdir，生成物检查迁入
-> `test/codegen`。参数边界见
-> [doc/goallc-llvm-goobj.md](doc/goallc-llvm-goobj.md#最小使用方式)。
+## 项目目标与上游 Go 的关系
 
-## 1. 项目目标
+GoALLC 在 Go 工具链中接入 LLVM 后端，同时复用 Go 的语言前端、通用 SSA、
+运行时、标准库、包归档和链接协议。正常的非 bootstrap compiler 默认使用
+LLVM；`-enablellvm=false` 显式选择原生 Go 后端。默认选择不代表所有平台、
+构建模式和测试已经达到上游 Go 的兼容性范围。
 
-GoALLC 的目标是在尽量保持社区 Go 前端、语言语义、运行时、包格式和
-工具链兼容性的前提下，以 LLVM 作为 Go 编译器的可选后端。
+| 层次 | 上游 Go | GoALLC LLVM 路径 |
+| --- | --- | --- |
+| 语言前端 | parser、类型检查、Go IR、内联、逃逸分析 | 复用 Go 前端 |
+| 通用优化 | Go generic SSA passes | 保留共享 pass 顺序，用 `nativeOnly` / `llvmOnly` 选择边界 |
+| 目标后端 | Go target lowering、调度、寄存器分配、栈帧和指令生成 | Go SSA → LLVM IR；LLVM 优化、CodeGen 和 GoALLC 插件 |
+| 对象输出 | 原生 Go object writer | LLVM GoObj writer |
+| 包与链接 | Go export data、archive、Go linker | 普通编译继续使用这些协议 |
+| 运行时 | GC、goroutine、栈增长、panic/defer、反射 | 通过 Go ABI 和元数据接入 Go runtime |
 
-当前工作已经覆盖了这条链路中的三个层次：
+LLVM IR 交接点在 `writebarrier`、`cpufeatures` 及 LLVM 边界清理之后，
+`rewrite tern` 和 target `lower` 之前。逻辑参数和结果尚未经过原生
+`expand calls`。`LLVMCompile` 结束后退出 SSA pass 循环，`ssagen` 不执行
+原生 `AllocFrame`；LLVM 拥有指令选择、寄存器分配和物理栈帧。Go 的 ABI
+分析、ArgInfo 和 package-level data 准备仍执行。
 
-1. 在社区 Go 编译器中引入 Go LLVM binding，并实现一版 Go SSA 到
-   LLVM IR 的原型 lowering。
-2. 在 LLVM 中实现 Go ABI 和 GoObj（Go gc 工具链对象格式）的初步支持。
-3. 在 `cmd/compile` 进程内把 LLVM IR 优化并生成 GoObj，复用 compiler 的
-   archive writer 打包，再交给社区 Go linker 完成链接。
+实现入口：[`compile.go`](src/cmd/compile/internal/ssa/compile.go)、
+[`ssagen/ssa.go`](src/cmd/compile/internal/ssagen/ssa.go)。具体 pass 选择见
+[Go SSA before LLVM](doc/goallc-llvm-pipeline.md)。
 
-当前成果是一个有真实端到端验证的原型，但还不是可以替代社区 Go 后端的
-完整编译器。特别需要区分：
+## 仓库职责
 
-- 默认 LLVM lowering 不落盘 IR，也不运行原生 Go backend；
-- LLVM 仓库中的目标级 GoObj 测试消费手写 `.ll`，Go 仓库中的集成测试消费
-  testdir 下的 Go 源码；
-- IR/GoObj/机器码诊断统一由 compiler 保留的 IR 和 testdir codegen 驱动完成。
+| 仓库 / 目录 | 职责 |
+| --- | --- |
+| [goallc/go](https://github.com/goallc/go) | Go 工具链、SSA lowering、函数与类型模型、debug、runtime 集成和回归测试 |
+| `src/cmd/llvmplugin`（Go 仓库内的 C++ 工程） | Early IR / CPU FMV、写屏障晚期分析、statepoint rewrite、机器码抢占范围分析 |
+| [goallc/go-llvm](https://github.com/goallc/go-llvm) | LLVM API binding、GoObj 配置、进程内 plugin/codegen hook；vendor 到 `src/cmd/vendor` |
+| [goallc/llvm-project](https://github.com/goallc/llvm-project) | 定制 LLVM 23：Go ABI、Go IR 扩展、X86/AArch64、GoObj 和调试元数据；提供插件扩展点 |
 
-## 2. 仓库与分支基线
+Go 专用分析策略位于 Go 仓库插件中，LLVM 负责目标机制与对象格式。插件不安装
+在 LLVM payload 内。动态与静态构建使用同一套实现，区别是加载动态模块还是
+直接调用链接进 compiler 的实现。
 
-### 2.1 `go`
-
-路径：`/Volumes/Disk1/00.Work/00.Code/goallc/go`
-
-Remote：
-
-- `origin`: `https://github.com/goallc/go`
-- `personal`: `git@github.com:zhouguangyuan0718/go.git`
-
-当前检出分支：
-
-- 正式集成分支 `go1.27.master`
-- 社区基线 `official/release-branch.go1.27`
-- 当前社区基线提交 `b7cc93a369`，版本为 `go1.27rc2`
-- 原 `personal/go1.25.master` 的 6 笔提交已经重放到该基线上：vendor
-  `go-llvm`、初版 SSA lowering 和 `cmd/objview`
-- GitHub ruleset 继续禁止删除和 non-fast-forward 更新；已移除与官方 Go
-  历史不兼容的 linear-history 限制，因为 release branch 本身包含 merge
-  commit
-
-另有一个更新的 SSA lowering 实验分支：
-
-- `personal/codex/add-llvm-backend-support-for-ssa-ops`
-- HEAD `8b64b9654f`
-- 直接基于 `go1.25.4`，领先 9 笔提交
-- `personal/go1.25.master` 停在 `2650cf0dfc`，包含前 6 笔提交；
-  主题分支继续增加 3 笔 lowering 提交
-
-9 笔提交按顺序为：
-
-1. `13e5c6c4d2`：vendor `go-llvm` 并支持构建
-2. `2da898daf0`：初版 Go SSA -> LLVM IR
-3. `77b20d0f59`：扩展 SSA lowering
-4. `17c622fede`：新增 `cmd/objview`
-5. `7211cd1ddc`：扩展 GoObj section dump
-6. `2650cf0dfc`：继续扩展 GoObj section dump
-7. `e69c3f5ffc`：扩展 LLVM SSA op coverage
-8. `a36cc472b3`：增加 call op lowering
-9. `8b64b9654f`：把部分 runtime/builtin call 降为 LLVM intrinsic
-
-注意：本阶段按项目决策只迁移 `personal/go1.25.master` 的前 6 笔提交，
-不使用 `personal/codex/add-llvm-backend-support-for-ssa-ops`。后者的 3 笔
-新增 lowering 提交只作为后续能力差异参考，不进入当前构建。
-
-### 2.2 `go-llvm`
-
-路径：`/Volumes/Disk1/00.Work/00.Code/goallc/go-llvm`
-
-- 由 `tinygo.org/x/go-llvm` 派生，module path 为
-  `github.com/goallc/go-llvm`；
-- LLVM 23 基础兼容及当前清理方案已进入 `master`，HEAD 为
-  `33267b8eb4a0`；
-- 本项目只支持 GoALLC 定制 LLVM，不再支持系统预安装 LLVM、
-  `byollvm`，也不保留 LLVM 14--22 的兼容配置；
-- LLVM API 版本和链接模式是两个正交、必选的 build-tag 维度：
-  `llvm23` 与 `dynamicllvm`/`staticllvm`；后续 LLVM 24 只新增
-  `llvm24` 版本层；
-- 路径与版本、链接模式解耦。所有 cgo include/link 路径固定写为
-  `${SRCDIR}/llvm/include` 和 `${SRCDIR}/llvm/lib`；
-- `llvm` 不入库，由调用方提供软链接。Go 工具链的 `cmd/dist` 根据
-  `-llvm-dir` 创建或更新该链接；
-- 动态模式链接 payload 中的 `libLLVM`；静态模式只链接 binding
-  `${SRCDIR}` 下由 `cmd/dist` 聚合的 `libLLVMGoALLC.a`；
-- 没有生成 Go 文件，没有 `LLVMROOT`，也不把路径塞进普通 cgo 的
-  `CGO_CPPFLAGS`、`CGO_LDFLAGS` 或全局动态库环境；
-- `goallc_ext.go` 已从 Go vendor 私有补丁收回 binding 仓库。
-- 自动 CI 暂时只做源码格式检查，不再为每个 PR 从源码冷构建 LLVM；
-  项目发布预构建 LLVM payload 后，CI 将直接下载 artifact 并恢复动态、
-  静态两种 binding 测试。
-
-Go 仓库依赖 go-llvm `master` 的 pseudo-version：
-`v0.0.0-20260727072003-33267b8eb4a0`。
-
-### 2.3 `llvm-project`
-
-路径：`/Volumes/Disk1/00.Work/00.Code/goallc/llvm-project`
-
-Remote：
-
-- `official`: 社区 `llvm/llvm-project`
-- `origin`: `zhouguangyuan0718/llvm-project`
-- `upstream`: `goallc/llvm-project`
-
-当前分支：
-
-- 正式及 GitHub 默认分支 `llvm23.1.master`
-- HEAD `867cfac7abbb`
-- 基于本地 `official/release/23.x` 的 `ce6af707aac8`
-- LLVM 版本文件为 `23.1.0`
-- GoObj 主题分支在 release base 上有 24 笔提交
-- 原聚合静态库方案的 GoALLC PR #2 已关闭；其 feature 分支已用
-  `e31213b5750d` 撤回全部源码改动，相对 `llvm23.1.master` 的净 diff
-  为零。静态聚合职责已移到 Go `cmd/dist`
-
-本轮已恢复 Clang、LLDB 和 MLGO 测试夹具中的既有 symlink/file-type
-变化，源码工作区目前干净。旧的 25 GB 构建目录已删除，并从空目录重新完成
-CMake configure 和 Ninja 全量构建；随后启用 `LLVM_BUILD_LLVM_DYLIB`
-生成供 binding 和 Go compiler 使用的 `libLLVM.23.1git.dylib`。
-
-## 3. 当前真实编译链路
+## 普通 package 编译链路
 
 ```text
-社区 Go 前端
-  -> walk / generic Go SSA
-  -> 开启 -enablellvm 时调用 LLVMCompile
-       -> 每个 package 共用一个 LLVM Module
-       -> LLVM optimize + pre-codegen callback
-       -> TargetMachine 生成内存 GoObj object
-  -> compiler archive writer 写入 __.PKGDEF 和唯一的 _go_.o
-  -> 社区 Go linker
+go build / go test
+  -> cmd/compile：Go 前端与通用 SSA
+  -> 内存中的 LLVM Module（函数、数据、Go 契约、debug graph）
+  -> GoALLC early IR：CPU/FMV 准备、write-barrier record 属性
+  -> LLVM IR 优化：默认 O2；-N 对应 O0
+  -> pre-codegen callback：写屏障展开、模块准备、注册 target passes
+  -> 标准 LLVM CodeGen IR 准备
+  -> late PreISel：逐函数 statepoint / relocation SSA 重写
+  -> LLVM 指令选择、寄存器分配、Go 栈帧、扩栈与机器布局
+  -> 最终机器位置、PC、StackMaps、debug -> GoObj
+  -> Go archive writer：__.PKGDEF + 唯一 _go_.o
+  -> Go linker -> 可执行程序
 ```
 
-`-enablellvm` 会替换原生 codegen，不再继续生成第二个原生 object。动态与静态
-模式只决定 compiler 对 LLVM payload 的链接方式；二者使用相同的前端、pipeline、
-archive writer、linker 和 testdir 入口。
+普通编译不启动外部 `opt`、`llc` 或 `toolexec`，也不依赖文本 IR 中转。
+`-llvm-keep-ir` 只增加诊断文件：`.raw.ll` 是前端快照，`.ll` 是 early IR 准备后的
+输入，`.opt.ll` 是 IR 优化结果；后者不是 late statepoint 重写后的最终 IR。
+`__.PKGDEF` 由 Go compiler 生成。包的汇编等其他成员仍按构建工具的正常流程
+处理；普通 LLVM package 不另合并一份原生 compiler 数据对象。
 
-## 4. 已完成工作
+实现入口：[`llvmbackend.go`](src/cmd/compile/internal/ssa/llvmbackend.go)、
+[`gc/obj.go`](src/cmd/compile/internal/gc/obj.go)、
+[`GoALLCStatepointPlugin.cpp`](src/cmd/llvmplugin/GoALLCStatepointPlugin.cpp)。
 
-### 4.1 Go 前端与 SSA lowering
+## LLVM 侧的 Go 能力
 
-personal 主题分支实现了以下原型能力：
+| 能力 | 主要契约 |
+| --- | --- |
+| 调用约定 | `goabiinternal` / `goabi0`、完整值的参数/结果分类、参数 homes、typed `byval` / `goret`、隐藏 `nest` context |
+| 栈与目标 ABI | X86/AArch64 Go frame、默认 split-stack 检查、`morestack` 重试、`go-nosplit` / `go-systemstack`、保留寄存器状态 |
+| Go IR 语义 | `llvm.go.defer.edge`、`llvm.go.abi0.frame`、pointer address/from-address、私有 ABI 写屏障 buffer intrinsic |
+| GC 元数据 | 标准 statepoint 机器位置到 Args/LocalsPointerMaps、StackObjects、PCDATA_StackMapIndex 的适配 |
+| 异步抢占 | Go 插件根据最终机器指令标记 unsafe ranges，LLVM 序列化标签到 PC 的范围 |
+| GoObj | Go header、包/符号身份、ABI、content hash、relocations、aux、类型与链接器 marker |
+| 可观测性 | PCSP、文件/行号、内联树、ArgInfo/ArgLive、Go linker-native DWARF carriers 和变量位置 |
 
-- 新增编译器布尔 flag `-enablellvm`；
-- LLVM 模式下关闭并行 backend，避免共享的 global LLVM context/module
-  并发访问；
-- package 初始化时创建 LLVM module；
-- 在 Go SSA `Compile` 入口调用 `LLVMCompile`；
-- 建立 Go SSA block/value 到 LLVM block/value 的映射；
-- 支持 phi 的延迟 incoming edge 填充；
-- 支持 `Ret`、`If`、`Plain` 三类 control-flow block；
-- 支持整数/浮点常量、布尔、nil、字符串常量；
-- 支持主要整数/浮点算术、位运算、比较、移位和数值转换；
-- 支持部分 pointer addressing、load/store、struct、string/slice
-  len/cap；
-- 支持 static、closure、interface 和 tail call 形态的初步 lowering；
-- 支持多返回值的 LLVM struct 表示和 `SelectN`；
-- 把 `runtime.memmove` 降为 `llvm.memmove`；
-- 把 `runtime.memclrNoHeapPointers` 和 `runtime.memclrHasPointers` 降为
-  `llvm.memset`；
-- 每个函数结束后调用 LLVM verifier；
-- 最后把 module 以文本 LLVM IR 写到 `<output>.ll`。
+这些能力互相依赖：闭包的 context 寄存器也必须在扩栈慢路径中保存；GC 图必须
+使用最终物理 frame 的位置。LLVM fork 的 `GoCallingConv.h`、`IntrinsicsGo.td`、
+`GoObjObjectWriter.cpp` 和两个目标的 frame lowering 是相应底层实现。
 
-分支还增加了 `cmd/objview`，用于查看 Go archive/GoObj 的 header、block、
-symbol、relocation、aux data、function metadata、stack map 和反汇编内容。
-它是 GoObj 格式开发时的重要诊断工具。
+## GC、栈迁移与运行时语义
 
-### 4.2 Go LLVM binding
+Go 当前堆不移动，但 goroutine 栈可以迁移。late statepoint pass 计算调用后活跃
+值，生成 `gc.statepoint`、`gc.result`、`gc.relocate`，通过 `PromoteMemToReg`
+建立条件分支、循环和合流处的 relocation SSA。
 
-- 保留了 LLVM C API 的主要 IR、target、bitcode、DIBuilder、pass、
-  execution engine 等 Go 封装；
-- 只保留当前 LLVM 23 API，并以独立 build tag 为 LLVM 24 迁移预留扩展点；
-- 版本选择、链接模式和 payload 路径互不耦合；
-- 动态、静态配置完全由代码 build tag 隔离，不生成配置源文件；
-- 静态模式使用一个 `libLLVMGoALLC.a`，不在 binding 中计算组件依赖；
-- 允许把 binding 直接 vendor 到 `src/cmd/vendor`，供 `cmd/compile`
-  内部使用；
-- bootstrap build 通过 `compiler_bootstrap` stub 避免第一阶段直接依赖
-  LLVM。
+固定 `alloca`、typed `byval` / `goret` 是存储身份，不作为普通指针生成
+`gc.relocate`。同对象派生地址规范化为 base 加整数 offset，在实际使用处重建；
+SelectionDAG 使用 canonical FrameIndex。它们的内容有独立 typed layout 和
+活跃性分析；从中加载的普通指针仍按普通 root 处理。
 
-### 4.3 LLVM GoObj 对象格式
+Args/LocalsPointerMaps 按完整 pair 去重，由同一 StackMapIndex 选择。入口 pair 0
+是 EntryArgs 与 empty locals。地址可观察的固定对象还生成 StackObjects；对象
+身份不等于内容在每个调用点都活跃。ArgLiveIndex 根据真实参数-home stores
+描述 traceback 可见性，不替代 GC 图。
 
-LLVM 主题分支已经实现：
+Go SSA 决定写屏障语义；插件在 LLVM 优化后利用 MemorySSA、AA 和分配属性证明
+可省略的记录，再展开 buffer 协议。`defer` 恢复边通过零指令的
+`callbr @llvm.go.defer.edge` 保留；open-defer bits/slots 经最终 frame metadata
+交给 runtime。详细协议见 [plugin README](src/cmd/llvmplugin/README.md)。
 
-- `Triple::GoObj` object format；
-- GoObj binary format constants、header、block、symbol、relocation 和 aux
-  record；
-- `MCSectionGoObj`、GoObj streamer、assembler parser 和 object writer；
-- X86 和 AArch64 的 GoObj target writer；
-- GoObj section 到 Go symbol kind 的映射；
-- Go toolchain 需要的 textual object header；
-- package path、object flags、symbol ABI 和外部 symbol ref；
-- X86/AArch64 relocation 映射；
-- compiler/assembly 两种 GoObj source kind；
-- `go120ld` object magic，以及与当前 Go 1.25.4 对象布局一致的 record
-  sizes 和 enum。
+## 类型、接口与调试信息
 
-本机安装的 Go 1.26.5 仍使用相同的 `go120ld` magic、record sizes 和
-`SSEHUNWINDINFO=25` symbol-kind 尾项。这个观察只能说明核心布局仍匹配，
-不能代替升级时对 `cmd/internal/goobj`、`objabi`、ABI 和 linker 读取逻辑的
-完整差异审计。
+Go `reflectdata` 仍生成 finalized `LSym`。数据 lowering 收集受支持的静态 data
+symbols 及额外 roots 的 Gotype/relocation 闭包，已建 schema 的 runtime ABI 数据
+使用 typed packed constants，其他部分保留 bytes/relocations。initializer 是地址关系的来源；GoObj
+专有 flags、offset/marker relocations 和 aux 使用显式 metadata。
 
-### 4.4 Go ABI 与运行时元数据
+定义级 keep、gotype、weak-call 和 marker 关系随所属定义选择；需要随内联迁移的
+函数 marker 先由 `llvm.sideeffect` 携带，优化后归属最终函数。LLVM native DI graph
+记录包、函数、变量、类型和内联关系；最终机器位置生成 PC 表和 DWARF location lists。
+优化后不可用的值保持 unavailable，不从源变量名称猜测位置。
 
-LLVM 主题分支已经实现：
+具体协议见 [LLVM IR 到 GoObj](doc/goallc-llvm-goobj.md)，runtime 函数属性见
+[Compiler-known runtime LLVM contracts](doc/goallc-runtime-attributes.md)。
 
-- LLVM IR calling conventions `goabiinternal` 和 `goabi0`；
-- 参数和返回值的寄存器/栈分类；
-- X86_64 和 AArch64 lowering；
-- ABI0 stack calling convention；
-- register argument spill/home slot 计算；
-- 对外部 GoObj reference 记录 ABI；
-- stack growth check 和 `runtime.morestack_noctxt` 慢路径；
-- `pcsp` stack delta；
-- `pcfile` / `pcline`；
-- function PC metadata 和基础 FuncInfo；
-- empty args/locals stack maps、stack-map index 等必需 aux carrier；
-- Go type symbol flag、type descriptor relocation，以及手写 type
-  descriptor 的 reflect/interface 端到端验证；
-- Darwin arm64 的 GoObj、relocation、calling convention 和 stack growth。
+## LTO 状态
 
-### 4.5 统一的进程内集成
+截至 2026-11-02，主线 compiler 已有 `-llvm-lto`：执行 early IR 准备和
+`lto-pre-link<O2>`，写入 `__.PKGDEF + __.LLVMBC`，把机器码生成留到链接阶段。
+它要求 LLVM、默认优化 pipeline、启用优化、combined archive，且不支持 sanitizers
+或 dynamic Go linking 等冲突选项。
 
-原外部 GoObj 原型已经完成其验证作用并被移除。当前 compiler 直接接收内存中的
-module、运行优化与 pre-codegen callback、生成 GoObj，再通过自己的 archive
-writer 写入 package。原型 fixture 中的运行语义测试归入 testdir `// run` 用例，
-IR、GoObj、链接器和机器码契约归入 `test/codegen`；不再维护第二套 package
-扫描、工具选择、archive 拼装或测试入口。
+主线 `cmd/link` 目前明确拒绝 `__.LLVMBC`，报告需要 LTO-capable linker。
+端到端 `go build -lto=full`、跨包优化和单一物理 GoObj 在
+[PR #347](https://github.com/goallc/go/pull/347) 中；该 PR 在上述日期仍未合并。
+不能把 compiler bitcode 支持写成主线已具备完整 FullLTO，也不能将相关 LLVM
+metadata 合并能力等同于 ThinLTO 端到端支持。
 
-## 5. 尚未完成或存在风险的部分
+## 构建、验证与当前边界
 
-### 5.1 Go SSA path 仍是受限原型
-
-- 单独使用 `-enablellvm` 时在 compiler 进程内优化 IR、运行 plugin 和
-  TargetMachine codegen，并直接写入唯一的 `_go_.o`；
-- `-llvm-keep-ir` 可保留进程内优化前后的 IR；原生与 LLVM object 的对比使用
-  两次独立构建，不再在一次 compiler invocation 中运行两个 backend；
-- package 选择完全复用 `cmd/go` 的 `-gcflags` pattern；需要覆盖完整编译闭包时
-  使用 `-gcflags=all=-enablellvm`；
-- Go branch 通过统一 testdir 复用 `test/codegen` 和现有 `// run` 用例，
-  原外部入口的 fixture 也按运行语义或生成物契约收编到这两类测试中。维护方式见
-  [doc/goallc-llvm-goobj.md](doc/goallc-llvm-goobj.md#回归测试机制)。
-
-### 5.2 Go ABI/GoObj lowering 覆盖仍有限
-
-当前已为函数和 direct static call 设置 `goabiinternal` / `goabi0` calling
-convention，支持多返回值 tuple 属性，并在 module 中携带 GoObj target
-triple 和结构化 package 配置。尚未覆盖 closure/interface dispatch、完整
-tail-call 语义、Go liveness、精确 stack maps、write barriers、defer/panic
-metadata 和类型描述符生成。
-
-### 5.3 lowering 正确性缺口
-
-当前源码中的主要限制为：
-
-- 未支持的 SSA op/type/block 会 fail fast；这能避免错误 IR 静默进入后续
-  pipeline，但也意味着一个文件中任一未支持函数都会阻止整个 package；
-- 每个函数结束后运行 LLVM verifier，module/context/type cache 仍是
-  process-global，因此 LLVM 模式强制 backend 并发为 1；
-- control flow、基础算术/比较/转换、聚合类型和 direct static call 已有
-  初步覆盖，memory、global address、closure/interface call 等仍不完整；
-- call lowering 已使用 Go ABI 信息，但尚未覆盖 closure context、
-  interface dispatch、panic edge 和完整 tail-call 语义；
-- GC/write barrier、pointer liveness、defer/panic 和类型描述符仍需独立
-  设计与验证。
-
-### 5.4 GC、调试信息和完整兼容性
-
-- LLVM writer 当前为函数挂接 empty args/locals pointer maps；这不适用于
-  一般含 live Go pointers 的函数；
-- 没有从 Go liveness 生成精确 stack map；
-- type descriptor 目前由 fixture 中手写 LLVM constants 验证，不是由
-  Go type system 自动生成；
-- Go-compatible DWARF 尚未实现，端到端测试仍使用 `-ldflags=-w`；
-- `PKGDEF` 仍由社区 Go compiler 生成，LLVM 侧不生成；
-- relocation、symbol kind、aux metadata 和 architecture 只覆盖当前测试
-  所需子集；
-- 当前重点架构是 X86_64 和 AArch64，远未达到社区 Go 的全平台矩阵。
-
-### 5.5 构建与版本状态
-
-当前可工作的集成组合是：
-
-- Go checkout：`goallc/go` 的 `go1.27.master` 开发分支；根目录不提交
-  `VERSION`，工具版本和 compiler build ID 从 Git revision 生成；
-- bootstrap Go：Go 1.26.5；
-- vendored/standalone binding：显式选择 `llvm23`；
-- LLVM source/build：23.1.0git；
-- LLVM payload 默认位于 `$GOROOT/llvm`，也可用 `-llvm-dir` 指定；
-- LLVM API 默认版本为 23，也可用 `-llvm-version` 显式指定；
-- 默认通过 payload 中的 `libLLVM` 动态链接；`-llvm-link=static` 让
-  `cmd/dist` 使用 payload 的
-  `llvm-config` 与 `llvm-ar` 生成 binding 本地的 `libLLVMGoALLC.a`，并把
-  `$GOROOT/pkg/goallc-llvmplugin/lib/libGoALLCStatepointsStatic.a` 直接链接进
-  compiler。动态 plugin 也安装在该 Go-owned `lib` 目录，LLVM payload 内不安装
-  或查找 plugin。
-
-当前 LLVM 由 macOS 26 SDK 构建，而 Go 1.27 工具链默认链接目标为 macOS
-16，因此链接时会产生 deployment-target 警告。构建和 smoke test
-成功，但后续应在 CMake 配置中显式统一最低 macOS 版本。
-
-`cmd/dist` 还用一个恒为 true 的 `buildGoallc` 强制所有工具走 external
-link。这是早期 bring-up 手段，后续应缩小到真正依赖 LLVM 的 compiler
-阶段和受支持平台。`cmd/dist` 现在根据参数自行注入
-`llvm23,dynamicllvm`，或静态模式所需的
-`llvm23,staticllvm,goallcplugin`；`goallcplugin` 是隔离项目插件静态链接
-参数的内部标签，用户仍只需指定 `-llvm-link=static`。bootstrap 仍使用
-`compiler_bootstrap` stub。LLVM 的 include 和 link 参数只存在于
-binding 的代码配置中，不与普通 cgo 构建的外部环境变量混用。
-
-## 6. 当前验证状态
-
-本轮已完成并确认：
-
-- Go 的 6 笔既有提交已迁移到 `official/release-branch.go1.27` 的
-  `b7cc93a369`，没有使用更新的
-  `add-llvm-backend-support-for-ssa-ops` 分支；
-- LLVM 源码工作区清理后，从空 `llvm/cmake-build-debug` 目录配置并完成
-  `3025/3025` 个 Ninja 构建目标；
-- 新构建产物为 LLVM `23.1.0git`、Debug、assertions enabled，包含 X86
-  和 AArch64，并生成约 302 MB 的 `libLLVM.23.1git.dylib`；
-- 8 个 X86/AArch64 GoObj MC/CodeGen 定向测试全部通过；
-- 旧方案曾由 LLVM 的 `LLVMGoALLC` target 生成聚合库；当前方案已把
-  聚合职责移到 `cmd/dist`，LLVM 源码不再需要该项目专用 target；
-- standalone `go-llvm` 在不设置外部 `CGO_*` 参数的情况下，以
-  `llvm23,dynamicllvm` 和 `llvm23,staticllvm` 完成全测试；
-- 更新后的 binding 已同步到 Go vendor，`goallc_ext.go` 不再是 vendor
-  私有差异；
-- Go 三阶段工具链在默认动态模式和 `-llvm-link=static` 模式下均构建
-  成功，`bin/go version` 使用带 revision 的 development version，
-  `compile -h` 包含 `-enablellvm`；
-- `go test cmd/dist`、`go test cmd/compile/internal/ssa cmd/objview` 通过；
-- 最小 `Add(int64, int64)` 包经 `compile -enablellvm` 同时生成 Go archive
-  和 LLVM IR，后者通过 LLVM 23 `opt -passes=verify`。
-
-已有历史验证记录表明，当前 `llvm23.1.master` 的 GoObj 工作在 LLVM 23
-rebase 后曾通过：
-
-- X86/AArch64 GoObj MC 与 CodeGen tests；
-- `-verify-machineinstrs`；
-- 进程内 `go build -gcflags=all=-enablellvm`；
-- 统一 testdir 的运行与 codegen 用例；
-- runtime stack、stack growth、GC trigger 和 type descriptor 测试。
-
-旧 build directory 的失败已通过清理并重新配置解决，不能再把旧 binary 的
-结果当作当前源码状态。
-
-## 7. 本轮版本升级结果与剩余门槛
-
-本轮升级保持既有功能范围，不引入
-`add-llvm-backend-support-for-ssa-ops` 的额外 lowering。三个版本基线为：
-
-- Go：`official/release-branch.go1.27`，当前 `go1.27rc2`；
-- LLVM：`release/23.x` 上的 GoObj 分支 `llvm23.1.master`；
-- binding：GoALLC `go-llvm` PR #3，显式 LLVM 23。
-
-### 7.1 已完成的版本迁移
-
-1. LLVM 23 分支和共享库 clean build 已完成。
-2. binding 已清理为定制 LLVM 23、固定 `${SRCDIR}/llvm` payload 和正交
-   build tags。
-3. Go 的 6 笔既有提交已重放到 Go 1.27 release branch。
-4. vendored binding、dist build tags 和 Go 1.27 vet 兼容性已更新。
-5. 三阶段 bootstrap、核心测试和最小 IR verifier smoke test 已恢复。
-
-### 7.2 后续仍需完成的兼容性门槛
-
-至少应满足：
-
-- 三个仓库 worktree clean，base/head/remote 可追溯；
-- 社区 Go toolchain 完整 bootstrap 成功；
-- 原生 Go tests 没有因 LLVM hook 产生回归；
-- `go-llvm` 对选定 LLVM major 的单元测试通过；
-- `-enablellvm` 对最小算术、分支、phi、call、多返回值样例输出可验证 IR；
-- LLVM GoObj MC/CodeGen tests 通过；
-- X86_64 和 AArch64 的 `-verify-machineinstrs` 通过；
-- 使用升级后的社区 Go 执行进程内 LLVM `go build` 和统一 testdir 通过；
-- GoObj format/ABI/linker 差异已经按新 Go release 重新审计；
-- 所有测试路径、Go binary 路径和 cache 路径参数化，不保留开发机绝对路径。
-
-## 8. 升级之后的首个集成里程碑
-
-完成 release refresh 后，真正的第一条纵向功能链应限定为：
-
-```text
-单 package、无 cgo、无泛型复杂实例、有限 SSA op
-  -> 社区 Go 前端和 Go SSA
-  -> 带 goabiinternal + target layout 的 LLVM IR
-  -> LLVM GoObj
-  -> 保留 Go compiler 生成的 PKGDEF
-  -> Go package archive
-  -> 社区 Go linker
-  -> 可运行程序
-```
-
-这一里程碑必须同时携带：
-
-- 明确拒绝未支持 op/type/block 的 fail-fast 行为；
-- LLVM module/function verifier；
-- Go ABI calling convention；
-- 最小但正确的 stack map/GC 限制，或明确拒绝含 pointer liveness 的函数；
-- 可自动运行的端到端测试。
-
-在这条链稳定前，不宜扩大到完整标准库、全平台、DWARF、cgo 或复杂泛型。
-
-## 9. 当前 LLVM 23 集成构建方法
-
-规范构建、安装、cache identity 和故障排查约定见
-[doc/goallc-build.md](doc/goallc-build.md)。llvm-project 仓库中的辅助脚本只负责
-生成标准 LLVM payload：
-
-```sh
-cd /path/to/llvm-project
-./llvm/utils/goallc/build-payload.bash
-```
-
-脚本把 LLVM build tree 和标准 `cmake --install` payload 分开，staging 验证后
-整体刷新 payload。Go toolchain 仍通过原生入口构建，`cmd/dist` 会构建并原子安装
-匹配的 plugin：
+先用 LLVM 仓库构建器生成完整安装 payload，再通过 Go 原有入口构建：
 
 ```sh
 cd src
-GOALLC_CCACHE=/path/to/ccache \
-./make.bash \
-  -llvm-dir=/path/to/llvm-payload \
-  -llvm-version=23 \
-  -llvm-link=dynamic
+./make.bash -llvm-dir=/path/to/goallc-llvm-payload \
+  -llvm-version=23 -llvm-link=dynamic
 ```
 
-不要再用源码头文件与 build tree 的 `bin`/`lib` 拼接 payload。开发测试所需的
-`FileCheck` 通过 `LLVM_INSTALL_UTILS=ON` 一并安装。
+`-llvm-link=static` 选择静态模式。动态 `libLLVM` 与 plugin 安装到
+`$GOROOT/pkg/tool/<host>/lib`；plugin 构建缓存和静态 archive 位于
+`pkg/goallc-llvmplugin`。bootstrap compiler 使用原生后端；后续正常 compiler
+默认 LLVM。完整构建、缓存和测试入口见 [构建说明](doc/goallc-build.md)。
 
-Linux amd64 和 arm64 CI 不从源码重复构建 LLVM；它们固定下载 llvm-project
-Release `goallc-llvm23.1.0-v2` 中与 runner 架构匹配的 payload，并校验 archive
-SHA-256、LLVM revision、relocatable prefix 和完整安装布局后再运行
-`make.bash`。发布与升级约定见上述构建文档。
+当前 compiler 配置的目标是 Darwin/arm64、Linux/amd64 和 Linux/arm64。
+动态/realigned frame、scalable pointer vectors、一般 moving-heap base/derived
+推断和任意 LLVM EH/call shapes 不在现有协议范围内；具体支持形态由 lowering、
+verifier 和回归测试约束。支持某项机制不代表所有组合已通过运行时资格验证。
 
-默认目录和模式可用环境变量覆盖：
+回归复用 Go testdir、codegen FileCheck、plugin CTest 和 LLVM target/MC tests。
+`all.bash` 的已知失败在 `test/llvm_known_failures.json` 中；当前失败应按具体
+revision 与测试结果判断，不沿用早期白名单计数或开发机历史结果。
+
+原生对照必须显式禁用 LLVM，例如：
 
 ```sh
-GOALLC_LLVM_SOURCE=/path/to/llvm-project \
-GOALLC_LLVM_BUILD=/path/to/llvm-build \
-GOALLC_LLVM_INSTALL=/path/to/llvm-payload \
-/path/to/llvm-project/llvm/utils/goallc/build-payload.bash
+go build -gcflags='all=-enablellvm=false' .
 ```
 
-不要把 LLVM build 目录全局写入 `DYLD_LIBRARY_PATH`；这会让 Homebrew 的
-clang 等 LLVM 工具误加载该开发版共享库。`cmd/compile` 的链接命令已经写入
-payload rpath。
-
-GoALLC 的功能性 pass 源码位于 Go 仓库 `src/cmd/llvmplugin`，不放入 LLVM
-源码树。LLVM 只保留通用的 `llc -load-pass-plugin` 和 pre-codegen callback
-机制。`make.bash` 会使用选定 payload 的 CMake config 自动构建插件；输入内容
-变化时清空旧 CMake/Ninja 状态再通过 ccache 重建，不能把其他 LLVM 构建出的
-plugin 复制过来。产物安装在 `$GOROOT/pkg/goallc-llvmplugin/lib`；LLVM payload
-只提供 LLVM 本身，compiler 不从 payload 查找 plugin。
-
-插件 core 在 Go 仓库中实现 Go ABI 函数的 pointer liveness、稳定 safepoint
-ID、`gc.statepoint` / `gc.relocate` 和 GC leaf 识别。当前 pointer 分类保守
-且不依赖 addrspace。合并后的 `alloca` 地址通过普通 `gc-live` 搬迁；固定
-pointer-containing alloca 则在 LLVM 优化后按实际 use graph 分为两类，并统一
-通过带 kind 的 deopt 布局协议进入 `LocalsPointerMaps`，只有地址可观察对象额外
-生成 `FUNCDATA_StackObjects`。live aggregate、EH invoke、
-musttail 等未覆盖形态会 fail closed。默认 `cmd/compile` 已在进程内加载 plugin
-adapter（动态模式）或调用链接实现（静态模式），并执行同一 pre-codegen
-callback；core 的独立入口继续用于测试和演进。
-
-Machine StackMaps 通过插件注册的 `GCMetadataPrinter::emitStackMaps` 接入：
-插件读取 LLVM 已生成的通用机器位置记录并桥接到 GoObj writer，LLVM
-`StackMaps.cpp` 不含 GoALLC/GoObj 特判。GoObj 固定记录 CALL 起点，使
-PCDATA_StackMapIndex 区间与 Go 的 call-site 约定一致；`runtime.morestack`
-自身的空 statepoint 从 CALL 起点选择空 map，不使用 reset label 或 return PC。
-已有 Machine `STATEPOINT` 但缺少前端栈增长属性的 GoObj 函数会 fail closed，
-不再保留普通 morestack CALL 加 reset label 的兼容路径。
-栈增长 slow path 在 CALL 之前的 spill/check 区间仍需由后续
-`PCDATA_UnsafePoint`/restart-at-entry 实现覆盖。当前
-`Indirect [SP+offset]` 生成
-locals pointer bit，`Direct SP+offset` 只表示可重建的栈地址、不置位；追踪
-alloca 地址不等于已经描述 alloca 对象内部的指针字段。两类对象的 deopt 记录都
-由 GoObj writer 严格解析并加入对应 `LocalsPointerMaps`；`StackObject` kind 还
-生成原生布局的 `FUNCDATA_StackObjects` 和 GC bitmap。StackObjects 本身不决定
-对象在某个 PC 是否存活，因此初始实现对两类对象都采用保守的 frame-lifetime
-locals bits。协议不合成 call 前 load、`gc.relocate` 或 call 后 write-back，也不
-新增 spill。
-精确 static-object liveness 和 `PCDATA_ArgLiveIndex` 仍待实现。
-
-验证 standalone binding：
-
-```sh
-cd /Volumes/Disk1/00.Work/00.Code/goallc/go-llvm
-ln -s /Volumes/Disk1/00.Work/00.Code/goallc/go/llvm llvm
-go test -tags='llvm23 dynamicllvm' ./...
-# staticllvm 需要先由 Go 的 cmd/dist 在 binding ${SRCDIR} 聚合静态库
-go test -tags='llvm23 staticllvm' ./...
-```
-
-复用已有标准 payload 时直接运行 Go 的构建入口：
-
-```sh
-cd "$GOROOT/src"
-./make.bash \
-  -llvm-dir=/path/to/llvm-payload \
-  -llvm-version=23 \
-  -llvm-link=dynamic
-```
-
-`cmd/dist` 使用显式 `-llvm-dir`，未指定时使用 `$GOROOT/llvm`。LLVM
-版本和链接方式同样只接受 `-llvm-version` 与 `-llvm-link` 参数，不读取
-项目专用环境变量。它验证 payload 版本和所选链接库，再原子更新
-`$GOROOT/src/cmd/vendor/github.com/goallc/go-llvm/llvm` 软链接。真实目录对
-binding 不可见，binding 始终只使用 `${SRCDIR}/llvm`。
-
-静态模式下，`cmd/dist` 通过 payload 的 `llvm-config --link-static
---libfiles` 获取标准 LLVM component archives，再通过 `llvm-ar -M`
-聚合为
-`$GOROOT/src/cmd/vendor/github.com/goallc/go-llvm/libLLVMGoALLC.a`。
-它用 LLVM 版本、组件列表以及输入归档的路径、大小和修改时间缓存结果；
-LLVM 源码和构建系统本身不包含 GoALLC 专用静态库 target。
-
-最小 IR smoke test：
-
-```sh
-/Volumes/Disk1/00.Work/00.Code/goallc/go/pkg/tool/darwin_arm64/compile \
-  -enablellvm -p smoke -o /private/tmp/goallc-smoke.o \
-  /private/tmp/goallc-smoke.go
-/Volumes/Disk1/00.Work/00.Code/goallc/llvm-project/llvm/cmake-build-debug/bin/opt \
-  -passes=verify -disable-output /private/tmp/goallc-smoke.o.ll
-```
+按包选择 LLVM 必须先设原生基线，再覆盖目标包；命令和范围说明见
+[分层构建和测试](doc/goallc-llvm-goobj.md#标准库的分层构建和测试)。
