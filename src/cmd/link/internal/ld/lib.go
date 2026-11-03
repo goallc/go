@@ -1859,6 +1859,15 @@ func (ctxt *Link) hostlink() {
 	}
 
 	if ctxt.IsWindows() {
+		// MinGW LLD otherwise emits a CodeView identifier hashed from the
+		// complete image, including Go's action ID. That identifier changes
+		// the content ID even when a self-hosted compiler is otherwise
+		// identical, so bootstrap's cache consistency check cannot converge.
+		// Go already carries its own build ID, as on ELF.
+		const noBuildID = "-Wl,--build-id=none"
+		if linkerFlagSupported(ctxt.Arch, argv[0], altLinker, noBuildID) {
+			argv = append(argv, noBuildID)
+		}
 		// Suppress generation of the PE file header timestamp,
 		// so as to avoid spurious build ID differences between
 		// linked binaries that are otherwise identical other than

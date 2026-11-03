@@ -122,6 +122,9 @@ func xinit() {
 	gorootBin = pathf("%s/bin", goroot)
 	goallcLLVMDir = pathf("%s/llvm", goroot)
 	goallcLLVMLink = "dynamic"
+	if gohostos == "windows" {
+		goallcLLVMLink = "static"
+	}
 	goallcLLVMVersion = "23"
 
 	// Don't run just 'go' because the build infrastructure
@@ -1748,11 +1751,14 @@ func cmdbootstrap() {
 }
 
 func configureGoallcLLVM() {
-	if gohostos != "darwin" && gohostos != "linux" {
-		fatalf("GoALLC LLVM currently supports Darwin and Linux hosts, not %s", gohostos)
+	if gohostos != "darwin" && gohostos != "linux" && gohostos != "windows" {
+		fatalf("GoALLC LLVM currently supports Darwin, Linux and Windows hosts, not %s", gohostos)
 	}
 	if goallcLLVMVersion != "23" {
 		fatalf("-llvm-version must be 23, not %q", goallcLLVMVersion)
+	}
+	if gohostos == "windows" && (gohostarch != "amd64" || goallcLLVMLink != "static") {
+		fatalf("Windows GoALLC hosts require amd64 and -llvm-link=static")
 	}
 	switch goallcLLVMLink {
 	case "dynamic", "static":
@@ -1779,15 +1785,15 @@ func configureGoallcLLVM() {
 		}
 	}
 	for _, required := range []string{
-		pathf("%s/bin/llc", goallcLLVMDir),
-		pathf("%s/bin/llvm-ar", goallcLLVMDir),
-		pathf("%s/bin/llvm-config", goallcLLVMDir),
+		goallcLLVMTool("llc"),
+		goallcLLVMTool("llvm-ar"),
+		goallcLLVMTool("llvm-config"),
 	} {
 		if err := requireExecutableFile(required); err != nil {
 			fatalf("invalid LLVM payload %q: %s: %v", goallcLLVMDir, required, err)
 		}
 	}
-	llvmConfig := pathf("%s/bin/llvm-config", goallcLLVMDir)
+	llvmConfig := goallcLLVMTool("llvm-config")
 	prefixOutput, err := exec.Command(llvmConfig, "--prefix").Output()
 	if err != nil {
 		fatalf("running %s --prefix: %v", llvmConfig, err)
@@ -1842,11 +1848,19 @@ func sameGoallcLLVMDirectory(a, b string) bool {
 	}
 	a = resolve(a)
 	b = resolve(b)
-	return a != "" && a == b
+	return a != "" && (a == b || gohostos == "windows" && strings.EqualFold(a, b))
 }
 
 func configureGoallcLLVMPayloadLink(bindingDir string) {
 	link := pathf("%s/llvm", bindingDir)
+	if gohostos == "windows" {
+		// Creating symlinks requires a privilege or Developer Mode on Windows.
+		// Keep an owned copy of just the headers needed by cgo instead.
+		if err := copyGoallcLLVMHeaders(link, goallcLLVMDir); err != nil {
+			fatalf("preparing LLVM binding headers: %v", err)
+		}
+		return
+	}
 	if info, err := os.Lstat(link); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			fatalf("LLVM binding payload path %q exists and is not a symlink", link)
@@ -1890,7 +1904,7 @@ var goallcLLVMStaticComponents = []string{
 }
 
 func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
-	llvmAR := pathf("%s/bin/llvm-ar", goallcLLVMDir)
+	llvmAR := goallcLLVMTool("llvm-ar")
 	if _, err := os.Stat(llvmAR); err != nil {
 		fatalf("static LLVM linking requires %s: %v", llvmAR, err)
 	}
@@ -1970,13 +1984,20 @@ func llvmConfigOutput(llvmConfig string, options ...string) string {
 
 func isGoallcLLVMSystemLibrary(library string) bool {
 	allowed := map[string]bool{
-		"-lm":       true,
-		"-lz":       true,
-		"-lzstd":    true,
-		"-lxml2":    true,
-		"-ldl":      true,
-		"-lpthread": true,
-		"-lrt":      true,
+		"-lm":        true,
+		"-lz":        true,
+		"-lzstd":     true,
+		"-lxml2":     true,
+		"-ldl":       true,
+		"-lpthread":  true,
+		"-lrt":       true,
+		"-lpsapi":    true,
+		"-lshell32":  true,
+		"-lole32":    true,
+		"-luuid":     true,
+		"-ladvapi32": true,
+		"-lws2_32":   true,
+		"-lntdll":    true,
 	}
 	return allowed[library]
 }

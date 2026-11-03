@@ -2016,6 +2016,12 @@ func (state *dodataState) allocateDataSections(ctxt *Link) {
 	sect.Length = uint64(state.datsize) - sect.Vaddr
 
 	/* bss */
+	if ctxt.IsWindows() && ctxt.LinkMode == LinkExternal {
+		// COFF emits initialized data and BSS as separate sections, each
+		// aligned to PESECTALIGN. Align their shared boundary here too, so
+		// rounding each COFF section does not move the following SEH data.
+		state.datsize = Rnd(state.datsize, PESECTALIGN)
+	}
 	sect = state.allocateNamedSectionAndAssignSyms(&Segdata, ".bss", sym.SBSS, sym.Sxxx, 06)
 	ldr.SetSymSect(ldr.LookupOrCreateSym("runtime.bss", 0), sect)
 	ldr.SetSymSect(ldr.LookupOrCreateSym("runtime.ebss", 0), sect)

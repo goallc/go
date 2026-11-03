@@ -15,6 +15,8 @@ import (
 )
 
 func sehf1() int {
+	// Keep a real call even if tail recursion is optimized into a loop.
+	runtime.Gosched()
 	return sehf1()
 }
 
@@ -120,7 +122,10 @@ func testSehCallersEqual(t *testing.T, pcs []uintptr, want []string) {
 		if fn == nil || len(got) >= len(want) {
 			break
 		}
-		name := fn.Name()
+		// FuncForPC may name an inlined function at pc, while SEH reports
+		// physical frames. Entry identifies the containing function even
+		// when, for example, panicmem is inlined into sigpanic.
+		name := runtime.FuncForPC(fn.Entry()).Name()
 		switch name {
 		case "runtime.panicmem":
 			// These functions are skipped as they appear inconsistently depending
@@ -196,7 +201,10 @@ func TestSehUnwindNilPointerPanic(t *testing.T) {
 		pcs := sehCallers()
 		testSehCallersEqual(t, pcs, want)
 	}()
-	var p *int
+	// Use a nonzero address in the unmapped first page to force a hardware
+	// exception. A nil pointer can instead become an explicit panicmem call,
+	// which correctly bypasses sigpanic and would not exercise SEH here.
+	p := (*int)(unsafe.Pointer(uintptr(1)))
 	if *p == 3 {
 		t.Fatal("did not see nil pointer panic")
 	}
