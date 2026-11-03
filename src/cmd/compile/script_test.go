@@ -9,8 +9,11 @@ import (
 	"flag"
 	"internal/testenv"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/goallc/go-llvm"
 )
 
 //go:generate go test cmd/compile -v -run=TestScript/README --fixreadme
@@ -18,6 +21,20 @@ import (
 var fixReadme = flag.Bool("fixreadme", false, "if true, update README for script tests")
 
 var testCompiler string
+
+func TestLLVMTestGoRoot(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	root := scripttest.SetupTestGoRoot(t, t.TempDir(), runtime.GOROOT())
+	lib := filepath.Join(root, "pkg", "tool", runtime.GOOS+"_"+runtime.GOARCH, "lib")
+	info, err := os.Stat(lib)
+	if llvm.UsesLinkedPassPlugin() {
+		if !os.IsNotExist(err) {
+			t.Fatalf("static test GOROOT retained runtime libraries: %v", err)
+		}
+	} else if err != nil || !info.IsDir() {
+		t.Fatalf("dynamic test GOROOT is missing its runtime library directory: %v", err)
+	}
+}
 
 // TestMain allows this test binary to run as the compiler
 // itself, which is helpful for running script tests.

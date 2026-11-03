@@ -1,0 +1,24 @@
+name: GoALLC native dependencies
+description: Install native build and test tools for the four SDK hosts
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build ccache zstd gdb
+    - if: runner.os == 'macOS'
+      shell: bash
+      run: brew install ninja ccache zstd
+    - if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install zstandard ninja -y --no-progress
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & "$env:GITHUB_WORKSPACE/.github/scripts/setup-windows-toolchain.ps1"
+    - shell: bash
+      run: |
+        cache="$(command -v ccache)"
+        if [[ "$RUNNER_OS" == Windows ]]; then cache=$(cygpath -m "$cache"); fi
+        echo "GOALLC_CCACHE=$cache" >> "$GITHUB_ENV"

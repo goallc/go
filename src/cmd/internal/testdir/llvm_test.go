@@ -26,13 +26,16 @@ func TestLLVMReflectMethodInline(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 	testenv.MustHaveCGO(t)
 	switch runtime.GOOS + "/" + runtime.GOARCH {
-	case "darwin/arm64", "linux/amd64", "linux/arm64":
+	case "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64":
 	default:
 		t.Skip("LLVM GoObj is not configured for this platform")
 	}
 	goTool = testenv.GoToolPath(t)
 	configureLLVMTestToolchain(t)
 	exe := filepath.Join(t.TempDir(), "reflect-method-inline")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
 	source := filepath.Join(runtime.GOROOT(), "test", "llvm_reflect_method_inline.go")
 	cmd := testenv.Command(t, goTool, "build", "-gcflags=-l", "-o", exe, source)
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local")
@@ -60,7 +63,7 @@ func TestLLVMContentAddressableClosureExternalLink(t *testing.T) {
 	testenv.MustHaveCGO(t)
 	platform := runtime.GOOS + "/" + runtime.GOARCH
 	switch platform {
-	case "darwin/arm64", "linux/amd64", "linux/arm64":
+	case "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64":
 	default:
 		t.Skipf("LLVM GoObj is not configured for %s", platform)
 	}
@@ -119,6 +122,9 @@ func main() {
 	}
 
 	exe := filepath.Join(dir, "closurelink")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
 	cmd := testenv.Command(t, goTool, "build", "-ldflags=-linkmode=external", "-o", exe, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local", "GOCACHE="+filepath.Join(dir, "cache"))
@@ -335,6 +341,9 @@ func runLLVMCodegenTest(t *testing.T, source string, flags, runenv []string) err
 
 	if hasLLVMFileCheckPrefix(src, "LLVM-LINK") {
 		executable := filepath.Join(t.TempDir(), "codegen-link")
+		if runtime.GOOS == "windows" {
+			executable += ".exe"
+		}
 		output, err := runLLVMCodegenTool(goTool, "build",
 			"-gcflags=-enablellvm",
 			"-ldflags=-w -debugnosplit",
@@ -586,7 +595,11 @@ func llvmTestPayloadRoot(t *testing.T) (root, configured string) {
 	}
 
 	legacy := filepath.Join(goroot, "llvm")
-	if _, err := os.Stat(filepath.Join(legacy, "bin", "llvm-config")); err == nil {
+	configName := "llvm-config"
+	if runtime.GOOS == "windows" {
+		configName += ".exe"
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "bin", configName)); err == nil {
 		return legacy, "GOROOT/llvm"
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("checking legacy LLVM payload %s: %v", legacy, err)
@@ -608,6 +621,9 @@ func llvmPayloadTool(t *testing.T, root, name, envName string) string {
 
 func llvmPayloadExecutable(t *testing.T, root, name string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
 	return llvmRegularFile(t, filepath.Join(root, "bin", name), "LLVM payload", true)
 }
 
@@ -641,7 +657,7 @@ func llvmRegularFile(t *testing.T, value, source string, executable bool) string
 	if !info.Mode().IsRegular() {
 		t.Fatalf("%s file %q is not a regular file", source, path)
 	}
-	if executable && info.Mode()&0o111 == 0 {
+	if executable && runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Fatalf("%s file %q is not executable", source, path)
 	}
 	return path

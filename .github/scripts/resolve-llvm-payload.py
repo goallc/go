@@ -22,7 +22,7 @@ DEPENDENCY = re.compile(
     r"^LLVM-PR:\s*(?:goallc/llvm-project#)?([1-9][0-9]*)\s*$"
 )
 REVISION = re.compile(r"^[0-9a-f]{40}$")
-ARCHITECTURES = {"amd64", "arm64"}
+PLATFORMS = {"linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"}
 
 
 class PayloadError(RuntimeError):
@@ -117,10 +117,10 @@ def asset_exists(url):
         return False
 
 
-def wait_for_assets(server_url, tag, prefix, architectures, wait_seconds, poll_seconds):
+def wait_for_assets(server_url, tag, prefix, platforms, wait_seconds, poll_seconds):
     assets = [
-        f"{prefix}-linux-{arch}.tar.zst{suffix}"
-        for arch in architectures
+        f"{prefix}-{platform}.tar.zst{suffix}"
+        for platform in platforms
         for suffix in ("", ".sha256")
     ]
     deadline = time.monotonic() + wait_seconds
@@ -159,7 +159,7 @@ def main():
     parser.add_argument("--github-output", required=True)
     parser.add_argument("--pinned-release", required=True)
     parser.add_argument("--pinned-revision", required=True)
-    parser.add_argument("--architectures", default="amd64,arm64")
+    parser.add_argument("--platforms", default="linux-amd64,linux-arm64")
     parser.add_argument("--wait-seconds", type=int, default=12_600)
     parser.add_argument("--poll-seconds", type=int, default=30)
     parser.add_argument(
@@ -172,9 +172,9 @@ def main():
 
     if not REVISION.fullmatch(args.pinned_revision):
         raise PayloadError("--pinned-revision must be a full lowercase Git revision")
-    architectures = args.architectures.split(",")
-    if not architectures or any(arch not in ARCHITECTURES for arch in architectures):
-        raise PayloadError("--architectures must contain only amd64 and arm64")
+    platforms = args.platforms.split(",")
+    if not platforms or any(platform not in PLATFORMS for platform in platforms):
+        raise PayloadError("--platforms contains an unsupported host")
     if args.wait_seconds < 0 or args.poll_seconds <= 0:
         raise PayloadError("wait and poll durations must be positive")
 
@@ -195,7 +195,7 @@ def main():
             args.server_url,
             LLVM_CI_RELEASE,
             prefix,
-            architectures,
+            platforms,
             args.wait_seconds,
             args.poll_seconds,
         )

@@ -122,6 +122,9 @@ func xinit() {
 	gorootBin = pathf("%s/bin", goroot)
 	goallcLLVMDir = pathf("%s/llvm", goroot)
 	goallcLLVMLink = "dynamic"
+	if gohostos == "windows" {
+		goallcLLVMLink = "static"
+	}
 	goallcLLVMVersion = "23"
 
 	// Don't run just 'go' because the build infrastructure
@@ -1407,9 +1410,8 @@ func toolenv() []string {
 		// as the original build system.
 		env = append(env, "CGO_ENABLED=0")
 	}
-	goallcTags := "llvm" + goallcLLVMVersion + "," + goallcLLVMLink + "llvm"
+	goallcTags := strings.Join(goallcBuildTags(), ",")
 	if goallcLLVMLink == "static" {
-		goallcTags += ",goallcplugin"
 		if goos == "linux" {
 			// The linked pass plugin must retain every archive member, but cgo
 			// rejects linker options from package directives unless they are
@@ -1435,6 +1437,14 @@ func toolenv() []string {
 		env = append(env, "GOFLAGS="+strings.Join(goFlags, " "))
 	}
 	return env
+}
+
+func goallcBuildTags() []string {
+	tags := []string{"llvm" + goallcLLVMVersion, goallcLLVMLink + "llvm"}
+	if goallcLLVMLink == "static" {
+		tags = append(tags, "goallcplugin")
+	}
+	return tags
 }
 
 var (
@@ -1748,11 +1758,14 @@ func cmdbootstrap() {
 }
 
 func configureGoallcLLVM() {
-	if gohostos != "darwin" && gohostos != "linux" {
-		fatalf("GoALLC LLVM currently supports Darwin and Linux hosts, not %s", gohostos)
+	if gohostos != "darwin" && gohostos != "linux" && gohostos != "windows" {
+		fatalf("GoALLC LLVM currently supports Darwin, Linux and Windows hosts, not %s", gohostos)
 	}
 	if goallcLLVMVersion != "23" {
 		fatalf("-llvm-version must be 23, not %q", goallcLLVMVersion)
+	}
+	if gohostos == "windows" && (gohostarch != "amd64" || goallcLLVMLink != "static") {
+		fatalf("Windows GoALLC hosts require amd64 and -llvm-link=static")
 	}
 	switch goallcLLVMLink {
 	case "dynamic", "static":
@@ -1779,15 +1792,15 @@ func configureGoallcLLVM() {
 		}
 	}
 	for _, required := range []string{
-		pathf("%s/bin/llc", goallcLLVMDir),
-		pathf("%s/bin/llvm-ar", goallcLLVMDir),
-		pathf("%s/bin/llvm-config", goallcLLVMDir),
+		goallcLLVMTool("llc"),
+		goallcLLVMTool("llvm-ar"),
+		goallcLLVMTool("llvm-config"),
 	} {
 		if err := requireExecutableFile(required); err != nil {
 			fatalf("invalid LLVM payload %q: %s: %v", goallcLLVMDir, required, err)
 		}
 	}
-	llvmConfig := pathf("%s/bin/llvm-config", goallcLLVMDir)
+	llvmConfig := goallcLLVMTool("llvm-config")
 	prefixOutput, err := exec.Command(llvmConfig, "--prefix").Output()
 	if err != nil {
 		fatalf("running %s --prefix: %v", llvmConfig, err)
@@ -1842,11 +1855,19 @@ func sameGoallcLLVMDirectory(a, b string) bool {
 	}
 	a = resolve(a)
 	b = resolve(b)
-	return a != "" && a == b
+	return a != "" && (a == b || gohostos == "windows" && strings.EqualFold(a, b))
 }
 
 func configureGoallcLLVMPayloadLink(bindingDir string) {
 	link := pathf("%s/llvm", bindingDir)
+	if gohostos == "windows" {
+		// Creating symlinks requires a privilege or Developer Mode on Windows.
+		// Keep an owned copy of just the headers needed by cgo instead.
+		if err := copyGoallcLLVMHeaders(link, goallcLLVMDir); err != nil {
+			fatalf("preparing LLVM binding headers: %v", err)
+		}
+		return
+	}
 	if info, err := os.Lstat(link); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			fatalf("LLVM binding payload path %q exists and is not a symlink", link)
@@ -1890,12 +1911,16 @@ var goallcLLVMStaticComponents = []string{
 }
 
 func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
-	llvmAR := pathf("%s/bin/llvm-ar", goallcLLVMDir)
+	llvmAR := goallcLLVMTool("llvm-ar")
 	if _, err := os.Stat(llvmAR); err != nil {
 		fatalf("static LLVM linking requires %s: %v", llvmAR, err)
 	}
 
-	archives := strings.Fields(llvmConfigOutput(llvmConfig, "--link-static", "--libfiles"))
+	// --libnames avoids splitting an installed prefix containing spaces.
+	archives := strings.Fields(llvmConfigOutput(llvmConfig, "--link-static", "--libnames"))
+	for i, name := range archives {
+		archives[i] = filepath.Join(goallcLLVMDir, "lib", name)
+	}
 	if len(archives) == 0 {
 		fatalf("%s returned no static component archives", llvmConfig)
 	}
@@ -1913,8 +1938,8 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 	var stamp strings.Builder
 	fmt.Fprintf(&stamp, "version=%s\ncomponents=%s\n", version, strings.Join(goallcLLVMStaticComponents, ","))
 	for _, archive := range archives {
-		if strings.ContainsAny(archive, " \t\r\n") {
-			fatalf("LLVM static archive paths may not contain whitespace: %q", archive)
+		if strings.ContainsAny(archive, "\"\r\n;*") {
+			fatalf("LLVM static archive path contains MRI control characters: %q", archive)
 		}
 		info, err := os.Stat(archive)
 		if err != nil {
@@ -1924,8 +1949,8 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 	}
 
 	output := pathf("%s/libLLVMGoALLC.a", bindingDir)
-	if strings.ContainsAny(output, " \t\r\n") {
-		fatalf("Go root path may not contain whitespace for static LLVM linking: %q", goroot)
+	if strings.ContainsAny(output, "\"\r\n;*") {
+		fatalf("Go root path contains MRI control characters: %q", goroot)
 	}
 	stampFile := output + ".stamp"
 	if oldStamp, err := os.ReadFile(stampFile); err == nil && string(oldStamp) == stamp.String() {
@@ -1937,9 +1962,9 @@ func buildGoallcLLVMStaticArchive(bindingDir, llvmConfig, version string) {
 	temporary := fmt.Sprintf("%s.tmp.%d", output, os.Getpid())
 	xremove(temporary)
 	var mri strings.Builder
-	fmt.Fprintf(&mri, "CREATE %s\n", temporary)
+	fmt.Fprintf(&mri, "CREATE \"%s\"\n", temporary)
 	for _, archive := range archives {
-		fmt.Fprintf(&mri, "ADDLIB %s\n", archive)
+		fmt.Fprintf(&mri, "ADDLIB \"%s\"\n", archive)
 	}
 	mri.WriteString("SAVE\nEND\n")
 
@@ -1970,13 +1995,17 @@ func llvmConfigOutput(llvmConfig string, options ...string) string {
 
 func isGoallcLLVMSystemLibrary(library string) bool {
 	allowed := map[string]bool{
-		"-lm":       true,
-		"-lz":       true,
-		"-lzstd":    true,
-		"-lxml2":    true,
-		"-ldl":      true,
-		"-lpthread": true,
-		"-lrt":      true,
+		"-lm":        true,
+		"-ldl":       true,
+		"-lpthread":  true,
+		"-lrt":       true,
+		"-lpsapi":    true,
+		"-lshell32":  true,
+		"-lole32":    true,
+		"-luuid":     true,
+		"-ladvapi32": true,
+		"-lws2_32":   true,
+		"-lntdll":    true,
 	}
 	return allowed[library]
 }
@@ -1984,7 +2013,12 @@ func isGoallcLLVMSystemLibrary(library string) bool {
 func goallcLLVMStaticSystemArchive(library string) string {
 	if !strings.HasPrefix(library, "-l") || len(library) == 2 {
 		if filepath.Ext(library) == ".a" {
-			return library
+			// llvm-config may retain the dependency's build-time absolute path.
+			// Installed payloads carry the matching archive beside LLVM's libs.
+			path := filepath.Join(goallcLLVMDir, "lib", filepath.Base(library))
+			if isFile(path) {
+				return path
+			}
 		}
 		return ""
 	}
@@ -1992,15 +2026,6 @@ func goallcLLVMStaticSystemArchive(library string) string {
 	filename := "lib" + name + ".a"
 	if path := pathf("%s/lib/%s", goallcLLVMDir, filename); isFile(path) {
 		return path
-	}
-	for _, pkg := range []string{name, "lib" + name} {
-		output, err := exec.Command(defaultpkgconfig, "--variable=libdir", pkg).Output()
-		if err != nil {
-			continue
-		}
-		if path := filepath.Join(strings.TrimSpace(string(output)), filename); isFile(path) {
-			return path
-		}
 	}
 	return ""
 }

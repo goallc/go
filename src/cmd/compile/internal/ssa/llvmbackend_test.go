@@ -90,7 +90,7 @@ func TestLLVMCodeGenOptions(t *testing.T) {
 		"-disable-lsr",
 	}
 	if buildcfg.GOARCH == "arm64" {
-		want = append(want, "-aarch64-goobj-composite-relocations")
+		want = append(want, "-optimize-regalloc", "-aarch64-goobj-composite-relocations")
 	}
 	if got := llvmCodeGenOptions(); !slices.Equal(got, want) {
 		t.Errorf("llvmCodeGenOptions() = %q, want %q", got, want)

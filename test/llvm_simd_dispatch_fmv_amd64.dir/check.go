@@ -6,10 +6,19 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"simd"
+	"simd/archsimd"
 )
 
 func checkDispatchFMVCase(test dispatchFMVCase) {
+	// Windows does not read GODEBUG until after internal/cpu.Initialize.
+	// As in internal/cpu's tests, cpu.* options are therefore unsupported.
+	// Still check width dispatch and every result, with the hardware CPU paths.
+	if runtime.GOOS == "windows" {
+		test.usedAVX2 = archsimd.X86.AVX2()
+		test.usedAVX512 = archsimd.X86.AVX512()
+	}
 	var x, y, portableDst, wide512Dst [64]int8
 	var x256, y256, wide256Dst [32]int8
 	for i := range x {
