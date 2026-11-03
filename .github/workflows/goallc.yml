@@ -371,6 +371,7 @@ jobs:
           path: ${{ runner.temp }}/release/*
 
       - name: Package CI SDK and test inputs
+        if: github.event_name != 'pull_request' || runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -388,6 +389,7 @@ jobs:
           tar --zstd -cf "$RUNNER_TEMP/go-build-cache.tar.zst" -C "$GOCACHE" .
 
       - name: Upload CI SDK and test inputs
+        if: github.event_name != 'pull_request' || runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: goallc-sdk-${{ matrix.name }}
@@ -425,18 +427,15 @@ jobs:
   test:
     name: test-${{ matrix.name }}-${{ matrix.group }}
     needs: build
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-22.04","linux-arm64":"ubuntu-22.04-arm","darwin-arm64":"macos-14","windows-amd64":"windows-2025"}')[matrix.name] }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        name: [linux-amd64, linux-arm64, darwin-arm64, windows-amd64]
+        # PRs retain Linux coverage; main-branch pushes and manual release
+        # qualification run the full four-platform suite.
+        name: ${{ fromJSON(github.event_name == 'pull_request' && '["linux-amd64","linux-arm64"]' || '["linux-amd64","linux-arm64","darwin-arm64","windows-amd64"]') }}
         group: [stdlib, compiler, tools, runtime]
-        include:
-          - {name: linux-amd64, runner: ubuntu-22.04}
-          - {name: linux-arm64, runner: ubuntu-22.04-arm}
-          - {name: darwin-arm64, runner: macos-14}
-          - {name: windows-amd64, runner: windows-2025}
     env:
       GOROOT: ${{ github.workspace }}
       GOCACHE: ${{ github.workspace }}/.go-build
