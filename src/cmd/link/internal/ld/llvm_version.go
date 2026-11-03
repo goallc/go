@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/goallc/go-llvm"
 )
 
 func init() {
@@ -23,6 +25,11 @@ func init() {
 func linkVersionFlagFullSuffix(buildID string) string {
 	if !ltoVersionEnabled(os.Args[1:]) {
 		return " buildID=" + buildID
+	}
+	if llvm.UsesLinkedPassPlugin() {
+		// LLVM and the plugin are part of the linker content ID. A static
+		// SDK must not need an external payload to answer -V=full.
+		return llvmVersionBuildID(buildID, "goallc-static-v1")
 	}
 	identity, err := llvmbackend.Identity()
 	if err != nil {

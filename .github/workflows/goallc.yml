@@ -597,6 +597,7 @@ jobs:
           sha256sum -c ./*.sha256
           gh release create "$RELEASE_TAG" ./* --verify-tag --fail-on-no-commits \
             --title "$RELEASE_TAG" --notes "Four-host static GoALLC SDK. LLVM and pass dependencies are linked into the compiler; OS system libraries remain platform dependencies. Includes Linux amd64/arm64, Darwin arm64, and Windows amd64. Native dist tests and relocated SDK checks passed in workflow run $GITHUB_RUN_ID."
+
   lto:
     name: lto-thin-linux-${{ matrix.arch }}
     needs: build
@@ -657,6 +658,7 @@ jobs:
       - name: Run ThinLTO integration tests
         env:
           GOALLC_TEST_LTO: "1"
+          CGO_LDFLAGS_ALLOW: '^-Wl,--(no-)?whole-archive$'
         run: |
           set -o pipefail
           ./bin/go test -tags=staticllvm,goallcplugin -gcflags=all=-enablellvm=false cmd/internal/llvmlto -timeout=30m -count=1 -v \
