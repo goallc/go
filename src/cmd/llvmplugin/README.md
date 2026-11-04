@@ -17,6 +17,18 @@ and immediately before instruction selection. Calling `runPreCodeGenPipeline`
 for the whole module from the callback is the emit-IR test mode, not the
 production placement.
 
+Before computing GC liveness, the late pipeline prepares small private byval
+initialization objects for LLVM's existing call-carrier forwarding. A complete
+zero fill followed by disjoint final field stores becomes typed stores and zero
+byte ranges immediately before the one consuming call. This also handles a
+chain of unique-predecessor blocks such as an interface nil-check edge. The
+transformation preserves the original SSA field values and never crosses a
+call, including a GC-leaf call. Escaping or observed addresses, partial field
+overwrites, volatile/atomic accesses, lifetime ends, defer frame homes, and
+objects larger than 256 bytes retain their original representation. GC analysis
+then sees the final pointer uses; no pointer values are introduced after root
+selection, and the backend's carrier and ABI checks remain in force.
+
 Dynamic builds load the module from `pkg/tool/<host>/lib`; static builds call
 the linked implementation. Both are built against the selected LLVM payload,
 and neither is installed into it. `-enablellvm=false` selects the native Go
