@@ -5,7 +5,11 @@
 
 package ld
 
-import "testing"
+import (
+	"internal/buildcfg"
+	"os"
+	"testing"
+)
 
 func TestLTOVersionMode(t *testing.T) {
 	for _, test := range []struct {
@@ -27,5 +31,19 @@ func TestLTOVersionMode(t *testing.T) {
 	}
 	if llvmVersionBuildID("action/content", "llvm-a") == llvmVersionBuildID("action/content", "llvm-b") {
 		t.Fatal("LLVM update did not change identity")
+	}
+}
+
+func TestNonLTOVersionIdentity(t *testing.T) {
+	oldArgs, oldVersion := os.Args, buildcfg.Version
+	t.Cleanup(func() { os.Args, buildcfg.Version = oldArgs, oldVersion })
+	os.Args = []string{"link", "-V=full"}
+	buildcfg.Version = "go1.27.3-goallc.test"
+	if got := linkVersionFlagFullSuffix("action/content"); got != "" {
+		t.Fatalf("release suffix = %q, want empty", got)
+	}
+	buildcfg.Version = "go1.27-devel"
+	if got := linkVersionFlagFullSuffix("action/content"); got != " buildID=action/content" {
+		t.Fatalf("development suffix = %q", got)
 	}
 }

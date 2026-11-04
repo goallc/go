@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"internal/buildcfg"
 	"os"
 	"strings"
 
@@ -24,6 +25,10 @@ func init() {
 
 func linkVersionFlagFullSuffix(buildID string) string {
 	if !ltoVersionEnabled(os.Args[1:]) {
+		// Preserve the ordinary release tool identity during bootstrap.
+		if !strings.Contains(buildcfg.Version, "devel") {
+			return ""
+		}
 		return " buildID=" + buildID
 	}
 	if llvm.UsesLinkedPassPlugin() {
