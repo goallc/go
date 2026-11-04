@@ -498,6 +498,64 @@ if(BUILD_TESTING)
     CHECK
   )
 
+  set(GOALLC_FRAME_COPY_INPUT
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/frame-copy-pointers.ll")
+  goallc_add_filecheck_test(
+    GoALLCStatepoints.FrameCopyPreparation
+    "${GOALLC_FRAME_COPY_INPUT}" PREP
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    -passes=goallc-prepare-frame-copies -verify-each -S
+    "${GOALLC_FRAME_COPY_INPUT}"
+  )
+  foreach(ARCH IN ITEMS aarch64 x86_64)
+    set(GOALLC_FRAME_COPY_PIPELINE
+      "'${GOALLC_OPT_EXECUTABLE}'"
+      " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
+      " '-passes=goallc-prepare-frame-copies,default<O2>' -verify-each -S"
+      " '${GOALLC_FRAME_COPY_INPUT}'"
+      " | '${GOALLC_LLC_EXECUTABLE}' '-mtriple=${ARCH}-unknown-linux-goobj'"
+      " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
+      " -goallc-pass-plugin-emit-ir -filetype=null -o - - 2>&1"
+      " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=IR"
+      " '${GOALLC_FRAME_COPY_INPUT}'")
+    string(JOIN "" GOALLC_FRAME_COPY_PIPELINE ${GOALLC_FRAME_COPY_PIPELINE})
+    add_test(
+      NAME "GoALLCStatepoints.FrameCopyO2.${ARCH}"
+      COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+        "${GOALLC_FRAME_COPY_PIPELINE}"
+    )
+    set(GOALLC_FRAME_COPY_CODEGEN
+      "'${GOALLC_OPT_EXECUTABLE}'"
+      " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
+      " '-passes=goallc-prepare-frame-copies,default<O2>' -verify-each -S"
+      " '${GOALLC_FRAME_COPY_INPUT}'"
+      " | '${GOALLC_LLC_EXECUTABLE}' '-mtriple=${ARCH}-unknown-linux-goobj'"
+      " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
+      " -verify-machineinstrs -frame-pointer=all -filetype=obj"
+      " -o '${CMAKE_CURRENT_BINARY_DIR}/frame-copy-${ARCH}.goobj' -")
+    string(JOIN "" GOALLC_FRAME_COPY_CODEGEN ${GOALLC_FRAME_COPY_CODEGEN})
+    add_test(
+      NAME "GoALLCStatepoints.FrameCopyGoObj.${ARCH}"
+      COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+        "${GOALLC_FRAME_COPY_CODEGEN}"
+    )
+  endforeach()
+  set(GOALLC_FRAME_COPY_BASELINE
+    "'${GOALLC_OPT_EXECUTABLE}' '-passes=default<O2>' -S"
+    " '${GOALLC_FRAME_COPY_INPUT}'"
+    " | '${GOALLC_NOT_EXECUTABLE}' '${GOALLC_LLC_EXECUTABLE}'"
+    " '-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>'"
+    " -goallc-pass-plugin-emit-ir -filetype=null -o - - 2>&1"
+    " | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=BASELINE"
+    " '${GOALLC_FRAME_COPY_INPUT}'")
+  string(JOIN "" GOALLC_FRAME_COPY_BASELINE ${GOALLC_FRAME_COPY_BASELINE})
+  add_test(
+    NAME GoALLCStatepoints.FrameCopyNeedsPreparation
+    COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
+      "${GOALLC_FRAME_COPY_BASELINE}"
+  )
+
   goallc_add_ir_filecheck_test(
     GoALLCStatepoints.GCLeafDefinition
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/gc-leaf-definition.ll"
@@ -522,6 +580,11 @@ if(BUILD_TESTING)
       "${INPUT}"
     )
   endfunction()
+  goallc_add_failure_filecheck_test(
+    GoALLCStatepoints.PartialPointerCopyFails
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/frame-copy-partial-pointer.ll"
+    ERROR
+  )
   add_test(
     NAME GoALLCStatepoints.Load
     COMMAND
