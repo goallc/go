@@ -28,7 +28,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: load volatile ptr, ptr %right.leaf.1.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %scratch.statepoint.home, ptr %right.leaf.1.statepoint.home, ptr %left.leaf.1.statepoint.home)
 ; IR-NOT: @llvm.experimental.gc.relocate
-; IR: load %slice, ptr %scratch.statepoint.home
+; IR: getelementptr i8, ptr %scratch.statepoint.home, i64 0
+; IR: load volatile ptr
 ; IR: ret i64
 
 ; MIR-LABEL: name: interface_call_loop
