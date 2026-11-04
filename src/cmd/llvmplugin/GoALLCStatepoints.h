@@ -15,10 +15,6 @@ class TargetMachine;
 
 namespace goallc {
 
-// Exposes pointer fields in fixed-frame memory copies before SROA can split
-// an untyped byte range through a GC pointer word.
-void preparePointerFrameCopies(Module &M);
-
 // Rewrites calls in Go ABI functions to statepoints using GoALLC's value
 // liveness and relocation policy.
 Error rewriteStatepoints(Module &M, TargetMachine &TM);

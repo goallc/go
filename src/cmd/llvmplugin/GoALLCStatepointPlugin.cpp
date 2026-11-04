@@ -62,22 +62,10 @@ struct LowerWriteBarrierRecordsPass : PassInfoMixin<LowerWriteBarrierRecordsPass
   }
 };
 
-struct PreparePointerFrameCopiesPass
-    : PassInfoMixin<PreparePointerFrameCopiesPass> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    goallc::preparePointerFrameCopies(M);
-    return PreservedAnalyses::none();
-  }
-};
-
 void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
          ArrayRef<PassBuilder::PipelineElement>) {
-        if (Name == "goallc-prepare-frame-copies") {
-          MPM.addPass(PreparePointerFrameCopiesPass());
-          return true;
-        }
         if (Name == "goallc-write-barriers") {
           MPM.addPass(LowerWriteBarrierRecordsPass());
           return true;
@@ -202,7 +190,6 @@ extern "C" LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef ModuleRef) {
     std::string Message = toString(std::move(Err));
     return LLVMCreateStringError(Message.c_str());
   }
-  goallc::preparePointerFrameCopies(M);
   return LLVMErrorSuccess;
 }
 

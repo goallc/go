@@ -293,17 +293,6 @@ narrow Go ABI contract above.
 
 The final combined order is:
 
-0. **Typed frame copies before optimization.** Expose the pointer fields of
-   constant-size, non-volatile memory copies of exact alloca/byval/goret
-   subobjects as aggregate loads and stores. The copy type includes explicit
-   padding bytes, and the complete source is loaded before any destination
-   store, preserving byte-copy and overlapping memmove semantics. Otherwise
-   SROA can start a byte slice in struct padding and split the following GC
-   pointer into integer/byte-array fragments, losing its identity across a
-   safepoint. Ordinary SROA remains enabled; the late activity checks still
-   reject actual partial pointer writes. Arbitrary partial, variable-size,
-   volatile and explicitly inline copies retain their original semantics and
-   existing validation.
 1. **Optimized alloca classification and activity.** Enumerate pointer leaves,
    classify final IR uses as address-observable stack objects or direct-only
    locals, then compute callsite live-out from frontend lifetime starts and

@@ -1332,11 +1332,20 @@ func (lfc *LLVMFuncContext) llvmClearMemory(dst, length llvm.Value, align int, v
 	return call
 }
 
-// Keep memory operations visible to LLVM's memory optimizations. Target
-// instruction selection chooses inline code or a Go runtime call afterwards.
-func (lfc *LLVMFuncContext) llvmCopyFixedMemory(dst, src llvm.Value, size int64, align int) llvm.Value {
-	length := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(size), false)
-	return lfc.llvmCopyMemory(dst, src, length, align, 0)
+// Copy a Go value while keeping its pointer fields visible to SROA and GC
+// liveness. A byte copy can be partitioned through padding into integer slices
+// that contain only part of a pointer. The ordinary storage type expresses
+// value assignment; unlike a raw memmove, it need not preserve padding bytes.
+func (lfc *LLVMFuncContext) llvmCopyValue(dst, src llvm.Value, typ *types.Type, align int, volatile uint64) llvm.Value {
+	if typ.HasPointers() && volatile == 0 {
+		value := lfc.b.CreateLoad(getLLVMType(typ), src, "")
+		value.SetAlignment(align)
+		store := lfc.b.CreateStore(value, dst)
+		store.SetAlignment(align)
+		return store
+	}
+	length := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(typ.Size()), false)
+	return lfc.llvmCopyMemory(dst, src, length, align, volatile)
 }
 
 func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
@@ -1344,7 +1353,12 @@ func (lfc *LLVMFuncContext) llvmMove(v *Value) llvm.Value {
 	dst := lfc.llvmMemoryPointer(v, 0)
 	src := lfc.llvmMemoryPointer(v, 1)
 	length := lfc.llvmMemoryLength(v, size)
-	return lfc.llvmCopyMemory(dst, src, length, align, lfc.llvmMemoryVolatile(v.Args[0]))
+	volatile := lfc.llvmMemoryVolatile(v.Args[0])
+	typ := v.Aux.(*types.Type)
+	if size == typ.Size() {
+		return lfc.llvmCopyValue(dst, src, typ, align, volatile)
+	}
+	return lfc.llvmCopyMemory(dst, src, length, align, volatile)
 }
 
 func (lfc *LLVMFuncContext) llvmCopyMemory(dst, src, length llvm.Value, align int, volatile uint64) llvm.Value {
@@ -3047,7 +3061,7 @@ func (lfc *LLVMFuncContext) storeMemoryResult(v, value *Value, index int) {
 	logical := lfc.F.OwnAux.TypeOfResult(int64(index))
 	dst := lfc.LF.Param(result.ParamIndex)
 	if slot, ok := lfc.MemorySnapshots[value.ID]; ok {
-		lfc.llvmCopyFixedMemory(dst, slot.Value, logical.Size(), result.Alignment)
+		lfc.llvmCopyValue(dst, slot.Value, logical, result.Alignment, 0)
 		return
 	}
 	if llvmCanForwardMemorySource(v, value, logical) {
@@ -3056,7 +3070,7 @@ func (lfc *LLVMFuncContext) storeMemoryResult(v, value *Value, index int) {
 			v.Fatalf("memory result %d has a non-pointer source address", index)
 		}
 		if src.C != dst.C {
-			lfc.llvmCopyFixedMemory(dst, src, logical.Size(), result.Alignment)
+			lfc.llvmCopyValue(dst, src, logical, result.Alignment, 0)
 		}
 		return
 	}
@@ -4569,8 +4583,7 @@ func (lfc *LLVMFuncContext) CompileBlock(BB *Block, values []*Value) {
 				lfc.setDebugLocation(v.Pos)
 				src := lfc.llvmLoadPointer(v)
 				lfc.llvmLifetimeStart(slot)
-				length := lfc.llvmMemoryLength(v, slot.Type.Size())
-				lfc.llvmCopyMemory(slot.Value, src, length, int(slot.Type.Alignment()), lfc.llvmMemoryVolatile(v.Args[0]))
+				lfc.llvmCopyValue(slot.Value, src, slot.Type, int(slot.Type.Alignment()), lfc.llvmMemoryVolatile(v.Args[0]))
 			}
 			continue
 		}
@@ -4813,9 +4826,9 @@ func (lfc *LLVMFuncContext) emitTailCallReturn(b *Block) {
 			if !ok {
 				call.Fatalf("memory result %d has no caller-owned home", i)
 			}
-			lfc.llvmCopyFixedMemory(
+			lfc.llvmCopyValue(
 				lfc.LF.Param(callerResult.ParamIndex), src.Value,
-				lfc.F.OwnAux.TypeOfResult(int64(i)).Size(), callerResult.Alignment,
+				lfc.F.OwnAux.TypeOfResult(int64(i)), callerResult.Alignment, 0,
 			)
 			continue
 		}
