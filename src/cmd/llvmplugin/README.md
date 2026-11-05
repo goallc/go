@@ -17,14 +17,16 @@ and immediately before instruction selection. Calling `runPreCodeGenPipeline`
 for the whole module from the callback is the emit-IR test mode, not the
 production placement.
 
-The pre-codegen callback calls LLVM's shared byval copy-elision preparation
-before standard CodeGen can expand fills into loops. The late pipeline repeats
-this idempotent preparation before computing GC liveness, handling carriers
-exposed by intervening IR cleanup. It sinks private initializers that dominate their
-single consuming call through an acyclic region with no intervening calls.
-The same helper serves ordinary non-GC callers from LLVM CodeGenPrepare;
-Go-specific handling only excludes defer frame homes and selects the pre-GC
-placement. The GC collector and SelectionDAG share the carrier ownership proof.
+`GoALLCByVal.cpp` owns private byval initialization analysis and IR rewriting.
+The pre-codegen callback invokes it before standard CodeGen can expand fills
+into loops. The late pipeline repeats this idempotent preparation before
+computing GC liveness, handling carriers exposed by intervening IR cleanup.
+It sinks private initializers that dominate their single consuming call through
+an acyclic region with no intervening calls, excluding Go defer frame homes.
+LLVM's existing carrier predicate validates the prepared form for GC root
+selection and SelectionDAG. LLVM only forwards the resulting stores into the
+outgoing argument area; it does not perform this IR preparation or expose a
+preparation API. Ordinary C callers and other GC clients are left unchanged.
 
 Initialization can consist of typed field stores, partial or complete fills,
 and constant or dynamic fill bytes. Fully overwritten writes are removed and

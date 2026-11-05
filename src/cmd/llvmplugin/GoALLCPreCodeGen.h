@@ -21,6 +21,7 @@ namespace goallc {
 // this entry point so the driver does not determine pass ordering.
 Error runPreCodeGenPipeline(Module &M, TargetMachine &TM);
 
+// Owns private byval IR analysis and rewriting in GoALLCByVal.cpp.
 // Canonicalizes private aggregate initialization before GC liveness is computed
 // so SelectionDAG can forward the final values into a byval argument home.
 void prepareByValCallArguments(Function &F);

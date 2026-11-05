@@ -26,6 +26,7 @@ set(GOALLC_STATEPOINT_SOURCES
   GoALLCAsyncPreemption.cpp
   GoALLCStackMapPrinter.cpp
   GoALLCInlineAnchors.cpp
+  GoALLCByVal.cpp
   GoALLCPreCodeGen.cpp
   GoALLCStatepoints.cpp
   GoALLCStatepointPlugin.cpp
@@ -963,6 +964,22 @@ if(BUILD_TESTING)
       "-mtriple=${ARCH}-unknown-linux-goobj" -verify-machineinstrs
       -stop-after=finalize-isel -o -
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-copy-elision.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ByValPreparation
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-preparation.ll" IR
+  )
+  foreach(ARCH IN ITEMS x86_64 aarch64)
+    goallc_add_filecheck_test(
+      "GoALLCStatepoints.ByValPreparationMIR.${ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-preparation.ll" MIR
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      "-mtriple=${ARCH}-unknown-linux-goobj" -verify-machineinstrs
+      -stop-after=finalize-isel -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-preparation.ll"
     )
   endforeach()
 

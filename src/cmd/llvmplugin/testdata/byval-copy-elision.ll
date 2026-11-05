@@ -10,7 +10,7 @@ declare goabiinternal void @leaf() "gc-leaf-function"
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 
 ; No complete zero fill, a dynamic partial fill, a partial scalar overwrite,
-; two pointer fields, and an interface-style nil edge use the shared proof.
+; two pointer fields, and an interface-style nil edge exercise Go IR preparation.
 ; IR-LABEL: define goabiinternal void @generic_nil(
 ; IR-NOT: store
 ; IR-NOT: @llvm.memset
