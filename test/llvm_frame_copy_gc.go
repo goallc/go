@@ -96,10 +96,42 @@ func check(value record, want int) {
 	}
 }
 
+type largeRecord struct {
+	bytes [2048]byte
+	flag  bool
+	ptr   *cell
+}
+
+//go:noinline
+func cloneLarge(source *largeRecord) largeRecord {
+	result := *source
+	grow(128)
+	return result
+}
+
+//go:noinline
+func largeSnapshot() {
+	local := cell{value: 317}
+	source := largeRecord{flag: true, ptr: &local}
+	source.bytes[0], source.bytes[2047] = 13, 29
+	got := cloneLarge(&source)
+	if !got.flag || got.ptr != &local || got.ptr.value != 317 || got.bytes != source.bytes {
+		panic("large copy lost data or a relocated stack pointer")
+	}
+	source.ptr = newCell(419)
+	got = cloneLarge(&source)
+	source.ptr = nil
+	runtime.GC()
+	if got.ptr.value != 419 {
+		panic("large copy lost a heap pointer")
+	}
+}
+
 func main() {
 	for iteration := 0; iteration < 4; iteration++ {
 		done := make(chan bool)
 		go func() {
+			largeSnapshot()
 			stackSnapshot(71 + iteration)
 			var values [3]record
 			values[0] = heapSnapshot(101 + iteration)

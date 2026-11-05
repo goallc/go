@@ -1337,14 +1337,30 @@ func (lfc *LLVMFuncContext) llvmClearMemory(dst, length llvm.Value, align int, v
 // that contain only part of a pointer. The ordinary storage type expresses
 // value assignment; unlike a raw memmove, it need not preserve padding bytes.
 func (lfc *LLVMFuncContext) llvmCopyValue(dst, src llvm.Value, typ *types.Type, align int, volatile uint64) llvm.Value {
+	length := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(typ.Size()), false)
 	if typ.HasPointers() && volatile == 0 {
+		// SelectionDAG flattens aggregate values into scalar results, with a
+		// bounded result/operand count. Keep first-class copies small even
+		// when most of the object is a pointer-free array. A runtime call
+		// preserves pointer words without exposing a byte copy to SROA and
+		// also retains memmove's overlap semantics.
+		const maxValueCopySize = 1024
+		if typ.Size() > maxValueCopySize {
+			sig := llvmFuncSignature{
+				Type:       llvm.FunctionType(GlobalCtxt.VoidType(), []llvm.Type{dst.Type(), src.Type(), length.Type()}, false),
+				ReturnType: GlobalCtxt.VoidType(),
+			}
+			fn := getOrInsertLLVMABISymbolRef("runtime.memmove", obj.ABIInternal, sig, goABIInternalCallConv)
+			call := lfc.b.CreateCall(sig.Type, fn, []llvm.Value{dst, src, length}, "")
+			call.SetInstructionCallConv(goABIInternalCallConv)
+			return call
+		}
 		value := lfc.b.CreateLoad(getLLVMType(typ), src, "")
 		value.SetAlignment(align)
 		store := lfc.b.CreateStore(value, dst)
 		store.SetAlignment(align)
 		return store
 	}
-	length := llvm.ConstInt(getLLVMType(types.Types[types.TUINTPTR]), uint64(typ.Size()), false)
 	return lfc.llvmCopyMemory(dst, src, length, align, volatile)
 }
 
