@@ -4,7 +4,6 @@
 
 #include "GoALLCStatepoints.h"
 #include "GoALLCCPUFeatures.h"
-#include "GoALLCPreCodeGen.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -42,7 +41,6 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CheckedArithmetic.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SSAUpdaterBulk.h"
@@ -4737,7 +4735,7 @@ Error goallc::prepareStatepointModule(Module &M) {
   return Error::success();
 }
 
-Error goallc::rewriteStatepoints(Function &F, TargetMachine &TM) {
+Error goallc::rewriteStatepoints(Function &F, TargetMachine &) {
   if (F.isDeclaration())
     return Error::success();
   if (Error Err = finalizeCPUFeatureTailTransfers(F))
@@ -4746,8 +4744,6 @@ Error goallc::rewriteStatepoints(Function &F, TargetMachine &TM) {
   if (!isGoCallingConv(F.getCallingConv()) || !F.hasGC() ||
       F.getGC() != GoALLCGCName)
     return Error::success();
-  if (TM.getOptLevel() != CodeGenOptLevel::None && !F.hasOptNone())
-    prepareByValCallArguments(F);
   return rewriteFunction(F);
 }
 

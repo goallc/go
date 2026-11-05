@@ -19,8 +19,8 @@ production placement.
 
 `GoALLCByVal.cpp` owns private byval initialization analysis and IR rewriting.
 The pre-codegen callback invokes it before standard CodeGen can expand fills
-into loops. The late pipeline repeats this idempotent preparation before
-computing GC liveness, handling carriers exposed by intervening IR cleanup.
+into loops. Both production and IR emission use this single early invocation.
+The late pipeline computes GC liveness without repeating byval preparation.
 It sinks private initializers that dominate their single consuming call through
 an acyclic region with no intervening calls, excluding Go defer frame homes.
 LLVM's existing carrier predicate validates the prepared form for GC root

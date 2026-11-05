@@ -98,24 +98,26 @@ bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
     return true;
   }
 
-  // Full statepoint rewriting here is an IR-emission test facility. Production
-  // prepares the module and private byval initializers, then rewrites roots
-  // from GoALLCPreISelPass after standard codegen IR preparation.
-  Error Err = EmitIR ? goallc::runPreCodeGenPipeline(M, TM)
-                     : goallc::prepareStatepointModule(M);
-  if (Err) {
+  if (Error Err = goallc::prepareStatepointModule(M)) {
     M.getContext().emitError(toString(std::move(Err)));
     return true;
   }
 
-  if (!EmitIR) {
-    // Prepare before standard codegen expands nonzero/dynamic memsets into
-    // loops. Root liveness is still computed by the late pass; its idempotent
-    // preparation also handles carriers exposed by intervening IR cleanup.
-    if (TM.getOptLevel() != CodeGenOptLevel::None)
-      for (Function &F : M)
-        goallc::prepareByValCallArguments(F);
+  // Prepare byval initializers once for both production and IR emission,
+  // before standard codegen can expand nonzero/dynamic memsets into loops.
+  // Production still computes root liveness in GoALLCPreISelPass after that
+  // standard IR preparation; it does not repeat byval preparation there.
+  if (TM.getOptLevel() != CodeGenOptLevel::None)
+    for (Function &F : M)
+      goallc::prepareByValCallArguments(F);
+
+  if (!EmitIR)
     return false;
+
+  // Full statepoint rewriting here is an IR-emission test facility.
+  if (Error Err = goallc::runPreCodeGenPipeline(M, TM)) {
+    M.getContext().emitError(toString(std::move(Err)));
+    return true;
   }
 
   if (ReportInvocation)
