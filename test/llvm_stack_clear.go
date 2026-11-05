@@ -37,7 +37,7 @@ func grow(n int) {
 }
 
 //go:noinline
-func initializeRoots(a *[96]*int) {
+func initializeRoots(a []*int) {
 	for i := range a {
 		if a[i] != nil {
 			panic("uninitialized root")
@@ -50,7 +50,7 @@ func initializeRoots(a *[96]*int) {
 }
 
 //go:noinline
-func checkRoots(a *[96]*int) {
+func checkRoots(a []*int) {
 	for i, p := range a {
 		if i%2 == 0 {
 			if p == nil || *p != i+1 {
@@ -65,15 +65,32 @@ func checkRoots(a *[96]*int) {
 //go:noinline
 func roots() {
 	var a [96]*int
-	initializeRoots(&a)
+	initializeRoots(a[:])
 	grow(128)
 	runtime.GC()
-	checkRoots(&a)
+	checkRoots(a[:])
 	a = [96]*int{}
 	runtime.GC()
 	for _, p := range a {
 		if p != nil {
 			panic("root clear")
+		}
+	}
+	runtime.KeepAlive(&a)
+}
+
+//go:noinline
+func largeRoots() {
+	var a [512]*int
+	initializeRoots(a[:])
+	grow(128)
+	runtime.GC()
+	checkRoots(a[:])
+	a = [512]*int{}
+	runtime.GC()
+	for _, p := range a {
+		if p != nil {
+			panic("large root clear")
 		}
 	}
 	runtime.KeepAlive(&a)
@@ -419,6 +436,159 @@ func clear4096At1() {
 	check(a.after[:], 0x97)
 }
 
+//go:noinline
+func clear191At1() {
+	var a struct {
+		before [1]byte
+		data   [191]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [191]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear192At1() {
+	var a struct {
+		before [1]byte
+		data   [192]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [192]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear193At1() {
+	var a struct {
+		before [1]byte
+		data   [193]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [193]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear513At1() {
+	var a struct {
+		before [1]byte
+		data   [513]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [513]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear4035At1() {
+	var a struct {
+		before [1]byte
+		data   [4035]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [4035]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear4095At1() {
+	var a struct {
+		before [1]byte
+		data   [4095]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [4095]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear4097At1() {
+	var a struct {
+		before [1]byte
+		data   [4097]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [4097]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear4099At1() {
+	var a struct {
+		before [1]byte
+		data   [4099]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [4099]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
+//go:noinline
+func clear65027At1() {
+	var a struct {
+		before [1]byte
+		data   [65027]byte
+		after  [17]byte
+	}
+	check(a.data[:], 0)
+	fill(a.before[:], 0x53)
+	fill(a.data[:], 0xab)
+	fill(a.after[:], 0x97)
+	a.data = [65027]byte{}
+	check(a.before[:], 0x53)
+	check(a.data[:], 0)
+	check(a.after[:], 0x97)
+}
+
 func main() {
 	var empty []byte
 	clear(empty)
@@ -444,4 +614,14 @@ func main() {
 	clear1025At1()
 	clear4096At1()
 	roots()
+	largeRoots()
+	clear191At1()
+	clear192At1()
+	clear193At1()
+	clear513At1()
+	clear4035At1()
+	clear4095At1()
+	clear4097At1()
+	clear4099At1()
+	clear65027At1()
 }
