@@ -984,6 +984,22 @@ if(BUILD_TESTING)
   endforeach()
 
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ByValSnapshots
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-snapshots.ll" IR
+  )
+  foreach(ARCH IN ITEMS x86_64 aarch64)
+    goallc_add_filecheck_test(
+      "GoALLCStatepoints.ByValSnapshotsMIR.${ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-snapshots.ll" MIR
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      "-mtriple=${ARCH}-unknown-linux-goobj" -verify-machineinstrs
+      -stop-after=finalize-isel -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-snapshots.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.TypedByVal
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/typed-byval.ll"
     IR

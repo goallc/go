@@ -33,7 +33,10 @@ and constant or dynamic fill bytes. Fully overwritten writes are removed and
 fills are split around overwritten bytes. Partially overlapping field stores
 keep their original SSA values and order; SelectionDAG forwards them only when
 its memory chains prove that order. There is no 256-byte object limit: analysis
-and fill expansion have work budgets instead. Escaping or observed addresses,
+and fill expansion have work budgets instead. Unwritten scalar bytes remain
+unspecified as in the original private alloca; preparation does not invent
+zero initialization for sparse IR objects. Go source initialization semantics
+are established by the frontend. Escaping or observed addresses,
 conditional writes, intervening calls (including GC-leaf calls), volatile/atomic
 accesses, lifetime ends, and defer homes retain the original path. The helper
 also declines optnone/optsize functions. All pointer lifetime changes precede
