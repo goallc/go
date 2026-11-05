@@ -251,7 +251,7 @@ exit:
   ret ptr %v
 }
 
-; A marker alone cannot bypass the safety normalization of a live pointer.
+; Legacy metadata is not provenance, even for a call-local memory address.
 define goabiinternal i64 @marked_live_nullable(i1 %local) gc "goallc" {
   %frame = alloca [2 x i64], align 8
   store [2 x i64] zeroinitializer, ptr %frame
@@ -267,6 +267,93 @@ define goabiinternal i64 @call_free(ptr %arg, i1 %local) gc "goallc" {
   %frame = alloca i64, align 8
   store i64 7, ptr %frame
   %field = select i1 %local, ptr %frame, ptr %arg
+  %v = load i64, ptr %field
+  ret i64 %v
+}
+
+; Keep independent argument groups separate even with interleaved PHIs and
+; reversed incoming order. Their path selector can still be shared.
+; IR-LABEL: define goabiinternal i64 @separate_groups(
+; IR: %frame.choice = phi i1
+; IR: %mixed.argument.base = phi ptr [ null, %stack ], [ %arg, %ordinary ]
+; IR: %mixed.argument.base{{[0-9]+}} = phi ptr [ null, %stack ], [ %other, %ordinary ]
+; IR-NOT: phi ptr
+; IR: @llvm.experimental.gc.statepoint{{.*}}@safepoint
+; IR: select i1 %frame.choice
+; IR: load i64
+; IR: select i1 %frame.choice
+; IR: load i64
+; IR: select i1 %frame.choice
+; IR: load i64
+; IR: ret i64
+define goabiinternal i64 @separate_groups(ptr %arg, ptr %other, i1 %local) gc "goallc" {
+entry:
+  %first = alloca i64, align 8
+  %second = alloca i64, align 8
+  %third = alloca i64, align 8
+  store i64 1, ptr %first
+  store i64 2, ptr %second
+  store i64 3, ptr %third
+  br i1 %local, label %stack, label %ordinary
+stack:
+  br label %merge
+ordinary:
+  %a = getelementptr i8, ptr %arg, i64 8
+  %b = getelementptr i8, ptr %other, i64 16
+  %c = getelementptr i8, ptr %arg, i64 24
+  br label %merge
+merge:
+  %first.field = phi ptr [ %first, %stack ], [ %a, %ordinary ]
+  %second.field = phi ptr [ %second, %stack ], [ %b, %ordinary ]
+  %third.field = phi ptr [ %c, %ordinary ], [ %third, %stack ]
+  call goabiinternal void @safepoint()
+  %x = load i64, ptr %first.field
+  %y = load i64, ptr %second.field
+  %z = load i64, ptr %third.field
+  %xy = add i64 %x, %y
+  %xyz = add i64 %xy, %z
+  ret i64 %xyz
+}
+
+; Sharing the path alone must not pull an unrelated short-lived argument
+; group into rematerialization.
+; IR-LABEL: define goabiinternal i64 @separate_call_free_group(
+; IR: %mixed.argument.base = select i1 %frame.choice, ptr null, ptr %arg
+; IR: %short.base = select i1 %local, ptr %second, ptr %other
+; IR: %short.derived = getelementptr i8, ptr %short.base
+; IR: %x = load i64, ptr %short.derived
+; IR: @llvm.experimental.gc.statepoint{{.*}}@safepoint
+; IR: mixed.frame.remat
+; IR: %y = load i64
+; IR: ret i64
+define goabiinternal i64 @separate_call_free_group(ptr %arg, ptr %other, i1 %local) gc "goallc" {
+  %first = alloca i64, align 8
+  %second = alloca i64, align 8
+  store i64 1, ptr %first
+  store i64 2, ptr %second
+  %a = getelementptr i8, ptr %arg, i64 8
+  %b = getelementptr i8, ptr %other, i64 16
+  %long = select i1 %local, ptr %first, ptr %a
+  %short = select i1 %local, ptr %second, ptr %b
+  %x = load i64, ptr %short
+  call goabiinternal void @safepoint()
+  %y = load i64, ptr %long
+  %sum = add i64 %x, %y
+  ret i64 %sum
+}
+
+; Even an adjacent load cannot make input metadata a normalization exemption.
+; IR-LABEL: define goabiinternal i64 @marked_local_nullable(
+; IR: %field.base = select i1 %local, ptr %frame, ptr null
+; IR: %field.derived = getelementptr i8, ptr %field.base, i64 8
+; IR-NEXT: %v = load i64, ptr %field.derived
+; IR: ret i64
+define goabiinternal i64 @marked_local_nullable(i1 %local) gc "goallc" {
+  %frame = alloca [2 x i64], align 8
+  store [2 x i64] zeroinitializer, ptr %frame
+  call goabiinternal void @safepoint()
+  %frame.field = getelementptr i8, ptr %frame, i64 8
+  %field = select i1 %local, ptr %frame.field, ptr inttoptr (i64 8 to ptr), !goallc.mixed_frame_remat !0
   %v = load i64, ptr %field
   ret i64 %v
 }
