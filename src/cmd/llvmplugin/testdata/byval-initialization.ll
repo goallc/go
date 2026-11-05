@@ -19,9 +19,9 @@ declare goabiinternal void @panic() noreturn
 ; IR: br i1 %nil, label %bad, label %call
 ; IR: call:
 ; IR: call void @llvm.lifetime.start.p0(ptr %slot)
-; IR: store <4 x i8> zeroinitializer
-; IR: store <2 x i8> zeroinitializer
 ; IR: store i8 0
+; IR: store <2 x i8> zeroinitializer
+; IR: store <4 x i8> zeroinitializer
 ; IR: store <16 x i8> zeroinitializer
 ; IR: store <8 x i8> zeroinitializer
 ; IR: store i8 %level
@@ -58,9 +58,9 @@ bad:
 
 ; IR-LABEL: define goabiinternal void @same_block(
 ; IR-NOT: @llvm.memset
-; IR: store <4 x i8> zeroinitializer
-; IR: store <2 x i8> zeroinitializer
 ; IR: store i8 0
+; IR: store <2 x i8> zeroinitializer
+; IR: store <4 x i8> zeroinitializer
 ; IR: store <16 x i8> zeroinitializer
 ; IR: store <8 x i8> zeroinitializer
 ; IR: store i8 %level
@@ -81,9 +81,9 @@ entry:
 
 ; IR-LABEL: define goabiinternal void @overwritten_store(
 ; IR-NOT: @llvm.memset
-; IR: store <4 x i8> zeroinitializer
-; IR: store <2 x i8> zeroinitializer
 ; IR: store i8 0
+; IR: store <2 x i8> zeroinitializer
+; IR: store <4 x i8> zeroinitializer
 ; IR: store <16 x i8> zeroinitializer
 ; IR: store <8 x i8> zeroinitializer
 ; IR: store i8 %level

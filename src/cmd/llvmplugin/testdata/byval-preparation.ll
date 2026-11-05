@@ -55,8 +55,8 @@ call:
 ; IR: store <8 x i8> splat (i8 7)
 ; IR: store <8 x i8> splat (i8 1)
 ; IR: store i8 1
-; IR: store <4 x i8> splat (i8 1)
 ; IR: store <2 x i8> splat (i8 1)
+; IR: store <4 x i8> splat (i8 1)
 ; IR: store i8 %byte
 ; IR: store ptr %pointer
 ; IR: elementtype(void (ptr)) @consume
@@ -103,7 +103,8 @@ entry:
 ; byte reconstruction of a scalar or pointer value in IR.
 ; IR-LABEL: define goabiinternal void @partial_scalar_overlap(
 ; IR-NOT: @llvm.memset
-; IR: store <16 x i8> zeroinitializer
+; IR: store <8 x i8> zeroinitializer
+; IR: store <8 x i8> zeroinitializer
 ; IR: store i64 %wide
 ; IR: store i32 %narrow
 ; IR: store ptr %pointer

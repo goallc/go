@@ -28,6 +28,15 @@ constexpr unsigned MaxInitWork = 128;
 
 using ByteRange = std::pair<uint64_t, uint64_t>;
 
+// A fill can resume at an odd offset after a scalar field overwrite. Keep
+// chunks naturally aligned within the object so they do not split an aligned
+// pointer word if later codegen preparation makes the carrier ineligible for
+// direct forwarding and GC liveness must describe its original storage.
+static unsigned fillStoreSize(uint64_t Begin, uint64_t End) {
+  return std::min(llvm::bit_floor(std::min(uint64_t(16), End - Begin)),
+                  commonAlignment(Align(16), Begin).value());
+}
+
 struct ByValCarrier {
   const CallBase *Call = nullptr;
   unsigned ArgNo = 0;
@@ -280,7 +289,11 @@ static bool prepareByValInitializer(AllocaInst &AI, const DominatorTree &DT) {
           uint64_t Bytes = End - Begin;
           if (Bytes > MaxInitWork * 16)
             return false;
-          Work += Bytes / 16 + llvm::popcount(Bytes % 16);
+          while (Begin != End) {
+            Begin += fillStoreSize(Begin, End);
+            if (++Work > MaxInitWork)
+              return false;
+          }
         }
       }
       if (Work > MaxInitWork)
@@ -317,7 +330,7 @@ static bool prepareByValInitializer(AllocaInst &AI, const DominatorTree &DT) {
     auto *MS = cast<MemSetInst>(W.Original);
     for (auto [Begin, End] : W.Ranges) {
       while (Begin != End) {
-        unsigned Bytes = llvm::bit_floor(std::min(uint64_t(16), End - Begin));
+        unsigned Bytes = fillStoreSize(Begin, End);
         Value *Fill = MS->getValue();
         if (Bytes != 1)
           Fill = B.CreateVectorSplat(Bytes, Fill);
