@@ -17,6 +17,26 @@ and immediately before instruction selection. Calling `runPreCodeGenPipeline`
 for the whole module from the callback is the emit-IR test mode, not the
 production placement.
 
+The pre-codegen callback calls LLVM's shared byval copy-elision preparation
+before standard CodeGen can expand fills into loops. The late pipeline repeats
+this idempotent preparation before computing GC liveness, handling carriers
+exposed by intervening IR cleanup. It sinks private initializers that dominate their
+single consuming call through an acyclic region with no intervening calls.
+The same helper serves ordinary non-GC callers from LLVM CodeGenPrepare;
+Go-specific handling only excludes defer frame homes and selects the pre-GC
+placement. The GC collector and SelectionDAG share the carrier ownership proof.
+
+Initialization can consist of typed field stores, partial or complete fills,
+and constant or dynamic fill bytes. Fully overwritten writes are removed and
+fills are split around overwritten bytes. Partially overlapping field stores
+keep their original SSA values and order; SelectionDAG forwards them only when
+its memory chains prove that order. There is no 256-byte object limit: analysis
+and fill expansion have work budgets instead. Escaping or observed addresses,
+conditional writes, intervening calls (including GC-leaf calls), volatile/atomic
+accesses, lifetime ends, and defer homes retain the original path. The helper
+also declines optnone/optsize functions. All pointer lifetime changes precede
+root selection, and the backend's alignment and ABI checks remain in force.
+
 Dynamic builds load the module from `pkg/tool/<host>/lib`; static builds call
 the linked implementation. Both are built against the selected LLVM payload,
 and neither is installed into it. `-enablellvm=false` selects the native Go

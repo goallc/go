@@ -931,6 +931,42 @@ if(BUILD_TESTING)
   )
 
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ByValInitialization
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-initialization.ll" IR
+  )
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ByValInitializationO0
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-initialization.ll" O0 -O0
+  )
+  foreach(ARCH IN ITEMS x86_64 aarch64)
+    goallc_add_filecheck_test(
+      "GoALLCStatepoints.ByValInitializationMIR.${ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-initialization.ll" MIR
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      "-mtriple=${ARCH}-unknown-linux-goobj" -verify-machineinstrs
+      -stop-after=finalize-isel -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-initialization.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ByValCopyElision
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-copy-elision.ll" IR
+  )
+  foreach(ARCH IN ITEMS x86_64 aarch64)
+    goallc_add_filecheck_test(
+      "GoALLCStatepoints.ByValCopyElisionMIR.${ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-copy-elision.ll" MIR
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      "-mtriple=${ARCH}-unknown-linux-goobj" -verify-machineinstrs
+      -stop-after=finalize-isel -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/byval-copy-elision.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.TypedByVal
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/typed-byval.ll"
     IR

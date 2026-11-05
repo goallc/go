@@ -98,9 +98,9 @@ bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
     return true;
   }
 
-  // Keep the early callback only as an IR-emission test facility. Production
-  // compilation performs only module-wide preparation here, then rewrites
-  // each function from GoALLCPreISelPass after standard codegen IR preparation.
+  // Full statepoint rewriting here is an IR-emission test facility. Production
+  // prepares the module and private byval initializers, then rewrites roots
+  // from GoALLCPreISelPass after standard codegen IR preparation.
   Error Err = EmitIR ? goallc::runPreCodeGenPipeline(M, TM)
                      : goallc::prepareStatepointModule(M);
   if (Err) {
@@ -108,8 +108,15 @@ bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
     return true;
   }
 
-  if (!EmitIR)
+  if (!EmitIR) {
+    // Prepare before standard codegen expands nonzero/dynamic memsets into
+    // loops. Root liveness is still computed by the late pass; its idempotent
+    // preparation also handles carriers exposed by intervening IR cleanup.
+    if (TM.getOptLevel() != CodeGenOptLevel::None)
+      for (Function &F : M)
+        goallc::prepareByValCallArguments(F);
     return false;
+  }
 
   if (ReportInvocation)
     errs() << "GoALLCStatepoints: ran pre-codegen pipeline for "
