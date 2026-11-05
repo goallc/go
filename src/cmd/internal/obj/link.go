@@ -322,7 +322,7 @@ type Prog struct {
 	Back     uint8     // for x86 back end: backwards branch state
 	Ft       uint8     // for x86 back end: type index of Prog.From
 	Tt       uint8     // for x86 back end: type index of Prog.To
-	Isize    uint8     // for x86 back end: size of the instruction in bytes
+	Isize    uint8     // x86/arm64: size of the encoded instruction sequence in bytes
 }
 
 // AddrPos indicates whether the operand is the source or the destination.
