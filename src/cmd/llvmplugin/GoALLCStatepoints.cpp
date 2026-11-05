@@ -1918,25 +1918,88 @@ bool isHomeableBasePointer(Value &V, SmallPtrSetImpl<Value *> &Active,
   return IsBase;
 }
 
-// A direct boolean call controlling its own backedge has a particularly
-// small preservation cycle: reload, call, branch. A home removes the repeated
-// spill without adding another reload to that cycle. Keep other loop shapes
-// on the existing profitability policy until their costs are established.
-bool isSingleCallBackedgeLoop(const Loop &L) {
-  if (L.getNumBlocks() != 1)
+// A single safepoint on every backedge can amortize an invariant home over
+// dynamic iterations, whether the call is direct or indirect and whether the
+// loop test is the call result or a counter. Reject nested loops, multiple
+// latches and paths that can repeat without executing the call.
+bool isSingleSafepointLoop(const Loop &L, DominatorTree &DT) {
+  BasicBlock *Latch = L.getLoopLatch();
+  if (!Latch || !L.getSubLoops().empty())
     return false;
-  BasicBlock *Header = L.getHeader();
-  auto *Branch = dyn_cast<BranchInst>(Header->getTerminator());
-  if (!Branch || !Branch->isConditional())
-    return false;
-  auto *Control = dyn_cast<CallInst>(Branch->getCondition());
-  if (!Control || Control->getParent() != Header ||
-      !Control->getCalledFunction() || isLeafCall(*Control) ||
-      Control->isMustTailCall() || isa<GCStatepointInst>(Control))
-    return false;
-  return llvm::none_of(*Header, [&](Instruction &I) {
-    auto *Call = dyn_cast<CallBase>(&I);
-    return Call && Call != Control && !isLeafCall(*Call);
+  CallInst *Safepoint = nullptr;
+  for (BasicBlock *BB : L.blocks())
+    for (Instruction &I : *BB) {
+      auto *Call = dyn_cast<CallBase>(&I);
+      if (!Call || isLeafCall(*Call))
+        continue;
+      if (Safepoint || !isa<CallInst>(Call) || Call->isMustTailCall() ||
+          isa<GCStatepointInst>(Call))
+        return false;
+      Safepoint = cast<CallInst>(Call);
+    }
+  return Safepoint && DT.dominates(Safepoint->getParent(), Latch);
+}
+
+bool containsSingleSafepointLoop(Loop &L, DominatorTree &DT) {
+  if (isSingleSafepointLoop(L, DT))
+    return true;
+  return llvm::any_of(L.getSubLoops(), [&](Loop *Inner) {
+    return containsSingleSafepointLoop(*Inner, DT);
+  });
+}
+
+struct PointerHomeUse {
+  Use *Operand;
+  SmallVector<Instruction *, 4> Recipe;
+};
+
+void collectPointerHomeUses(Value &V, bool RebuildAddresses,
+                            SmallVectorImpl<Instruction *> &Recipe,
+                            SmallVectorImpl<PointerHomeUse> &Uses) {
+  for (Use &U : V.uses()) {
+    auto *I = dyn_cast<Instruction>(U.getUser());
+    bool IsRecipe = false;
+    if (RebuildAddresses && I) {
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(I))
+        IsRecipe = U.getOperandNo() == GEP->getPointerOperandIndex();
+      else if (auto *Cast = dyn_cast<CastInst>(I))
+        IsRecipe = Cast->getSrcTy()->isPointerTy() &&
+                   Cast->getDestTy()->isPointerTy() &&
+                   Cast->isNoopCast(Cast->getDataLayout());
+    }
+    if (IsRecipe) {
+      Recipe.push_back(I);
+      collectPointerHomeUses(*I, RebuildAddresses, Recipe, Uses);
+      Recipe.pop_back();
+    } else {
+      Uses.push_back(
+          {&U, SmallVector<Instruction *, 4>(Recipe.begin(), Recipe.end())});
+    }
+  }
+}
+
+SmallVector<PointerHomeUse, 8> pointerHomeUses(Value &V,
+                                               bool RebuildAddresses) {
+  SmallVector<PointerHomeUse, 8> Uses;
+  SmallVector<Instruction *, 4> Recipe;
+  collectPointerHomeUses(V, RebuildAddresses, Recipe, Uses);
+  return Uses;
+}
+
+// Rebuilding a GEP at a material use ends its cross-call SSA lifetime. Do not
+// discount derived roots that feed a pointer carrier or a use outside the
+// home region: those can still require the original base after a safepoint.
+bool canRebuildDerivedHomeUses(Value &V, const BasicBlockEdge &Entry,
+                               DominatorTree &DT) {
+  return llvm::all_of(pointerHomeUses(V, true), [&](const PointerHomeUse &Use) {
+    if (!DT.dominates(Entry, *Use.Operand))
+      return false;
+    auto *I = dyn_cast<Instruction>(Use.Operand->getUser());
+    if (auto *Load = dyn_cast_or_null<LoadInst>(I))
+      return Use.Operand->getOperandNo() == Load->getPointerOperandIndex();
+    if (auto *Store = dyn_cast_or_null<StoreInst>(I))
+      return Use.Operand->getOperandNo() == Store->getPointerOperandIndex();
+    return isa_and_nonnull<CallBase, ReturnInst, ICmpInst, PtrToIntInst>(I);
   });
 }
 
@@ -1949,7 +2012,7 @@ findRepeatedPassiveLoopSafepoints(const StatepointPreservationPlan &Plan,
   // call in the cluster: reloading it at that use is precisely what ends its
   // cross-call SSA range. Direct and indirect calls have the same GC
   // preservation requirement here. Two-call loops remain below the
-  // amortization boundary. The direct call-controlled backedge case below
+  // amortization boundary. The single-safepoint backedge case below
   // instead amortizes across dynamic iterations with no extra loop reload.
   constexpr unsigned MinLoopCallsToHome = 3;
   SmallVector<Loop *, 4> Candidates;
@@ -1988,10 +2051,10 @@ findRepeatedPassiveLoopSafepoints(const StatepointPreservationPlan &Plan,
             llvm::any_of(Plan.LiveCalls, [&](CallInst *Call) {
               Loop *Inner = LI.getLoopFor(Call->getParent());
               return Inner && Inner != Current && Current->contains(Inner) &&
-                     isSingleCallBackedgeLoop(*Inner);
+                     isSingleSafepointLoop(*Inner, DT);
             });
         if ((LoopCalls >= MinLoopCallsToHome && PassiveCalls != 0) ||
-            (LoopCalls == 1 && isSingleCallBackedgeLoop(*Current)) ||
+            (LoopCalls == 1 && isSingleSafepointLoop(*Current, DT)) ||
             ContainsCallBackedge)
           Candidates.push_back(Current);
       }
@@ -2063,7 +2126,7 @@ CallInst *previousStatepointCall(Instruction &InsertBefore) {
 
 std::optional<unsigned>
 countPointerHomeReloadPoints(const StatepointPreservationPlan &Plan,
-                             Loop *HomeLoop, DominatorTree &DT) {
+                             Loop *HomeLoop, DominatorTree &DT, LoopInfo &LI) {
   std::optional<BasicBlockEdge> EntryEdge = loopHomeEntryEdge(HomeLoop);
   if (!EntryEdge)
     return std::nullopt;
@@ -2074,11 +2137,21 @@ countPointerHomeReloadPoints(const StatepointPreservationPlan &Plan,
   // address used throughout a numeric loop remains a poor home candidate when
   // those uses span as many statepoint-free regions as the calls it covers.
   SmallSet<std::pair<BasicBlock *, CallInst *>, 16> ReloadRegions;
-  for (Use &U : Plan.V->uses()) {
+  bool RebuildAddresses = containsSingleSafepointLoop(*HomeLoop, DT);
+  for (const PointerHomeUse &HomeUse :
+       pointerHomeUses(*Plan.V, RebuildAddresses)) {
+    Use &U = *HomeUse.Operand;
     if (!DT.dominates(*EntryEdge, U))
       continue;
     Instruction *InsertBefore = aggregateUseInsertionPoint(U);
     if (!InsertBefore)
+      return std::nullopt;
+    // Do not introduce a volatile load into a nested numeric loop whose
+    // iterations contain no live safepoint for this pointer.
+    if (Loop *UseLoop = LI.getLoopFor(InsertBefore->getParent());
+        UseLoop && llvm::none_of(Plan.LiveCalls, [&](CallInst *Call) {
+          return UseLoop->contains(Call->getParent());
+        }))
       return std::nullopt;
     ReloadRegions.insert(
         {InsertBefore->getParent(), previousStatepointCall(*InsertBefore)});
@@ -2087,7 +2160,8 @@ countPointerHomeReloadPoints(const StatepointPreservationPlan &Plan,
 }
 
 void retainProfitablePointerHomes(
-    MapVector<Value *, StatepointPreservationPlan> &Plans, DominatorTree &DT) {
+    MapVector<Value *, StatepointPreservationPlan> &Plans, DominatorTree &DT,
+    LoopInfo &LI, const DirectPointerLeafAliasGroups &AliasGroups) {
   // Decide independently for each pointer. Requiring a particular number of
   // sibling homes makes profitability depend on aggregate shape rather than
   // on the work this home removes. Reject only candidates whose dominated
@@ -2101,7 +2175,8 @@ void retainProfitablePointerHomes(
     Value *Candidate = V;
     StatepointPreservationPlan *PlanPtr = &Plan;
     llvm::erase_if(
-        Plan.HomeLoops, [Candidate, PlanPtr, &Plans, &DT](Loop *HomeLoop) {
+        Plan.HomeLoops,
+        [Candidate, PlanPtr, &Plans, &DT, &LI, &AliasGroups](Loop *HomeLoop) {
           std::optional<BasicBlockEdge> EntryEdge = loopHomeEntryEdge(HomeLoop);
           if (!EntryEdge)
             return true;
@@ -2120,19 +2195,38 @@ void retainProfitablePointerHomes(
           for (auto &[OtherV, OtherPlan] : Plans) {
             if (rematerializableDerivedBase(OtherV) != Candidate)
               continue;
+            if (containsSingleSafepointLoop(*HomeLoop, DT) &&
+                canRebuildDerivedHomeUses(*OtherV, *EntryEdge, DT))
+              continue;
             for (CallInst *Call : OtherPlan.LiveCalls)
               if (DominatedLiveCalls.contains(Call))
                 ReintroducedBaseCalls.insert(Call);
           }
+          // Scalarized copies of the same inserted pointer can outlive this
+          // home reload independently. Retain their shared relocate until all
+          // aliases can be homed together; otherwise a home adds a root slot.
+          for (const auto &[Root, Aliases] : AliasGroups) {
+            (void)Root;
+            if (!llvm::is_contained(Aliases, Candidate))
+              continue;
+            for (Value *Alias : Aliases) {
+              auto It = Plans.find(Alias);
+              if (Alias == Candidate || It == Plans.end())
+                continue;
+              for (CallInst *Call : It->second.LiveCalls)
+                if (DominatedLiveCalls.contains(Call))
+                  ReintroducedBaseCalls.insert(Call);
+            }
+          }
           unsigned EliminatedRelocates =
               DominatedLiveCalls.size() - ReintroducedBaseCalls.size();
           std::optional<unsigned> ReloadPoints =
-              countPointerHomeReloadPoints(*PlanPtr, HomeLoop, DT);
+              countPointerHomeReloadPoints(*PlanPtr, HomeLoop, DT, LI);
           // In the reload/call/backedge cycle, equal reload counts still
           // remove one store per iteration. Do not admit duplicate roots or
           // additional reload regions under this exception.
-          bool RemovesBackedgeStore = isSingleCallBackedgeLoop(*HomeLoop) &&
-                                     EliminatedRelocates == 1;
+          bool RemovesBackedgeStore =
+              isSingleSafepointLoop(*HomeLoop, DT) && EliminatedRelocates == 1;
           return !ReloadPoints || *ReloadPoints > EliminatedRelocates ||
                  (*ReloadPoints == EliminatedRelocates &&
                   !RemovesBackedgeStore);
@@ -2147,7 +2241,11 @@ void retainProfitablePointerHomes(
 bool hasMaterialPointerUse(Value &V, SmallPtrSetImpl<Value *> &Visited) {
   if (!Visited.insert(&V).second)
     return false;
-  for (User *User : V.users()) {
+  for (Use &U : V.uses()) {
+    User *User = U.getUser();
+    // A call target alone is not a material use of a Go object pointer.
+    if (auto *Call = dyn_cast<CallBase>(User); Call && Call->isCallee(&U))
+      continue;
     if (isa<GetElementPtrInst, LoadInst, StoreInst, AtomicRMWInst,
             AtomicCmpXchgInst, CallBase, ReturnInst, PtrToIntInst>(User))
       return true;
@@ -2175,7 +2273,7 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
     DenseMap<Value *, bool> Memo;
     // Keep this deliberately narrower than "live across calls in a loop".
     // A home is useful when one pointer is repeatedly preserved for later use
-    // rather than consumed by every call, or for a direct call-controlled
+    // rather than consumed by every call, or for a single-safepoint
     // backedge whose reload count does not increase.
     SmallPtrSet<Value *, 16> UseVisited;
     Plan.HomeLoops = findRepeatedPassiveLoopSafepoints(Plan, LI, DT);
@@ -2333,19 +2431,19 @@ Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
   StoreInst *Initialize =
       InitializeBuilder.CreateAlignedStore(&V, Home, Home->getAlign());
 
-  SmallVector<Use *, 16> OriginalUses;
-  for (Use &U : V.uses())
-    if (U.getUser() != Initialize)
-      OriginalUses.push_back(&U);
+  bool RebuildAddresses = containsSingleSafepointLoop(HomeLoop, DT);
+  SmallVector<PointerHomeUse, 8> OriginalUses =
+      pointerHomeUses(V, RebuildAddresses);
   struct ReloadRegion {
     BasicBlock *Block;
     CallInst *PreviousCall;
     Instruction *InsertBefore;
-    SmallVector<Use *, 4> Uses;
+    SmallVector<PointerHomeUse, 4> Uses;
   };
   SmallVector<ReloadRegion, 8> ReloadRegions;
-  for (Use *U : OriginalUses) {
-    if (!DT.dominates(Initialize, *U))
+  for (const PointerHomeUse &HomeUse : OriginalUses) {
+    Use *U = HomeUse.Operand;
+    if (U->getUser() == Initialize || !DT.dominates(Initialize, *U))
       continue;
     Instruction *InsertBefore = aggregateUseInsertionPoint(*U);
     if (!InsertBefore)
@@ -2359,12 +2457,12 @@ Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
     });
     if (It == ReloadRegions.end()) {
       ReloadRegions.push_back(
-          {InsertBefore->getParent(), PreviousCall, InsertBefore, {U}});
+          {InsertBefore->getParent(), PreviousCall, InsertBefore, {HomeUse}});
       continue;
     }
     if (InsertBefore->comesBefore(It->InsertBefore))
       It->InsertBefore = InsertBefore;
-    It->Uses.push_back(U);
+    It->Uses.push_back(HomeUse);
   }
   if (ReloadRegions.empty()) {
     Initialize->eraseFromParent();
@@ -2385,9 +2483,43 @@ Error homeStatepointPointer(Value &V, Loop &HomeLoop, Function &F,
     // above the call. Keep one volatile reload in each statepoint-free region
     // so CodeGen cannot resurrect the pre-relocation address.
     Reload->setVolatile(true);
-    for (Use *U : Region.Uses)
-      U->set(Reload);
+    // Rebuild addresses at their material uses, not at the original GEP.
+    // Otherwise a preheader GEP keeps the reloaded base live across every
+    // inner call and recreates the spill that the home was meant to remove.
+    llvm::stable_sort(
+        Region.Uses, [](const PointerHomeUse &A, const PointerHomeUse &B) {
+          Instruction *Left = aggregateUseInsertionPoint(*A.Operand);
+          Instruction *Right = aggregateUseInsertionPoint(*B.Operand);
+          return Left != Right && Left->comesBefore(Right);
+        });
+    DenseMap<Instruction *, Value *> Rebuilt;
+    for (const PointerHomeUse &HomeUse : Region.Uses) {
+      Value *Pointer = Reload;
+      Instruction *UsePoint = aggregateUseInsertionPoint(*HomeUse.Operand);
+      for (Instruction *Template : HomeUse.Recipe) {
+        if (Value *Cached = Rebuilt.lookup(Template)) {
+          Pointer = Cached;
+          continue;
+        }
+        Instruction *Clone = Template->clone();
+        Clone->setOperand(0, Pointer);
+        Clone->setName(Template->getName() + ".home.address");
+        Clone->insertBefore(UsePoint->getIterator());
+        Pointer = Clone;
+        Rebuilt[Template] = Pointer;
+      }
+      HomeUse.Operand->set(Pointer);
+    }
   }
+  // Dead recipes must not keep their bases live just to compute an unused
+  // address on the next outer iteration. Weak handles survive recursive DCE.
+  SmallVector<WeakTrackingVH, 8> OldRecipes;
+  for (const PointerHomeUse &HomeUse : OriginalUses)
+    for (Instruction *I : HomeUse.Recipe)
+      OldRecipes.push_back(I);
+  for (WeakTrackingVH &Handle : llvm::reverse(OldRecipes))
+    if (auto *I = dyn_cast_or_null<Instruction>(Handle))
+      RecursivelyDeleteTriviallyDeadInstructions(I);
   return Error::success();
 }
 
@@ -4270,7 +4402,21 @@ Error rewriteFunction(Function &F) {
   for (auto &[V, Plan] : ScalarizedPlans)
     if (!V->getType()->isPointerTy())
       Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
-  retainProfitablePointerHomes(ScalarizedPlans, DT);
+  // Existing extractvalue users can replace newly materialized leaves during
+  // scalarization. Recover exact insertvalue provenance for the profitability
+  // decision as well, so those aliases do not acquire independent homes.
+  MapVector<Value *, Value *> HomeLeafSources = DirectPointerLeafSources;
+  for (auto &[V, Plan] : ScalarizedPlans) {
+    (void)Plan;
+    if (auto *Extract = dyn_cast<ExtractValueInst>(V))
+      if (Value *Inserted = FindInsertedValue(Extract->getAggregateOperand(),
+                                              Extract->getIndices());
+          Inserted && Inserted != V && isOrdinaryRelocatablePointer(Inserted))
+        HomeLeafSources[V] = Inserted;
+  }
+  retainProfitablePointerHomes(
+      ScalarizedPlans, DT, LI,
+      buildDirectPointerLeafAliasGroups(HomeLeafSources));
   if (Error Err = applyStatepointPreservationPlans(ScalarizedPlans, F, DT, LI))
     return Err;
   ScalarizedPlans.clear();

@@ -14,9 +14,16 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: phi ptr
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_natural_loop(
+; IR: %value.leaf.0.statepoint.home = alloca ptr{{.*}}!llvm.stackcoloring.no_merge
+; IR: store ptr %value.leaf.0, ptr %value.leaf.0.statepoint.home
 ; IR: header:
-; IR: phi ptr
-; IR: "gc-live"(ptr %value.leaf.0.relocated.merge
+; IR-NOT: store ptr
+; IR: "gc-live"(ptr %value.leaf.0.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: exit:
+; IR: %[[NATURAL:.*]] = load volatile ptr, ptr %value.leaf.0.statepoint.home
+; IR: insertvalue %pair poison, ptr %[[NATURAL]]
+; IR: ret ptr %[[NATURAL]]
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_irreducible(
 ; IR-COUNT-3: = phi ptr
@@ -41,8 +48,15 @@ target triple = "x86_64-unknown-linux-goobj"
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_call_result_loop(
 ; IR: call %pair @llvm.experimental.gc.result.{{[^(]+}}
-; IR: = phi ptr
-; IR: insertvalue %pair poison, ptr %value.leaf.0
+; IR: store ptr %value.leaf.0, ptr %value.leaf.0.statepoint.home
+; IR: header:
+; IR-NOT: store ptr
+; IR: "gc-live"(ptr %value.leaf.0.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: exit:
+; IR: %[[RESULT:.*]] = load volatile ptr, ptr %value.leaf.0.statepoint.home
+; IR: insertvalue %pair poison, ptr %[[RESULT]]
+; IR: ret ptr %[[RESULT]]
 
 ; IR-LABEL: define goabiinternal ptr @aggregate_call_result_irreducible(
 ; IR: call %pair @llvm.experimental.gc.result.{{[^(]+}}
