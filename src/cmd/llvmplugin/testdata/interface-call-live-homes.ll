@@ -6,6 +6,8 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR-LABEL: define goabiinternal i64 @interface_call_loop(
 ; IR-NOT: %left.statepoint.home
 ; IR-NOT: %right.statepoint.home
+; IR-DAG: %left.leaf.1.statepoint.home = alloca ptr
+; IR-DAG: %right.leaf.1.statepoint.home = alloca ptr
 ; IR: %left.leaf.0 = extractvalue %iface %left, 0
 ; IR: %left.leaf.1 = extractvalue %iface %left, 1
 ; IR: %right.leaf.0 = extractvalue %iface %right, 0
@@ -14,14 +16,18 @@ target triple = "x86_64-unknown-linux-goobj"
 ; IR: store %slice %scratch, ptr %scratch.statepoint.home
 ; IR: %left.method = add i64 %left.leaf.0, 24
 ; IR: %right.method = add i64 %right.leaf.0, 24
-; IR: %[[LEFT_MERGE:left\.leaf\.1\.relocated\.merge[.0-9]*]] = phi ptr
-; IR: %[[RIGHT_MERGE:right\.leaf\.1\.relocated\.merge[.0-9]*]] = phi ptr
+; IR-DAG: store ptr %left.leaf.1, ptr %left.leaf.1.statepoint.home
+; IR-DAG: store ptr %right.leaf.1, ptr %right.leaf.1.statepoint.home
+; IR: loop:
+; IR-NOT: store ptr
 ; IR: inttoptr i64 %left.method to ptr
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[RIGHT_MERGE]], ptr %[[LEFT_MERGE]], ptr %scratch.statepoint.home)
-; IR: %[[RIGHT_RELOC:right\.leaf\.1\.relocated[0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: %[[LEFT_RELOC:left\.leaf\.1\.relocated[0-9]+]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR: load volatile ptr, ptr %left.leaf.1.statepoint.home
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %scratch.statepoint.home, ptr %right.leaf.1.statepoint.home, ptr %left.leaf.1.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
 ; IR: inttoptr i64 %right.method to ptr
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[RIGHT_RELOC]], ptr %[[LEFT_RELOC]], ptr %scratch.statepoint.home)
+; IR: load volatile ptr, ptr %right.leaf.1.statepoint.home
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %scratch.statepoint.home, ptr %right.leaf.1.statepoint.home, ptr %left.leaf.1.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
 ; IR: load %slice, ptr %scratch.statepoint.home
 ; IR: ret i64
 
@@ -192,21 +198,30 @@ exit:
   ret i64 %updated
 }
 
-; Two passive safepoints do not amortize a function-wide scalar home.
-; Keep the ordinary relocate chain so a cold fallback loop cannot perturb the
-; frame of hotter paths which bypass it.
+; Two hot passive safepoints amortize the homes. A genuinely cold fallback
+; with a hot bypass is tested separately in pointer-home-cost.ll.
 ;
-; IR-LABEL: define goabiinternal i64 @two_passive_pointer_interface_call_loop_relocate(
-; IR-NOT: statepoint.home
+; IR-LABEL: define goabiinternal i64 @two_passive_pointer_interface_call_loop_home(
+; IR-DAG: %preserved.statepoint.home = alloca ptr
+; IR-DAG: %left.leaf.1.statepoint.home = alloca ptr
+; IR-DAG: %right.leaf.1.statepoint.home = alloca ptr
+; IR-DAG: store ptr %preserved, ptr %preserved.statepoint.home
+; IR-DAG: store ptr %left.leaf.1, ptr %left.leaf.1.statepoint.home
+; IR-DAG: store ptr %right.leaf.1, ptr %right.leaf.1.statepoint.home
+; IR: loop:
+; IR-NOT: store ptr
+; IR: load volatile ptr, ptr %left.leaf.1.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"({{.*}}ptr %preserved
-; IR: %[[RELOC1:preserved.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %right.leaf.1.statepoint.home, ptr %left.leaf.1.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: load volatile ptr, ptr %right.leaf.1.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-SAME: "gc-live"({{.*}}ptr %[[RELOC1]]
-; IR: %[[RELOC2:preserved.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: load i64, ptr %[[RELOC2]]
+; IR-SAME: "gc-live"(ptr %preserved.statepoint.home, ptr %right.leaf.1.statepoint.home, ptr %left.leaf.1.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: %[[P:.*]] = load volatile ptr, ptr %preserved.statepoint.home
+; IR: load i64, ptr %[[P]]
 ; IR: ret i64
-define goabiinternal i64 @two_passive_pointer_interface_call_loop_relocate(
+define goabiinternal i64 @two_passive_pointer_interface_call_loop_home(
     %iface %left, %iface %right, ptr %preserved, i64 %limit) gc "goallc" {
 entry:
   %left.itab = extractvalue %iface %left, 0
@@ -761,24 +776,22 @@ exit:
   ret i64 %updated
 }
 
-; A live derived address is rebuilt from its relocated base after every
-; statepoint. A simultaneous base home would add that home without removing
-; the reintroduced base root, so charge all three calls as zero benefit and
-; keep the ordinary single-root relocate chain.
+; Pure GEP recipes end at their material uses and can be rebuilt from a
+; shared home reload. Only one root remains live through the calls.
 ;
 ; IR-LABEL: define goabiinternal i64 @derived_base_passive_pointer_direct_call_loop(
-; IR-NOT: statepoint.home
-; IR: %[[BASE_MERGE:preserved\.relocated\.merge[.0-9]*]] = phi ptr
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[BASE_MERGE]])
-; IR: %[[BASE1:preserved\.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: getelementptr i64, ptr %[[BASE1]], i64 1
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[BASE1]])
-; IR: %[[BASE2:preserved\.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: getelementptr i64, ptr %[[BASE2]], i64 1
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[BASE2]])
-; IR: %[[BASE3:preserved\.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: %[[DERIVED:[a-zA-Z0-9_.]+]] = getelementptr i64, ptr %[[BASE3]], i64 1
-; IR: load i64, ptr %[[BASE3]]
+; IR: store ptr %preserved, ptr %preserved.statepoint.home
+; IR: loop:
+; IR-NOT: store ptr
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %preserved.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %preserved.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %preserved.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: %[[BASE:.*]] = load volatile ptr, ptr %preserved.statepoint.home
+; IR: load i64, ptr %[[BASE]]
+; IR: %[[DERIVED:.*]] = getelementptr i64, ptr %[[BASE]], i64 1
 ; IR: load i64, ptr %[[DERIVED]]
 ; IR: ret i64
 define goabiinternal i64 @derived_base_passive_pointer_direct_call_loop(
@@ -810,24 +823,26 @@ exit:
 
 declare goabiinternal i64 @consume_pointer(ptr, i64)
 
-; A scalar pointer is already one statepoint root, so homing it cannot reduce
-; the root count. Even across two calls in a loop it stays on the relocate path;
-; every derived address after a call is rebuilt from the corresponding
-; relocate, never from the entry value.
+; A scalar home need not reduce root count to save repeated stores. Every
+; call-delimited region still reloads before rebuilding its derived addresses.
 ;
 ; IR-LABEL: define goabiinternal i64 @scalar_pointer_call_loop(
-; IR-NOT: statepoint.home
 ; IR: %entry.value = load i64, ptr %receiver
-; IR: %[[MERGE:receiver.relocated.merge[.0-9]*]] = phi ptr
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[MERGE]])
-; IR: %[[RELOC1:receiver.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: %[[FIELD1:field.remat[0-9]*]] = getelementptr i64, ptr %[[RELOC1]]
+; IR: store ptr %receiver, ptr %receiver.statepoint.home
+; IR: loop:
+; IR-NOT: store ptr
+; IR: load volatile ptr, ptr %receiver.statepoint.home
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %receiver.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: %[[BASE1:.*]] = load volatile ptr, ptr %receiver.statepoint.home
+; IR: %[[FIELD1:.*]] = getelementptr i64, ptr %[[BASE1]], i64 1
 ; IR: %first.prior = load i64, ptr %[[FIELD1]]
-; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %[[RELOC1]])
-; IR: %[[RELOC2:receiver.relocated[0-9]*]] = call coldcc ptr @llvm.experimental.gc.relocate
-; IR: %[[FIELD2:field.remat[0-9]*]] = getelementptr i64, ptr %[[RELOC2]]
+; IR: @llvm.experimental.gc.statepoint{{.*}}"gc-live"(ptr %receiver.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: %[[BASE2:.*]] = load volatile ptr, ptr %receiver.statepoint.home
+; IR: %[[FIELD2:.*]] = getelementptr i64, ptr %[[BASE2]], i64 1
 ; IR: %second.prior = load i64, ptr %[[FIELD2]]
-; IR: getelementptr i64, ptr %[[RELOC2]], i64 %index
+; IR: getelementptr i64, ptr %[[BASE2]], i64 %index
 ; IR: ret i64
 ;
 ; MIR-LABEL: name: scalar_pointer_call_loop
