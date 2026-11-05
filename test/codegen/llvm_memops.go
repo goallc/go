@@ -66,7 +66,8 @@ func llvmZeroDerivedPointerStack(p *int) {
 }
 
 // LLVM-DAG: define goabiinternal ptr @codegen.llvmMovePointerToStack(
-// LLVM-DAG: call void @llvm.memmove.p0.p0.i64(ptr align 8 {{%.*}}, ptr align 8 %src, i64 32, i1 false)
+// LLVM-DAG: [[POINTERS:%.*]] = load [4 x ptr], ptr %src, align 8
+// LLVM-DAG: store [4 x ptr] [[POINTERS]], ptr {{%.*}}, align 8
 func llvmMovePointerToStack(src *llvmPointerStackZero) *int {
 	var local llvmPointerStackZero
 	local = *src
