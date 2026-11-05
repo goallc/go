@@ -144,12 +144,24 @@ exit:
   ret ptr %p
 }
 
-; Preserve the existing two-call policy and independent relocation epochs.
+; Two safepoints share the home, but each material use after a call must
+; reload its current value. The exit reload is outside the repeated cycle.
 ; IR-LABEL: define goabiinternal ptr @two_safepoints(
-; IR-NOT: statepoint.home
+; IR: store ptr %p, ptr %p.statepoint.home
+; IR: loop:
+; IR-NOT: store ptr
+; IR: load volatile ptr, ptr %p.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"(ptr %p.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: load volatile ptr, ptr %p.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR: ret ptr
+; IR-SAME: "gc-live"(ptr %p.statepoint.home)
+; IR-NOT: store ptr
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: exit:
+; IR: %[[P:.*]] = load volatile ptr, ptr %p.statepoint.home
+; IR: ret ptr %[[P]]
 
 define goabiinternal ptr @two_safepoints(ptr %p) gc "goallc" {
 entry:

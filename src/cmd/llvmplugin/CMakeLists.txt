@@ -1337,6 +1337,26 @@ if(BUILD_TESTING)
   )
 
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.PointerHomeCost
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pointer-home-cost.ll"
+    IR
+  )
+  foreach(GOALLC_ARCH_PREFIX IN ITEMS "x86_64;X86" "aarch64;A64")
+    list(GET GOALLC_ARCH_PREFIX 0 GOALLC_ARCH)
+    list(GET GOALLC_ARCH_PREFIX 1 GOALLC_PREFIX)
+    goallc_add_filecheck_test(
+      "GoALLCStatepoints.PointerHomeCost.${GOALLC_ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pointer-home-cost.ll"
+      "${GOALLC_PREFIX}"
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-mtriple=${GOALLC_ARCH}-unknown-linux-goobj"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs -stop-after=finalize-isel -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pointer-home-cost.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.CountedRootHome
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/counted-root-home.ll"
     IR
@@ -1871,19 +1891,10 @@ if(BUILD_TESTING)
       "i64 -978360670708369630"
   )
 
-  add_test(
-    NAME GoALLCStatepoints.AggregateLoopRewrite
-    COMMAND
-      "${GOALLC_LLC_EXECUTABLE}"
-      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
-      -goallc-pass-plugin-emit-ir
-      -filetype=null
-      -o -
-      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-loop-stage-b.ll"
-  )
-  set_tests_properties(GoALLCStatepoints.AggregateLoopRewrite PROPERTIES
-    PASS_REGULAR_EXPRESSION
-      "value\\.leaf\\.0\\.relocated\\.merge.* = phi ptr"
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.AggregateLoopRewrite
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/aggregate-loop-stage-b.ll"
+    IR
   )
 
   set(GOALLC_AGGREGATE_CFG_PIPELINE

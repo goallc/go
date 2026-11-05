@@ -132,13 +132,22 @@ exit:
   ret i64 %value
 }
 
-; A bypass can execute arbitrarily many iterations without a call. A static
-; single-call count alone must not authorize a home in this shape.
+; Skipped calls need no new reload. The call path and exit can use an
+; invariant home even though the call does not dominate every backedge.
 ; IR-LABEL: define goabiinternal ptr @conditional_call(
-; IR-NOT: statepoint.home
+; IR: store ptr %p, ptr %p.statepoint.home
+; IR: header:
+; IR-NOT: load volatile ptr
+; IR: br i1 %run
+; IR: call:
+; IR: load volatile ptr, ptr %p.statepoint.home
 ; IR: @llvm.experimental.gc.statepoint
-; IR-NOT: statepoint.home
-; IR: ret ptr
+; IR-SAME: "gc-live"(ptr %p.statepoint.home)
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR-NOT: store ptr
+; IR: exit:
+; IR: %[[P:.*]] = load volatile ptr, ptr %p.statepoint.home
+; IR: ret ptr %[[P]]
 define goabiinternal ptr @conditional_call(ptr %p, i64 %n, i1 %run) gc "goallc" {
 entry:
   br label %header
@@ -261,11 +270,18 @@ exit:
 }
 
 ; The selected shape requires one latch, even when a call dominates both.
+; Multiple latches do not change the initialized root identity.
 ; IR-LABEL: define goabiinternal ptr @multiple_latches(
-; IR-NOT: statepoint.home
-; IR: @llvm.experimental.gc.relocate
-; IR-NOT: statepoint.home
-; IR: ret ptr
+; IR: store ptr %p, ptr %p.statepoint.home
+; IR: header:
+; IR: load volatile ptr, ptr %p.statepoint.home
+; IR: @llvm.experimental.gc.statepoint
+; IR-SAME: "gc-live"(ptr %p.statepoint.home)
+; IR-NOT: store ptr
+; IR-NOT: @llvm.experimental.gc.relocate
+; IR: exit:
+; IR: %[[P:.*]] = load volatile ptr, ptr %p.statepoint.home
+; IR: ret ptr %[[P]]
 define goabiinternal ptr @multiple_latches(ptr %p, i1 %which, i1 %again) gc "goallc" {
 entry:
   br label %header
