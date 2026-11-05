@@ -22,6 +22,14 @@ the linked implementation. Both are built against the selected LLVM payload,
 and neither is installed into it. `-enablellvm=false` selects the native Go
 backend. See `GoALLCStatepointPlugin.cpp` for the callback and target-pass order.
 
+The early callback also sets the target-independent `gc-preserve-frame-base`
+optimization hint on Go GC functions. SROA then retains a shared pointer PHI or
+select when it merges a static frame object with an ordinary pointer, instead
+of unfolding each field GEP and splitting the frame object. This avoids
+creating independent live base/offset pairs for each field. Other SROA
+transformations still run. Late statepoint lowering continues to distinguish
+every frame object and apply the same GC and stack-growth relocation rules.
+
 Scalar write barriers retain Go SSA's `needwb` selection and zero-value proofs.
 The frontend emits the compiler-private declaration
 `goallc.gc.write.record(new, destination, flags)` followed by an ordinary store.

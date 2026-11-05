@@ -114,6 +114,23 @@ if(BUILD_TESTING)
     )
   endfunction()
 
+  goallc_add_filecheck_test(
+    goallc-mixed-frame-base-opt
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/mixed-frame-base.ll" OPT
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+    "-passes=goallc-cpu-features,default<O2>"
+    -S "${CMAKE_CURRENT_SOURCE_DIR}/testdata/mixed-frame-base.ll"
+  )
+
+  foreach(ARCH IN ITEMS x86_64 aarch64)
+    goallc_add_ir_filecheck_test(
+      "goallc-mixed-frame-base-ir-${ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/mixed-frame-base.ll" IR
+      "-mtriple=${ARCH}-unknown-linux-goobj"
+    )
+  endforeach()
+
   foreach(STAGE IN ITEMS OPT LOWER)
     set(WB_PIPELINE "goallc-cpu-features,default<O2>")
     if(STAGE STREQUAL "LOWER")

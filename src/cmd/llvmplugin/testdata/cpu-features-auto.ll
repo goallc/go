@@ -129,5 +129,5 @@ feature:
 done:
   ret i1 %avx
 }
-; CHECK: attributes #[[ISA]] = { "target-cpu"="x86-64" "target-features"="+avx,+avx2" }
+; CHECK: attributes #[[ISA]] = { "gc-preserve-frame-base" "target-cpu"="x86-64" "target-features"="+avx,+avx2" }
 ; CHECK: ![[WEAK]] = !{ptr @ordinary}

@@ -185,6 +185,7 @@ void registerGoALLCTargetPasses() {
 
 extern "C" LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef ModuleRef) {
   Module &M = *unwrap(ModuleRef);
+  goallc::configureFrameBasePreservation(M);
   goallc::configureWriteBarrierRecords(M);
   if (Error Err = goallc::runEarlyIRPipeline(M)) {
     std::string Message = toString(std::move(Err));

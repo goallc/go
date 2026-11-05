@@ -9,6 +9,15 @@
 
 using namespace llvm;
 
+void goallc::configureFrameBasePreservation(Module &M) {
+  // SROA must account for the cost of relocating movable stack addresses.
+  // Retain one frame/object base merge rather than splitting it into an
+  // independent base/offset pair for every field live across calls.
+  for (Function &F : M)
+    if (!F.isDeclaration() && F.hasGC() && F.getGC() == "goallc")
+      F.addFnAttr("gc-preserve-frame-base");
+}
+
 Error goallc::runPreCodeGenPipeline(Module &M, TargetMachine &TM) {
   return rewriteStatepoints(M, TM);
 }

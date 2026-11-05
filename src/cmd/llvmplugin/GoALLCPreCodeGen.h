@@ -14,6 +14,10 @@ class TargetMachine;
 
 namespace goallc {
 
+// Configure SROA's frame/object merge cost before the ordinary optimizer.
+// This hint is not added by the late pre-codegen callback.
+void configureFrameBasePreservation(Module &M);
+
 // Runs the GoALLC IR pipeline immediately before LLVM code generation.
 //
 // The loadable llc plugin and the future in-process compiler integration share

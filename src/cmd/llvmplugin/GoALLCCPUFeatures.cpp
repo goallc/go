@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCCPUFeatures.h"
+#include "GoALLCPreCodeGen.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -881,6 +882,7 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
 
 PreservedAnalyses llvm::goallc::CPUFeaturesPass::run(Module &M,
                                                      ModuleAnalysisManager &) {
+  configureFrameBasePreservation(M);
   if (Error Err = runEarlyIRPipeline(M)) {
     M.getContext().emitError(toString(std::move(Err)));
     return PreservedAnalyses::none();
