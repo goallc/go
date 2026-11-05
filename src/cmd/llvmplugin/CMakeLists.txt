@@ -1649,6 +1649,12 @@ if(BUILD_TESTING)
     IR
   )
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.MixedFrameRematerialization
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/mixed-frame-rematerialization.ll"
+    IR
+  )
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.FixedFrameBaseRewrite
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/fixed-frame-base.ll"
     IR

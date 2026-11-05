@@ -66,6 +66,7 @@ constexpr StringLiteral GoObjMarkerRelocMD = "goobj.marker_reloc";
 constexpr StringLiteral GoObjReflectMethodMD = "goobj.reflect_method";
 constexpr StringLiteral GoObjSymbolFlagsMD = "goobj.symbol.flags";
 constexpr StringLiteral StackColoringNoMergeMD = "llvm.stackcoloring.no_merge";
+constexpr StringLiteral MixedFrameRematMD = "goallc.mixed_frame_remat";
 
 // This strategy exists for statepoint verification and lowering. GoALLC owns
 // statepoint insertion, so UseRS4GC deliberately remains false.
@@ -861,6 +862,25 @@ private:
   MapVector<Value *, Value *> Offsets;
 };
 
+bool isLocalMixedFrameMemoryAddress(Instruction &I) {
+  if (!I.getMetadata(MixedFrameRematMD))
+    return false;
+  for (Use &U : I.uses()) {
+    auto *User = dyn_cast<Instruction>(U.getUser());
+    bool IsMemoryAddress =
+        (isa_and_nonnull<LoadInst>(User) && U.getOperandNo() == 0) ||
+        (isa_and_nonnull<StoreInst>(User) && U.getOperandNo() == 1);
+    if (!IsMemoryAddress || User->getParent() != I.getParent() ||
+        !I.comesBefore(User))
+      return false;
+    for (Instruction *Between = I.getNextNode(); Between != User;
+         Between = Between->getNextNode())
+      if (isa<CallBase>(Between))
+        return false;
+  }
+  return true;
+}
+
 Error normalizeMergedDerivedPointers(Function &F) {
   ScalarPointerBaseAnalysis Bases(F);
   ScalarPointerOffsetBuilder Offsets(F, Bases);
@@ -874,7 +894,7 @@ Error normalizeMergedDerivedPointers(Function &F) {
     // Same-object fixed-frame merges already use FixedFrameOffsetBuilder and
     // must retain their canonical alloca/byval/goret identity.
     if (I.getType()->isPointerTy() && isa<PHINode, SelectInst>(I) &&
-        !isFixedFrameAddress(&I))
+        !isFixedFrameAddress(&I) && !isLocalMixedFrameMemoryAddress(I))
       Candidates.push_back(&I);
 
   SmallVector<Normalization, 16> Normalizations;
@@ -1029,7 +1049,8 @@ void visitFixedFrameAddressUses(ArrayRef<Value *> Addresses,
           isa_and_nonnull<PHINode, SelectInst, FreezeInst>(I);
       bool FollowMixed =
           !Canonical.contains(Address) ||
-          (IsPointerMerge && LI.getLoopFor(I->getParent()));
+          (IsPointerMerge && (LI.getLoopFor(I->getParent()) ||
+                              I->getMetadata(MixedFrameRematMD)));
       if (FollowMixed && I && isRelocatablePointerType(I->getType()) &&
           (Kind == FrameAddressUseKind::Derivation || IsPointerMerge)) {
         Worklist.push_back(I);
@@ -1632,6 +1653,290 @@ public:
     return Snapshots[Index];
   }
 };
+
+// A memory-only merge of a frame address and an argument-derived address need
+// not carry the selected concrete pointer through every call. Keep its choice
+// and the selected argument base live instead, then rebuild the address at
+// each memory use. The ordinary base is null on the frame edge, so an unused
+// input does not become an unconditional GC root. Frame objects remain distinct
+// and their contents have independent liveness. In particular, the
+// reconstructed select must not hide a frame-content read merely because its
+// selected pointer is no longer a live scalar GC root.
+void rematerializeMixedFrameMemoryAddresses(Function &F, DominatorTree &DT,
+                                            LoopInfo &LI) {
+  struct MemoryUse {
+    Use *Operand;
+    int64_t Offset;
+  };
+  struct Plan {
+    Instruction *Merge;
+    AllocaInst *Frame;
+    Argument *ArgumentBase;
+    int64_t FrameOffset;
+    int64_t ArgumentOffset;
+    unsigned FrameIndex;
+    SmallVector<MemoryUse, 8> Uses;
+    SmallVector<Value *, 8> Addresses;
+  };
+  using GroupKey = std::tuple<BasicBlock *, Value *, Argument *, unsigned>;
+  auto GroupFor = [](const Plan &P) -> GroupKey {
+    if (auto *Phi = dyn_cast<PHINode>(P.Merge))
+      return {Phi->getParent(), Phi->getIncomingBlock(P.FrameIndex),
+              P.ArgumentBase, 0};
+    auto *Select = cast<SelectInst>(P.Merge);
+    return {Select->getParent(), Select->getCondition(), P.ArgumentBase,
+            P.FrameIndex + 1};
+  };
+  DenseSet<GroupKey> LiveGroups;
+  SmallVector<Instruction *, 16> Candidates;
+  for (Instruction &I : instructions(F))
+    if (I.getType()->isPointerTy() && isa<PHINode, SelectInst>(I) &&
+        !LI.getLoopFor(I.getParent()) &&
+        cast<PointerType>(I.getType())->getAddressSpace() == 0)
+      Candidates.push_back(&I);
+  if (Candidates.empty())
+    return;
+
+  // May-live frame contents must not be reintroduced after a lifetime kill:
+  // an unselected object's stale pointers may already have become dead. Keep
+  // this prototype to one non-repeating lifetime extending to function exit.
+  struct FrameLifetime {
+    unsigned Starts = 0;
+    bool Unsupported = false;
+  };
+  DenseMap<AllocaInst *, FrameLifetime> Lifetimes;
+  for (Instruction &I : instructions(F)) {
+    auto *Marker = dyn_cast<IntrinsicInst>(&I);
+    if (!Marker || (Marker->getIntrinsicID() != Intrinsic::lifetime_start &&
+                    Marker->getIntrinsicID() != Intrinsic::lifetime_end))
+      continue;
+    auto *Frame =
+        dyn_cast<AllocaInst>(getUnderlyingObject(Marker->getArgOperand(0)));
+    // Opaque lifetime ownership could alias a candidate frame object.
+    if (!Frame)
+      return;
+    FrameLifetime &Lifetime = Lifetimes[Frame];
+    if (Marker->getIntrinsicID() == Intrinsic::lifetime_end ||
+        LI.getLoopFor(Marker->getParent()) || ++Lifetime.Starts > 1)
+      Lifetime.Unsupported = true;
+  }
+
+  const DataLayout &DL = F.getDataLayout();
+  SmallVector<Plan, 16> Plans;
+  for (Instruction *Merge : Candidates) {
+    Value *Inputs[2];
+    if (auto *Phi = dyn_cast<PHINode>(Merge)) {
+      if (Phi->getNumIncomingValues() != 2 ||
+          Phi->getIncomingBlock(0) == Phi->getIncomingBlock(1))
+        continue;
+      Inputs[0] = Phi->getIncomingValue(0);
+      Inputs[1] = Phi->getIncomingValue(1);
+    } else {
+      auto *Select = cast<SelectInst>(Merge);
+      Inputs[0] = Select->getTrueValue();
+      Inputs[1] = Select->getFalseValue();
+    }
+    int64_t Offsets[2] = {};
+    Value *Bases[2] = {
+        GetPointerBaseWithConstantOffset(Inputs[0], Offsets[0], DL),
+        GetPointerBaseWithConstantOffset(Inputs[1], Offsets[1], DL)};
+    unsigned FrameIndex = isa<AllocaInst>(Bases[0]) ? 0 : 1;
+    auto *Frame = dyn_cast<AllocaInst>(Bases[FrameIndex]);
+    auto *ArgumentBase = dyn_cast<Argument>(Bases[1 - FrameIndex]);
+    if (!Frame || !Frame->isStaticAlloca() || !ArgumentBase ||
+        Lifetimes.lookup(Frame).Unsupported ||
+        isFixedFrameArgument(ArgumentBase) ||
+        Frame->getType() != Merge->getType() ||
+        ArgumentBase->getType() != Merge->getType() || Offsets[0] < 0 ||
+        Offsets[1] < 0)
+      continue;
+    auto Size = Frame->getAllocationSize(DL);
+    if (!Size || Size->isScalable())
+      continue;
+
+    Plan P{Merge,
+           Frame,
+           ArgumentBase,
+           Offsets[FrameIndex],
+           Offsets[1 - FrameIndex],
+           FrameIndex,
+           {},
+           {}};
+    SmallVector<std::pair<Value *, int64_t>, 8> Worklist{{Merge, 0}};
+    SmallPtrSet<Value *, 16> Seen;
+    bool Supported = true;
+    while (!Worklist.empty() && Supported) {
+      auto [Address, Offset] = Worklist.pop_back_val();
+      if (!Seen.insert(Address).second)
+        continue;
+      P.Addresses.push_back(Address);
+      for (Use &U : Address->uses()) {
+        auto *User = dyn_cast<Instruction>(U.getUser());
+        if (!User || !DT.dominates(Merge, U)) {
+          Supported = false;
+          break;
+        }
+        if (auto *GEP = dyn_cast<GetElementPtrInst>(User);
+            GEP && U.getOperandNo() == GEP->getPointerOperandIndex() &&
+            GEP->getType() == Merge->getType()) {
+          APInt Delta(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+          if (Delta.getBitWidth() != 64 ||
+              !GEP->accumulateConstantOffset(DL, Delta)) {
+            Supported = false;
+            break;
+          }
+          auto Next = checkedAdd<int64_t>(Offset, Delta.getSExtValue());
+          if (!Next) {
+            Supported = false;
+            break;
+          }
+          Worklist.push_back({GEP, *Next});
+          continue;
+        }
+        if (auto *Cast = dyn_cast<BitCastInst>(User);
+            Cast && Cast->getType() == Merge->getType()) {
+          Worklist.push_back({Cast, Offset});
+          continue;
+        }
+        Type *AccessType = nullptr;
+        if (auto *Load = dyn_cast<LoadInst>(User);
+            Load && U.getOperandNo() == Load->getPointerOperandIndex() &&
+            !Load->isAtomic() && !Load->isVolatile())
+          AccessType = Load->getType();
+        if (auto *Store = dyn_cast<StoreInst>(User);
+            Store && U.getOperandNo() == Store->getPointerOperandIndex() &&
+            !Store->isAtomic() && !Store->isVolatile())
+          AccessType = Store->getValueOperand()->getType();
+        auto FrameOffset = checkedAdd<int64_t>(P.FrameOffset, Offset);
+        auto ArgumentOffset = checkedAdd<int64_t>(P.ArgumentOffset, Offset);
+        if (!AccessType || !FrameOffset || !ArgumentOffset ||
+            *FrameOffset < 0 || *ArgumentOffset < 0) {
+          Supported = false;
+          break;
+        }
+        TypeSize AccessSize = DL.getTypeStoreSize(AccessType);
+        if (AccessSize.isScalable() ||
+            uint64_t(*FrameOffset) > Size->getFixedValue() ||
+            AccessSize.getFixedValue() >
+                Size->getFixedValue() - uint64_t(*FrameOffset)) {
+          Supported = false;
+          break;
+        }
+        P.Uses.push_back({&U, Offset});
+      }
+    }
+    if (Supported && !P.Uses.empty())
+      Plans.push_back(std::move(P));
+  }
+  if (Plans.empty())
+    return;
+
+  LivenessData Data = computeStatepointLiveness(F);
+  CallsiteLiveness Calls(Data);
+  SmallPtrSet<Value *, 32> LiveAcrossCalls;
+  for (Instruction &I : instructions(F))
+    if (auto *Call = dyn_cast<CallInst>(&I);
+        Call && !isa<GCStatepointInst>(Call) && !isLeafCall(*Call) &&
+        !Call->isMustTailCall())
+      for (Value *V : Calls.get(*Call))
+        LiveAcrossCalls.insert(V);
+
+  for (const Plan &P : Plans)
+    if (llvm::any_of(P.Addresses, [&](Value *Address) {
+          return LiveAcrossCalls.contains(Address);
+        }))
+      LiveGroups.insert(GroupFor(P));
+  if (LiveGroups.empty())
+    return;
+
+  struct GroupValues {
+    Value *ChooseFrame;
+    Value *OrdinaryBase;
+  };
+  DenseMap<GroupKey, GroupValues> Groups;
+  DenseMap<std::pair<BasicBlock *, BasicBlock *>, PHINode *> Choices;
+  SmallVector<WeakTrackingVH, 16> Dead;
+  for (Plan &P : Plans) {
+    // Sibling fields can share the same choice and ordinary base even when
+    // some fields are consumed before the first call. Leaving those behind
+    // would let normalization manufacture separate base/offset pairs again.
+    // Require a call-crossing member of this exact group; unrelated or
+    // entirely call-free merges retain their existing representation.
+    if (!LiveGroups.contains(GroupFor(P)))
+      continue;
+    GroupKey Key = GroupFor(P);
+    auto [It, Inserted] = Groups.try_emplace(Key);
+    GroupValues &Group = It->second;
+    if (Inserted) {
+      auto *Null =
+          ConstantPointerNull::get(cast<PointerType>(P.Merge->getType()));
+      if (auto *Phi = dyn_cast<PHINode>(P.Merge)) {
+        auto ChoiceKey = std::make_pair(Phi->getParent(),
+                                        Phi->getIncomingBlock(P.FrameIndex));
+        PHINode *&Choice = Choices[ChoiceKey];
+        if (!Choice) {
+          Choice = PHINode::Create(Type::getInt1Ty(F.getContext()), 2,
+                                   "frame.choice", Phi->getIterator());
+          for (unsigned I = 0; I != 2; ++I)
+            Choice->addIncoming(
+                ConstantInt::getBool(F.getContext(), I == P.FrameIndex),
+                Phi->getIncomingBlock(I));
+        }
+        Group.ChooseFrame = Choice;
+        auto *Ordinary =
+            PHINode::Create(P.ArgumentBase->getType(), 2, "mixed.argument.base",
+                            Phi->getIterator());
+        for (unsigned I = 0; I != 2; ++I)
+          Ordinary->addIncoming(I == P.FrameIndex ? static_cast<Value *>(Null)
+                                                  : P.ArgumentBase,
+                                Phi->getIncomingBlock(I));
+        Group.OrdinaryBase = Ordinary;
+      } else {
+        auto *Select = cast<SelectInst>(P.Merge);
+        IRBuilder<> Builder(Select);
+        // A single original select becomes several dependent selections.
+        // Freeze its condition so undef cannot make their choices disagree.
+        Group.ChooseFrame =
+            Builder.CreateFreeze(Select->getCondition(), "frame.choice");
+        if (P.FrameIndex != 0)
+          Group.ChooseFrame =
+              Builder.CreateNot(Group.ChooseFrame, "frame.choice");
+        Group.OrdinaryBase = Builder.CreateSelect(
+            Group.ChooseFrame, Null, P.ArgumentBase, "mixed.argument.base");
+      }
+    }
+    for (MemoryUse &Use : P.Uses) {
+      auto *User = cast<Instruction>(Use.Operand->getUser());
+      IRBuilder<> Builder(User);
+      Builder.SetCurrentDebugLocation(User->getDebugLoc());
+      Value *FrameAddress = Builder.CreateGEP(
+          Builder.getInt8Ty(), P.Frame,
+          Builder.getInt64(P.FrameOffset + Use.Offset), "frame.remat");
+      Value *ArgumentAddress = Builder.CreateGEP(
+          Builder.getInt8Ty(), Group.OrdinaryBase,
+          Builder.getInt64(P.ArgumentOffset + Use.Offset), "argument.remat");
+      Value *Selected =
+          Builder.CreateSelect(Group.ChooseFrame, FrameAddress, ArgumentAddress,
+                               "mixed.frame.remat");
+      if (auto *I = dyn_cast<SelectInst>(Selected))
+        I->setMetadata(MixedFrameRematMD,
+                       MDNode::get(F.getContext(), ArrayRef<Metadata *>()));
+      Value *OldAddress = Use.Operand->get();
+      Use.Operand->set(Selected);
+      Dead.push_back(OldAddress);
+    }
+    Dead.push_back(P.Merge);
+  }
+  for (WeakTrackingVH &Handle : llvm::reverse(Dead)) {
+    auto *I = dyn_cast_or_null<Instruction>(Handle);
+    if (!I)
+      continue;
+    if (auto *Phi = dyn_cast<PHINode>(I))
+      RecursivelyDeleteDeadPHINode(Phi);
+    else
+      RecursivelyDeleteTriviallyDeadInstructions(I);
+  }
+}
 
 Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
                                SmallVectorImpl<AggregateLeaf> &Leaves) {
@@ -4353,6 +4658,7 @@ Error rewriteFunction(Function &F) {
   // inside F: rewrite those using their own callee/call-site contracts.
   DominatorTree DT(F);
   LoopInfo LI(DT);
+  rematerializeMixedFrameMemoryAddresses(F, DT, LI);
   Expected<std::optional<OpenDeferInfo>> OpenDeferOrErr =
       collectOpenDeferInfo(F);
   if (!OpenDeferOrErr)
