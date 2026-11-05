@@ -1337,6 +1337,26 @@ if(BUILD_TESTING)
   )
 
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.LoopRootStore
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/loop-root-store.ll"
+    IR
+  )
+  foreach(GOALLC_ARCH_PREFIX IN ITEMS "x86_64;MIR" "aarch64;A64")
+    list(GET GOALLC_ARCH_PREFIX 0 GOALLC_ARCH)
+    list(GET GOALLC_ARCH_PREFIX 1 GOALLC_PREFIX)
+    goallc_add_filecheck_test(
+      "GoALLCStatepoints.LoopRootStore.${GOALLC_ARCH}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/loop-root-store.ll"
+      "${GOALLC_PREFIX}"
+      "${GOALLC_LLC_EXECUTABLE}"
+      "-mtriple=${GOALLC_ARCH}-unknown-linux-goobj"
+      "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+      -verify-machineinstrs -stop-after=finalize-isel -o -
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/loop-root-store.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.InterfaceCallLiveHomes
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/interface-call-live-homes.ll"
     IR

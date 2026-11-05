@@ -1918,6 +1918,28 @@ bool isHomeableBasePointer(Value &V, SmallPtrSetImpl<Value *> &Active,
   return IsBase;
 }
 
+// A direct boolean call controlling its own backedge has a particularly
+// small preservation cycle: reload, call, branch. A home removes the repeated
+// spill without adding another reload to that cycle. Keep other loop shapes
+// on the existing profitability policy until their costs are established.
+bool isSingleCallBackedgeLoop(const Loop &L) {
+  if (L.getNumBlocks() != 1)
+    return false;
+  BasicBlock *Header = L.getHeader();
+  auto *Branch = dyn_cast<BranchInst>(Header->getTerminator());
+  if (!Branch || !Branch->isConditional())
+    return false;
+  auto *Control = dyn_cast<CallInst>(Branch->getCondition());
+  if (!Control || Control->getParent() != Header ||
+      !Control->getCalledFunction() || isLeafCall(*Control) ||
+      Control->isMustTailCall() || isa<GCStatepointInst>(Control))
+    return false;
+  return llvm::none_of(*Header, [&](Instruction &I) {
+    auto *Call = dyn_cast<CallBase>(&I);
+    return Call && Call != Control && !isLeafCall(*Call);
+  });
+}
+
 SmallVector<Loop *, 2>
 findRepeatedPassiveLoopSafepoints(const StatepointPreservationPlan &Plan,
                                   LoopInfo &LI, DominatorTree &DT) {
@@ -1927,7 +1949,8 @@ findRepeatedPassiveLoopSafepoints(const StatepointPreservationPlan &Plan,
   // call in the cluster: reloading it at that use is precisely what ends its
   // cross-call SSA range. Direct and indirect calls have the same GC
   // preservation requirement here. Two-call loops remain below the
-  // amortization boundary.
+  // amortization boundary. The direct call-controlled backedge case below
+  // instead amortizes across dynamic iterations with no extra loop reload.
   constexpr unsigned MinLoopCallsToHome = 3;
   SmallVector<Loop *, 4> Candidates;
   for (Loop *TopLevel : LI) {
@@ -1957,7 +1980,19 @@ findRepeatedPassiveLoopSafepoints(const StatepointPreservationPlan &Plan,
               return Current->contains(Call->getParent()) &&
                      !llvm::is_contained(Call->args(), Plan.V);
             });
-        if (LoopCalls >= MinLoopCallsToHome && PassiveCalls != 0)
+        // An invariant of an enclosing loop must be homed at that loop's
+        // entry. Homing it only at the inner call loop would leave its old
+        // SSA value live across the inner call to reinitialize the home on
+        // the next outer iteration, retaining the very spill being removed.
+        bool ContainsCallBackedge = PassiveCalls != 0 &&
+            llvm::any_of(Plan.LiveCalls, [&](CallInst *Call) {
+              Loop *Inner = LI.getLoopFor(Call->getParent());
+              return Inner && Inner != Current && Current->contains(Inner) &&
+                     isSingleCallBackedgeLoop(*Inner);
+            });
+        if ((LoopCalls >= MinLoopCallsToHome && PassiveCalls != 0) ||
+            (LoopCalls == 1 && isSingleCallBackedgeLoop(*Current)) ||
+            ContainsCallBackedge)
           Candidates.push_back(Current);
       }
       Worklist.append(Current->begin(), Current->end());
@@ -2093,7 +2128,14 @@ void retainProfitablePointerHomes(
               DominatedLiveCalls.size() - ReintroducedBaseCalls.size();
           std::optional<unsigned> ReloadPoints =
               countPointerHomeReloadPoints(*PlanPtr, HomeLoop, DT);
-          return !ReloadPoints || *ReloadPoints >= EliminatedRelocates;
+          // In the reload/call/backedge cycle, equal reload counts still
+          // remove one store per iteration. Do not admit duplicate roots or
+          // additional reload regions under this exception.
+          bool RemovesBackedgeStore = isSingleCallBackedgeLoop(*HomeLoop) &&
+                                     EliminatedRelocates == 1;
+          return !ReloadPoints || *ReloadPoints > EliminatedRelocates ||
+                 (*ReloadPoints == EliminatedRelocates &&
+                  !RemovesBackedgeStore);
         });
     if (Plan.HomeLoops.empty()) {
       Plan.Strategy = StatepointPreservationStrategy::RelocateSSA;
@@ -2133,8 +2175,8 @@ chooseStatepointPreservationStrategy(StatepointPreservationPlan &Plan,
     DenseMap<Value *, bool> Memo;
     // Keep this deliberately narrower than "live across calls in a loop".
     // A home is useful when one pointer is repeatedly preserved for later use
-    // rather than consumed by every call, independent of how those calls find
-    // their callees.
+    // rather than consumed by every call, or for a direct call-controlled
+    // backedge whose reload count does not increase.
     SmallPtrSet<Value *, 16> UseVisited;
     Plan.HomeLoops = findRepeatedPassiveLoopSafepoints(Plan, LI, DT);
     return !Plan.HomeLoops.empty() && !isa<Constant>(V) &&
