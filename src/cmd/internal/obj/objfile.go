@@ -32,7 +32,7 @@ const UnlinkablePkg = "<unlinkable>" // invalid package path, used when compiled
 // Entry point of writing new object file.
 func WriteObjFile(ctxt *Link, b *bio.Writer) {
 
-	debugAsmEmit(ctxt)
+	ctxt.PrintAssembly()
 
 	genFuncInfoSyms(ctxt)
 
@@ -330,12 +330,10 @@ func (w *writer) StringTable() {
 // (see issue #9862).
 const MaxSymSize = int64(2e9) // 2 GB (or so; looks better in errors than 2^31)
 
-func (w *writer) Sym(s *LSym) {
-	name := s.Name
-	abi := uint16(s.ABI())
-	if s.Static() {
-		abi = goobj.SymABIstatic
-	}
+// SymbolFlags returns the GoObj flags for a symbol. Alternate object producers
+// must share this policy with the ordinary Go writer; LLVM linkage alone does
+// not encode Go attributes such as LOCAL, LINKNAME or TYPELINK.
+func (ctxt *Link) SymbolFlags(s *LSym) (uint8, uint8) {
 	flag := uint8(0)
 	if s.DuplicateOK() {
 		flag |= goobj.SymFlagDupok
@@ -365,13 +363,13 @@ func (w *writer) Sym(s *LSym) {
 	if strings.HasPrefix(s.Name, "go:itab.") && s.Type == objabi.SRODATA {
 		flag2 |= goobj.SymFlagItab
 	}
-	if strings.HasPrefix(s.Name, w.ctxt.Pkgpath) && strings.HasPrefix(s.Name[len(w.ctxt.Pkgpath):], ".") && strings.HasPrefix(s.Name[len(w.ctxt.Pkgpath)+1:], objabi.GlobalDictPrefix) {
+	if strings.HasPrefix(s.Name, ctxt.Pkgpath) && strings.HasPrefix(s.Name[len(ctxt.Pkgpath):], ".") && strings.HasPrefix(s.Name[len(ctxt.Pkgpath)+1:], objabi.GlobalDictPrefix) {
 		flag2 |= goobj.SymFlagDict
 	}
 	if s.IsPkgInit() {
 		flag2 |= goobj.SymFlagPkgInit
 	}
-	if s.IsLinkname() || name == "main.main" {
+	if s.IsLinkname() || s.Name == "main.main" {
 		// The runtime linknames main.main.
 		flag2 |= goobj.SymFlagLinkname
 	}
@@ -384,6 +382,16 @@ func (w *writer) Sym(s *LSym) {
 	if s.Func() != nil && s.Func().WasmExport != nil {
 		flag2 |= goobj.SymFlagWasmExport
 	}
+	return flag, flag2
+}
+
+func (w *writer) Sym(s *LSym) {
+	name := s.Name
+	abi := uint16(s.ABI())
+	if s.Static() {
+		abi = goobj.SymABIstatic
+	}
+	flag, flag2 := w.ctxt.SymbolFlags(s)
 	if strings.HasPrefix(name, "gofile..") {
 		name = filepath.ToSlash(name)
 	}
@@ -872,7 +880,8 @@ func writeAuxSymDebug(ctxt *Link, par *LSym, aux *LSym) {
 	ctxt.writeSymDebugNamed(aux, "aux for "+par.Name)
 }
 
-func debugAsmEmit(ctxt *Link) {
+// PrintAssembly emits the assembly and symbol listing requested by -S.
+func (ctxt *Link) PrintAssembly() {
 	if ctxt.Debugasm > 0 {
 		ctxt.traverseSyms(traverseDefs, ctxt.writeSymDebug)
 		if ctxt.Debugasm > 1 {

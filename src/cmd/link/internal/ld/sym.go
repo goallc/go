@@ -107,7 +107,7 @@ func (ctxt *Link) computeTLSOffset() {
 			 * and runtime/cgo/gcc_darwin_amd64.c.
 			 */
 		case sys.AMD64:
-			ctxt.Tlsoffset = 0x30
+			ctxt.Tlsoffset = objabi.DarwinAMD64TLSOffset
 
 		case sys.ARM64:
 			ctxt.Tlsoffset = 0 // dummy value, not needed
