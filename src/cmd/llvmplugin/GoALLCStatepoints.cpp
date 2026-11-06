@@ -861,7 +861,41 @@ private:
   MapVector<Value *, Value *> Offsets;
 };
 
-Error normalizeMergedDerivedPointers(Function &F) {
+void deleteDeadAddresses(ArrayRef<WeakTrackingVH> Addresses) {
+  for (const WeakTrackingVH &Handle : llvm::reverse(Addresses)) {
+    auto *I = dyn_cast_or_null<Instruction>(Handle);
+    if (!I)
+      continue;
+    if (auto *Phi = dyn_cast<PHINode>(I))
+      RecursivelyDeleteDeadPHINode(Phi);
+    else
+      RecursivelyDeleteTriviallyDeadInstructions(I);
+  }
+}
+
+struct FixedFrameAddressRecord {
+  Value *Address;
+  Value *Base;
+  // Integer offsets may themselves be ordinary call results. Statepoint
+  // rewriting replaces such a call with gc.result before addresses are
+  // localized, so retain a tracking handle rather than a raw pointer to the
+  // erased call instruction.
+  WeakTrackingVH Offset;
+};
+
+// Function-local provenance shared by normalization and frame-content analysis.
+// LocalMerges contains only addresses built at memory uses by this pass; input
+// IR metadata cannot grant an address an exemption from normalization. Their
+// only users are terminal memory operations; preservation/scalarization does
+// not move them across calls or erase them before content analysis completes.
+struct FrameAddressInfo {
+  SmallVector<FixedFrameAddressRecord, 32> Fixed;
+  DenseMap<Value *, SmallVector<Value *, 4>> ByBase;
+  DenseSet<AssertingVH<Value>> LocalMerges;
+};
+
+Error normalizeMergedDerivedPointers(Function &F,
+                                     const FrameAddressInfo &Addresses) {
   ScalarPointerBaseAnalysis Bases(F);
   ScalarPointerOffsetBuilder Offsets(F, Bases);
   struct Normalization {
@@ -874,7 +908,7 @@ Error normalizeMergedDerivedPointers(Function &F) {
     // Same-object fixed-frame merges already use FixedFrameOffsetBuilder and
     // must retain their canonical alloca/byval/goret identity.
     if (I.getType()->isPointerTy() && isa<PHINode, SelectInst>(I) &&
-        !isFixedFrameAddress(&I))
+        !isFixedFrameAddress(&I) && !Addresses.LocalMerges.contains(&I))
       Candidates.push_back(&I);
 
   SmallVector<Normalization, 16> Normalizations;
@@ -914,15 +948,7 @@ Error normalizeMergedDerivedPointers(Function &F) {
     Address->replaceAllUsesWith(Derived);
     Dead.push_back(Address);
   }
-  for (WeakTrackingVH &Handle : llvm::reverse(Dead)) {
-    auto *I = dyn_cast_or_null<Instruction>(Handle);
-    if (!I)
-      continue;
-    if (auto *Phi = dyn_cast<PHINode>(I))
-      RecursivelyDeleteDeadPHINode(Phi);
-    else
-      RecursivelyDeleteTriviallyDeadInstructions(I);
-  }
+  deleteDeadAddresses(Dead);
   return Error::success();
 }
 
@@ -1006,10 +1032,12 @@ FrameAddressUseKind classifyFrameAddressUse(const Use &U) {
 // That misses projections hidden behind aggregate SSA. Only loop-carried
 // mixed-object merges need an additional may-alias closure for content reads:
 // they cannot participate in unique-base address rematerialization. Outside a
-// loop, the selected pointer remains the precise dynamic root.
+// loop, unlocalized selected pointers remain precise dynamic roots. Local
+// mixed addresses instead expose their possible frame-content reads here.
 template <typename VisitorT>
-void visitFixedFrameAddressUses(ArrayRef<Value *> Addresses,
-                                const LoopInfo &LI, VisitorT &&Visit) {
+void visitFixedFrameAddressUses(ArrayRef<Value *> Addresses, const LoopInfo &LI,
+                                const FrameAddressInfo &FrameAddresses,
+                                VisitorT &&Visit) {
   SmallPtrSet<Value *, 16> Canonical(Addresses.begin(), Addresses.end());
   SmallVector<Value *, 16> Worklist(Addresses);
   SmallPtrSet<Value *, 16> Seen;
@@ -1024,12 +1052,12 @@ void visitFixedFrameAddressUses(ArrayRef<Value *> Addresses,
       if (Canonical.contains(I))
         continue;
       FrameAddressUseKind Kind = classifyFrameAddressUse(U);
-      bool IsPointerMerge =
-          Kind == FrameAddressUseKind::FirstClass &&
-          isa_and_nonnull<PHINode, SelectInst, FreezeInst>(I);
+      bool IsPointerMerge = Kind == FrameAddressUseKind::FirstClass &&
+                            isa_and_nonnull<PHINode, SelectInst, FreezeInst>(I);
       bool FollowMixed =
           !Canonical.contains(Address) ||
-          (IsPointerMerge && LI.getLoopFor(I->getParent()));
+          (IsPointerMerge && (LI.getLoopFor(I->getParent()) ||
+                              FrameAddresses.LocalMerges.contains(I)));
       if (FollowMixed && I && isRelocatablePointerType(I->getType()) &&
           (Kind == FrameAddressUseKind::Derivation || IsPointerMerge)) {
         Worklist.push_back(I);
@@ -1043,18 +1071,6 @@ void visitFixedFrameAddressUses(ArrayRef<Value *> Addresses,
 Value *rematerializeAddress(Value *Address, Value *Base, Value *RelocatedBase,
                             Instruction *InsertBefore,
                             DenseMap<Value *, Value *> &Rematerialized);
-
-struct FixedFrameAddressRecord {
-  Value *Address;
-  Value *Base;
-  // Integer offsets may themselves be ordinary call results. Statepoint
-  // rewriting replaces such a call with gc.result before addresses are
-  // localized, so retain a tracking handle rather than a raw pointer to the
-  // erased call instruction.
-  WeakTrackingVH Offset;
-};
-
-using FixedFrameAddressMap = DenseMap<Value *, SmallVector<Value *, 4>>;
 
 struct FixedFrameOffsetCacheEntry {
   Value *Base;
@@ -1272,8 +1288,7 @@ private:
   }
 };
 
-Expected<SmallVector<FixedFrameAddressRecord, 32>>
-prepareFixedFrameAddresses(Function &F) {
+Error prepareFixedFrameAddresses(Function &F, FrameAddressInfo &Addresses) {
   ValueSet Candidates;
   for (Argument &Arg : F.args())
     if (isFixedFrameArgument(&Arg))
@@ -1283,22 +1298,22 @@ prepareFixedFrameAddresses(Function &F) {
       Candidates.insert(&I);
 
   FixedFrameOffsetBuilder Builder(F);
-  SmallVector<FixedFrameAddressRecord, 32> Records;
-  Records.reserve(Candidates.size());
+  Addresses.Fixed.reserve(Candidates.size());
   for (Value *Address : Candidates) {
     Value *Base = fixedFrameProvenanceBase(Address);
     assert(Base && "fixed-frame candidate lost its provenance");
     Expected<Value *> Offset = Builder.get(Address, Base);
     if (!Offset)
       return Offset.takeError();
-    Records.push_back({Address, Base, *Offset});
+    Addresses.Fixed.push_back({Address, Base, *Offset});
+    Addresses.ByBase[Base].push_back(Address);
   }
-  return Records;
+  return Error::success();
 }
 
-Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
+Error localizeFixedFrameAddresses(const FrameAddressInfo &Addresses) {
   SmallVector<WeakTrackingVH, 32> DeadAddresses;
-  for (const FixedFrameAddressRecord &Record : Records) {
+  for (const FixedFrameAddressRecord &Record : Addresses.Fixed) {
     Value *Address = Record.Address;
     Value *Offset = Record.Offset;
     if (!Offset)
@@ -1363,15 +1378,7 @@ Error localizeFixedFrameAddresses(ArrayRef<FixedFrameAddressRecord> Records) {
   // The offset graph no longer depends on these pointer recipes. Remove dead
   // GEP/cast/PHI/select chains after every concrete use has its block-local
   // Base+Offset materialization.
-  for (WeakTrackingVH &Handle : llvm::reverse(DeadAddresses)) {
-    auto *I = dyn_cast_or_null<Instruction>(Handle);
-    if (!I)
-      continue;
-    if (auto *Phi = dyn_cast<PHINode>(I))
-      RecursivelyDeleteDeadPHINode(Phi);
-    else
-      RecursivelyDeleteTriviallyDeadInstructions(I);
-  }
+  deleteDeadAddresses(DeadAddresses);
   return Error::success();
 }
 
@@ -1632,6 +1639,260 @@ public:
     return Snapshots[Index];
   }
 };
+
+// A memory-only merge of a frame address and an argument-derived address need
+// not carry the selected concrete pointer through every call. Keep its choice
+// and the selected argument base live instead, then rebuild the address at
+// each memory use. The ordinary base is null on the frame edge, so an unused
+// input does not become an unconditional GC root. Frame objects remain distinct
+// and their contents have independent liveness. In particular, the
+// reconstructed select must not hide a frame-content read merely because its
+// selected pointer is no longer a live scalar GC root.
+void rematerializeMixedFrameMemoryAddresses(Function &F, DominatorTree &DT,
+                                            LoopInfo &LI,
+                                            FrameAddressInfo &FrameAddresses) {
+  struct MemoryUse {
+    Use *Operand;
+    int64_t Offset;
+  };
+  struct Plan {
+    Instruction *Merge;
+    AllocaInst *Frame;
+    Argument *ArgumentBase;
+    int64_t FrameOffset;
+    int64_t ArgumentOffset;
+    unsigned FrameIndex;
+    SmallVector<MemoryUse, 8> Uses;
+    SmallVector<Value *, 8> Addresses;
+  };
+  using GroupKey = std::tuple<BasicBlock *, Value *, Argument *, unsigned>;
+  auto GroupFor = [](const Plan &P) -> GroupKey {
+    if (auto *Phi = dyn_cast<PHINode>(P.Merge))
+      return {Phi->getParent(), Phi->getIncomingBlock(P.FrameIndex),
+              P.ArgumentBase, 0};
+    auto *Select = cast<SelectInst>(P.Merge);
+    return {Select->getParent(), Select->getCondition(), P.ArgumentBase,
+            P.FrameIndex + 1};
+  };
+  SmallVector<Instruction *, 16> Candidates;
+  for (Instruction &I : instructions(F))
+    if (I.getType()->isPointerTy() && isa<PHINode, SelectInst>(I) &&
+        !LI.getLoopFor(I.getParent()) &&
+        cast<PointerType>(I.getType())->getAddressSpace() == 0)
+      Candidates.push_back(&I);
+  if (Candidates.empty())
+    return;
+
+  // May-live frame contents must not be reintroduced after a lifetime kill:
+  // an unselected object's stale pointers may already have become dead. Keep
+  // this prototype to one non-repeating lifetime extending to function exit.
+  struct FrameLifetime {
+    unsigned Starts = 0;
+    bool Unsupported = false;
+  };
+  DenseMap<AllocaInst *, FrameLifetime> Lifetimes;
+  for (Instruction &I : instructions(F)) {
+    auto *Marker = dyn_cast<IntrinsicInst>(&I);
+    if (!Marker || (Marker->getIntrinsicID() != Intrinsic::lifetime_start &&
+                    Marker->getIntrinsicID() != Intrinsic::lifetime_end))
+      continue;
+    auto *Frame =
+        dyn_cast<AllocaInst>(getUnderlyingObject(Marker->getArgOperand(0)));
+    // Opaque lifetime ownership could alias a candidate frame object.
+    if (!Frame)
+      return;
+    FrameLifetime &Lifetime = Lifetimes[Frame];
+    if (Marker->getIntrinsicID() == Intrinsic::lifetime_end ||
+        LI.getLoopFor(Marker->getParent()) || ++Lifetime.Starts > 1)
+      Lifetime.Unsupported = true;
+  }
+
+  const DataLayout &DL = F.getDataLayout();
+  MapVector<GroupKey, SmallVector<Plan, 4>> Groups;
+  for (Instruction *Merge : Candidates) {
+    Value *Inputs[2];
+    if (auto *Phi = dyn_cast<PHINode>(Merge)) {
+      if (Phi->getNumIncomingValues() != 2 ||
+          Phi->getIncomingBlock(0) == Phi->getIncomingBlock(1))
+        continue;
+      Inputs[0] = Phi->getIncomingValue(0);
+      Inputs[1] = Phi->getIncomingValue(1);
+    } else {
+      auto *Select = cast<SelectInst>(Merge);
+      Inputs[0] = Select->getTrueValue();
+      Inputs[1] = Select->getFalseValue();
+    }
+    int64_t Offsets[2] = {};
+    Value *Bases[2] = {
+        GetPointerBaseWithConstantOffset(Inputs[0], Offsets[0], DL),
+        GetPointerBaseWithConstantOffset(Inputs[1], Offsets[1], DL)};
+    unsigned FrameIndex = isa<AllocaInst>(Bases[0]) ? 0 : 1;
+    auto *Frame = dyn_cast<AllocaInst>(Bases[FrameIndex]);
+    auto *ArgumentBase = dyn_cast<Argument>(Bases[1 - FrameIndex]);
+    if (!Frame || !Frame->isStaticAlloca() || !ArgumentBase ||
+        Lifetimes.lookup(Frame).Unsupported ||
+        isFixedFrameArgument(ArgumentBase) ||
+        Frame->getType() != Merge->getType() ||
+        ArgumentBase->getType() != Merge->getType() || Offsets[0] < 0 ||
+        Offsets[1] < 0)
+      continue;
+    auto Size = Frame->getAllocationSize(DL);
+    if (!Size || Size->isScalable())
+      continue;
+
+    Plan P{Merge,
+           Frame,
+           ArgumentBase,
+           Offsets[FrameIndex],
+           Offsets[1 - FrameIndex],
+           FrameIndex,
+           {},
+           {}};
+    auto CollectUses = [&]() {
+      SmallVector<std::pair<Value *, int64_t>, 8> Worklist{{Merge, 0}};
+      SmallPtrSet<Value *, 16> Seen;
+      while (!Worklist.empty()) {
+        auto [Address, Offset] = Worklist.pop_back_val();
+        if (!Seen.insert(Address).second)
+          continue;
+        P.Addresses.push_back(Address);
+        for (Use &U : Address->uses()) {
+          auto *User = dyn_cast<Instruction>(U.getUser());
+          if (!User || !DT.dominates(Merge, U))
+            return false;
+          if (auto *GEP = dyn_cast<GetElementPtrInst>(User);
+              GEP && U.getOperandNo() == GEP->getPointerOperandIndex() &&
+              GEP->getType() == Merge->getType()) {
+            APInt Delta(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+            if (Delta.getBitWidth() != 64 ||
+                !GEP->accumulateConstantOffset(DL, Delta))
+              return false;
+            auto Next = checkedAdd<int64_t>(Offset, Delta.getSExtValue());
+            if (!Next)
+              return false;
+            Worklist.push_back({GEP, *Next});
+            continue;
+          }
+          if (auto *Cast = dyn_cast<BitCastInst>(User);
+              Cast && Cast->getType() == Merge->getType()) {
+            Worklist.push_back({Cast, Offset});
+            continue;
+          }
+          Type *AccessType = nullptr;
+          if (auto *Load = dyn_cast<LoadInst>(User);
+              Load && U.getOperandNo() == Load->getPointerOperandIndex() &&
+              !Load->isAtomic() && !Load->isVolatile())
+            AccessType = Load->getType();
+          if (auto *Store = dyn_cast<StoreInst>(User);
+              Store && U.getOperandNo() == Store->getPointerOperandIndex() &&
+              !Store->isAtomic() && !Store->isVolatile())
+            AccessType = Store->getValueOperand()->getType();
+          auto FrameOffset = checkedAdd<int64_t>(P.FrameOffset, Offset);
+          auto ArgumentOffset = checkedAdd<int64_t>(P.ArgumentOffset, Offset);
+          if (!AccessType || !FrameOffset || !ArgumentOffset ||
+              *FrameOffset < 0 || *ArgumentOffset < 0)
+            return false;
+          TypeSize AccessSize = DL.getTypeStoreSize(AccessType);
+          if (AccessSize.isScalable() ||
+              uint64_t(*FrameOffset) > Size->getFixedValue() ||
+              AccessSize.getFixedValue() >
+                  Size->getFixedValue() - uint64_t(*FrameOffset))
+            return false;
+          P.Uses.push_back({&U, Offset});
+        }
+      }
+      return !P.Uses.empty();
+    };
+    if (CollectUses())
+      Groups[GroupFor(P)].push_back(std::move(P));
+  }
+  if (Groups.empty())
+    return;
+
+  LivenessData Data = computeStatepointLiveness(F);
+  CallsiteLiveness Calls(Data);
+  SmallPtrSet<Value *, 32> LiveAcrossCalls;
+  for (Instruction &I : instructions(F))
+    if (auto *Call = dyn_cast<CallInst>(&I);
+        Call && !isa<GCStatepointInst>(Call) && !isLeafCall(*Call) &&
+        !Call->isMustTailCall())
+      for (Value *V : Calls.get(*Call))
+        LiveAcrossCalls.insert(V);
+
+  DenseMap<std::pair<BasicBlock *, BasicBlock *>, PHINode *> Choices;
+  SmallVector<WeakTrackingVH, 16> Dead;
+  for (auto &[Key, Plans] : Groups) {
+    // Include short-lived siblings only when this exact group saves work at a
+    // safepoint. Otherwise normalization would recreate their base/offsets.
+    if (!llvm::any_of(Plans, [&](const Plan &P) {
+          return llvm::any_of(P.Addresses, [&](Value *Address) {
+            return LiveAcrossCalls.contains(Address);
+          });
+        }))
+      continue;
+
+    const Plan &First = Plans.front();
+    Value *ChooseFrame;
+    Value *OrdinaryBase;
+    auto *Null =
+        ConstantPointerNull::get(cast<PointerType>(First.Merge->getType()));
+    if (auto *Phi = dyn_cast<PHINode>(First.Merge)) {
+      auto ChoiceKey = std::make_pair(Phi->getParent(),
+                                      Phi->getIncomingBlock(First.FrameIndex));
+      PHINode *&Choice = Choices[ChoiceKey];
+      if (!Choice) {
+        Choice = PHINode::Create(Type::getInt1Ty(F.getContext()), 2,
+                                 "frame.choice", Phi->getIterator());
+        for (unsigned I = 0; I != 2; ++I)
+          Choice->addIncoming(
+              ConstantInt::getBool(F.getContext(), I == First.FrameIndex),
+              Phi->getIncomingBlock(I));
+      }
+      ChooseFrame = Choice;
+      auto *Ordinary =
+          PHINode::Create(First.ArgumentBase->getType(), 2,
+                          "mixed.argument.base", Phi->getIterator());
+      for (unsigned I = 0; I != 2; ++I)
+        Ordinary->addIncoming(I == First.FrameIndex ? static_cast<Value *>(Null)
+                                                    : First.ArgumentBase,
+                              Phi->getIncomingBlock(I));
+      OrdinaryBase = Ordinary;
+    } else {
+      auto *Select = cast<SelectInst>(First.Merge);
+      IRBuilder<> Builder(Select);
+      // A single original select becomes several dependent selections.
+      // Freeze its condition so undef cannot make their choices disagree.
+      ChooseFrame =
+          Builder.CreateFreeze(Select->getCondition(), "frame.choice");
+      if (First.FrameIndex != 0)
+        ChooseFrame = Builder.CreateNot(ChooseFrame, "frame.choice");
+      OrdinaryBase = Builder.CreateSelect(ChooseFrame, Null, First.ArgumentBase,
+                                          "mixed.argument.base");
+    }
+    for (Plan &P : Plans) {
+      for (MemoryUse &Use : P.Uses) {
+        auto *User = cast<Instruction>(Use.Operand->getUser());
+        IRBuilder<> Builder(User);
+        Builder.SetCurrentDebugLocation(User->getDebugLoc());
+        Value *FrameAddress = Builder.CreateGEP(
+            Builder.getInt8Ty(), P.Frame,
+            Builder.getInt64(P.FrameOffset + Use.Offset), "frame.remat");
+        Value *ArgumentAddress = Builder.CreateGEP(
+            Builder.getInt8Ty(), OrdinaryBase,
+            Builder.getInt64(P.ArgumentOffset + Use.Offset), "argument.remat");
+        Value *Selected = Builder.CreateSelect(
+            ChooseFrame, FrameAddress, ArgumentAddress, "mixed.frame.remat");
+        if (isa<SelectInst>(Selected))
+          FrameAddresses.LocalMerges.insert(Selected);
+        Value *OldAddress = Use.Operand->get();
+        Use.Operand->set(Selected);
+        Dead.push_back(OldAddress);
+      }
+      Dead.push_back(P.Merge);
+    }
+  }
+  deleteDeadAddresses(Dead);
+}
 
 Error enumerateAggregateLeaves(Type *Ty, SmallVectorImpl<unsigned> &Path,
                                SmallVectorImpl<AggregateLeaf> &Leaves) {
@@ -3300,7 +3561,7 @@ void collectFrameMemoryAccesses(RecordT &Record, Value *Address, Use &U,
 void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
                                      const DominatorTree &DT,
                                      const LoopInfo &LI,
-                                     const FixedFrameAddressMap &FrameAddresses) {
+                                     const FrameAddressInfo &FrameAddresses) {
   bool HasLifetimeStart =
       llvm::any_of(Record.LifetimeMarkers, [](IntrinsicInst *Marker) {
         return Marker->getIntrinsicID() == Intrinsic::lifetime_start;
@@ -3325,7 +3586,7 @@ void collectPointerAllocaAddressUses(PointerAllocaRecord &Record,
         Record.WholeLifetime = true;
       };
   visitFixedFrameAddressUses(
-      FrameAddresses.lookup(Record.Alloca), LI,
+      FrameAddresses.ByBase.lookup(Record.Alloca), LI, FrameAddresses,
       [&](Value *Address, Use &U, Instruction *I, FrameAddressUseKind Kind) {
         if (!I) {
           Record.ActivityUnclear = true;
@@ -3389,7 +3650,7 @@ Error computePointerAllocaActivity(
     Function &F, SmallVectorImpl<PointerAllocaRecord> &PointerAllocas,
     const SmallPtrSetImpl<const CallInst *> &SafepointCalls,
     const DominatorTree &DT, const LoopInfo &LI,
-    const FixedFrameAddressMap &FrameAddresses) {
+    const FrameAddressInfo &FrameAddresses) {
   for (PointerAllocaRecord &Record : PointerAllocas) {
     collectPointerAllocaAddressUses(Record, DT, LI, FrameAddresses);
     if (Record.ActivityUnclear)
@@ -3805,9 +4066,9 @@ Error collectPointerFixedArgs(Function &F,
 
 void collectFixedArgContentAccesses(PointerFixedArgRecord &Record,
                                     const LoopInfo &LI,
-                                    const FixedFrameAddressMap &FrameAddresses) {
+                                    const FrameAddressInfo &FrameAddresses) {
   visitFixedFrameAddressUses(
-      FrameAddresses.lookup(Record.Base), LI,
+      FrameAddresses.ByBase.lookup(Record.Base), LI, FrameAddresses,
       [&](Value *Address, Use &U, Instruction *I, FrameAddressUseKind Kind) {
         if (!I) {
           Record.ActivityUnclear = true;
@@ -3966,7 +4227,7 @@ Error computePointerFixedArgActivity(
     Function &F, MutableArrayRef<PointerFixedArgRecord> Records,
     const SmallPtrSetImpl<const CallInst *> &SafepointCalls,
     const DominatorTree &DT, const LoopInfo &LI,
-    const FixedFrameAddressMap &FrameAddresses) {
+    const FrameAddressInfo &FrameAddresses) {
   for (PointerFixedArgRecord &Record : Records) {
     collectFixedArgContentAccesses(Record, LI, FrameAddresses);
     if (Record.ActivityUnclear)
@@ -4353,6 +4614,8 @@ Error rewriteFunction(Function &F) {
   // inside F: rewrite those using their own callee/call-site contracts.
   DominatorTree DT(F);
   LoopInfo LI(DT);
+  FrameAddressInfo FrameAddresses;
+  rematerializeMixedFrameMemoryAddresses(F, DT, LI, FrameAddresses);
   Expected<std::optional<OpenDeferInfo>> OpenDeferOrErr =
       collectOpenDeferInfo(F);
   if (!OpenDeferOrErr)
@@ -4435,21 +4698,14 @@ Error rewriteFunction(Function &F) {
   for (PointerAllocaRecord &Record : PointerAllocasAfterHomes)
     if (!ExistingPointerAllocas.contains(Record.Alloca))
       PointerAllocas.push_back(std::move(Record));
-  if (Error Err = normalizeMergedDerivedPointers(F))
+  if (Error Err = normalizeMergedDerivedPointers(F, FrameAddresses))
     return Err;
   // Scalarization can expose fixed-frame pointer PHIs/selects. Preserve only
   // their integer object offsets across statepoints; concrete addresses are
   // rebuilt from the canonical alloca/byval/goret base after continuations are
   // split into independent SelectionDAG blocks.
-  Expected<SmallVector<FixedFrameAddressRecord, 32>> FixedFrameAddressesOrErr =
-      prepareFixedFrameAddresses(F);
-  if (!FixedFrameAddressesOrErr)
-    return FixedFrameAddressesOrErr.takeError();
-  SmallVector<FixedFrameAddressRecord, 32> FixedFrameAddresses =
-      std::move(*FixedFrameAddressesOrErr);
-  FixedFrameAddressMap FrameAddresses;
-  for (const FixedFrameAddressRecord &Address : FixedFrameAddresses)
-    FrameAddresses[Address.Base].push_back(Address.Address);
+  if (Error Err = prepareFixedFrameAddresses(F, FrameAddresses))
+    return Err;
 
   // Aggregate preservation has now been decided and materialized. Compute one
   // final SSA live set, then choose the representation-specific repair for
@@ -4473,6 +4729,8 @@ Error rewriteFunction(Function &F) {
     SafepointRecord Record{OrdinaryCall,
                            stableStatepointID(F.getName(), CallOrdinal++)};
     for (Value *Live : CallLiveness.get(*OrdinaryCall)) {
+      assert(!FrameAddresses.LocalMerges.contains(Live) &&
+             "localized memory address must not cross a safepoint");
       if (isFixedFrameAddress(Live)) {
         // Address liveness is independent from object-content liveness. Map
         // every same-object alloca/byval/goret recipe to its canonical frame
@@ -4506,6 +4764,7 @@ Error rewriteFunction(Function &F) {
           computePointerAllocaActivity(F, PointerAllocas, SafepointCalls, DT,
                                        LI, FrameAddresses))
     return Err;
+  FrameAddresses.LocalMerges.clear();
   DirectPointerLeafAliasGroups DirectPointerLeafAliases =
       buildDirectPointerLeafAliasGroups(DirectPointerLeafSources);
   for (SafepointRecord &Record : Records) {
@@ -4584,7 +4843,7 @@ Error rewriteFunction(Function &F) {
   }
   eraseOriginalCalls(Records);
   splitStatepointContinuations(Records);
-  if (Error Err = localizeFixedFrameAddresses(FixedFrameAddresses))
+  if (Error Err = localizeFixedFrameAddresses(FrameAddresses))
     return Err;
   // Continuation splitting changes the CFG after liveness analysis.
   DT.recalculate(F);
