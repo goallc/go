@@ -1797,11 +1797,71 @@ Instruction *aggregateUseInsertionPoint(Use &U) {
   return User;
 }
 
+// Share loads of constant home fields, but keep dynamic address recipes at
+// their use points. Loading a whole aggregate as volatile would also force
+// CodeGen to load every unused integer field (for example slice len/cap).
+class ArgumentHomeReloads {
+  struct Reload {
+    SmallVector<unsigned, 4> Indices;
+    LoadInst *Value;
+  };
+  DenseMap<std::pair<BasicBlock *, Instruction *>, SmallVector<Reload, 4>> Regions;
+
+public:
+  Value *get(AllocaInst &Home, Type *Ty, ArrayRef<unsigned> Indices,
+             Instruction &Before) {
+    Instruction *Boundary = Before.getPrevNode();
+    while (Boundary && !isa<CallBase>(Boundary))
+      Boundary = Boundary->getPrevNode();
+    auto &Region = Regions[{Before.getParent(), Boundary}];
+    for (auto &R : Region) {
+      if (ArrayRef<unsigned>(R.Indices) != Indices)
+        continue;
+      // Use lists are not in program order. The address uses only Home and
+      // constant field indices, so it can move with the load to an earlier
+      // use in this region. Dynamic GEP indices never move here.
+      if (Before.comesBefore(R.Value)) {
+        if (auto *Address = dyn_cast<GetElementPtrInst>(
+                R.Value->getPointerOperand()))
+          Address->moveBefore(Before.getIterator());
+        R.Value->moveBefore(Before.getIterator());
+      }
+      return R.Value;
+    }
+    IRBuilder<> Builder(&Before);
+    Builder.SetCurrentDebugLocation(Before.getDebugLoc());
+    Value *Address = &Home;
+    Type *FieldTy = Ty;
+    Align Alignment = Home.getAlign();
+    if (!Indices.empty()) {
+      SmallVector<Value *, 4> Path{Builder.getInt32(0)};
+      for (unsigned Index : Indices)
+        Path.push_back(Builder.getInt32(Index));
+      Address = Builder.CreateInBoundsGEP(Ty, &Home, Path,
+                                         Home.getName() + ".field");
+      FieldTy = ExtractValueInst::getIndexedType(Ty, Indices);
+      Alignment = commonAlignment(
+          Alignment, Home.getFunction()->getDataLayout().getIndexedOffsetInType(
+                         Ty, Path));
+    }
+    auto *Load = Builder.CreateAlignedLoad(
+        FieldTy, Address, Alignment,
+        Home.getName() + ".reload");
+    // gc-live is not an LLVM memory dependence. Keep pointer reloads after
+    // calls that can rewrite the home during stack growth, as for scalar
+    // pointer homes. Integer fields cannot be changed by relocation.
+    Load->setVolatile(containsPointer(FieldTy));
+    Region.push_back({SmallVector<unsigned, 4>(Indices), Load});
+    return Load;
+  }
+};
+
 Error reloadAggregateArgumentProjection(
     AllocaInst &Home, Type *AggregateType, ArrayRef<unsigned> Indices,
     Instruction &Projection,
     SmallVectorImpl<std::pair<Instruction *, unsigned>> &Recipe,
-    ArrayRef<CallInst *> LiveCalls, DominatorTree &DT, LoopInfo &LI) {
+    ArrayRef<CallInst *> LiveCalls, DominatorTree &DT, LoopInfo &LI,
+    ArgumentHomeReloads &Reloads) {
   SmallVector<Use *, 8> Uses;
   for (Use &U : Projection.uses())
     Uses.push_back(&U);
@@ -1813,7 +1873,7 @@ Error reloadAggregateArgumentProjection(
       NestedIndices.append(Nested->idx_begin(), Nested->idx_end());
       if (Error Err = reloadAggregateArgumentProjection(
               Home, AggregateType, NestedIndices, *Nested, Recipe, LiveCalls,
-              DT, LI))
+              DT, LI, Reloads))
         return Err;
       if (Nested->use_empty())
         Nested->eraseFromParent();
@@ -1824,7 +1884,8 @@ Error reloadAggregateArgumentProjection(
         U->getOperandNo() == GetElementPtrInst::getPointerOperandIndex()) {
       Recipe.push_back({GEP, U->getOperandNo()});
       if (Error Err = reloadAggregateArgumentProjection(
-              Home, AggregateType, Indices, *GEP, Recipe, LiveCalls, DT, LI))
+              Home, AggregateType, Indices, *GEP, Recipe, LiveCalls, DT, LI,
+              Reloads))
         return Err;
       Recipe.pop_back();
       if (GEP->use_empty())
@@ -1846,14 +1907,7 @@ Error reloadAggregateArgumentProjection(
       U->set(Leaf);
       continue;
     }
-    IRBuilder<> Builder(InsertBefore);
-    Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
-    Value *Reloaded = Builder.CreateAlignedLoad(
-        AggregateType, &Home, Home.getAlign(), Home.getName() + ".reload");
-    Value *Leaf = Builder.CreateExtractValue(
-        Reloaded, Indices,
-        Projection.hasName() ? Projection.getName() + ".reload"
-                             : "argument.field.reload");
+    Value *Leaf = Reloads.get(Home, AggregateType, Indices, *InsertBefore);
     for (auto [Template, OperandNo] : Recipe) {
       Instruction *Rematerialized = Template->clone();
       Rematerialized->setOperand(OperandNo, Leaf);
@@ -2370,7 +2424,7 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
   for (Use &U : Arg.uses())
     if (U.getUser() != Initialize)
       OriginalUses.push_back(&U);
-  DenseMap<Instruction *, Value *> ReloadedAtUsePoint;
+  ArgumentHomeReloads Reloads;
 
   for (Use *U : OriginalUses) {
     if (ArgType->isAggregateType()) {
@@ -2379,7 +2433,8 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
                                          Extract->idx_end());
         SmallVector<std::pair<Instruction *, unsigned>, 4> Recipe;
         if (Error Err = reloadAggregateArgumentProjection(
-                *Home, ArgType, Indices, *Extract, Recipe, LiveCalls, DT, LI))
+                *Home, ArgType, Indices, *Extract, Recipe, LiveCalls, DT, LI,
+                Reloads))
           return Err;
         if (Extract->use_empty())
           Extract->eraseFromParent();
@@ -2395,15 +2450,7 @@ Error homeStatepointArgument(Argument &Arg, ArrayRef<CallInst *> LiveCalls,
           return isPotentiallyReachable(Call, InsertBefore, nullptr, &DT, &LI);
         }))
       continue;
-    if (Value *Reloaded = ReloadedAtUsePoint.lookup(InsertBefore)) {
-      U->set(Reloaded);
-      continue;
-    }
-    IRBuilder<> Builder(InsertBefore);
-    Builder.SetCurrentDebugLocation(InsertBefore->getDebugLoc());
-    Value *Reloaded = Builder.CreateAlignedLoad(ArgType, Home, Home->getAlign(),
-                                                Home->getName() + ".reload");
-    ReloadedAtUsePoint[InsertBefore] = Reloaded;
+    Value *Reloaded = Reloads.get(*Home, ArgType, {}, *InsertBefore);
     U->set(Reloaded);
   }
   return Error::success();
