@@ -36,8 +36,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PINNED_LLVM_RELEASE: goallc-llvm23.1.4-20261105T053117Z
-  PINNED_LLVM_REVISION: 45b0a2a9b43e60710b1b02955b3ffb27b58b9b35
+  PINNED_LLVM_RELEASE: goallc-llvm23.1.4-20261105T144511Z
+  PINNED_LLVM_REVISION: b10445e0683371fe34037463403de5112fb906c7
 
   MACOSX_DEPLOYMENT_TARGET: '13.0'
   GOAMD64: v1
@@ -99,7 +99,7 @@ jobs:
         include:
           - {arch: amd64, os: linux, runner: ubuntu-22.04, name: linux-amd64}
           - {arch: arm64, os: linux, runner: ubuntu-22.04-arm, name: linux-arm64}
-          - {arch: arm64, os: darwin, runner: macos-14, name: darwin-arm64}
+          - {arch: arm64, os: darwin, runner: macos-15, name: darwin-arm64}
           - {arch: amd64, os: windows, runner: windows-2025, name: windows-amd64}
     env:
       LLVM_RELEASE: ${{ needs.llvm-payload.outputs.release_tag }}
@@ -427,7 +427,7 @@ jobs:
   test:
     name: test-${{ matrix.name }}-${{ matrix.group }}
     needs: build
-    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-22.04","linux-arm64":"ubuntu-22.04-arm","darwin-arm64":"macos-14","windows-amd64":"windows-2025"}')[matrix.name] }}
+    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-22.04","linux-arm64":"ubuntu-22.04-arm","darwin-arm64":"macos-15","windows-amd64":"windows-2025"}')[matrix.name] }}
     timeout-minutes: 120
     strategy:
       fail-fast: false

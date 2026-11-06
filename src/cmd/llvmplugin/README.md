@@ -17,6 +17,31 @@ and immediately before instruction selection. Calling `runPreCodeGenPipeline`
 for the whole module from the callback is the emit-IR test mode, not the
 production placement.
 
+`GoALLCByVal.cpp` owns private byval initialization analysis and IR rewriting.
+The pre-codegen callback invokes it before standard CodeGen can expand fills
+into loops. Both production and IR emission use this single early invocation.
+The late pipeline computes GC liveness without repeating byval preparation.
+It sinks private initializers that dominate their single consuming call through
+an acyclic region with no intervening calls, excluding Go defer frame homes.
+LLVM's existing carrier predicate validates the prepared form for GC root
+selection and SelectionDAG. LLVM only forwards the resulting stores into the
+outgoing argument area; it does not perform this IR preparation or expose a
+preparation API. Ordinary C callers and other GC clients are left unchanged.
+
+Initialization can consist of typed field stores, partial or complete fills,
+and constant or dynamic fill bytes. Fully overwritten writes are removed and
+fills are split around overwritten bytes. Partially overlapping field stores
+keep their original SSA values and order; SelectionDAG forwards them only when
+its memory chains prove that order. There is no 256-byte object limit: analysis
+and fill expansion have work budgets instead. Unwritten scalar bytes remain
+unspecified as in the original private alloca; preparation does not invent
+zero initialization for sparse IR objects. Go source initialization semantics
+are established by the frontend. Escaping or observed addresses,
+conditional writes, intervening calls (including GC-leaf calls), volatile/atomic
+accesses, lifetime ends, and defer homes retain the original path. The helper
+also declines optnone/optsize functions. All pointer lifetime changes precede
+root selection, and the backend's alignment and ABI checks remain in force.
+
 Dynamic builds load the module from `pkg/tool/<host>/lib`; static builds call
 the linked implementation. Both are built against the selected LLVM payload,
 and neither is installed into it. `-enablellvm=false` selects the native Go
