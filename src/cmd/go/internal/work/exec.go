@@ -364,7 +364,7 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 	default:
 		base.Fatalf("buildActionID: unknown build toolchain %q", cfg.BuildToolchainName)
 	case "gc":
-		fmt.Fprintf(h, "compile %s %q %q\n", b.compileToolID(p.Internal.Gcflags), forcedGcflags, p.Internal.Gcflags)
+		fmt.Fprintf(h, "compile %s %q %q\n", b.compileToolID(p.Internal.Gcflags), forcedGcflagsFor(p), p.Internal.Gcflags)
 		if len(p.SFiles) > 0 {
 			fmt.Fprintf(h, "asm %q %q %q\n", b.toolID("asm"), forcedAsmflags, p.Internal.Asmflags)
 		}
@@ -1587,7 +1587,7 @@ func (b *Builder) printLinkerConfig(h io.Writer, p *load.Package) {
 		base.Fatalf("linkActionID: unknown toolchain %q", cfg.BuildToolchainName)
 
 	case "gc":
-		fmt.Fprintf(h, "link %s %q %s\n", b.toolID("link"), forcedLdflags, ldBuildmode)
+		fmt.Fprintf(h, "link %s %q %s\n", b.linkToolID(p), forcedLdflags, ldBuildmode)
 		if p != nil {
 			fmt.Fprintf(h, "linkflags %q\n", p.Internal.Ldflags)
 		}

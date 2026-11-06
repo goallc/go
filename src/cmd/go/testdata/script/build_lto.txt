@@ -1,0 +1,22 @@
+env GO111MODULE=off
+
+go help build
+stdout '-lto mode'
+
+! go build -lto=full .
+stderr 'go: unsupported -lto mode "full"'
+
+! go build -lto=thin -buildmode=archive .
+stderr 'go: -lto requires gc, buildmode=exe or pie, and no sanitizers or shared linking'
+
+go build -n -a -lto=thin crypto/internal/fips140/sha256
+stderr 'compile .* -p crypto/internal/fips140/sha256 .* -llvm-lto=thin'
+
+env GOOS=windows
+env GOARCH=amd64
+! go build -lto=thin .
+stderr 'go: -lto=thin is not supported on windows/amd64'
+
+-- main.go --
+package main
+func main() {}
