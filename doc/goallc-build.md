@@ -138,6 +138,31 @@ $LLVM_PAYLOAD/share/goallc/build-manifest
 安装前缀、ccache 路径和 static system-library closure，供诊断使用；时间戳和
 manifest 本身不作为编译缓存身份。
 
+## GoALLC SDK 版本号
+
+正式 SDK 使用 `go<Go版本>-goallc.<GoALLC版本>`，例如：
+
+```text
+Release 标题：GoALLC 0.1.0 (Go 1.27.3)
+Git tag / VERSION：go1.27.3-goallc.0.1.0
+Linux amd64 归档：go1.27.3-goallc.0.1.0.linux-amd64.tar.gz
+Windows amd64 归档：go1.27.3-goallc.0.1.0.windows-amd64.zip
+go version：go version go1.27.3-goallc.0.1.0 linux/amd64
+```
+
+GoALLC 使用独立的三段版本号。每次正式发布都递增 GoALLC 版本；仅升级
+上游 Go 时也至少递增 patch。Go 的版本号必须与工作流中的
+`GOALLC_BASE_GO_VERSION` 一致，不能通过 tag 把现有源码标成其他 Go 版本。
+
+此格式遵循 Go 的 `goV-suffix` 自定义工具链命名规则。Go 的兼容性比较
+只比较前面的 Go 版本，会忽略 `-goallc.*` 后缀；GoALLC 版本供用户识别
+发行版，不参与 Go 的工具链版本排序。
+
+发布时，在已通过 CI 的提交上创建不可变 tag，再对该 tag 手动运行
+`GoALLC` 工作流并设置 `publish=true`。发布任务依赖四平台构建、测试及
+SDK 重定位检查；正式版本写入 `VERSION` 并用于归档命名。已有 tag、归档
+及 checksum 不覆盖。
+
 ## 发布的 LLVM payload 与 CI
 
 GoALLC LLVM payload 发布在
