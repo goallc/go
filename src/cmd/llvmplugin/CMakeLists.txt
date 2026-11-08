@@ -2162,6 +2162,30 @@ if(BUILD_TESTING)
   endforeach()
 
   goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ArgumentHomeReloads
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/argument-home-reloads.ll"
+    IR
+  )
+
+  goallc_add_ir_filecheck_test(
+    GoALLCStatepoints.ArgumentHomeReloadCount
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/argument-home-reloads.ll"
+    COUNT
+  )
+
+  foreach(ARCH x86_64 aarch64)
+    add_test(
+      NAME "GoALLCStatepoints.ArgumentHomeReloadsCodegen.${ARCH}"
+      COMMAND "${GOALLC_LLC_EXECUTABLE}"
+        "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>"
+        "-mtriple=${ARCH}-unknown-linux-goobj"
+        -frame-pointer=all -verify-machineinstrs -filetype=obj
+        -o "${CMAKE_CURRENT_BINARY_DIR}/argument-home-reloads-${ARCH}.goobj"
+        "${CMAKE_CURRENT_SOURCE_DIR}/testdata/argument-home-reloads.ll"
+    )
+  endforeach()
+
+  goallc_add_ir_filecheck_test(
     GoALLCStatepoints.RelocationLocalDefinitions
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/relocation-local-definitions.ll"
     IR
