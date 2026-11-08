@@ -36,6 +36,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  GOALLC_BASE_GO_VERSION: go1.27.3
   PINNED_LLVM_RELEASE: goallc-llvm23.1.4-20261107T161044Z
   PINNED_LLVM_REVISION: a651a0ed86fdeacb41f1b743bb5143aa0a8c5751
 
@@ -133,9 +134,14 @@ jobs:
               echo "$name=$(cygpath -m "${!name}")" >> "$GITHUB_ENV"
             done
           fi
-          version="go1.27.3-goallc.$(git rev-parse --short=12 HEAD)"
+          version="$GOALLC_BASE_GO_VERSION-goallc.$(git rev-parse --short=12 HEAD)"
           if [[ "$RELEASE_REQUESTED" == true ]]; then
-            [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^go[0-9]+\.[0-9]+\.[0-9]+-goallc\.[0-9]+$ ]]
+            release_pattern='^go[0-9]+\.[0-9]+\.[0-9]+-goallc\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+            if [[ "$GITHUB_REF_TYPE" != tag || ! "$GITHUB_REF_NAME" =~ $release_pattern ]]; then
+              echo "Release requires a go<Go version>-goallc.<major>.<minor>.<patch> tag" >&2
+              exit 1
+            fi
+            test "${GITHUB_REF_NAME%%-goallc.*}" = "$GOALLC_BASE_GO_VERSION"
             test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$(git rev-parse HEAD)"
             version="$GITHUB_REF_NAME"
           fi
@@ -596,4 +602,5 @@ jobs:
           test "$(find . -name '*.sha256' | wc -l)" -eq 4
           sha256sum -c ./*.sha256
           gh release create "$RELEASE_TAG" ./* --verify-tag --fail-on-no-commits \
-            --title "$RELEASE_TAG" --notes "Four-host static GoALLC SDK. LLVM and pass dependencies are linked into the compiler; OS system libraries remain platform dependencies. Includes Linux amd64/arm64, Darwin arm64, and Windows amd64. Native dist tests and relocated SDK checks passed in workflow run $GITHUB_RUN_ID."
+            --title "GoALLC ${RELEASE_TAG#*-goallc.} (Go ${GOALLC_BASE_GO_VERSION#go})" \
+            --notes "Four-host static GoALLC SDK. LLVM and pass dependencies are linked into the compiler; OS system libraries remain platform dependencies. Includes Linux amd64/arm64, Darwin arm64, and Windows amd64. Native dist tests and relocated SDK checks passed in workflow run $GITHUB_RUN_ID."
