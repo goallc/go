@@ -1,0 +1,18 @@
+{
+  "toolchains": [
+    "Go 1.27.3",
+    "go1.27.3-goallc.0.1.0 (LLVM)"
+  ],
+  "platform": "Linux amd64",
+  "cpu": "Intel Core Ultra 9 185H",
+  "cases": 92,
+  "rounds_per_case_per_toolchain": 12,
+  "observations": 2208,
+  "cpu_affinity": 1,
+  "GOMAXPROCS": 1,
+  "GOAMD64": "v1",
+  "PGO": "off",
+  "iterations": "same per case across toolchains",
+  "schedule": "interleaved",
+  "summary": "median ns/op; paired sign test with Holm correction; 5 percent effect threshold"
+}
