@@ -11,11 +11,27 @@ runs:
     - if: runner.os == 'macOS'
       shell: bash
       run: brew install ninja ccache zstd
+    - name: Preserve cache tool path
+      if: runner.os == 'Windows'
+      id: windows-cache-path
+      shell: pwsh
+      run: '"path=$env:PATH" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8'
+    - name: Cache Windows dependency archives
+      if: runner.os == 'Windows'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      # Installing zstd below must not change cache compression between
+      # restore and the post-job save (compression is part of the cache version).
+      env:
+        PATH: ${{ steps.windows-cache-path.outputs.path }}
+      with:
+        path: ${{ runner.temp }}/goallc-windows-downloads
+        key: goallc-windows-downloads-${{ runner.arch }}-${{ hashFiles('.github/scripts/setup-windows-toolchain.ps1', '.github/scripts/download-windows-dependency.ps1') }}
     - if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        choco install zstandard ninja -y --no-progress
+        choco install ninja -y --no-progress
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & "$env:GITHUB_WORKSPACE/.github/scripts/test-windows-dependency-download.ps1"
         & "$env:GITHUB_WORKSPACE/.github/scripts/setup-windows-toolchain.ps1"
     - shell: bash
       run: |
