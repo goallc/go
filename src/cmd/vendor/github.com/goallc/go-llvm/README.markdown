@@ -6,31 +6,38 @@ system-installed LLVM is not supported.
 
 ## LLVM payload
 
-The binding always reads LLVM headers below `${SRCDIR}/llvm`; dynamic linking
-also reads the LLVM shared library there:
+The binding reads LLVM headers below `${SRCDIR}/llvm`:
 
     llvm/include/llvm-c
-    llvm/lib
 
 `llvm` is not committed. The caller must create it as a symlink to an LLVM
 payload with this layout. GoALLC's `cmd/dist` manages that symlink from its
-`-llvm-dir` option, whose default is `$GOROOT/llvm`.
+`-llvm-dir` option, `GOALLC_LLVM_DIR`, or the default `$GOROOT/llvm`.
+Dynamic linking uses the libraries installed by `cmd/dist` in
+`$GOROOT/pkg/tool/${GOOS}_${GOARCH}/lib`, with a loader-relative runtime path
+for installed tools. Static linking also requires the matching GoALLC pass
+plugin in `$GOROOT/pkg/goallc-llvmplugin/lib`. These paths assume the binding
+is in `$GOROOT/src/cmd/vendor/github.com/goallc/go-llvm`.
 
 ## Build tags
 
-The LLVM API version and link mode are independent, mandatory build-tag axes:
+The bindings target LLVM 23 and use dynamic linking by default:
 
-* `llvm23` selects the LLVM 23 API. A future LLVM 24 port will add `llvm24`
-  without changing how the payload path or link mode is selected.
-* `dynamicllvm` links `llvm/lib/libLLVM`; it is the GoALLC default.
+* No version tag is required; `llvm23` remains accepted for existing callers.
+* Without `staticllvm`, the binding links the bundled `libLLVM` dynamically.
 * `staticllvm` links `${SRCDIR}/libLLVMGoALLC.a`. GoALLC's `cmd/dist`
   assembles and caches this build artifact from the selected payload's normal
   LLVM component archives with `llvm-config` and `llvm-ar`.
 
 For example:
 
-    go test -tags='llvm23 dynamicllvm' ./...
-    go test -tags='llvm23 staticllvm' ./...
+    go test ./...
+    go test -tags=staticllvm ./...
+
+For standalone binding development, arrange the headers and libraries above
+or provide explicit library search and runtime paths through `CGO_LDFLAGS`.
+When using an upstream Go toolchain on Darwin, allow the loader-relative flag
+with `CGO_LDFLAGS_ALLOW='^-Wl,-rpath,@loader_path/lib$'`.
 
 The static command requires `libLLVMGoALLC.a` to have been assembled first.
 The GoALLC toolchain does this automatically for `-llvm-link=static`.
@@ -39,8 +46,6 @@ including static zlib/zstd when enabled. The binding does not search pkg-config
 or link third-party shared libraries. The final executable links only host OS
 libraries; Linux additionally selects static C++ and GCC runtimes. Use a payload
 and `cmd/dist` that implement this dependency closure together.
-
-Do not select multiple version tags or multiple link-mode tags in one build.
 
 ## Continuous integration
 
