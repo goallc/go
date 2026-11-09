@@ -1,0 +1,21 @@
+name: Feature request / 功能建议
+description: Suggest an improvement to GoALLC / 提出 GoALLC 改进建议
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case / 问题与使用场景
+      description: Describe what you want to achieve and the current limitation. / 说明目标与当前限制。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement / 改进建议
+      description: Describe the desired behavior and affected platforms or build modes. / 说明期望行为及涉及的平台或构建方式。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context / 替代方案与补充信息

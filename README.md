@@ -1,6 +1,12 @@
 # GoALLC
 
+[![Release](https://img.shields.io/github/v/release/goallc/go)](https://github.com/goallc/go/releases)
+[![CI](https://github.com/goallc/go/actions/workflows/goallc.yml/badge.svg?branch=go1.27.master)](https://github.com/goallc/go/actions/workflows/goallc.yml)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+
 English | [简体中文](README.zh-CN.md)
+
+[Downloads](https://github.com/goallc/go/releases) · [Architecture](GOALLC.md) · [Issues](https://github.com/goallc/go/issues) · [Contributing](CONTRIBUTING.md)
 
 **Go's toolchain and runtime, with an LLVM backend.** GoALLC brings LLVM optimization
 and code generation to existing Go projects while retaining Go's frontend,

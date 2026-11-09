@@ -1,35 +1,50 @@
-# Contributing to Go
+# Contributing to GoALLC
 
-Go is an open source project.
+English | [简体中文](CONTRIBUTING.zh-CN.md)
 
-It is the work of hundreds of contributors. We appreciate your help!
+Contributions to GoALLC are welcome through this repository's
+[issues](https://github.com/goallc/go/issues) and
+[pull requests](https://github.com/goallc/go/pulls). You can help with compiler and
+runtime compatibility, performance, tests, documentation, and build tooling.
 
-## Before filing an issue
+## Report a problem or suggest a change
 
-If you are unsure whether you have found a bug, please consider asking in the [golang-nuts mailing
-list](https://groups.google.com/forum/#!forum/golang-nuts) or [other forums](https://golang.org/help/) first. If
-the behavior you are seeing is confirmed as a bug or issue, it can easily be re-raised in the issue tracker.
+Search existing issues first, then choose the bug, performance, or feature form.
+English and Chinese reports are welcome.
 
-## Filing issues
+For a bug, include the GoALLC version (`go version`), OS and architecture, relevant
+build flags, a small reproducer, and the expected and actual behavior. If you have
+compared with official Go, include its version and result as well.
 
-Sensitive security-related issues should be reported to [security@golang.org](mailto:security@golang.org).
-See the [security policy](https://golang.org/security) for details.
+For performance reports, include the benchmark source, CPU model, toolchain
+versions, build flags, repeated measurements, and commands. Keep inputs and
+benchmark settings comparable, and include slower cases when reporting a broader
+comparison.
 
-The recommended way to file an issue is by running `go bug`.
-Otherwise, when filing an issue, make sure to answer these five questions:
+## Prepare a pull request
 
-1. What version of Go are you using (`go version`)?
-2. What operating system and processor architecture are you using?
-3. What did you do?
-4. What did you expect to see?
-5. What did you see instead?
+Start from the repository's default branch, `go1.27.master`, and keep each change
+focused on one problem. Explain the resulting behavior and link a related issue
+when there is one.
 
-For change proposals, see [Proposing Changes To Go](https://go.dev/s/proposal-process).
+Use the [build guide](doc/goallc-build.md) for source builds and the
+[architecture overview](GOALLC.md) to locate the relevant implementation.
+Go-specific LLVM passes live in [src/cmd/llvmplugin](src/cmd/llvmplugin/README.md);
+LLVM target mechanisms live in [goallc/llvm-project](https://github.com/goallc/llvm-project).
 
-## Contributing code
+Format changed Go files with `gofmt`. For behavior changes, add a focused regression
+case and run the relevant tests with the toolchain you changed. In the PR, state
+what you tested, on which platform, and any validation still outstanding. For
+performance changes, include the comparison method and measurements. Documentation
+changes should have their links and examples checked.
 
-Please read the [Contribution Guidelines](https://golang.org/doc/contribute.html) before sending patches.
+Keep the English and Chinese READMEs consistent when changing user-facing project
+information. Submit the PR on GitHub against `go1.27.master`.
 
-Unless otherwise noted, the Go source files are distributed under
-the BSD-style license found in the LICENSE file.
+If the change depends on an open GoALLC LLVM PR, add an uncommented line such as
+`LLVM-PR: goallc/llvm-project#123` to the PR body so CI can select its LLVM payload.
 
+## License
+
+Unless otherwise noted, the Go source files use the BSD-style [LICENSE](LICENSE).
+Preserve existing copyright and license notices when modifying code.

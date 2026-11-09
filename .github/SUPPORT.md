@@ -1,14 +1,15 @@
-Unlike many projects on GitHub, the Go project does not use its bug tracker for general discussion or asking questions.
-We only use our bug tracker for tracking bugs and tracking proposals going through the [Proposal Process](https://go.dev/s/proposal-process).
+# GoALLC support
 
-For asking questions, see:
+- [Download an SDK](https://github.com/goallc/go/releases).
+- Read the [English README](../README.md) or [中文 README](../README.zh-CN.md).
+- See the [source build guide](../doc/goallc-build.md) and
+  [known compatibility differences](../test/llvm_known_failures.json).
+- Ask GoALLC usage questions or report problems in
+  [this repository's issues](https://github.com/goallc/go/issues).
 
-* [The golang-nuts mailing list](https://groups.google.com/d/forum/golang-nuts)
+Include your GoALLC version, platform, command, and relevant output when asking
+for help. For code contributions, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-* [The Go Forum](https://forum.golangbridge.org/), a web-based forum
-
-* [Gophers Slack](https://gophers.slack.com), use the [invite app](https://invite.slack.golangbridge.org/) for access
-
-* [Stack Overflow](https://stackoverflow.com/questions/tagged/go) with questions tagged "go"
-
-* **IRC** channel #go-nuts on Libera
+GoALLC 使用问题、缺陷和功能建议请提交到本仓库的 issue，中英文均可。
+请附上工具链版本、运行平台、执行命令和相关输出；参与开发可参考
+[中文贡献指南](../CONTRIBUTING.zh-CN.md)。
