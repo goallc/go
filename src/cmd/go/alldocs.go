@@ -194,6 +194,8 @@
 //	-linkshared
 //		build code that will be linked against shared libraries previously
 //		created with -buildmode=shared.
+//	-lto mode
+//		LLVM link-time optimization mode: thin (experimental).
 //	-mod mode
 //		module download mode to use: readonly, vendor, or mod.
 //		By default, if a vendor directory is present and the go version in go.mod

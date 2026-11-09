@@ -1,0 +1,193 @@
+// Copyright 2026 The GoALLC Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license.
+
+// Package llvmlto replaces package bitcode with ThinLTO-optimized Go objects.
+package llvmlto
+
+import (
+	"bytes"
+	"cmd/internal/archive"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+)
+
+const irMember = "__.LLVMBC"
+
+// Prepare preserves original archives and replaces each bitcode member with
+// its own optimized compiler object. The ordinary Go loader consumes them.
+func Prepare(main string, packages map[string]string, keep, pic bool, jobs int, arch string) (string, map[string]string, func(), error) {
+	work, err := os.MkdirTemp("", "go-thinlto-")
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	cleanup := func() { os.RemoveAll(work) }
+	if keep {
+		fmt.Fprintln(os.Stderr, "LTO_WORK="+work)
+		cleanup = func() {}
+	}
+	paths := map[string]string{main: "main"}
+	for name, path := range packages {
+		if old, ok := paths[path]; !ok || name < old {
+			paths[path] = name
+		}
+	}
+	var names []string
+	for path := range paths {
+		names = append(names, path)
+	}
+	sort.Slice(names, func(i, j int) bool { return paths[names[i]] < paths[names[j]] })
+	var inputs [][]byte
+	var originals []string
+	var layouts [][]archive.Entry
+	for _, path := range names {
+		ir, entries, err := readIR(path)
+		if err != nil {
+			return "", nil, cleanup, err
+		}
+		if ir == nil {
+			continue
+		}
+		inputs = append(inputs, ir)
+		originals = append(originals, path)
+		layouts = append(layouts, entries)
+	}
+	if len(inputs) == 0 {
+		return "", nil, cleanup, fmt.Errorf("ThinLTO requires packages compiled with -llvm-lto=thin")
+	}
+	diagnostics := ""
+	if keep {
+		diagnostics = work
+	}
+	objects, release, err := optimize(originals, inputs, diagnostics, pic, jobs, arch)
+	if err != nil {
+		return "", nil, cleanup, err
+	}
+	defer release()
+	replacements := make(map[string]string)
+	for i, path := range originals {
+		archive := filepath.Join(work, fmt.Sprintf("%d.a", i))
+		if err := rewriteArchive(path, archive, layouts[i], objects[i]); err != nil {
+			return "", nil, cleanup, err
+		}
+		replacements[path] = archive
+	}
+	result := make(map[string]string, len(packages))
+	for name, path := range packages {
+		if replacement := replacements[path]; replacement != "" {
+			path = replacement
+		}
+		result[name] = path
+	}
+	if replacement := replacements[main]; replacement != "" {
+		main = replacement
+	}
+	return main, result, cleanup, nil
+}
+
+// readIR validates slim archives before optimization and retains their layout
+// for rewriting. Archives without bitcode pass through the ordinary Go linker.
+func readIR(path string) ([]byte, []archive.Entry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	a, err := archive.Parse(f, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	var bitcode *archive.Entry
+	objects := 0
+	for i := range a.Entries {
+		e := &a.Entries[i]
+		switch e.Name {
+		case "_go_.o":
+			objects++
+		case irMember:
+			if bitcode != nil {
+				return nil, nil, fmt.Errorf("%s: duplicate %s member", path, irMember)
+			}
+			bitcode = e
+		}
+	}
+	if bitcode == nil {
+		return nil, nil, nil
+	}
+	if objects != 0 {
+		return nil, nil, fmt.Errorf("%s: expected a slim bitcode archive with no compiler GoObj member, found %d", path, objects)
+	}
+	if bitcode.Size == 0 {
+		return nil, nil, fmt.Errorf("%s: empty %s member", path, irMember)
+	}
+	ir, err := io.ReadAll(io.NewSectionReader(f, bitcode.Offset, bitcode.Size))
+	if err != nil {
+		return nil, nil, err
+	}
+	if int64(len(ir)) != bitcode.Size {
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+	return ir, a.Entries, nil
+}
+
+// writeArchiveEntry uses the same header as cmd/pack, but propagates write
+// errors instead of archive.AddEntry's process-wide log.Fatal path.
+func writeArchiveEntry(out io.Writer, name string, size int64, content io.Reader) error {
+	var header [archive.HeaderSize]byte
+	archive.FormatHeader(header[:], name, size)
+	if n, err := out.Write(header[:]); err != nil {
+		return err
+	} else if n != len(header) {
+		return io.ErrShortWrite
+	}
+	if _, err := io.CopyN(out, content, size); err != nil {
+		return err
+	}
+	if size&1 != 0 {
+		if n, err := out.Write([]byte{0}); err != nil {
+			return err
+		} else if n != 1 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
+func rewriteArchive(src, dst string, entries []archive.Entry, object []byte) (err error) {
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := out.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			os.Remove(dst)
+		}
+	}()
+	if _, err := archive.New(out); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name == irMember {
+			if err := writeArchiveEntry(out, "_go_.o", int64(len(object)), bytes.NewReader(object)); err != nil {
+				return err
+			}
+		} else {
+			// Preserve the complete member, including its header and padding.
+			size := archive.HeaderSize + e.Size + (e.Size & 1)
+			if _, err := io.CopyN(out, io.NewSectionReader(f, e.Offset-archive.HeaderSize, size), size); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
