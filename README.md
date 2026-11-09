@@ -54,15 +54,9 @@ requires a C toolchain for the target platform.
 
 ## How it works
 
-```mermaid
-flowchart TD
-    A[Go source] --> B[Go frontend and generic SSA optimizations]
-    B --> C[GoALLC SSA to LLVM IR]
-    C --> D[LLVM optimization and code generation]
-    D --> E[GoObj machine code and runtime metadata]
-    E --> F[Go package archive and linker]
-    F --> G[Executable using the Go runtime]
-```
+[![GoALLC compiler architecture: shared Go frontend, LLVM lowering, Go-specific passes, GoObj output, and Go runtime](doc/images/goallc-architecture.en.svg)](doc/images/goallc-architecture.en.svg)
+
+Blue: GoALLC implementation; orange: LLVM fork extensions; teal: standard LLVM. Reused Go components are grouped in gray. Click the diagram to enlarge.
 
 GoALLC enters LLVM after Go's generic SSA optimizations and before target-specific
 lowering. Normal package compilation runs LLVM in the compiler process. LLVM
