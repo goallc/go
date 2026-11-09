@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Questions
-    about: Please use one of the forums for questions or general discussions
-    url:  https://go.dev/wiki/Questions
+  - name: GoALLC downloads / 下载
+    url: https://github.com/goallc/go/releases
+    about: Released SDKs and checksums / 已发布的 SDK 与校验文件
+  - name: GoALLC documentation / 文档
+    url: https://github.com/goallc/go#readme
+    about: Installation, architecture, compatibility, and SIMD / 安装、架构、兼容性与 SIMD

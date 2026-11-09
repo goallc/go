@@ -1,6 +1,12 @@
 # GoALLC
 
+[![Release](https://img.shields.io/github/v/release/goallc/go)](https://github.com/goallc/go/releases)
+[![CI](https://github.com/goallc/go/actions/workflows/goallc.yml/badge.svg?branch=go1.27.master)](https://github.com/goallc/go/actions/workflows/goallc.yml)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+
 [English](README.md) | 简体中文
+
+[下载](https://github.com/goallc/go/releases) · [架构](GOALLC.md) · [问题反馈](https://github.com/goallc/go/issues) · [参与开发](CONTRIBUTING.zh-CN.md)
 
 **保留 Go 工具链与运行时，接入 LLVM 后端。** GoALLC 为现有 Go 项目引入 LLVM
 的优化与代码生成能力，复用 Go 前端、标准库、运行时、汇编器和链接器。

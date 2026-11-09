@@ -1,0 +1,30 @@
+name: Performance / 性能问题
+description: Report a GoALLC performance difference with measurements / 提供性能差异与实测数据
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Toolchains and hardware / 工具链与硬件
+      description: Include toolchain versions, OS, architecture, CPU model, and relevant build flags. / 提供版本、系统、架构、CPU 型号和构建参数。
+    validations:
+      required: true
+  - type: textarea
+    id: benchmark
+    attributes:
+      label: Benchmark and commands / 基准与命令
+      description: Include source or an exact repository revision, inputs, and commands for both toolchains. / 提供源码或准确提交、输入及两组执行命令。
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Measurements / 测量结果
+      description: Include repeated results with matching inputs and settings, plus any slower cases. / 提供相同输入与设置下的多轮结果，并保留变慢的用例。
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: analysis
+    attributes:
+      label: Additional analysis / 补充分析
+      description: Profiles, IR, or disassembly are useful if available. / 如有 profile、IR 或反汇编，可附在此处。
