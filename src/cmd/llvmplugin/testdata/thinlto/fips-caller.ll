@@ -5,7 +5,7 @@
 ; OBJ: "data_hex": "2a000000000000000d00000000000000"
 ; This ordinary package imports a FIPS function, but its generated static data
 ; must not inherit the other package's FIPS classification.
-target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-v128:64:64-v256:64:64-v512:64:64-n8:16:32:64-S64"
 target triple = "x86_64-unknown-linux-goobj"
 @main.table = private constant [2 x i64] [i64 42, i64 13]
 define goabiinternal i64 @main.result() !goobj.symbol.index !0 {

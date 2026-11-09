@@ -1,7 +1,6 @@
 // Copyright 2026 The GoALLC Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-#include "GoALLCThinLTO.h"
 #include "GoALLCPreCodeGen.h"
 #include "GoALLCThinLTOC.h"
 #include "llvm/ADT/DenseSet.h"
@@ -110,69 +109,70 @@ static bool canImportGoFunction(const Function &F) {
   return true;
 }
 
-Error goallc::writeThinBitcode(Module &M, raw_ostream &OS) {
+static Error writeThinBitcode(Module &M, raw_ostream &OS) {
   auto Prefix = packagePrefix(M);
   if (!Prefix)
     return Prefix.takeError();
   LLVMContext &C = M.getContext();
   DenseSet<uint32_t> Indices;
-  for (GlobalObject &G : M.global_objects()) {
-    auto *Index = G.getMetadata("goobj.symbol.index");
-    if (!Index)
-      continue;
-    auto *I = Index->getNumOperands()
-                  ? mdconst::dyn_extract<ConstantInt>(Index->getOperand(0))
-                  : nullptr;
-    if (!I || !I->getType()->isIntegerTy(32) || G.isDeclaration() ||
-        !Indices.insert(I->getZExtValue()).second)
-      return fail("invalid ThinLTO package index: " + G.getName());
-  }
   SmallVector<GlobalValue *> Retained;
   for (GlobalObject &G : M.global_objects()) {
-    if (G.isDeclaration() || G.getName().starts_with("llvm."))
-      continue;
-    if (auto *Index = G.getMetadata("goobj.symbol.index")) {
-      unsigned Flags2 = 0;
+    auto *F = dyn_cast<Function>(&G);
+    auto *Index = G.getMetadata("goobj.symbol.index");
+    StringRef Owner;
+    uint64_t Slot = 0, Flags2 = 0;
+    if (Index) {
+      auto *I = Index->getNumOperands()
+                    ? mdconst::dyn_extract<ConstantInt>(Index->getOperand(0))
+                    : nullptr;
+      if (!I || !I->getType()->isIntegerTy(32) || G.isDeclaration() ||
+          !Indices.insert(I->getZExtValue()).second)
+        return fail("invalid ThinLTO package index: " + G.getName());
+      Owner = *Prefix;
+      Slot = I->getZExtValue();
       if (auto *Flags = G.getMetadata("goobj.symbol.flags"))
         Flags2 = mdconst::extract<ConstantInt>(Flags->getOperand(1))
                      ->getZExtValue() &
                  GoObj::SymFlagUsedInIface;
-      Metadata *Ref[] = {MDString::get(C, *Prefix), Index->getOperand(0),
-                         ConstantAsMetadata::get(
-                             ConstantInt::get(Type::getInt32Ty(C), Flags2))};
-      // During ThinLTO, this existing reference attachment also describes how
-      // an imported body may refer back to this definition. Remove it from
-      // local definitions before the GoObj writer consumes the output.
-      G.setMetadata("goobj.import", MDNode::get(C, Ref));
-      Retained.push_back(&G);
-    } else if (!G.hasLocalLinkage() && !hashed(G)) {
-      Retained.push_back(&G);
-    }
-  }
-  // Function::deleteBody drops metadata when ThinLTO eliminates an imported
-  // body, but preserves function attributes. Keep reference identity there so
-  // declarations need no post-import snapshot or reconstruction. Global
-  // variable metadata already survives initializer removal.
-  for (Function &F : M)
-    if (auto *Ref = F.getMetadata("goobj.import")) {
-      auto *Owner = Ref->getNumOperands() == 3
-                        ? dyn_cast<MDString>(Ref->getOperand(0))
+    } else if (auto *Ref = F ? F->getMetadata("goobj.import") : nullptr) {
+      auto *Package = Ref->getNumOperands() == 3
+                          ? dyn_cast<MDString>(Ref->getOperand(0))
+                          : nullptr;
+      auto *I = Package ? mdconst::dyn_extract<ConstantInt>(Ref->getOperand(1))
                         : nullptr;
-      auto *Index = Owner
-                        ? mdconst::dyn_extract<ConstantInt>(Ref->getOperand(1))
-                        : nullptr;
-      auto *Flags = Owner
+      auto *Flags = Package
                         ? mdconst::dyn_extract<ConstantInt>(Ref->getOperand(2))
                         : nullptr;
-      if (!Owner || Owner->getString().empty() || !Index ||
-          Index->getValue().ugt(UINT32_MAX) || !Flags ||
+      if (!Package || Package->getString().empty() || !I ||
+          I->getValue().ugt(UINT32_MAX) || !Flags ||
           Flags->getValue().ugt(UINT8_MAX))
-        return fail("invalid ThinLTO function reference: " + F.getName());
-      F.addFnAttr("goobj.import.package", Owner->getString());
-      F.addFnAttr("goobj.import.index", utostr(Index->getZExtValue()));
-      F.addFnAttr("goobj.import.flags2", utostr(Flags->getZExtValue()));
-      F.setMetadata("goobj.import", nullptr);
+        return fail("invalid ThinLTO function reference: " + G.getName());
+      Owner = Package->getString();
+      Slot = I->getZExtValue();
+      Flags2 = Flags->getZExtValue();
     }
+    if (!Owner.empty()) {
+      if (F) {
+        // Function::deleteBody drops metadata but preserves attributes.
+        // Encode indexed definitions directly, without a metadata round trip.
+        F->addFnAttr("goobj.import.package", Owner);
+        F->addFnAttr("goobj.import.index", utostr(Slot));
+        F->addFnAttr("goobj.import.flags2", utostr(Flags2));
+        F->setMetadata("goobj.import", nullptr);
+      } else {
+        // Global metadata survives initializer removal during importing.
+        Metadata *Ref[] = {MDString::get(C, Owner),
+                           ConstantAsMetadata::get(
+                               ConstantInt::get(Type::getInt32Ty(C), Slot)),
+                           ConstantAsMetadata::get(
+                               ConstantInt::get(Type::getInt32Ty(C), Flags2))};
+        G.setMetadata("goobj.import", MDNode::get(C, Ref));
+      }
+    }
+    if (!G.isDeclaration() && !G.getName().starts_with("llvm.") &&
+        (Index || (!G.hasLocalLinkage() && !hashed(G))))
+      Retained.push_back(&G);
+  }
   // Keep original package slots and externally visible definitions until the
   // Go linker resolves native objects and Go-only reachability. This is our
   // current resolution policy; ThinLTO itself does not require retaining all.
@@ -249,8 +249,9 @@ static Error finishGoObjModule(Module &M, StringRef Prefix,
   return Error::success();
 }
 
-Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
-                         unsigned Jobs, bool PIC, AddStreamFn AddStream) {
+static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
+                        unsigned Jobs, bool PIC,
+                        MutableArrayRef<SmallVector<char, 0>> Objects) {
   if (Inputs.empty() || Jobs == 0)
     return fail("ThinLTO requires inputs and a positive job count");
   static std::once_flag Initialize;
@@ -344,7 +345,7 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
     }
     SmallVector<char, 0> Bytes;
     raw_svector_ostream OS(Bytes);
-    if (Error E = goallc::writeThinBitcode(M, OS))
+    if (Error E = writeThinBitcode(M, OS))
       return E;
     Normalized.push_back(
         MemoryBuffer::getMemBufferCopy(StringRef(Bytes.data(), Bytes.size()),
@@ -454,12 +455,10 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
         return E;
       if (Error E = Save(Task, M, ""))
         return E;
-      if (AddStream) {
-        if (Error E = goallc::prepareCodeGenModule(M, CodeGenOptLevel::Default))
-          return E;
-        if (verifyModule(M, &errs()))
-          return fail("invalid ThinLTO pre-codegen module");
-      }
+      if (Error E = goallc::prepareCodeGenModule(M, CodeGenOptLevel::Default))
+        return E;
+      if (verifyModule(M, &errs()))
+        return fail("invalid ThinLTO pre-codegen module");
       return Error::success();
     };
     if (Error E = Finish()) {
@@ -467,7 +466,7 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
       return false;
     }
     S.Finished = true;
-    return bool(AddStream);
+    return true;
   };
   lto::LTO Driver(std::move(Conf),
                   lto::createInProcessThinBackend(hardware_concurrency(Jobs)));
@@ -491,10 +490,11 @@ Error goallc::runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
     return fail("unexpected LTO task count");
   auto Stream =
       [&](unsigned Task,
-          const Twine &Name) -> Expected<std::unique_ptr<CachedFileStream>> {
+          const Twine &) -> Expected<std::unique_ptr<CachedFileStream>> {
     if (!Task || Task >= States.size())
       return fail("unexpected LTO output task");
-    return AddStream(Task - 1, Name);
+    return std::make_unique<CachedFileStream>(
+        std::make_unique<raw_svector_ostream>(Objects[Task - 1]));
   };
   if (Error E = Driver.run(Stream))
     return E;
@@ -520,13 +520,7 @@ extern "C" LLVMErrorRef LLVMGoALLCThinLTO(LLVMMemoryBufferRef *Inputs,
   for (size_t I = 0; I != Count; ++I)
     Buffers.push_back(unwrap(Inputs[I])->getMemBufferRef());
   std::vector<SmallVector<char, 0>> Objects(Count);
-  auto AddStream =
-      [&](unsigned I,
-          const Twine &) -> Expected<std::unique_ptr<CachedFileStream>> {
-    return std::make_unique<CachedFileStream>(
-        std::make_unique<raw_svector_ostream>(Objects[I]));
-  };
-  if (Error E = goallc::runThinLTO(Buffers, Diagnostics, Jobs, PIC, AddStream))
+  if (Error E = runThinLTO(Buffers, Diagnostics, Jobs, PIC, Objects))
     return wrap(std::move(E));
   for (size_t I = 0; I != Count; ++I) {
     auto &Object = Objects[I];
@@ -551,7 +545,7 @@ extern "C" LLVMErrorRef
 LLVMGoALLCWriteThinBitcode(LLVMModuleRef Module, LLVMMemoryBufferRef *Output) {
   SmallVector<char, 0> Buffer;
   raw_svector_ostream OS(Buffer);
-  if (Error E = goallc::writeThinBitcode(*unwrap(Module), OS))
+  if (Error E = writeThinBitcode(*unwrap(Module), OS))
     return wrap(std::move(E));
   *Output = wrap(
       MemoryBuffer::getMemBufferCopy(StringRef(Buffer.data(), Buffer.size()),

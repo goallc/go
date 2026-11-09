@@ -68,7 +68,7 @@ endforeach()
 # directory may be created when save-temps is disabled.
 add_test(NAME thinlto-memory-objects
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
-  "rm -rf '${THIN_OUT}/no-files' && '$<TARGET_FILE:goallc-thinlto-test>' --emit-objects --save-temps=false --output-dir='${THIN_OUT}/no-files' '${THIN_FIXTURES}/debug-caller.ll' '${THIN_FIXTURES}/debug-callee.ll' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=BUFFER '${THIN_FIXTURES}/debug-caller.ll'")
+  "rm -rf '${THIN_OUT}/no-files' && '$<TARGET_FILE:goallc-thinlto-test>' --save-temps=false --output-dir='${THIN_OUT}/no-files' '${THIN_FIXTURES}/debug-caller.ll' '${THIN_FIXTURES}/debug-callee.ll' | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=BUFFER '${THIN_FIXTURES}/debug-caller.ll'")
 add_test(NAME thinlto-duplicate-input
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
   "'${GOALLC_NOT_EXECUTABLE}' '$<TARGET_FILE:goallc-thinlto-test>' --save-temps=false --output-dir='${THIN_OUT}/duplicate' '${THIN_FIXTURES}/caller.ll' '${THIN_FIXTURES}/caller.ll' 2>&1 | '${GOALLC_FILECHECK_EXECUTABLE}' --check-prefix=DUPLICATE '${THIN_FIXTURES}/caller.ll'")
@@ -88,7 +88,7 @@ foreach(ARCH IN ITEMS x86_64 aarch64)
 endforeach()
 add_test(NAME thinlto-symver-rejected
   COMMAND "${GOALLC_BASH_EXECUTABLE}" -o pipefail -c
-  "'${GOALLC_NOT_EXECUTABLE}' '$<TARGET_FILE:goallc-thinlto-test>' --emit-objects --save-temps=false --output-dir='${THIN_OUT}/symver' '${THIN_FIXTURES}/symver.ll' 2>&1 | '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/symver.ll'")
+  "'${GOALLC_NOT_EXECUTABLE}' '$<TARGET_FILE:goallc-thinlto-test>' --save-temps=false --output-dir='${THIN_OUT}/symver' '${THIN_FIXTURES}/symver.ll' 2>&1 | '${GOALLC_FILECHECK_EXECUTABLE}' '${THIN_FIXTURES}/symver.ll'")
 
 # The production plugin supplies final-layout inline anchors. Exercise symbol
 # annotations with no source GlobalValue on both GoObj backends.
@@ -116,7 +116,7 @@ add_test(NAME thinlto-debug-symbol-invalid
 # Verify that parallel in-process codegen uses each module's own configuration.
 set(THIN_PARALLEL "${CMAKE_CURRENT_BINARY_DIR}/thinlto-parallel")
 add_test(NAME thinlto-parallel-objects
-  COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --emit-objects --jobs=4
+  COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --jobs=4
     "--output-dir=${THIN_PARALLEL}"
     "${THIN_FIXTURES}/debug-caller.ll" "${THIN_FIXTURES}/debug-callee.ll")
 set_tests_properties(thinlto-parallel-objects PROPERTIES FIXTURES_SETUP thinlto-parallel)
@@ -136,7 +136,7 @@ endif()
 
 set(THIN_MARKERS "${CMAKE_CURRENT_BINARY_DIR}/thinlto-markers")
 add_test(NAME thinlto-markers
-  COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --emit-objects
+  COMMAND "$<TARGET_FILE:goallc-thinlto-test>"
     "--output-dir=${THIN_MARKERS}" "${THIN_FIXTURES}/markers.ll")
 set_tests_properties(thinlto-markers PROPERTIES FIXTURES_SETUP thinlto-markers)
 if(GOALLC_OBJVIEW_EXECUTABLE)
@@ -158,7 +158,7 @@ foreach(ORDER IN ITEMS forward reverse)
     set(SECOND 0)
   endif()
   add_test(NAME thinlto-duplicate-definitions-${ORDER}
-    COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --emit-objects --jobs=4
+    COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --jobs=4
       "--output-dir=${THIN_DUP}-${ORDER}"
       "${THIN_FIXTURES}/duplicate-${FIRST}.ll"
       "${THIN_FIXTURES}/duplicate-${SECOND}.ll")
@@ -181,7 +181,7 @@ foreach(ORDER IN ITEMS forward reverse)
 endforeach()
 
 add_test(NAME thinlto-empty-package
-  COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --emit-objects --save-temps=false
+  COMMAND "$<TARGET_FILE:goallc-thinlto-test>" --save-temps=false
     "--output-dir=${THIN_OUT}/empty" "${THIN_FIXTURES}/empty.ll")
 
 add_executable(goallc-lto-transform-test testdata/thinlto/module-transform.cpp)

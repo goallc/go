@@ -9,18 +9,18 @@
 ; CHECK-LABEL: define {{.*}}@main.noinlineCaller(
 ; CHECK: call goabiinternal i64 @dep.add(i64 %v)
 ; CHECK: declare goabiinternal i64 @dep.add(i64) {{.*}}#[[ATTR:[0-9]+]]
-; CHECK: attributes #[[ATTR]] = {{.*}}"goobj.import.flags2"="0" "goobj.import.index"="0" "goobj.import.package"="dep"
+; CHECK: attributes #[[ATTR]] = {{.*}}"goobj.import.flags2"="1" "goobj.import.index"="0" "goobj.import.package"="dep"
 ; CHECK: !goobj.config = !{![[CONFIG:[0-9]+]]}
 ; CHECK-DAG: ![[CONFIG]] = !{!"main-id", !"main", !"1", !"0", !"0100000000000000"}
 target triple = "x86_64-unknown-linux-goobj"
-target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-v128:64:64-v256:64:64-v512:64:64-n8:16:32:64-S64"
 define goabiinternal i64 @main.result() !goobj.symbol.index !0 {
   %r = call goabiinternal i64 @dep.add(i64 41)
   ret i64 %r
 }
 declare !goobj.import !1 goabiinternal i64 @dep.add(i64)
 !0 = !{i32 0, i16 1}
-!1 = !{!"dep", i32 0, i32 0}
+!1 = !{!"dep", i32 0, i32 1}
 !goobj.config = !{!2}
 !2 = !{!"main-id", !"main", !"1", !"0", !"0100000000000000"}
 !goobj.imports = !{!3}
@@ -40,7 +40,7 @@ declare !goobj.import !9 goabiinternal void @dep.marked()
 !7 = !{i32 1, i16 1}
 !8 = !{!"dep", i32 1, i32 0}
 !9 = !{!"dep", i32 2, i32 0}
-; CHECK-DAG: ![[REF]] = !{!"dep", i32 3, i32 0}
+; CHECK-DAG: ![[REF]] = !{!"dep", i32 3, i32 1}
 
 ; Keep one imported callee referenced after optimization. The standard ThinLTO
 ; pipeline must discard its available_externally body without our own rewrite.
@@ -49,3 +49,7 @@ define goabiinternal i64 @main.noinlineCaller(i64 %v) noinline optnone !goobj.sy
   ret i64 %r
 }
 !11 = !{i32 2, i16 1}
+
+; Non-leaf codegen needs the compiler-owned late stack-growth declaration.
+declare goabi0 void @"runtime.morestack_noctxt<builtin.246><ABI0>"()
+@llvm.compiler.used = appending global [1 x ptr] [ptr @"runtime.morestack_noctxt<builtin.246><ABI0>"], section "llvm.metadata"
