@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="1660" viewBox="0 0 1260 1660" role="img" aria-labelledby="title description">
+<title id="title">GoALLC architecture</title>
+<desc id="description">Ordinary GoObj compilation · amd64 / arm64 · LLVM runs inside the compiler</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4.5 L0,9 Z" fill="#475569"/></marker></defs>
+<rect width="1260" height="1660" rx="16" fill="#FFFFFF"/>
+<g font-family="Arial, PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+<text x="50" y="52" font-size="36" fill="#1E293B" font-weight="700" text-anchor="start" >GoALLC architecture</text>
+<text x="50" y="89" font-size="20" fill="#475569" font-weight="400" text-anchor="start" >Ordinary GoObj compilation · amd64 / arm64 · LLVM runs inside the compiler</text>
+<rect x="50" y="114" width="22" height="22" rx="4" fill="#EEF2F6" stroke="#64748B"/>
+<text x="82" y="132" font-size="19" fill="#1E293B" font-weight="400" text-anchor="start" >Reused Go</text>
+<rect x="300" y="114" width="22" height="22" rx="4" fill="#175CD3" stroke="#1249A6"/>
+<text x="332" y="132" font-size="19" fill="#1E293B" font-weight="400" text-anchor="start" >GoALLC implementation</text>
+<rect x="650" y="114" width="22" height="22" rx="4" fill="#0E766E" stroke="#09594F"/>
+<text x="682" y="132" font-size="19" fill="#1E293B" font-weight="400" text-anchor="start" >Standard LLVM</text>
+<rect x="950" y="114" width="22" height="22" rx="4" fill="#FDB022" stroke="#DC6803"/>
+<text x="982" y="132" font-size="19" fill="#1E293B" font-weight="400" text-anchor="start" >LLVM fork extensions</text>
+<g data-node="front"><rect x="50" y="166" width="1150" height="92" rx="10" fill="#EEF2F6" stroke="#64748B" stroke-width="2"/>
+<text x="625.0" y="204.0" font-size="23" fill="#1E293B" font-weight="700" text-anchor="middle" >cmd/go · Go frontend · generic SSA</text>
+<text x="625.0" y="236.0" font-size="19" fill="#1E293B" font-weight="400" text-anchor="middle" >Parsing, types, inlining, escape analysis and Go optimizations</text>
+</g>
+<g data-node="functions"><rect x="50" y="310" width="560" height="92" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="330.0" y="348.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >ssa2llvm / llvmfunctions / llvmdebug</text>
+<text x="330.0" y="380.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Functions · Go ABI · closures · GC / debug metadata</text>
+</g>
+<g data-node="globals"><rect x="720" y="310" width="480" height="92" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="960.0" y="348.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >llvmdata / llvmtypeddata</text>
+<text x="960.0" y="380.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Types · itabs · globals · symbols / relocations</text>
+</g>
+<g data-node="module"><rect x="50" y="454" width="1150" height="88" rx="10" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+<text x="625.0" y="490.0" font-size="23" fill="#1E293B" font-weight="700" text-anchor="middle" >Package LLVM Module</text>
+<text x="625.0" y="522.0" font-size="19" fill="#1E293B" font-weight="400" text-anchor="middle" >Function IR + global IR + Go metadata · go-llvm C/C++ API bridge</text>
+</g>
+<polyline points="330,258 330,310" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="960,258 960,310" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="330,402 330,454" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="960,402 960,454" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="50,211 22,211 22,1514 50,1514" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="15" y="925" font-size="16" fill="#64748B" font-weight="400" text-anchor="middle" transform="rotate(-90 15 925)">Go package export data</text>
+<rect x="40" y="574" width="1170" height="848" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+<text x="60" y="608" font-size="25" fill="#1E293B" font-weight="700" text-anchor="start" >LLVM optimization and code generation</text>
+<text x="330" y="642" font-size="17" fill="#475569" font-weight="400" text-anchor="middle" >Compilation stages</text>
+<text x="960" y="642" font-size="17" fill="#475569" font-weight="400" text-anchor="middle" >Go-specific passes and target support</text>
+<polyline points="665,542 665,652 330,652 330,662" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<g data-node="opt"><rect x="50" y="662" width="560" height="88" rx="10" fill="#0E766E" stroke="#09594F" stroke-width="2"/>
+<text x="330.0" y="698.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >LLVM IR optimizer</text>
+<text x="330.0" y="730.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Loop / SLP vectorization · inlining · scalar optimization</text>
+</g>
+<g data-node="early"><rect x="720" y="662" width="480" height="88" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="960.0" y="698.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >GoALLC early IR preparation</text>
+<text x="960.0" y="730.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >CPU features / FMV · write-barrier contracts</text>
+</g>
+<polyline points="720,706.0 610,706.0" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="665" y="694.0" font-size="15" fill="#475569" font-weight="400" text-anchor="middle" stroke="white" stroke-width="6" paint-order="stroke">before</text>
+<g data-node="hook"><rect x="50" y="784" width="560" height="88" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="330.0" y="820.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >llvmbackend · pre-codegen hook</text>
+<text x="330.0" y="852.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Prepare Go semantics and register target passes</text>
+</g>
+<g data-node="wb"><rect x="720" y="784" width="480" height="88" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="960.0" y="820.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >GoALLCWriteBarriers / GoALLCByVal</text>
+<text x="960.0" y="852.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Late barrier lowering · byval initialization</text>
+</g>
+<polyline points="610,828.0 720,828.0" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="665" y="816.0" font-size="15" fill="#475569" font-weight="400" text-anchor="middle" stroke="white" stroke-width="6" paint-order="stroke">calls</text>
+<polyline points="330,750 330,784" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<g data-node="preisel"><rect x="50" y="906" width="560" height="88" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="330.0" y="942.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >CodeGen IR prep → GoALLCPreISelPass</text>
+<text x="330.0" y="974.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Late statepoint rewrite, just before instruction selection</text>
+</g>
+<g data-node="sp"><rect x="720" y="906" width="480" height="88" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="960.0" y="942.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >GoALLCStatepoints</text>
+<text x="960.0" y="974.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Pointer liveness · gc.relocate · fixed-frame objects</text>
+</g>
+<polyline points="610,950.0 720,950.0" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="665" y="938.0" font-size="15" fill="#475569" font-weight="400" text-anchor="middle" stroke="white" stroke-width="6" paint-order="stroke">calls</text>
+<polyline points="330,872 330,906" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<g data-node="isel"><rect x="50" y="1028" width="560" height="88" rx="10" fill="#0E766E" stroke="#09594F" stroke-width="2"/>
+<text x="330.0" y="1064.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >SelectionDAG → Machine IR</text>
+<text x="330.0" y="1096.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Call lowering · instruction selection · statepoint lowering</text>
+</g>
+<g data-node="abi"><rect x="720" y="1028" width="480" height="88" rx="10" fill="#FDB022" stroke="#DC6803" stroke-width="2"/>
+<text x="960.0" y="1064.0" font-size="23" fill="#422006" font-weight="700" text-anchor="middle" >X86 / AArch64 · Go ABI</text>
+<text x="960.0" y="1096.0" font-size="19" fill="#422006" font-weight="400" text-anchor="middle" >ABIInternal / ABI0 · registers · stack conventions</text>
+</g>
+<polyline points="720,1072.0 610,1072.0" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="665" y="1060.0" font-size="15" fill="#475569" font-weight="400" text-anchor="middle" stroke="white" stroke-width="6" paint-order="stroke">ABI</text>
+<polyline points="330,994 330,1028" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<g data-node="machine"><rect x="50" y="1150" width="560" height="88" rx="10" fill="#FDB022" stroke="#DC6803" stroke-width="2"/>
+<text x="330.0" y="1186.0" font-size="23" fill="#422006" font-weight="700" text-anchor="middle" >Machine passes / Go frame lowering</text>
+<text x="330.0" y="1218.0" font-size="19" fill="#422006" font-weight="400" text-anchor="middle" >Scheduling · register allocation · Go stack checks</text>
+</g>
+<g data-node="preempt"><rect x="720" y="1150" width="480" height="88" rx="10" fill="#175CD3" stroke="#1249A6" stroke-width="2"/>
+<text x="960.0" y="1186.0" font-size="23" fill="#FFFFFF" font-weight="700" text-anchor="middle" >GoALLCAsyncPreemption</text>
+<text x="960.0" y="1218.0" font-size="19" fill="#FFFFFF" font-weight="400" text-anchor="middle" >Final machine instructions → unsafe PC ranges</text>
+</g>
+<polyline points="610,1194.0 720,1194.0" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="665" y="1182.0" font-size="15" fill="#475569" font-weight="400" text-anchor="middle" stroke="white" stroke-width="6" paint-order="stroke">calls</text>
+<polyline points="330,1116 330,1150" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<g data-node="writer"><rect x="50" y="1272" width="560" height="116" rx="10" fill="#FDB022" stroke="#DC6803" stroke-width="2"/>
+<text x="330.0" y="1306.0" font-size="23" fill="#422006" font-weight="700" text-anchor="middle" >AsmPrinter → GoObj writer</text>
+<text x="330.0" y="1338.0" font-size="19" fill="#422006" font-weight="400" text-anchor="middle" >MCGoObjStreamer / GoObjObjectWriter</text>
+<text x="330.0" y="1370.0" font-size="19" fill="#422006" font-weight="400" text-anchor="middle" >Machine code · Go symbols · relocations</text>
+</g>
+<g data-node="metadata"><rect x="720" y="1272" width="480" height="116" rx="10" fill="#FDB022" stroke="#DC6803" stroke-width="2"/>
+<text x="960.0" y="1306.0" font-size="23" fill="#422006" font-weight="700" text-anchor="middle" >StackMaps / GoObjDebug / PC tables</text>
+<text x="960.0" y="1338.0" font-size="19" fill="#422006" font-weight="400" text-anchor="middle" >Pointer maps · stack objects · PCDATA / FUNCDATA</text>
+<text x="960.0" y="1370.0" font-size="19" fill="#422006" font-weight="400" text-anchor="middle" >PCSP · file / line · inline tree · DWARF</text>
+</g>
+<polyline points="720,1330.0 610,1330.0" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="665" y="1318.0" font-size="15" fill="#475569" font-weight="400" text-anchor="middle" stroke="white" stroke-width="6" paint-order="stroke">serialize</text>
+<polyline points="330,1238 330,1272" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="960,1238 960,1272" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<polyline points="1200,950 1230,950 1230,1330 1200,1330" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<g data-node="end"><rect x="50" y="1470" width="1150" height="116" rx="10" fill="#EEF2F6" stroke="#64748B" stroke-width="2"/>
+<text x="625.0" y="1504.0" font-size="23" fill="#1E293B" font-weight="700" text-anchor="middle" >Go archive → cmd/link → executable + Go runtime</text>
+<text x="625.0" y="1536.0" font-size="19" fill="#1E293B" font-weight="400" text-anchor="middle" >__.PKGDEF + _go_.o + assembly / cgo objects</text>
+<text x="625.0" y="1568.0" font-size="19" fill="#1E293B" font-weight="400" text-anchor="middle" >Existing Go linking, GC, stack copying, reflection and diagnostics</text>
+</g>
+<polyline points="330,1388 330,1470" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="60,1625 115,1625" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="130" y="1632" font-size="18" fill="#475569" font-weight="400" text-anchor="start" >Compilation / artifacts</text>
+<polyline points="650,1625 705,1625" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="720" y="1632" font-size="18" fill="#475569" font-weight="400" text-anchor="start" >Metadata / integration</text>
+</g></svg>

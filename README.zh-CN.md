@@ -50,15 +50,9 @@ SDK 默认启用 LLVM，并集成编译器所需依赖；编译纯 Go 项目无�
 
 ## 工作原理
 
-```mermaid
-flowchart TD
-    A[Go 源码] --> B[Go 前端与通用 SSA 优化]
-    B --> C[GoALLC 将 SSA 转换为 LLVM IR]
-    C --> D[LLVM 优化与代码生成]
-    D --> E[GoObj 机器码与运行时元数据]
-    E --> F[Go 包归档与链接器]
-    F --> G[使用 Go 运行时的可执行文件]
-```
+[![GoALLC 编译器架构：复用 Go 前端、LLVM lowering、Go 专用 pass、GoObj 输出与 Go 运行时](doc/images/goallc-architecture.zh-CN.svg)](doc/images/goallc-architecture.zh-CN.svg)
+
+蓝色为 GoALLC 实现，橙色为 LLVM fork 扩展，青绿色为 LLVM 标准模块；复用 Go 的部分以灰色合并展示。点击图片可放大查看。
 
 GoALLC 在 Go 通用 SSA 优化之后、目标架构 lowering 之前接入 LLVM。
 普通包编译在编译器进程内运行 LLVM，由 LLVM 负责指令选择、寄存器分配和栈帧布局，
