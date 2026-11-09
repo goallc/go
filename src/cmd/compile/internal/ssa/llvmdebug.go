@@ -13,7 +13,9 @@ import (
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/dwarf"
+	"cmd/internal/goobj"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"fmt"
 	"internal/buildcfg"
@@ -30,16 +32,17 @@ import (
 // GoObj writer then encodes pcfile/pcline/pcinline and the Go linker's
 // per-function DWARF carriers from the same facts.
 var (
-	llvmDIBuilder        *llvm.DIBuilder
-	llvmDICompileUnit    llvm.Metadata
-	llvmDIPackage        llvm.Metadata
-	llvmDIFiles          map[string]llvm.Metadata
-	llvmDISubprograms    map[*obj.LSym]llvm.Metadata
-	llvmDISubprogramVals map[*obj.LSym]llvm.Value
-	llvmDITypes          map[*types.Type]llvm.Metadata
-	llvmDITypeBuilding   map[*types.Type]bool
-	llvmDIForwardTypes   map[*types.Type]llvm.Metadata
-	llvmDIDebugFinalized bool
+	llvmDIBuilder               *llvm.DIBuilder
+	llvmDICompileUnit           llvm.Metadata
+	llvmDIPackage               llvm.Metadata
+	llvmDIFiles                 map[string]llvm.Metadata
+	llvmDISubprograms           map[*obj.LSym]llvm.Metadata
+	llvmDISubprogramVals        map[*obj.LSym]llvm.Value
+	llvmDISubprogramAnnotations map[*obj.LSym]llvm.Metadata
+	llvmDITypes                 map[*types.Type]llvm.Metadata
+	llvmDITypeBuilding          map[*types.Type]bool
+	llvmDIForwardTypes          map[*types.Type]llvm.Metadata
+	llvmDIDebugFinalized        bool
 )
 
 func initLLVMDebugInfo(pkg *types.Pkg) {
@@ -47,6 +50,7 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 	llvmDIFiles = make(map[string]llvm.Metadata)
 	llvmDISubprograms = make(map[*obj.LSym]llvm.Metadata)
 	llvmDISubprogramVals = make(map[*obj.LSym]llvm.Value)
+	llvmDISubprogramAnnotations = make(map[*obj.LSym]llvm.Metadata)
 	llvmDITypes = make(map[*types.Type]llvm.Metadata)
 	llvmDITypeBuilding = make(map[*types.Type]bool)
 	llvmDIForwardTypes = make(map[*types.Type]llvm.Metadata)
@@ -116,16 +120,31 @@ func finalizeLLVMDebugInfo() {
 			value = llvmDebugSubprogramValue(sym, llvmDISubprograms[sym], abstractValues)
 		}
 		preserveGoObjMetadataValues(value)
-		// Definitions carry their exact subprogram on !dbg. Keep the symbol
-		// rooted, but only publish mappings that cannot be recovered there:
-		// abstract inline instances can share storage with a different SP.
-		if !value.IsAFunction().IsNil() && !value.IsDeclaration() && value.Subprogram() == llvmDISubprograms[sym] {
-			continue
+		// An inline scope outlives its function body, including across ThinLTO
+		// imports. Store the exact storage identity on the scope itself, using
+		// scalar annotations that do not require importing an otherwise unused GV.
+		var annotations []llvm.Metadata
+		add := func(key string, value llvm.Metadata) {
+			annotations = append(annotations, GlobalCtxt.MDNode([]llvm.Metadata{GlobalCtxt.MDString(key), value}))
 		}
-		CurrentModule.AddNamedMetadataOperand("goobj.debug.funcs", GlobalCtxt.MDNode([]llvm.Metadata{
-			llvmDISubprograms[sym],
-			value.ConstantAsMetadata(),
-		}))
+		add("goobj.symbol", GlobalCtxt.MDString(value.Name()))
+		ref := value.GlobalMetadata(GlobalCtxt.MDKindID("goobj.import"))
+		if index := value.GlobalMetadata(GlobalCtxt.MDKindID(goObjSymbolIndexMD)); !index.IsNil() {
+			var flags2 uint64
+			if sym.UsedInIface() {
+				flags2 = goobj.SymFlagUsedInIface
+			}
+			ref = GlobalCtxt.MDNode([]llvm.Metadata{
+				GlobalCtxt.MDString(objabi.PathToPrefix(base.Ctxt.Pkgpath)), index.Operand(0),
+				llvm.ConstInt(GlobalCtxt.Int32Type(), flags2, false).ConstantAsMetadata(),
+			})
+		}
+		if !ref.IsNil() {
+			add("goobj.package", ref.Operand(0))
+			add("goobj.index", ref.Operand(1))
+			add("goobj.flags2", ref.Operand(2))
+		}
+		llvmDISubprogramAnnotations[sym].ReplaceAllUsesWith(GlobalCtxt.MDNode(annotations))
 	}
 	emitGoObjDebugGlobals()
 	llvmDIBuilder.Finalize()
@@ -445,6 +464,7 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 	if f != nil && base.Flag.Dwarf {
 		typ = llvmDebugFunctionType(f, file)
 	}
+	annotations := GlobalCtxt.TemporaryMDNode(nil)
 	sp := llvmDIBuilder.CreateFunction(llvmDIPackage, llvm.DIFunction{
 		Name:         sym.Name,
 		LinkageName:  llvmFunctionStorageName(sym.Name, llvmCallConv(sym.ABI())),
@@ -454,8 +474,10 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 		IsDefinition: true,
 		ScopeLine:    line,
 		Optimized:    base.Flag.N == 0,
+		Annotations:  annotations,
 	})
 	llvmDISubprograms[sym] = sp
+	llvmDISubprogramAnnotations[sym] = annotations
 	return sp
 }
 

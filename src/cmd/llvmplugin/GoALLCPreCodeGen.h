@@ -5,6 +5,7 @@
 #ifndef GOALLC_PRE_CODEGEN_H
 #define GOALLC_PRE_CODEGEN_H
 
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
 
 namespace llvm {
@@ -14,6 +15,10 @@ class Function;
 class TargetMachine;
 
 namespace goallc {
+
+// Shared preparation for llc and standard LLVM LTO code generation. Run before
+// constructing the codegen pipeline, including AsmPrinter initialization.
+Error prepareCodeGenModule(Module &M, CodeGenOptLevel OptLevel);
 
 // Runs the GoALLC IR pipeline immediately before LLVM code generation.
 //
