@@ -19,21 +19,22 @@ go test -lto=thin -short ./...
 go build -lto=thin -ldflags='-lto-jobs=4 -lto-keep' ./cmd/app
 ```
 
-`-lto-jobs` controls parallel LLVM optimization (default: `GOMAXPROCS`).
-Archive bitcode is passed to LLVM in memory. Each worker imports and optimizes
-its module, then emits a GoObj from that same module and context. Object buffers
-are written directly into replacement archives. LLVM's process-global GoObj
-configuration requires serial code generation; module optimization stays
-parallel. Modules are released as their workers finish.
+`-lto-jobs` controls parallel LLVM backends (default: `GOMAXPROCS`).
+Archive bitcode is passed to LLVM in memory. The Go-owned plugin normalizes
+symbol identities and supplies resolutions to `lto::LTO`, which constructs the
+combined index, plans imports, and schedules the standard in-process backends.
+Each backend optimizes and emits one GoObj from its module and context. GoObj
+configuration belongs to the individual `MCContext`, so code generation can
+run concurrently. Object buffers feed replacement archives directly.
 
-The plugin owns its C ABI in `GoALLCThinLTOC.h`, as well as summary writing,
-importing, optimization, and codegen. `cmd/internal/llvmbackend` adapts Go calls
-to that ABI, retaining the existing dynamic loading and static dispatch paths.
-It also owns LLVM error and buffer lifetimes, including partial results.
-`cmd/internal/llvmlto` only coordinates archives and borrows output byte slices
-until rewriting is complete. The compiler writes ThinLTO bitcode through the
-backend adapter without depending on the linker archive package. Plugin-specific
-operations do not extend the vendored LLVM binding.
+The plugin owns its C ABI in `GoALLCThinLTOC.h` and the Go-specific input/output
+adaptation. Its mutable post-optimization callback restores package metadata
+and prepares Go markers before codegen initializes AsmPrinter. LLVM owns the
+LTO algorithms and codegen pipeline. `cmd/internal/llvmbackend` adapts Go calls
+to the plugin through dynamic loading or static dispatch and owns LLVM error
+and buffer lifetimes. `cmd/internal/llvmlto` coordinates archives and borrows
+output byte slices until rewriting is complete. Plugin-specific operations do
+not extend the vendored LLVM binding.
 
 By default, ThinLTO preparation writes only replacement archives. `-lto-keep`
 prints `LTO_WORK` and additionally saves input/optimized bitcode and IR, and
@@ -43,14 +44,20 @@ LLVM/plugin identities; there is currently no persistent ThinLTO backend cache.
 ## Package identity and imports
 
 Original compiler symbol indices and package fingerprints remain unchanged.
-An indexed definition is retained and gets a temporary `goobj.import`
-attachment identifying its package and index. Imported references retain that
-attachment; local definitions lose it before GoObj emission. Imported bodies
-are optimization-only; LLVM's standard ThinLTO post-link pipeline eliminates
-their `available_externally` definitions. GoALLC preserves package references
-across that elimination (which also clears function metadata), then normalizes
-the remaining GoObj metadata.
-Each output module must retain exactly its original set of indexed definitions.
+An indexed definition is retained with its package and index. Functions carry
+this reference identity in string attributes, which survive LLVM deleting an
+imported body; globals use `goobj.import` metadata. Local definitions lose the
+reference identity before GoObj emission. LLVM's standard ThinLTO post-link
+pipeline eliminates imported `available_externally` definitions. Each output
+module must retain exactly its original set of indexed definitions.
+
+LLVM normally selects one prevailing definition for each name. Before LTO,
+the adapter gives duplicate Go definitions collision-checked temporary LLVM
+names and rebuilds their summaries. Functions involving these unresolved
+identities are not imported. After optimization, each package restores its
+original names before object emission. This preserves package slots and
+content-addressed references while leaving BSS replacement and duplicate
+selection to the Go linker, including when native objects participate.
 
 The current resolution policy leaves native symbol resolution authoritative,
 including duplicate BSS and content-addressed symbols. Retaining original
@@ -64,11 +71,10 @@ in metadata must not be lost through LLVM's summary-based importer. Global
 initializers are not imported, so LLVM cannot replace native BSS resolution with
 an imported initializer.
 
-Native debug metadata follows LLVM importing and inlining. Temporary
-`goallc.thin.debug.funcs` records preserve source-subprogram-to-symbol mappings
-as names and package references, including linknamed functions. After
-optimization, reachable scopes regain exact GoObj debug symbol mappings;
-unimported null references are discarded. Package configuration, import DAG,
+Native debug metadata follows LLVM importing and inlining. `DISubprogram`
+annotations preserve exact source-to-symbol identities, including linknamed
+functions, without rebuilding a separate mapping table after optimization.
+Package configuration, import DAG,
 CPU configuration, generated read-only data classification, and cgo assembly
 directives remain owned by each original module. FIPS packages participate in
 ThinLTO while retaining their FIPS symbol sections; their classification of

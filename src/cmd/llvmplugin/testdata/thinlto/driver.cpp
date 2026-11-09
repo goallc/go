@@ -86,8 +86,7 @@ int main(int argc, char **argv) {
     return Valid ? 0 : 1;
   }
   if (auto E = goallc::runThinLTO(
-          Modules, SaveTemps ? StringRef(Out) : StringRef(), Jobs,
-          [](unsigned, Module &) { return Error::success(); })) {
+          Modules, SaveTemps ? StringRef(Out) : StringRef(), Jobs)) {
     errs() << "goallc-thinlto: " << toString(std::move(E)) << '\n';
     return 1;
   }

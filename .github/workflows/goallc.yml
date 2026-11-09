@@ -255,7 +255,7 @@ jobs:
             -DGOALLC_OBJVIEW_EXECUTABLE="$plugin_build/goallc-objview" \
             -DCMAKE_C_COMPILER_LAUNCHER="$GOALLC_CCACHE" \
             -DCMAKE_CXX_COMPILER_LAUNCHER="$GOALLC_CCACHE"
-          cmake --build "$plugin_build" --target GoALLCStatepoints goallc-thinlto-test --parallel 2
+          cmake --build "$plugin_build" --target GoALLCStatepoints goallc-thinlto-test goallc-lto-transform-test --parallel 2
           ctest --test-dir "$plugin_build" --output-on-failure -j 2
 
       - name: Package standard release archives

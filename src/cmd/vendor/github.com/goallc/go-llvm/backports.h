@@ -10,6 +10,17 @@ void LLVMGlobalObjectAddMetadata(LLVMValueRef objValue, unsigned KindID, LLVMMet
 
 LLVMMemoryBufferRef LLVMGoWriteThinLTOBitcodeToMemoryBuffer(LLVMModuleRef M);
 
+LLVMMetadataRef LLVMGoGlobalObjectGetMetadata(LLVMValueRef Value,
+                                            unsigned Kind);
+LLVMMetadataRef LLVMGoMDNodeGetOperand(LLVMMetadataRef Node, unsigned Index);
+
+LLVMMetadataRef LLVMGoDIBuilderCreateFunction(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, const char *LinkageName, size_t LinkageNameLen,
+    LLVMMetadataRef File, unsigned Line, LLVMMetadataRef Type,
+    LLVMBool LocalToUnit, LLVMBool IsDefinition, unsigned ScopeLine,
+    LLVMDIFlags Flags, LLVMBool Optimized, LLVMMetadataRef Annotations);
+
 LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
     LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
     size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,

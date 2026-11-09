@@ -281,6 +281,7 @@ type DIFunction struct {
 	ScopeLine    int
 	Flags        int
 	Optimized    bool
+	Annotations  Metadata
 }
 
 // CreateFunction creates function debug metadata.
@@ -289,7 +290,7 @@ func (d *DIBuilder) CreateFunction(diScope Metadata, f DIFunction) Metadata {
 	defer C.free(unsafe.Pointer(name))
 	linkageName := C.CString(f.LinkageName)
 	defer C.free(unsafe.Pointer(linkageName))
-	result := C.LLVMDIBuilderCreateFunction(
+	result := C.LLVMGoDIBuilderCreateFunction(
 		d.ref,
 		diScope.C,
 		name, C.size_t(len(f.Name)),
@@ -302,6 +303,7 @@ func (d *DIBuilder) CreateFunction(diScope Metadata, f DIFunction) Metadata {
 		C.unsigned(f.ScopeLine),
 		C.LLVMDIFlags(f.Flags),
 		C.LLVMBool(boolToCInt(f.Optimized)),
+		f.Annotations.C,
 	)
 	return Metadata{C: result}
 }

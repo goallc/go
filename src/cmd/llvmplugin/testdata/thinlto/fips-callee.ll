@@ -3,6 +3,7 @@
 ; OBJ: "kind": "SRODATAFIPS"
 ; OBJ-NOT: "name":
 ; OBJ: "data_hex": "6500000000000000ca00000000000000"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-goobj"
 @fips.table = private constant [2 x i64] [i64 101, i64 202]
 define goabiinternal i64 @"crypto/internal/fips140/probe.add"(i64 %v) section ".text.fips" !goobj.symbol.index !0 {

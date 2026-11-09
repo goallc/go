@@ -1,3 +1,5 @@
+; OWNER: "text_header": {{.*}}main-id
+; OWNER: "fingerprint": "0100000000000000"
 ; CGO: "text_header": {{.*}}-lthin_caller
 ; CGO-NOT: -lthin_callee
 ; ASM-NOT: -lthin_callee
@@ -9,20 +11,20 @@
 ; CHECK-LABEL: define {{.*}}@main.result(
 ; CHECK-NOT: call {{.*}}@dep.public
 ; CHECK: load volatile i64, ptr @dep.slot
-; CHECK: declare !goobj.import ![[LEAFREF:[0-9]+]] void @leaf.original()
-; CHECK: !goobj.debug.funcs = !{![[MAP:[0-9]+]], ![[DEPMAP:[0-9]+]], ![[LEAFMAP:[0-9]+]]}
-; CHECK-DAG: ![[MAP]] = !{![[MAIN:[0-9]+]], ptr @main.result}
-; CHECK-DAG: ![[DEPMAP]] = !{![[DEP:[0-9]+]], ptr @dep.public}
-; CHECK-DAG: ![[LEAFMAP]] = !{![[LEAF:[0-9]+]], ptr @leaf.original}
-; CHECK-DAG: ![[DEP]] = distinct !DISubprogram(name: "dep.source", linkageName: "dep.source"
-; CHECK-DAG: ![[LEAF]] = distinct !DISubprogram(name: "leaf.source", linkageName: "leaf.source"
+; CHECK-NOT: !goobj.debug.funcs
+; CHECK-NOT: !goallc.thin.debug.funcs
+; CHECK-DAG: distinct !DISubprogram(name: "dep.source", linkageName: "dep.source", {{.*}}annotations:
+; CHECK-DAG: distinct !DISubprogram(name: "leaf.source", linkageName: "leaf.source", {{.*}}annotations:
+; CHECK-DAG: !{!"goobj.symbol", !"dep.public"}
+; CHECK-DAG: !{!"goobj.symbol", !"leaf.original"}
+; CHECK-DAG: !{!"goobj.package", !"leaf"}
 ; CHECK-DAG: !DILocation(line: 20, {{.*}}inlinedAt:
-; CHECK-DAG: ![[LEAFREF]] = !{!"leaf", i32 0, i32 0}
 ; OBJ-LABEL: "name": "main.result",
 ; OBJ: "inline_tree": [
 ; OBJ: "name": "dep.public"
 ; OBJ: "file": "/tmp/thinlto/dep.go"
 ; OBJ: "name": "leaf.original"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-v128:64:64-v256:64:64-v512:64:64-n8:16:32:64-S64"
 target triple = "x86_64-unknown-linux-goobj"
 define goabiinternal i64 @main.result() !goobj.symbol.index !0 !dbg !13 {
   %v = call goabiinternal i64 @dep.public(), !dbg !14

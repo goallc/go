@@ -203,7 +203,7 @@ func TestLTOCgo(t *testing.T) {
 // objects must still resolve the declaring package's original symbol index.
 func TestLTOIndexedBSS(t *testing.T) {
 	goTool := thinLTOToolchain(t)
-	for _, mode := range []string{"ordinary", "thin", "mixed"} {
+	for _, mode := range []string{"ordinary", "thin", "mixed", "native-declaration", "native-initializer"} {
 		t.Run(mode, func(t *testing.T) {
 			output := filepath.Join(t.TempDir(), "program")
 			args := []string{"build", "-o", output}
@@ -211,8 +211,13 @@ func TestLTOIndexedBSS(t *testing.T) {
 				args = append(args, "-gcflags=all=-enablellvm=false")
 			} else {
 				args = append(args, "-lto=thin")
-				if mode == "mixed" {
+				switch mode {
+				case "mixed":
 					args = append(args, "-gcflags=example.com/lto-bss/observer=-enablellvm=false")
+				case "native-declaration":
+					args = append(args, "-gcflags=example.com/lto-bss/decl=-enablellvm=false")
+				case "native-initializer":
+					args = append(args, "-gcflags=example.com/lto-bss/initialize=-enablellvm=false")
 				}
 			}
 			cmd := exec.Command(goTool, append(args, ".")...)

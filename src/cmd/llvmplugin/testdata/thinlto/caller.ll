@@ -8,7 +8,8 @@
 ; CHECK-NOT: !goobj.marker_reloc
 ; CHECK-LABEL: define {{.*}}@main.noinlineCaller(
 ; CHECK: call goabiinternal i64 @dep.add(i64 %v)
-; CHECK: declare !goobj.import {{.*}}goabiinternal i64 @dep.add(i64)
+; CHECK: declare goabiinternal i64 @dep.add(i64) {{.*}}#[[ATTR:[0-9]+]]
+; CHECK: attributes #[[ATTR]] = {{.*}}"goobj.import.flags2"="0" "goobj.import.index"="0" "goobj.import.package"="dep"
 ; CHECK: !goobj.config = !{![[CONFIG:[0-9]+]]}
 ; CHECK-DAG: ![[CONFIG]] = !{!"main-id", !"main", !"1", !"0", !"0100000000000000"}
 target triple = "x86_64-unknown-linux-goobj"
