@@ -4,7 +4,6 @@
 #include "GoALLCPreCodeGen.h"
 #include "GoALLCThinLTOC.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
@@ -63,38 +62,30 @@ static bool hashed(const GlobalObject &G) {
 // references can be represented in a different package's ordinary Go object.
 // In particular, a content-addressed local has no cross-package export index,
 // and a linkname reference must retain its original permission-checking owner.
-static bool exportableReference(const Value *V,
-                                SmallPtrSetImpl<const Value *> &Seen) {
-  if (!Seen.insert(V).second)
+static bool exportableReference(ValueInfo VI, const StringSet<> &Ambiguous) {
+  const GlobalValue *G = VI.getValue();
+  if (!G || Ambiguous.count(G->getName()))
+    return false;
+  StringRef Name = G->getName();
+  Name.consume_back(GoObj::ABI0SymbolSuffix);
+  if (GoObj::getSymbolSuffix(Name) == GoObj::LinknameSymbolSuffix)
+    return false;
+  if (G->isDeclaration() || Name.starts_with("llvm."))
     return true;
-  if (const auto *G = dyn_cast<GlobalValue>(V)) {
-    StringRef Name = G->getName();
-    Name.consume_back(GoObj::ABI0SymbolSuffix);
-    if (GoObj::getSymbolSuffix(Name) == GoObj::LinknameSymbolSuffix)
-      return false;
-    if (G->isDeclaration() || Name.starts_with("llvm."))
-      return true;
-    const auto *GO = dyn_cast<GlobalObject>(G);
-    if (!GO || hashed(*GO))
-      return false;
-    return GO->getMetadata("goobj.symbol.index") || !G->hasLocalLinkage();
-  }
-  if (const auto *C = dyn_cast<Constant>(V))
-    for (const Use &U : C->operands())
-      if (!exportableReference(U.get(), Seen))
-        return false;
-  return true;
+  const auto *GO = dyn_cast<GlobalObject>(G);
+  return GO && !hashed(*GO) &&
+         (GO->getMetadata("goobj.symbol.index") || !G->hasLocalLinkage());
 }
 
 // Conservative import policy for the current GoObj representation, not a
 // ThinLTO requirement. Relax individual restrictions only when Go symbol
 // ownership and metadata-only reachability survive the importer.
-static bool canImportGoFunction(const Function &F) {
-  if (F.getMetadata("goallc.lto.noimport") || hashed(F) || F.isInterposable() ||
+static bool canImportGoFunction(const Function &F, const FunctionSummary &Summary,
+                                const StringSet<> &Ambiguous) {
+  if (Ambiguous.count(F.getName()) || hashed(F) || F.isInterposable() ||
       F.getMetadata("goobj.keep") || F.getMetadata("goobj.marker_relocs") ||
       F.getMetadata("goobj.weak_calls"))
     return false;
-  SmallPtrSet<const Value *, 32> Seen;
   for (const BasicBlock &BB : F)
     for (const Instruction &I : BB) {
       // Relocation targets in metadata are not ThinLTO reference edges. Keep
@@ -102,14 +93,19 @@ static bool canImportGoFunction(const Function &F) {
       // representation; an imported null target would lose Go reachability.
       if (I.getMetadata("goobj.marker_reloc"))
         return false;
-      for (const Use &U : I.operands())
-        if (!exportableReference(U.get(), Seen))
-          return false;
     }
-  return true;
+  // Reuse LLVM's reference and call edges, including nested constant operands.
+  auto Exportable = [&](ValueInfo VI) {
+    return exportableReference(VI, Ambiguous);
+  };
+  return llvm::all_of(Summary.refs(), Exportable) &&
+         llvm::all_of(Summary.calls(), [&](const auto &Edge) {
+           return Exportable(Edge.first);
+         });
 }
 
-static Error writeThinBitcode(Module &M, raw_ostream &OS) {
+static Error writeThinBitcode(Module &M, raw_ostream &OS,
+                              const StringSet<> &Ambiguous = {}) {
   auto Prefix = packagePrefix(M);
   if (!Prefix)
     return Prefix.takeError();
@@ -186,12 +182,12 @@ static Error writeThinBitcode(Module &M, raw_ostream &OS) {
     auto VI = Index.getValueInfo(G.getGUIDOrFallback());
     if (!VI)
       continue;
-    if (!isa<Function>(G) || !canImportGoFunction(cast<Function>(G)))
-      for (auto &Summary : VI.getSummaryList())
+    for (auto &Summary : VI.getSummaryList()) {
+      auto *FS = dyn_cast<FunctionSummary>(Summary.get());
+      if (!FS || !canImportGoFunction(cast<Function>(G), *FS, Ambiguous))
         Summary->setNotEligibleToImport();
+    }
   }
-  for (Function &F : M)
-    F.setMetadata("goallc.lto.noimport", nullptr);
   if (verifyModule(M, &errs()))
     return fail("invalid ThinLTO input module");
   WriteBitcodeToFile(M, OS, false, &Index, true);
@@ -307,28 +303,6 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
     if (!Parsed)
       return Parsed.takeError();
     Module &M = **Parsed;
-    auto UsesAmbiguous = [&](const Value *V, auto &&Self,
-                             SmallPtrSetImpl<const Value *> &Seen) -> bool {
-      if (!Seen.insert(V).second)
-        return false;
-      if (auto *GV = dyn_cast<GlobalValue>(V))
-        return AmbiguousIRNames.count(GV->getName());
-      if (auto *K = dyn_cast<Constant>(V))
-        for (const Use &U : K->operands())
-          if (Self(U.get(), Self, Seen))
-            return true;
-      return false;
-    };
-    for (Function &F : M) {
-      SmallPtrSet<const Value *, 32> Seen;
-      bool Unresolved = AmbiguousIRNames.count(F.getName());
-      for (BasicBlock &BB : F)
-        for (Instruction &Inst : BB)
-          for (const Use &U : Inst.operands())
-            Unresolved |= UsesAmbiguous(U.get(), UsesAmbiguous, Seen);
-      if (Unresolved)
-        F.setMetadata("goallc.lto.noimport", MDNode::get(C, {}));
-    }
     unsigned N = 0;
     for (GlobalObject &G : M.global_objects()) {
       if (G.isDeclaration() || !AmbiguousIRNames.count(G.getName()))
@@ -339,13 +313,14 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
       } while (M.getNamedValue(Temporary) || AllIRNames.count(Temporary));
       AllIRNames.insert(Temporary);
       TemporaryNames.insert(Temporary);
+      AmbiguousIRNames.insert(Temporary);
       OriginalNames[I][Temporary] = G.getName().str();
       G.setName(Temporary);
       G.setMetadata("guid", nullptr);
     }
     SmallVector<char, 0> Bytes;
     raw_svector_ostream OS(Bytes);
-    if (Error E = writeThinBitcode(M, OS))
+    if (Error E = writeThinBitcode(M, OS, AmbiguousIRNames))
       return E;
     Normalized.push_back(
         MemoryBuffer::getMemBufferCopy(StringRef(Bytes.data(), Bytes.size()),
