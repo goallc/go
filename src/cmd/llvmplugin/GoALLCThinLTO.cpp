@@ -8,9 +8,11 @@
 #include "llvm/Analysis/ModuleSummaryAnalysis.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/BinaryFormat/GoObj.h"
+#include "llvm/BinaryFormat/GoObjIdentity.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Instructions.h"
@@ -104,14 +106,35 @@ static bool canImportGoFunction(const Function &F, const FunctionSummary &Summar
          });
 }
 
-static Error writeThinBitcode(Module &M, raw_ostream &OS,
-                              const StringSet<> &Ambiguous = {}) {
+static Error writeThinBitcode(Module &M, raw_ostream &OS) {
   auto Prefix = packagePrefix(M);
   if (!Prefix)
     return Prefix.takeError();
   LLVMContext &C = M.getContext();
+  C.getMDKindID("goobj.llvm.identity");
+  if (auto *Version = M.getModuleFlag("goobj.llvm.identity")) {
+    auto *V = mdconst::dyn_extract<ConstantInt>(Version);
+    if (!V || !V->equalsInt(1))
+      return fail("unsupported GoObj LLVM identity version");
+  } else {
+    M.addModuleFlag(Module::Error, "goobj.llvm.identity", 1);
+  }
+  // Existing backends reject this schema rather than emitting encoded names.
+  auto *ABI = dyn_cast<MDNode>(M.getModuleFlag("goobj.abi"));
+  if (!ABI || ABI->getNumOperands() != 8)
+    return fail("invalid GoObj ABI for stable identity");
+  auto *Schema = dyn_cast<MDString>(ABI->getOperand(0));
+  if (!Schema || (Schema->getString() != "goallc.goobj" &&
+                  Schema->getString() != "goallc.goobj.llvm-identity.v1"))
+    return fail("unsupported GoObj ABI for stable identity");
+  SmallVector<Metadata *> ABIFields(ABI->op_begin(), ABI->op_end());
+  ABIFields[0] = MDString::get(C, "goallc.goobj.llvm-identity.v1");
+  M.setModuleFlag(Module::Error, "goobj.abi", MDNode::get(C, ABIFields));
   DenseSet<uint32_t> Indices;
   SmallVector<GlobalValue *> Retained;
+  StringSet<> NativeOnly;
+  StringMap<std::string> IRNames;
+  SmallVector<std::pair<GlobalObject *, std::string>> NewNames;
   for (GlobalObject &G : M.global_objects()) {
     auto *F = dyn_cast<Function>(&G);
     auto *Index = G.getMetadata("goobj.symbol.index");
@@ -130,7 +153,7 @@ static Error writeThinBitcode(Module &M, raw_ostream &OS,
         Flags2 = mdconst::extract<ConstantInt>(Flags->getOperand(1))
                      ->getZExtValue() &
                  GoObj::SymFlagUsedInIface;
-    } else if (auto *Ref = F ? F->getMetadata("goobj.import") : nullptr) {
+    } else if (auto *Ref = G.getMetadata("goobj.import")) {
       auto *Package = Ref->getNumOperands() == 3
                           ? dyn_cast<MDString>(Ref->getOperand(0))
                           : nullptr;
@@ -146,6 +169,16 @@ static Error writeThinBitcode(Module &M, raw_ostream &OS,
       Owner = Package->getString();
       Slot = I->getZExtValue();
       Flags2 = Flags->getZExtValue();
+    }
+    if (Owner.empty() && F && F->hasFnAttribute("goobj.import.package")) {
+      Owner = F->getFnAttribute("goobj.import.package").getValueAsString();
+      if (F->getFnAttribute("goobj.import.index")
+              .getValueAsString()
+              .getAsInteger(10, Slot) ||
+          F->getFnAttribute("goobj.import.flags2")
+              .getValueAsString()
+              .getAsInteger(10, Flags2))
+        return fail("invalid existing Go identity");
     }
     if (!Owner.empty()) {
       if (F) {
@@ -168,6 +201,111 @@ static Error writeThinBitcode(Module &M, raw_ostream &OS,
     if (!G.isDeclaration() && !G.getName().starts_with("llvm.") &&
         (Index || (!G.hasLocalLinkage() && !hashed(G))))
       Retained.push_back(&G);
+    // Establish the LLVM identity once, before the initial summary.
+    // Hex encoding keeps package bytes out of the reserved suffix syntax.
+    bool Marked = F ? F->hasFnAttribute("goobj.llvm.identity")
+                    : G.getMetadata("goobj.llvm.identity") != nullptr;
+    bool Escape = !Marked && G.getName().starts_with("__goid$");
+    if (Marked && Owner.empty() && !G.isDeclaration())
+      NativeOnly.insert(G.getName());
+    if (!Owner.empty() || Escape ||
+        (!G.isDeclaration() && !G.hasLocalLinkage() &&
+         !G.getName().starts_with("llvm."))) {
+      std::string NativeName = G.getName().str();
+      if (Marked) {
+        auto *MD = G.getMetadata("goobj.llvm.identity");
+        auto *Version =
+            MD && MD->getNumOperands() == 1
+                ? mdconst::dyn_extract<ConstantInt>(MD->getOperand(0))
+                : nullptr;
+        if (F ? F->getFnAttribute("goobj.llvm.identity").getValueAsString() !=
+                    "1"
+              : !Version || !Version->equalsInt(1))
+          return fail("unsupported GoObj symbol identity version");
+        StringRef Decoded = GoObj::decodeLLVMIdentity(NativeName);
+        if (Decoded.empty())
+          return fail("invalid stable Go identity: " + G.getName());
+        NativeName = Decoded.str();
+      }
+      std::string IRName = GoObj::encodeLLVMIdentity(
+          NativeName, Owner.empty() ? *Prefix : Owner,
+          Owner.empty() ? std::nullopt : std::optional<uint32_t>(Slot));
+      if (Escape && Owner.empty() && (G.isDeclaration() || G.hasLocalLinkage()))
+        IRName = "__goid$v1$6E6174697665$r$" + NativeName;
+      IRNames[NativeName] = IRName;
+      if (G.getName() != IRName) {
+        NewNames.emplace_back(&G, IRName);
+        G.setMetadata("guid", nullptr);
+      }
+      if (F)
+        F->addFnAttr("goobj.llvm.identity", "1");
+      else
+        G.setMetadata("goobj.llvm.identity",
+                      MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(
+                                         Type::getInt32Ty(C), 1))));
+      if (Owner.empty() && !G.isDeclaration())
+        NativeOnly.insert(IRName);
+    }
+  }
+  // Release original names together: a valid native name may equal another
+  // definition's encoded identity. References follow their GlobalValues.
+  for (auto &[G, Name] : NewNames)
+    G->setName("");
+  for (auto &[G, Name] : NewNames) {
+    if (M.getNamedValue(Name))
+      return fail("conflicting stable Go identity: " + Name);
+    G->setName(Name);
+  }
+  // Debug identities are scalar annotations, not GlobalValue references.
+  DebugInfoFinder Debug;
+  Debug.processModule(M);
+  for (DISubprogram *SP : Debug.subprograms()) {
+    auto *Annotations = SP->getAnnotations().get();
+    if (!Annotations)
+      continue;
+    StringRef Name, Owner;
+    bool Marked = false;
+    const ConstantInt *Slot = nullptr;
+    for (const MDOperand &Operand : Annotations->operands()) {
+      auto *A = cast<MDNode>(Operand);
+      if (A->getNumOperands() != 2)
+        continue;
+      auto *Key = dyn_cast<MDString>(A->getOperand(0));
+      if (!Key)
+        continue;
+      if (Key->getString() == "goobj.llvm.identity")
+        Marked = true;
+      if (Key->getString() == "goobj.symbol")
+        Name = cast<MDString>(A->getOperand(1))->getString();
+      if (Key->getString() == "goobj.package")
+        Owner = cast<MDString>(A->getOperand(1))->getString();
+      if (Key->getString() == "goobj.index")
+        Slot = mdconst::dyn_extract<ConstantInt>(A->getOperand(1));
+    }
+    if (Marked) {
+      if (GoObj::decodeLLVMIdentity(Name).empty())
+        return fail("invalid stable Go debug identity");
+      continue;
+    }
+    std::string IRName = IRNames.lookup(Name);
+    if (IRName.empty() && !Owner.empty() && Slot)
+      IRName = GoObj::encodeLLVMIdentity(Name, Owner, Slot->getZExtValue());
+    if (IRName.empty())
+      continue;
+    SmallVector<Metadata *> Updated;
+    for (const MDOperand &Operand : Annotations->operands()) {
+      auto *A = cast<MDNode>(Operand);
+      auto *Key = A->getNumOperands() == 2
+                      ? dyn_cast<MDString>(A->getOperand(0))
+                      : nullptr;
+      Updated.push_back(Key && Key->getString() == "goobj.symbol"
+                            ? MDNode::get(C, {Key, MDString::get(C, IRName)})
+                            : A);
+    }
+    Updated.push_back(MDNode::get(C, {MDString::get(C, "goobj.llvm.identity"),
+                                      ConstantAsMetadata::get(ConstantInt::get(
+                                          Type::getInt32Ty(C), 1))}));
+    SP->replaceOperandWith(11, MDTuple::get(C, Updated));
   }
   // Keep original package slots and externally visible definitions until the
   // Go linker resolves native objects and Go-only reachability. This is our
@@ -184,7 +322,7 @@ static Error writeThinBitcode(Module &M, raw_ostream &OS,
       continue;
     for (auto &Summary : VI.getSummaryList()) {
       auto *FS = dyn_cast<FunctionSummary>(Summary.get());
-      if (!FS || !canImportGoFunction(cast<Function>(G), *FS, Ambiguous))
+      if (!FS || !canImportGoFunction(cast<Function>(G), *FS, NativeOnly))
         Summary->setNotEligibleToImport();
     }
   }
@@ -210,7 +348,8 @@ static Error finishGoObjModule(Module &M, StringRef Prefix,
       G.getAllMetadata(MD);
       for (const auto &Entry : MD)
         if (MetadataNames[Entry.first].starts_with("goobj.") &&
-            MetadataNames[Entry.first] != "goobj.import")
+            MetadataNames[Entry.first] != "goobj.import" &&
+            MetadataNames[Entry.first] != "goobj.llvm.identity")
           G.setMetadata(Entry.first, nullptr);
       continue;
     }
@@ -263,10 +402,8 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
     if (std::error_code EC = sys::fs::create_directories(OutDir))
       return fail(EC.message());
   // LLVM owns index construction, import planning and backend scheduling.
-  // Normalize Go-owned duplicate definitions before supplying resolutions.
+  // Stable identities have already been established at first serialization.
   std::vector<std::unique_ptr<lto::InputFile>> Files;
-  StringMap<unsigned> Definitions;
-  StringSet<> AllIRNames;
   StringSet<> Names;
   for (MemoryBufferRef Input : Inputs) {
     StringRef Name = Input.getBufferIdentifier();
@@ -275,60 +412,7 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
     auto File = lto::InputFile::create(Input);
     if (!File)
       return File.takeError();
-    auto BM = lto::findThinLTOModule(Input);
-    if (!BM)
-      return BM.takeError();
-    for (const auto &Sym : (*File)->symbols()) {
-      AllIRNames.insert(Sym.getIRName());
-      if (!Sym.isUndefined())
-        ++Definitions[Sym.getName()];
-    }
     Files.push_back(std::move(*File));
-  }
-  // Go's native loader, not LLVM name resolution, owns
-  // duplicate package slots, BSS replacement and content-addressed definitions.
-  // Give each such definition a distinct LLVM identity for the LTO interval.
-  // Do not import functions that refer to these unresolved native identities.
-  std::vector<StringMap<std::string>> OriginalNames(Inputs.size());
-  StringSet<> TemporaryNames;
-  std::vector<std::unique_ptr<MemoryBuffer>> Normalized;
-  StringSet<> AmbiguousIRNames;
-  for (auto &File : Files)
-    for (const auto &Sym : File->symbols())
-      if (!Sym.getIRName().empty() && Definitions.lookup(Sym.getName()) > 1)
-        AmbiguousIRNames.insert(Sym.getIRName());
-  for (unsigned I = 0; !AmbiguousIRNames.empty() && I < Files.size(); ++I) {
-    LLVMContext C;
-    auto Parsed = Files[I]->getSingleBitcodeModule().parseModule(C);
-    if (!Parsed)
-      return Parsed.takeError();
-    Module &M = **Parsed;
-    unsigned N = 0;
-    for (GlobalObject &G : M.global_objects()) {
-      if (G.isDeclaration() || !AmbiguousIRNames.count(G.getName()))
-        continue;
-      std::string Temporary;
-      do {
-        Temporary = "__goallc_lto." + utostr(I) + "." + utostr(N++);
-      } while (M.getNamedValue(Temporary) || AllIRNames.count(Temporary));
-      AllIRNames.insert(Temporary);
-      TemporaryNames.insert(Temporary);
-      AmbiguousIRNames.insert(Temporary);
-      OriginalNames[I][Temporary] = G.getName().str();
-      G.setName(Temporary);
-      G.setMetadata("guid", nullptr);
-    }
-    SmallVector<char, 0> Bytes;
-    raw_svector_ostream OS(Bytes);
-    if (Error E = writeThinBitcode(M, OS, AmbiguousIRNames))
-      return E;
-    Normalized.push_back(
-        MemoryBuffer::getMemBufferCopy(StringRef(Bytes.data(), Bytes.size()),
-                                       Inputs[I].getBufferIdentifier()));
-    auto File = lto::InputFile::create(Normalized.back()->getMemBufferRef());
-    if (!File)
-      return File.takeError();
-    Files[I] = std::move(*File);
   }
   struct PackageState {
     std::string Owner;
@@ -352,8 +436,7 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
     if (EC)
       return fail(EC.message());
     if (Suffix == ".input")
-      BC.os() << (Normalized.empty() ? Inputs[Task - 1].getBuffer()
-                                     : Normalized[Task - 1]->getBuffer());
+      BC.os() << Inputs[Task - 1].getBuffer();
     else
       WriteBitcodeToFile(M, BC.os());
     BC.keep();
@@ -388,6 +471,12 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
       S.Error = toString(Prefix.takeError());
       return false;
     }
+    auto *Version = mdconst::dyn_extract_or_null<ConstantInt>(
+        M.getModuleFlag("goobj.llvm.identity"));
+    if (!Version || !Version->equalsInt(1)) {
+      S.Error = "ThinLTO requires stable Go identity version 1";
+      return false;
+    }
     S.Owner = Prefix->str();
     for (const GlobalObject &G : M.global_objects())
       if (auto *MD = G.getMetadata("goobj.symbol.index"))
@@ -407,19 +496,6 @@ static Error runThinLTO(ArrayRef<MemoryBufferRef> Inputs, StringRef OutDir,
       return false;
     auto &S = States[Task];
     auto Finish = [&]() -> Error {
-      for (GlobalValue &G : M.global_values()) {
-        auto It = OriginalNames[Task - 1].find(G.getName());
-        if (It == OriginalNames[Task - 1].end()) {
-          if (TemporaryNames.count(G.getName()))
-            return fail("imported an unresolved Go definition: " + G.getName());
-          continue;
-        }
-        if (M.getNamedValue(It->second))
-          return fail("conflicting restored Go symbol: " + It->second);
-        G.setName(It->second);
-        if (auto *GO = dyn_cast<GlobalObject>(&G))
-          GO->setMetadata("guid", nullptr);
-      }
       for (StringRef Name : PackageMetadataNames) {
         if (auto *MD = M.getNamedMetadata(Name))
           M.eraseNamedMetadata(MD);

@@ -74,8 +74,24 @@ func testLLVMSlimArchive(t *testing.T, mode string) {
 			if !strings.Contains(module.String(), "!goallc.cpu.fmv.done") {
 				t.Fatal("bitcode bypassed required early IR preparation")
 			}
-			if module.NamedFunction("p.F").IsNil() {
+			findFunction := func(name string) llvm.Value {
+				t.Helper()
+				if mode == "-llvm-lto=full" {
+					return module.NamedFunction(name)
+				}
+				for f := module.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
+					if strings.HasPrefix(f.Name(), "__goid$v1$") && strings.HasSuffix(f.Name(), "$"+name) {
+						return f
+					}
+				}
+				t.Fatalf("bitcode lost native function identity %s", name)
+				return llvm.Value{}
+			}
+			if findFunction("p.F").IsNil() {
 				t.Fatal("bitcode lost package function")
+			}
+			if mode == "-llvm-lto=thin" && !strings.Contains(module.String(), "goallc.goobj.llvm-identity.v1") {
+				t.Fatal("ThinLTO bitcode lacks its backend compatibility gate")
 			}
 			ir, err := os.ReadFile(output + ".ll")
 			if err != nil {
@@ -93,7 +109,7 @@ func testLLVMSlimArchive(t *testing.T, mode string) {
 			if !bytes.Contains(ir, []byte("call goabiinternal i64 @p.constant(")) {
 				t.Fatal("prepared IR has no call to exercise pre-link constant propagation")
 			}
-			if body := module.NamedFunction("p.F").String(); strings.Contains(body, "@p.constant(") || !strings.Contains(body, "ret i64 42") {
+			if body := findFunction("p.F").String(); strings.Contains(body, findFunction("p.constant").Name()) || !strings.Contains(body, "ret i64 42") {
 				t.Fatal("serialized bitcode bypassed pre-link optimization")
 			}
 			optimized, err := os.ReadFile(output + ".opt.ll")
@@ -105,7 +121,7 @@ func testLLVMSlimArchive(t *testing.T, mode string) {
 			}
 			index := func(ir, name string) string {
 				t.Helper()
-				definition := regexp.MustCompile(`(?m)^define [^\n]*@` + regexp.QuoteMeta(name) + `\([^\n]*!goobj.symbol.index !([0-9]+)`)
+				definition := regexp.MustCompile(`(?m)^define [^\n]*@(?:"` + regexp.QuoteMeta(name) + `"|` + regexp.QuoteMeta(name) + `)\([^\n]*!goobj.symbol.index !([0-9]+)`)
 				ref := definition.FindStringSubmatch(ir)
 				if ref == nil {
 					t.Fatalf("missing indexed definition %s", name)
@@ -118,7 +134,7 @@ func testLLVMSlimArchive(t *testing.T, mode string) {
 				return node[1]
 			}
 			for _, name := range []string{"p.F", "p.constant"} {
-				if got, want := index(module.String(), name), index(string(ir), name); got != want {
+				if got, want := index(module.String(), findFunction(name).Name()), index(string(ir), name); got != want {
 					t.Fatalf("pre-link optimization changed %s index from %s to %s", name, want, got)
 				}
 			}
