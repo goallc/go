@@ -717,6 +717,12 @@ func (v Value) SetSubprogram(sp Metadata) {
 	C.LLVMSetSubprogram(v.C, sp.C)
 }
 
+// ReplaceSubprogramAnnotations updates a subprogram created with a non-nil
+// annotations tuple, without exposing temporary metadata to the verifier.
+func (md Metadata) ReplaceSubprogramAnnotations(annotations Metadata) {
+	C.LLVMGoDISubprogramReplaceAnnotations(md.C, annotations.C)
+}
+
 // ReplaceSubprogramType upgrades an abstract subprogram after its complete
 // source signature becomes available.
 func (md Metadata) ReplaceSubprogramType(t Metadata) {

@@ -35,7 +35,7 @@ func testLLVMSlimArchive(t *testing.T, mode string) {
 				t.Fatal(err)
 			}
 			output := filepath.Join(dir, "p.a")
-			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", mode, "-llvm-keep-ir", "-l", "-p=p", "-o", output, source)
+			cmd := testenv.Command(t, testenv.GoToolPath(t), "tool", "compile", "-enablellvm", mode, "-llvm-keep-ir", "-d=ssa/check/on", "-l", "-p=p", "-o", output, source)
 			cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOARCH="+arch)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)

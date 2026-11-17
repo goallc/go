@@ -32,17 +32,16 @@ import (
 // GoObj writer then encodes pcfile/pcline/pcinline and the Go linker's
 // per-function DWARF carriers from the same facts.
 var (
-	llvmDIBuilder               *llvm.DIBuilder
-	llvmDICompileUnit           llvm.Metadata
-	llvmDIPackage               llvm.Metadata
-	llvmDIFiles                 map[string]llvm.Metadata
-	llvmDISubprograms           map[*obj.LSym]llvm.Metadata
-	llvmDISubprogramVals        map[*obj.LSym]llvm.Value
-	llvmDISubprogramAnnotations map[*obj.LSym]llvm.Metadata
-	llvmDITypes                 map[*types.Type]llvm.Metadata
-	llvmDITypeBuilding          map[*types.Type]bool
-	llvmDIForwardTypes          map[*types.Type]llvm.Metadata
-	llvmDIDebugFinalized        bool
+	llvmDIBuilder        *llvm.DIBuilder
+	llvmDICompileUnit    llvm.Metadata
+	llvmDIPackage        llvm.Metadata
+	llvmDIFiles          map[string]llvm.Metadata
+	llvmDISubprograms    map[*obj.LSym]llvm.Metadata
+	llvmDISubprogramVals map[*obj.LSym]llvm.Value
+	llvmDITypes          map[*types.Type]llvm.Metadata
+	llvmDITypeBuilding   map[*types.Type]bool
+	llvmDIForwardTypes   map[*types.Type]llvm.Metadata
+	llvmDIDebugFinalized bool
 )
 
 func initLLVMDebugInfo(pkg *types.Pkg) {
@@ -50,7 +49,6 @@ func initLLVMDebugInfo(pkg *types.Pkg) {
 	llvmDIFiles = make(map[string]llvm.Metadata)
 	llvmDISubprograms = make(map[*obj.LSym]llvm.Metadata)
 	llvmDISubprogramVals = make(map[*obj.LSym]llvm.Value)
-	llvmDISubprogramAnnotations = make(map[*obj.LSym]llvm.Metadata)
 	llvmDITypes = make(map[*types.Type]llvm.Metadata)
 	llvmDITypeBuilding = make(map[*types.Type]bool)
 	llvmDIForwardTypes = make(map[*types.Type]llvm.Metadata)
@@ -144,7 +142,7 @@ func finalizeLLVMDebugInfo() {
 			add("goobj.index", ref.Operand(1))
 			add("goobj.flags2", ref.Operand(2))
 		}
-		llvmDISubprogramAnnotations[sym].ReplaceAllUsesWith(GlobalCtxt.MDNode(annotations))
+		llvmDISubprograms[sym].ReplaceSubprogramAnnotations(GlobalCtxt.MDNode(annotations))
 	}
 	emitGoObjDebugGlobals()
 	llvmDIBuilder.Finalize()
@@ -464,7 +462,8 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 	if f != nil && base.Flag.Dwarf {
 		typ = llvmDebugFunctionType(f, file)
 	}
-	annotations := GlobalCtxt.TemporaryMDNode(nil)
+	// Keep the scope resolved for per-function verification. Package indices
+	// become available later, when finalizeLLVMDebugInfo fills the annotations.
 	sp := llvmDIBuilder.CreateFunction(llvmDIPackage, llvm.DIFunction{
 		Name:         sym.Name,
 		LinkageName:  llvmFunctionStorageName(sym.Name, llvmCallConv(sym.ABI())),
@@ -474,10 +473,9 @@ func llvmDebugSubprogram(sym *obj.LSym, pos src.Pos, f *Func) llvm.Metadata {
 		IsDefinition: true,
 		ScopeLine:    line,
 		Optimized:    base.Flag.N == 0,
-		Annotations:  annotations,
+		Annotations:  GlobalCtxt.MDNode(nil),
 	})
 	llvmDISubprograms[sym] = sp
-	llvmDISubprogramAnnotations[sym] = annotations
 	return sp
 }
 

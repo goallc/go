@@ -78,6 +78,15 @@ LLVMMetadataRef LLVMGoDIBuilderCreateFunction(
                                   : nullptr)));
 }
 
+void LLVMGoDISubprogramReplaceAnnotations(LLVMMetadataRef SP,
+                                         LLVMMetadataRef Annotations) {
+  auto *Subprogram = llvm::unwrap<llvm::DISubprogram>(SP);
+  // CreateFunction must reserve this optional operand with a non-null tuple.
+  assert(Subprogram->getRawAnnotations() && "missing annotations operand");
+  assert(Subprogram->getOperand(11) == Subprogram->getRawAnnotations());
+  Subprogram->replaceOperandWith(11, llvm::unwrap<llvm::MDTuple>(Annotations));
+}
+
 LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
     LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
     size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,

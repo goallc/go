@@ -21,6 +21,9 @@ LLVMMetadataRef LLVMGoDIBuilderCreateFunction(
     LLVMBool LocalToUnit, LLVMBool IsDefinition, unsigned ScopeLine,
     LLVMDIFlags Flags, LLVMBool Optimized, LLVMMetadataRef Annotations);
 
+void LLVMGoDISubprogramReplaceAnnotations(LLVMMetadataRef SP,
+                                         LLVMMetadataRef Annotations);
+
 LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
     LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
     size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,

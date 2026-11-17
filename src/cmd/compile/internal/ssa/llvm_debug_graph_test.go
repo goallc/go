@@ -36,7 +36,7 @@ func Caller(x int) int { return InlineResult(x) + InlineResult(x+1) }
 		for _, mode := range []string{"optimized", "noopt", "no-inline-dies"} {
 			t.Run(arch+"/"+mode, func(t *testing.T) {
 				output := filepath.Join(t.TempDir(), "p.a")
-				args := []string{"tool", "compile", "-enablellvm", "-p=p", "-llvm-keep-ir", "-o", output}
+				args := []string{"tool", "compile", "-enablellvm", "-p=p", "-d=ssa/check/on", "-llvm-keep-ir", "-o", output}
 				if mode == "noopt" {
 					args = append(args, "-N", "-l")
 				} else if mode == "no-inline-dies" {
