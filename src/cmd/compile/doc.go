@@ -86,12 +86,14 @@ Flags:
 		object to usual output file (as specified by -o).
 		Without this flag, the -o output is a combination of both
 		linker and compiler input.
-	-llvm-lto
-		With the LLVM backend, emit package bitcode for FullLTO instead of
-		machine code. Required early IR lowering and LLVM's lto-pre-link<O2>
-		pipeline run before serialization; whole-program optimization and
-		code generation remain link-time work. With -llvm-keep-ir, .ll shows
-		prepared IR and .opt.ll shows the pre-link optimized IR in the archive.
+	-llvm-lto mode
+		Enable LLVM LTO preparation with mode thin or full. When omitted,
+		emit ordinary machine code. Both modes emit package bitcode after
+		required early IR lowering and the corresponding LLVM
+		thinlto-pre-link<O2> or lto-pre-link<O2> pipeline. Thin mode also writes
+		module summaries for cross-package importing. Final LTO optimization
+		and code generation remain link-time work. With -llvm-keep-ir, .ll
+		shows prepared IR and .opt.ll shows pre-link optimized IR.
 	-m
 		Print optimization decisions. Higher values or repetition
 		produce more detail.

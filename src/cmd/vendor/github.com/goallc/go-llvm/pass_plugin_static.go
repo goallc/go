@@ -4,7 +4,7 @@ package llvm
 
 /*
 #cgo darwin LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -lGoALLCStatepointsStatic
-#cgo linux LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -Wl,--whole-archive -lGoALLCStatepointsStatic -Wl,--no-whole-archive
+#cgo linux LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -Wl,--whole-archive -lGoALLCStatepointsStatic -Wl,--no-whole-archive -lLLVMGoALLC
 
 #cgo windows LDFLAGS: -L${SRCDIR}/../../../../../../pkg/goallc-llvmplugin/lib -lGoALLCStatepointsStatic -lLLVMGoALLC
 

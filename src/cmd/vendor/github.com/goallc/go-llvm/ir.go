@@ -16,6 +16,7 @@ package llvm
 #include "llvm-c/Core.h"
 #include "llvm-c/Comdat.h"
 #include "IRBindings.h"
+#include "backports.h"
 #include "deprecated.h"
 #include <stdlib.h>
 */
@@ -781,6 +782,17 @@ func (v Value) SetFastMathFlags(flags FastMathFlags) {
 func (v Value) SetGlobalMetadata(kind int, node Metadata) {
 	C.LLVMGlobalSetMetadata(v.C, C.unsigned(kind), node.C)
 }
+
+// GlobalMetadata returns an attachment on a global object, or nil metadata.
+func (v Value) GlobalMetadata(kind int) Metadata {
+	return Metadata{C: C.LLVMGoGlobalObjectGetMetadata(v.C, C.unsigned(kind))}
+}
+
+// Operand returns an operand of an MDNode.
+func (md Metadata) Operand(index int) Metadata {
+	return Metadata{C: C.LLVMGoMDNodeGetOperand(md.C, C.unsigned(index))}
+}
+
 func (v Value) EraseGlobalMetadata(kind int) {
 	C.LLVMGlobalEraseMetadata(v.C, C.unsigned(kind))
 }

@@ -1901,6 +1901,7 @@ var goallcLLVMStaticComponents = []string{
 	"bitwriter",
 	"irreader",
 	"linker",
+	"lto",
 	"passes",
 	"plugins",
 	"all-targets",

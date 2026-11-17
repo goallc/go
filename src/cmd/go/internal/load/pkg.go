@@ -2482,6 +2482,9 @@ func (p *Package) setBuildInfo(ctx context.Context, f *modfetch.Fetcher, autoVCS
 	if cfg.BuildCover {
 		appendSetting("-cover", "true")
 	}
+	if cfg.BuildLTO != "" {
+		appendSetting("-lto", cfg.BuildLTO)
+	}
 	if cfg.BuildMSan {
 		appendSetting("-msan", "true")
 	}

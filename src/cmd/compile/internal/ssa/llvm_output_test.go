@@ -420,8 +420,9 @@ func TestLLVMImportedInlineMappings(t *testing.T) {
 				}
 				ir := string(data)
 				checkLLVMAbstractFunctionMappings(t, ir)
-				if !strings.Contains(ir, "!goobj.debug.funcs =") ||
-					!regexp.MustCompile(`(?m)^![0-9]+ = !\{![0-9]+, ptr @dep.Add\}`).MatchString(ir) {
+				if strings.Contains(ir, "!goobj.debug.funcs =") ||
+					!strings.Contains(ir, `!{!"goobj.symbol", !"dep.Add"}`) ||
+					!strings.Contains(ir, `!{!"goobj.package", !"dep"}`) {
 					t.Errorf("%s: missing imported inline mapping", suffix)
 				}
 				if !strings.Contains(ir, "inlinedAt:") {

@@ -82,7 +82,7 @@ func dumpobj1(outfile string, mode int) {
 			dumpLinkerObj(bout)
 		}
 		name := "_go_.o"
-		if base.Flag.LLVMLTO {
+		if base.Flag.LLVMLTO != "" {
 			name = "__.LLVMBC"
 		}
 		finishArchiveEntry(bout, start, name)

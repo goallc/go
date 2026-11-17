@@ -85,31 +85,10 @@ void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
 
 bool runPreCodeGenCallback(Module &M, TargetMachine &TM, CodeGenFileType,
                            raw_pwrite_stream &) {
-  // A dynamically loaded plugin runs its static constructors immediately
-  // before this callback. A plugin linked into compile, however, may run them
-  // before LLVM has initialized its callback registry. Register lazily from
-  // the common callback so both linkage modes observe the same lifetime.
-  registerGoALLCTargetPasses();
-
-  goallc::lowerWriteBarrierRecords(M);
-
-  if (Error Err = goallc::runEarlyIRPipeline(M)) {
+  if (Error Err = goallc::prepareCodeGenModule(M, TM.getOptLevel())) {
     M.getContext().emitError(toString(std::move(Err)));
     return true;
   }
-
-  if (Error Err = goallc::prepareStatepointModule(M)) {
-    M.getContext().emitError(toString(std::move(Err)));
-    return true;
-  }
-
-  // Prepare byval initializers once for both production and IR emission,
-  // before standard codegen can expand nonzero/dynamic memsets into loops.
-  // Production still computes root liveness in GoALLCPreISelPass after that
-  // standard IR preparation; it does not repeat byval preparation there.
-  if (TM.getOptLevel() != CodeGenOptLevel::None)
-    for (Function &F : M)
-      goallc::prepareByValCallArguments(F);
 
   if (!EmitIR)
     return false;
@@ -191,6 +170,31 @@ void registerGoALLCTargetPasses() {
 }
 
 } // namespace
+
+Error llvm::goallc::prepareCodeGenModule(Module &M, CodeGenOptLevel OptLevel) {
+  linkGoALLCStackMapPrinter();
+  linkGoALLCAsyncPreemption();
+  // Finish thread-safe callback registration before constructing a target
+  // pipeline. Static plugin constructors may precede LLVM's registry setup.
+  registerGoALLCTargetPasses();
+  goallc::lowerWriteBarrierRecords(M);
+
+  if (Error Err = goallc::runEarlyIRPipeline(M))
+    return Err;
+
+  if (Error Err = goallc::prepareStatepointModule(M))
+    return Err;
+
+  // Prepare byval initializers once for both production and IR emission,
+  // before standard codegen can expand nonzero/dynamic memsets into loops.
+  // Production still computes root liveness in GoALLCPreISelPass after that
+  // standard IR preparation; it does not repeat byval preparation there.
+  if (OptLevel != CodeGenOptLevel::None)
+    for (Function &F : M)
+      goallc::prepareByValCallArguments(F);
+
+  return Error::success();
+}
 
 extern "C" LLVMErrorRef LLVMGoALLCRunEarlyIR(LLVMModuleRef ModuleRef) {
   Module &M = *unwrap(ModuleRef);

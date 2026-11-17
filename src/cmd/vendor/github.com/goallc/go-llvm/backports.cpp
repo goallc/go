@@ -51,6 +51,42 @@ LLVMMemoryBufferRef LLVMGoWriteThinLTOBitcodeToMemoryBuffer(LLVMModuleRef M) {
   return llvm::wrap(llvm::MemoryBuffer::getMemBufferCopy(OS.str()).release());
 }
 
+LLVMMetadataRef LLVMGoGlobalObjectGetMetadata(LLVMValueRef Value,
+                                            unsigned Kind) {
+  return llvm::wrap(llvm::unwrap<llvm::GlobalObject>(Value)->getMetadata(Kind));
+}
+
+LLVMMetadataRef LLVMGoMDNodeGetOperand(LLVMMetadataRef Node, unsigned Index) {
+  return llvm::wrap(llvm::unwrap<llvm::MDNode>(Node)->getOperand(Index).get());
+}
+
+LLVMMetadataRef LLVMGoDIBuilderCreateFunction(
+    LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+    size_t NameLen, const char *LinkageName, size_t LinkageNameLen,
+    LLVMMetadataRef File, unsigned Line, LLVMMetadataRef Type,
+    LLVMBool LocalToUnit, LLVMBool IsDefinition, unsigned ScopeLine,
+    LLVMDIFlags Flags, LLVMBool Optimized, LLVMMetadataRef Annotations) {
+  return llvm::wrap(llvm::unwrap(Builder)->createFunction(
+      llvm::unwrap<llvm::DIScope>(Scope), llvm::StringRef(Name, NameLen),
+      llvm::StringRef(LinkageName, LinkageNameLen),
+      llvm::unwrap<llvm::DIFile>(File), Line,
+      llvm::unwrap<llvm::DISubroutineType>(Type), ScopeLine,
+      static_cast<llvm::DINode::DIFlags>(Flags),
+      llvm::DISubprogram::toSPFlags(LocalToUnit, IsDefinition, Optimized),
+      nullptr, nullptr, nullptr,
+      llvm::DINodeArray(Annotations ? llvm::unwrap<llvm::MDTuple>(Annotations)
+                                  : nullptr)));
+}
+
+void LLVMGoDISubprogramReplaceAnnotations(LLVMMetadataRef SP,
+                                         LLVMMetadataRef Annotations) {
+  auto *Subprogram = llvm::unwrap<llvm::DISubprogram>(SP);
+  // CreateFunction must reserve this optional operand with a non-null tuple.
+  assert(Subprogram->getRawAnnotations() && "missing annotations operand");
+  assert(Subprogram->getOperand(11) == Subprogram->getRawAnnotations());
+  Subprogram->replaceOperandWith(11, llvm::unwrap<llvm::MDTuple>(Annotations));
+}
+
 LLVMMetadataRef LLVMGoDIBuilderCreateAutoVariable(
     LLVMDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
     size_t NameLen, LLVMMetadataRef File, unsigned LineNo, LLVMMetadataRef Type,
