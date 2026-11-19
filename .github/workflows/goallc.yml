@@ -260,7 +260,8 @@ jobs:
 
       - name: Exercise Go and LLVM PGO together
         run: |
-          export PATH="$LLVM_ROOT/bin:$PATH"
+          llvm_bin=$(cd "$LLVM_ROOT/bin" && pwd)
+          export PATH="$llvm_bin:$PATH"
           llvm-profdata --version
           ./bin/go test -run '^TestScript/build_llvmpgo$' cmd/go
 
