@@ -8,6 +8,7 @@ package ssa
 
 import (
 	"cmd/compile/internal/base"
+	"cmd/compile/internal/llvmpgo"
 	"cmd/internal/llvmbackend"
 	"fmt"
 	"internal/buildcfg"
@@ -94,7 +95,11 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 			pipeline = "default<O0>"
 		}
 	}
-	if pipeline != "" && pipeline != "none" {
+	if base.Flag.LLVMPGO != "" {
+		if err := llvmpgo.Run(CurrentModule, tm, pipeline, base.Flag.LLVMPGO); err != nil {
+			return nil, fmt.Errorf("run LLVM PGO pipeline %q: %w", pipeline, err)
+		}
+	} else if pipeline != "" && pipeline != "none" {
 		options := llvm.NewPassBuilderOptions()
 		defer options.Dispose()
 		if err := CurrentModule.RunPasses(pipeline, tm, options); err != nil {
@@ -133,6 +138,10 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 
 func configureLLVMCodeGenOptions() {
 	args := append([]string{"cmd/compile LLVM backend"}, llvmCodeGenOptions()...)
+	// Only edge and select counters have a GoObj runtime representation.
+	if base.Flag.LLVMPGO != "" {
+		args = append(args, "-disable-vp")
+	}
 	llvm.ParseCommandLineOptions(args, "GoALLC in-process LLVM backend")
 }
 

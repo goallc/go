@@ -2485,6 +2485,12 @@ func (p *Package) setBuildInfo(ctx context.Context, f *modfetch.Fetcher, autoVCS
 	if cfg.BuildMSan {
 		appendSetting("-msan", "true")
 	}
+	if mode := cfg.BuildLLVMPGO; mode != "" {
+		if cfg.BuildTrimpath {
+			mode = filepath.Base(mode)
+		}
+		appendSetting("-llvmpgo", mode)
+	}
 	// N.B. -pgo added later by setPGOProfilePath.
 	if cfg.BuildRace {
 		appendSetting("-race", "true")
@@ -2707,6 +2713,9 @@ func LinkerDeps(s *modload.Loader, p *Package) ([]string, error) {
 	// Using address sanitizer forces an import of runtime/asan.
 	if cfg.BuildASan {
 		deps = append(deps, "runtime/asan")
+	}
+	if cfg.BuildLLVMPGO == "generate" {
+		deps = append(deps, "runtime/llvmprofile")
 	}
 	// Building for coverage forces an import of runtime/coverage.
 	if cfg.BuildCover {

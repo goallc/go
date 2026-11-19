@@ -805,7 +805,7 @@ Error llvm::goallc::finalizeCPUFeatureTailTransfers(Function &F) {
   return Error::success();
 }
 
-Error llvm::goallc::runEarlyIRPipeline(Module &M) {
+static Error prepareCPUFeatures(Module &M) {
   if (M.getNamedMetadata(DoneMD))
     return Error::success();
   if (!M.getNamedMetadata(ConfigMD))
@@ -877,6 +877,10 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
     return createStringError(inconvertibleErrorCode(),
                              "GoALLC CPU multiversioning produced invalid IR");
   return Error::success();
+}
+
+Error llvm::goallc::runEarlyIRPipeline(Module &M) {
+  return prepareCPUFeatures(M);
 }
 
 PreservedAnalyses llvm::goallc::CPUFeaturesPass::run(Module &M,

@@ -90,6 +90,9 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 		base.Errorf("-llvm-lto requires LLVM, optimization, the default pipeline, and a combined archive without sanitizers or dynamic Go linking")
 		base.ErrorExit()
 	}
+	if base.Flag.LLVMPGO != "" && !base.Flag.EnableLLVM {
+		base.Fatalf("-llvm-pgo requires -enablellvm")
+	}
 	if !base.Flag.EnableLLVM && (base.Flag.LLVMKeepIR || base.Flag.LLVMOptPasses != "auto") {
 		base.Fatalf("LLVM backend options require -enablellvm")
 	}

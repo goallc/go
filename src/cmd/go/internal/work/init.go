@@ -60,6 +60,12 @@ func BuildInit(ld *modload.Loader) {
 	modload.Init(ld)
 	instrumentInit()
 	buildModeInit()
+	if cfg.BuildLLVMPGO == "off" {
+		cfg.BuildLLVMPGO = ""
+	}
+	if cfg.BuildLLVMPGO != "" && cfg.BuildToolchainName != "gc" {
+		base.Fatalf("go: -llvmpgo requires the GoALLC compiler")
+	}
 	initCompilerConcurrencyPool()
 	cfgChangedEnv = makeCfgChangedEnv()
 

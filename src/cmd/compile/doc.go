@@ -86,6 +86,10 @@ Flags:
 		object to usual output file (as specified by -o).
 		Without this flag, the -o output is a combination of both
 		linker and compiler input.
+	-llvm-pgo generate|file
+		Insert LLVM IR instrumentation counters or use an indexed LLVM IR
+		instrumentation profile. Use go build -llvmpgo for training binaries
+		so the Go linker and runtime can collect the counters at exit.
 	-llvm-lto
 		With the LLVM backend, emit package bitcode for FullLTO instead of
 		machine code. Required early IR lowering and LLVM's lto-pre-link<O2>

@@ -1,0 +1,100 @@
+[!exec:llvm-profdata] skip 'requires llvm-profdata compatible with the GoALLC LLVM version'
+[short] skip 'builds and runs instrumented and profile-optimized programs'
+
+# Keep the Go frontend profile fixed across training and use.
+cp $GOROOT/src/cmd/compile/internal/test/testdata/pgo/inline/inline_hot.pprof cpu.pprof
+go build -pgo=cpu.pprof -llvmpgo=generate -o train.exe .
+env LLVM_PROFILE_FILE=$WORK/run.proftext
+exec ./train.exe
+stderr '^5350$'
+exec llvm-profdata merge $WORK/run.proftext -o run.profdata
+exec llvm-profdata show -function=main.branch -counts run.profdata
+stdout 'main.branch:'
+go build -x -pgo=cpu.pprof -llvmpgo=run.profdata -o app.exe .
+stderr 'compile.*-llvm-pgo=.*-pgoprofile=.*hot.go'
+exec ./app.exe
+stderr '^5350$'
+
+# The native optimizer should see the profile at its own instrumentation site.
+# The prepared module is captured before the optimizer starts.
+go tool compile -p main -llvm-pgo=run.profdata -llvm-keep-ir -o check.o hot.go
+! grep '"function_entry_count"' check.o.ll
+grep '"function_entry_count", i64 100' check.o.opt.ll
+grep '"branch_weights", i32 100, i32 0' check.o.opt.ll
+
+# Replacing a profile at the same path reverses the trained branch.
+exec ./train.exe reverse
+stderr '^-5550$'
+exec llvm-profdata merge $WORK/run.proftext -o run.profdata
+go build -x -pgo=cpu.pprof -llvmpgo=run.profdata -o app.exe .
+stderr 'compile.*-llvm-pgo=.*hot.go'
+go build -x -pgo=cpu.pprof -llvmpgo=run.profdata -o app.exe .
+! stderr 'compile.*hot.go'
+go tool compile -p main -llvm-pgo=run.profdata -llvm-keep-ir -o check.o hot.go
+grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
+exec ./app.exe reverse
+stderr '^-5550$'
+
+# Exercise the O0, pre-link and explicit custom pipeline selection paths.
+go tool compile -p main -N -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+! grep 'go:llvmpgopkg' check.o.ll
+grep 'go:llvmpgopkg' check.o.opt.ll
+go tool compile -p main -llvm-lto -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+grep 'go:llvmpgopkg' check.o.opt.ll
+go tool compile -p main -llvm-opt-passes=none -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+grep 'atomicrmw add' check.o.opt.ll
+go tool compile -p main '-llvm-opt-passes=function(simplifycfg)' -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+grep 'atomicrmw add' check.o.opt.ll
+
+# Train and consume a profile at the input of an explicit custom pipeline.
+go build '-gcflags=-llvm-opt-passes=function(simplifycfg)' -llvmpgo=generate -o custom.exe .
+exec ./custom.exe reverse
+exec llvm-profdata merge $WORK/run.proftext -o custom.profdata
+go tool compile -p main '-llvm-opt-passes=function(simplifycfg)' -llvm-pgo=custom.profdata -llvm-keep-ir -o check.o hot.go
+grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
+# Explicit profiling passes use the same input site and indexed profile.
+go tool compile -p main '-llvm-opt-passes=pgo-instr-use,function(simplifycfg)' -llvm-pgo=custom.profdata -llvm-keep-ir -o check.o hot.go
+grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
+# A mixed list must not instrument an already profiled default pipeline twice.
+! go tool compile -p main '-llvm-opt-passes=default<O2>,pgo-instr-gen,instrprof' -llvm-pgo=generate -o check.o hot.go
+stdout 'conflicting LLVM PGO passes'
+
+# Reject a CPU profile accidentally passed to LLVM.
+! go tool compile -p main -llvm-pgo=cpu.pprof -o check.o hot.go
+stderr 'profile|Profile'
+
+-- go.mod --
+module example.org/hot
+
+go 1.26
+-- hot.go --
+package main
+
+//go:noinline
+func left(x int) int { return x + 3 }
+
+//go:noinline
+func right(x int) int { return x - 5 }
+
+//go:noinline
+func branch(x int) int {
+	if x > 0 { return left(x) }
+	return right(x)
+}
+-- main.go --
+package main
+import (
+ "crypto/sha256"
+ "os"
+)
+
+func main() {
+	// Include a FIPS package: the platform loader must be able to fix up
+	// the profiling records even when package constants live in hashed text.
+	if sha256.Sum256(nil)[0] != 0xe3 { panic("sha256") }
+	sign := 1
+	if len(os.Args) > 1 { sign = -1 }
+	sum := 0
+	for i := 1; i <= 100; i++ { sum += branch(i*sign) }
+	println(sum)
+}
