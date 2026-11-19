@@ -115,6 +115,14 @@ func (gcToolchain) gc(b *Builder, a *Action, archive string, importcfg, embedcfg
 	if p.Internal.Cover.Cfg != "" {
 		defaultGcFlags = append(defaultGcFlags, "-coveragecfg="+p.Internal.Cover.Cfg)
 	}
+	if cfg.BuildLLVMPGO == "generate" {
+		defaultGcFlags = append(defaultGcFlags, "-llvm-pgo=generate")
+	}
+	for _, dep := range a.Deps {
+		if dep.Mode == "LLVM PGO profile" {
+			defaultGcFlags = append(defaultGcFlags, "-llvm-pgo="+dep.built)
+		}
+	}
 	if pgoProfile != "" {
 		defaultGcFlags = append(defaultGcFlags, "-pgoprofile="+pgoProfile)
 	}

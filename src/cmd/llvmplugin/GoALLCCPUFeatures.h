@@ -15,9 +15,9 @@ class Module;
 
 namespace goallc {
 
-// Runs GoALLC function multiversioning before the normal LLVM optimization
-// pipeline. The transformation is module-idempotent so no-opt llc paths may
-// safely invoke it again from the pre-codegen callback.
+// Runs GoALLC function multiversioning and PGO before LLVM optimization.
+// The pipeline is idempotent so no-opt llc paths may invoke it again from
+// the pre-codegen callback.
 Error runEarlyIRPipeline(Module &M);
 
 // Promotes a marked FMV dispatcher which remains terminal after optimization

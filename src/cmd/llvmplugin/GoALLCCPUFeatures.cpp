@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCCPUFeatures.h"
+#include "GoALLCPGO.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -805,7 +806,7 @@ Error llvm::goallc::finalizeCPUFeatureTailTransfers(Function &F) {
   return Error::success();
 }
 
-Error llvm::goallc::runEarlyIRPipeline(Module &M) {
+static Error prepareCPUFeatures(Module &M) {
   if (M.getNamedMetadata(DoneMD))
     return Error::success();
   if (!M.getNamedMetadata(ConfigMD))
@@ -877,6 +878,12 @@ Error llvm::goallc::runEarlyIRPipeline(Module &M) {
     return createStringError(inconvertibleErrorCode(),
                              "GoALLC CPU multiversioning produced invalid IR");
   return Error::success();
+}
+
+Error llvm::goallc::runEarlyIRPipeline(Module &M) {
+  if (Error Err = prepareCPUFeatures(M))
+    return Err;
+  return runPGO(M);
 }
 
 PreservedAnalyses llvm::goallc::CPUFeaturesPass::run(Module &M,

@@ -67,6 +67,11 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 			return nil, err
 		}
 	}
+	if base.Flag.LLVMPGO != "" {
+		CurrentModule.AddNamedMetadataOperand("goallc.pgo", GlobalCtxt.MDNode([]llvm.Metadata{
+			GlobalCtxt.MDString(base.Flag.LLVMPGO),
+		}))
+	}
 	if err := CurrentModule.RunPassPluginEarlyIR(plugin); err != nil {
 		return nil, fmt.Errorf("run GoALLC early IR plugin: %w", err)
 	}
@@ -133,6 +138,10 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 
 func configureLLVMCodeGenOptions() {
 	args := append([]string{"cmd/compile LLVM backend"}, llvmCodeGenOptions()...)
+	// Only edge and select counters have a GoObj runtime representation.
+	if base.Flag.LLVMPGO != "" {
+		args = append(args, "-disable-vp")
+	}
 	llvm.ParseCommandLineOptions(args, "GoALLC in-process LLVM backend")
 }
 

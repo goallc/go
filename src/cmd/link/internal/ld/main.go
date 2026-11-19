@@ -369,6 +369,7 @@ func Main(arch *sys.Arch, theArch Arch) {
 
 	bench.Start("inittasks")
 	ctxt.inittasks()
+	ctxt.llvmProfileTables()
 
 	bench.Start("deadcode")
 	deadcode(ctxt)
