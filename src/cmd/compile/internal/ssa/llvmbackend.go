@@ -95,16 +95,13 @@ func EmitLLVMObject(outputFile string) ([]byte, error) {
 			pipeline = "default<O0>"
 		}
 	}
-	if base.Flag.LLVMPGO != "" || pipeline != "" && pipeline != "none" {
+	if base.Flag.LLVMPGO != "" {
+		if err := llvmpgo.Run(CurrentModule, tm, pipeline, base.Flag.LLVMPGO); err != nil {
+			return nil, fmt.Errorf("run LLVM PGO pipeline %q: %w", pipeline, err)
+		}
+	} else if pipeline != "" && pipeline != "none" {
 		options := llvm.NewPassBuilderOptions()
 		defer options.Dispose()
-		if base.Flag.LLVMPGO != "" {
-			var err error
-			pipeline, err = llvmpgo.Configure(CurrentModule, options, pipeline, base.Flag.LLVMPGO)
-			if err != nil {
-				return nil, err
-			}
-		}
 		if err := CurrentModule.RunPasses(pipeline, tm, options); err != nil {
 			return nil, fmt.Errorf("run LLVM optimization pipeline %q: %w", pipeline, err)
 		}

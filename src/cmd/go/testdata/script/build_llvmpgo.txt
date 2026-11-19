@@ -52,6 +52,9 @@ exec ./custom.exe reverse
 exec llvm-profdata merge $WORK/run.proftext -o custom.profdata
 go tool compile -p main '-llvm-opt-passes=function(simplifycfg)' -llvm-pgo=custom.profdata -llvm-keep-ir -o check.o hot.go
 grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
+# Explicit profiling passes use the same input site and indexed profile.
+go tool compile -p main '-llvm-opt-passes=pgo-instr-use,function(simplifycfg)' -llvm-pgo=custom.profdata -llvm-keep-ir -o check.o hot.go
+grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
 # A mixed list must not instrument an already profiled default pipeline twice.
 ! go tool compile -p main '-llvm-opt-passes=default<O2>,pgo-instr-gen,instrprof' -llvm-pgo=generate -o check.o hot.go
 stdout 'conflicting LLVM PGO passes'
