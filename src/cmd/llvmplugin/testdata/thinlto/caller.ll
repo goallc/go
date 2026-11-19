@@ -1,14 +1,14 @@
 ; DUPLICATE: ThinLTO requires unique nonempty module identifiers
-; CHECK: @dep.slot = external global i64, {{.*}}!goobj.import ![[REF:[0-9]+]]
-; CHECK-LABEL: define {{.*}}@main.result(
+; CHECK: @"__goid$v1$646570$p3$dep.slot" = external global i64, {{.*}}!goobj.import ![[REF:[0-9]+]]
+; CHECK-LABEL: define {{.*}}@"__goid$v1$6D61696E$p0$main.result"(
 ; CHECK: ret i64 42
-; CHECK-LABEL: define {{.*}}@main.load(
-; CHECK: load volatile i64, ptr @dep.slot
-; CHECK: tail call goabiinternal void @dep.marked()
+; CHECK-LABEL: define {{.*}}@"__goid$v1$6D61696E$p1$main.load"(
+; CHECK: load volatile i64, ptr @"__goid$v1$646570$p3$dep.slot"
+; CHECK: tail call goabiinternal void @"__goid$v1$646570$p2$dep.marked"()
 ; CHECK-NOT: !goobj.marker_reloc
-; CHECK-LABEL: define {{.*}}@main.noinlineCaller(
-; CHECK: call goabiinternal i64 @dep.add(i64 %v)
-; CHECK: declare goabiinternal i64 @dep.add(i64) {{.*}}#[[ATTR:[0-9]+]]
+; CHECK-LABEL: define {{.*}}@"__goid$v1$6D61696E$p2$main.noinlineCaller"(
+; CHECK: call goabiinternal i64 @"__goid$v1$646570$p0$dep.add"(i64 %v)
+; CHECK: declare goabiinternal i64 @"__goid$v1$646570$p0$dep.add"(i64) {{.*}}#[[ATTR:[0-9]+]]
 ; CHECK: attributes #[[ATTR]] = {{.*}}"goobj.import.flags2"="1" "goobj.import.index"="0" "goobj.import.package"="dep"
 ; CHECK: !goobj.config = !{![[CONFIG:[0-9]+]]}
 ; CHECK-DAG: ![[CONFIG]] = !{!"main-id", !"main", !"1", !"0", !"0100000000000000"}

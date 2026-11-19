@@ -1,4 +1,4 @@
-; CHECK-LABEL: define {{.*}}@dep.add(
+; CHECK-LABEL: define {{.*}}@"__goid$v1$646570$p0$dep.add"(
 ; CHECK-SAME: !goobj.symbol.index ![[INDEX:[0-9]+]]
 ; CHECK: !goobj.config = !{![[CONFIG:[0-9]+]]}
 ; CHECK-DAG: ![[INDEX]] = !{i32 0, i16 1}

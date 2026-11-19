@@ -1,4 +1,4 @@
-; CHECK-LABEL: define {{.*}}@main.result(
+; CHECK-LABEL: define {{.*}}@"__goid$v1$6D61696E$p0$main.result"(
 ; CHECK: ret i64 42
 ; OBJ: "kind": "SRODATA"
 ; OBJ-NOT: "name":

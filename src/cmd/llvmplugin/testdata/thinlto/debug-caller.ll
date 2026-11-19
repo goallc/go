@@ -8,15 +8,15 @@
 ; ASM-NOT: -lthin_callee
 ; BUFFER: object 0: go object
 ; BUFFER-NEXT: object 1: go object
-; CHECK-LABEL: define {{.*}}@main.result(
-; CHECK-NOT: call {{.*}}@dep.public
-; CHECK: load volatile i64, ptr @dep.slot
+; CHECK-LABEL: define {{.*}}@"__goid$v1$6D61696E$p0$main.result"(
+; CHECK-NOT: call {{.*}}@"__goid$v1$646570$p0$dep.public"
+; CHECK: load volatile i64, ptr @"__goid$v1$646570$p1$dep.slot"
 ; CHECK-NOT: !goobj.debug.funcs
 ; CHECK-NOT: !goallc.thin.debug.funcs
 ; CHECK-DAG: distinct !DISubprogram(name: "dep.source", linkageName: "dep.source", {{.*}}annotations:
 ; CHECK-DAG: distinct !DISubprogram(name: "leaf.source", linkageName: "leaf.source", {{.*}}annotations:
-; CHECK-DAG: !{!"goobj.symbol", !"dep.public"}
-; CHECK-DAG: !{!"goobj.symbol", !"leaf.original"}
+; CHECK-DAG: !{!"goobj.symbol", !"__goid$v1$646570$p0$dep.public"}
+; CHECK-DAG: !{!"goobj.symbol", !"__goid$v1$6C656166$p0$leaf.original"}
 ; CHECK-DAG: !{!"goobj.package", !"leaf"}
 ; CHECK-DAG: !DILocation(line: 20, {{.*}}inlinedAt:
 ; OBJ-LABEL: "name": "main.result",

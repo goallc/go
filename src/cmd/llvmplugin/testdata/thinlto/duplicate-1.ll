@@ -3,9 +3,16 @@
 ; OBJ: "class_index": 0
 ; OBJ: "name": "shared"
 ; OBJ: "kind": "SDATA"
-; IR: @shared = global i64 42
-; IR-LABEL: define {{.*}}@pkg1.address(
-; IR: call goabiinternal ptr @pkg0.address()
+; OBJ-LABEL: "name": "pkg1.address"
+; OBJ: "type": "R_ADDR"
+; OBJ: "addend": 1,
+; OBJ: "pkg_kind": "imported",
+; OBJ-NEXT: "sym_index": 0,
+; OBJ-NEXT: "package": "pkg0",
+; OBJ-NEXT: "name": "shared"
+; IR: @"__goid$v1$706B6731$p0$shared" = global i64 42
+; IR-LABEL: define {{.*}}@"__goid$v1$706B6731$p1$pkg1.address"(
+; IR: ret ptr getelementptr {{.*}}(i8, ptr @"__goid$v1$706B6730$p0$shared", i64 1)
 target triple = "x86_64-unknown-linux-goobj"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-v128:64:64-v256:64:64-v512:64:64-n8:16:32:64-S64"
 @shared = global i64 42, !goobj.symbol.index !0
@@ -17,7 +24,7 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 !3 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !4}
 !4 = !{}
 
-; Importing pkg0.address would bind its reference to the wrong package slot.
+; After inlining, the reference must still resolve to pkg0.shared.
 define goabiinternal ptr @pkg1.address() !goobj.symbol.index !5 {
   %p = call goabiinternal ptr @pkg0.address()
   ret ptr %p
