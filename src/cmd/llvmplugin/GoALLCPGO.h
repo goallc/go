@@ -5,13 +5,17 @@
 #ifndef GOALLC_PGO_H
 #define GOALLC_PGO_H
 
-#include "llvm/Support/Error.h"
+#include "llvm/IR/PassManager.h"
 
 namespace llvm {
 class Module;
 namespace goallc {
-Error runPGO(Module &M);
-}
+class LowerPGOCountersPass
+    : public RequiredPassInfoMixin<LowerPGOCountersPass> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
+};
+} // namespace goallc
 } // namespace llvm
 
 #endif

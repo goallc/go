@@ -4,6 +4,7 @@
 
 #include "GoALLCPreCodeGen.h"
 #include "GoALLCCPUFeatures.h"
+#include "GoALLCPGO.h"
 #include "GoALLCStatepoints.h"
 #include "GoALLCWriteBarriers.h"
 #include "llvm-c/Core.h"
@@ -66,6 +67,10 @@ void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
          ArrayRef<PassBuilder::PipelineElement>) {
+        if (Name == "goallc-lower-pgo-counters") {
+          MPM.addPass(goallc::LowerPGOCountersPass());
+          return true;
+        }
         if (Name == "goallc-write-barriers") {
           MPM.addPass(LowerWriteBarrierRecordsPass());
           return true;

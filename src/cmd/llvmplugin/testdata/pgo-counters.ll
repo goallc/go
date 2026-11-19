@@ -1,5 +1,4 @@
-; The same early pipeline runs again before codegen. Each select and CFG
-; counter must be lowered once and refer to the published package table.
+; Lower LLVM instrumentation to GoObj counters and a package table.
 ; CHECK: @"go:llvmpgocount" = internal global [2 x i64] zeroinitializer
 ; CHECK: @"go:llvmpgopkg.p" = constant
 ; CHECK-LABEL: define goabi0 i64 @"p.choose<ABI0>"
@@ -21,6 +20,3 @@ define goabi0 i64 @"p.choose<ABI0>"(i1 %cond, i64 %a, i64 %b) {
   %v = select i1 %cond, i64 %a, i64 %b
   ret i64 %v
 }
-
-!goallc.pgo = !{!0}
-!0 = !{!"generate"}

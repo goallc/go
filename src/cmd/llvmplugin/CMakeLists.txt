@@ -137,7 +137,7 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pgo-counters.ll" CHECK
     "${GOALLC_OPT_EXECUTABLE}"
     "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>" -disable-vp
-    -passes=goallc-cpu-features,goallc-cpu-features -verify-each -S
+    -passes=pgo-instr-gen,goallc-lower-pgo-counters -verify-each -S
     "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pgo-counters.ll"
   )
 

@@ -15,8 +15,10 @@ stderr 'compile.*-llvm-pgo=.*-pgoprofile=.*hot.go'
 exec ./app.exe
 stderr '^5350$'
 
-# Check LLVM consumed the measured counts in the package pipeline.
+# The native optimizer should see the profile at its own instrumentation site.
+# The prepared module is captured before the optimizer starts.
 go tool compile -p main -llvm-pgo=run.profdata -llvm-keep-ir -o check.o hot.go
+! grep '"function_entry_count"' check.o.ll
 grep '"function_entry_count", i64 100' check.o.opt.ll
 grep '"branch_weights", i32 100, i32 0' check.o.opt.ll
 
@@ -32,6 +34,17 @@ go tool compile -p main -llvm-pgo=run.profdata -llvm-keep-ir -o check.o hot.go
 grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
 exec ./app.exe reverse
 stderr '^-5550$'
+
+# Exercise the O0, pre-link and explicit custom pipeline selection paths.
+go tool compile -p main -N -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+! grep 'go:llvmpgopkg' check.o.ll
+grep 'go:llvmpgopkg' check.o.opt.ll
+go tool compile -p main -llvm-lto -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+grep 'go:llvmpgopkg' check.o.opt.ll
+go tool compile -p main -llvm-opt-passes=none -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+grep 'atomicrmw add' check.o.opt.ll
+go tool compile -p main '-llvm-opt-passes=function(simplifycfg)' -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
+grep 'atomicrmw add' check.o.opt.ll
 
 # Reject a CPU profile accidentally passed to LLVM.
 ! go tool compile -p main -llvm-pgo=cpu.pprof -o check.o hot.go

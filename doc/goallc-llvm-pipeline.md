@@ -50,8 +50,12 @@ go build -pgo=cpu.pprof -llvmpgo=training.profdata -o app .
 ```
 
 Run the training binary with a representative workload. Use an llvm-profdata
-version matching the SDK's LLVM. Keep the Go profile and frontend flags the
-same for training and use since they can change the CFG that LLVM profiles.
+version matching the SDK's LLVM. Keep the Go profile, compiler flags and LLVM
+pipeline the same for training and use. The default and LTO pre-link pipelines
+place instrumentation and profile use at corresponding points during optimization.
+An explicit list of passes without a PGO site profiles its input instead.
+Profiles collected before the switch to integrated PGO may need retraining
+when the control-flow hash changes.
 The Go build cache tracks the contents of both profile inputs.
 
 Training binaries write LLVM's text instrumentation format on normal return

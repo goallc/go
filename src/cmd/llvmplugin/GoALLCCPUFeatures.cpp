@@ -3,7 +3,6 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCCPUFeatures.h"
-#include "GoALLCPGO.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -881,9 +880,7 @@ static Error prepareCPUFeatures(Module &M) {
 }
 
 Error llvm::goallc::runEarlyIRPipeline(Module &M) {
-  if (Error Err = prepareCPUFeatures(M))
-    return Err;
-  return runPGO(M);
+  return prepareCPUFeatures(M);
 }
 
 PreservedAnalyses llvm::goallc::CPUFeaturesPass::run(Module &M,
