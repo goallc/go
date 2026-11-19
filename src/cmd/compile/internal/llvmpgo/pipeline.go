@@ -4,50 +4,90 @@
 
 //go:build !compiler_bootstrap
 
-// Package llvmpgo invokes the GoObj-aware pipeline in the compiler's LLVM plugin.
+// Package llvmpgo configures IR profiling for the compiler's LLVM pipeline.
 package llvmpgo
 
 /*
 #cgo CPPFLAGS: -I${SRCDIR}/../../../vendor/github.com/goallc/go-llvm/llvm/include
 #cgo staticllvm CPPFLAGS: -DGOALLC_LINKED_PLUGIN
-#include "llvm-c/Error.h"
 #include "llvm-c/Support.h"
-#include "llvm-c/TargetMachine.h"
+#include "llvm-c/Transforms/PassBuilder.h"
 #include <stdlib.h>
 
-extern LLVMErrorRef LLVMGoALLCRunPGOPipeline(LLVMModuleRef, LLVMTargetMachineRef, const char *, const char *);
-static LLVMErrorRef runPipeline(LLVMModuleRef m, LLVMTargetMachineRef tm, const char *passes, const char *mode) {
+extern LLVMErrorRef LLVMGoALLCLowerPGOCounters(LLVMModuleRef);
+static int configurePGO(LLVMPassBuilderOptionsRef options, const char *profile) {
+    LLVMInstrProfLoweringCallback lower = NULL;
+    if (!*profile) {
 #ifdef GOALLC_LINKED_PLUGIN
-  return LLVMGoALLCRunPGOPipeline(m, tm, passes, mode);
+        lower = LLVMGoALLCLowerPGOCounters;
 #else
-  // Early IR preparation has already loaded the plugin into LLVM.
-  typedef LLVMErrorRef (*Run)(LLVMModuleRef, LLVMTargetMachineRef, const char *, const char *);
-  Run run = (Run)LLVMSearchForAddressOfSymbol("LLVMGoALLCRunPGOPipeline");
-  if (!run)
-    return LLVMCreateStringError("GoALLC plugin lacks its PGO pipeline entry point");
-  return run(m, tm, passes, mode);
+        lower = (LLVMInstrProfLoweringCallback)LLVMSearchForAddressOfSymbol("LLVMGoALLCLowerPGOCounters");
+        if (!lower)
+            return 0;
 #endif
+    }
+    LLVMPassBuilderOptionsSetIRPGO(options, profile, lower);
+    return 1;
 }
 */
 import "C"
 
 import (
-	"errors"
+	"fmt"
+	"strings"
 	"unsafe"
 
 	"github.com/goallc/go-llvm"
 )
 
-func Run(m llvm.Module, tm llvm.TargetMachine, pipeline, mode string) error {
-	passes := C.CString(pipeline)
-	defer C.free(unsafe.Pointer(passes))
+// Configure selects LLVM's instrumentation mode. Standard pipelines choose
+// their own profiling site. A custom list without one profiles its input.
+func Configure(m llvm.Module, options llvm.PassBuilderOptions, pipeline, mode string) (string, error) {
+	generate := mode == "generate"
+	if generate {
+		const versionSymbol = "__llvm_profile_raw_version"
+		if !m.NamedGlobal(versionSymbol).IsNil() || !m.NamedFunction(versionSymbol).IsNil() {
+			return "", fmt.Errorf("LLVM profile version symbol already defined")
+		}
+		mode = ""
+	}
 	profile := C.CString(mode)
 	defer C.free(unsafe.Pointer(profile))
-	err := C.runPipeline(C.LLVMModuleRef(unsafe.Pointer(m.C)), C.LLVMTargetMachineRef(unsafe.Pointer(tm.C)), passes, profile)
-	if err == nil {
-		return nil
+	if C.configurePGO(C.LLVMPassBuilderOptionsRef(unsafe.Pointer(options.C)), profile) == 0 {
+		return "", fmt.Errorf("GoALLC plugin lacks PGO counter lowering")
 	}
-	message := C.LLVMGetErrorMessage(err)
-	defer C.LLVMDisposeErrorMessage(message)
-	return errors.New(C.GoString(message))
+	if pipeline == "none" {
+		pipeline = ""
+	}
+	var sites, gen, lower, use int
+	for _, token := range strings.FieldsFunc(pipeline, func(r rune) bool { return r == '(' || r == ')' || r == ',' }) {
+		name, _, _ := strings.Cut(strings.TrimSpace(token), "<")
+		switch name {
+		case "default", "lto-pre-link", "thinlto-pre-link", "fatlto-pre-link":
+			sites++
+		case "pgo-instr-gen":
+			gen++
+		case "instrprof":
+			if gen != 1 {
+				return "", fmt.Errorf("instrprof requires preceding pgo-instr-gen in %q", pipeline)
+			}
+			lower++
+		case "pgo-instr-use":
+			use++
+		}
+	}
+	if sites+gen+use > 1 || gen != lower || generate && use != 0 || !generate && gen != 0 {
+		return "", fmt.Errorf("conflicting LLVM PGO passes in %q", pipeline)
+	}
+	if sites+gen+use != 0 {
+		return pipeline, nil
+	}
+	prefix := "pgo-instr-use"
+	if generate {
+		prefix = "pgo-instr-gen,instrprof"
+	}
+	if pipeline != "" {
+		prefix += "," + pipeline
+	}
+	return prefix, nil
 }

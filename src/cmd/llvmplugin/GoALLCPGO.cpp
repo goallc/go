@@ -3,16 +3,11 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCPGO.h"
-#include "llvm-c/TargetMachine.h"
-#include "llvm/IR/DiagnosticHandler.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/ProfileData/InstrProf.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Transforms/Instrumentation/InstrProfiling.h"
-#include "llvm/Transforms/Instrumentation/PGOInstrumentation.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
@@ -108,82 +103,7 @@ PreservedAnalyses goallc::LowerPGOCountersPass::run(Module &M,
   return PreservedAnalyses::none();
 }
 
-namespace {
-// LLVM 23 schedules compiler-rt lowering immediately after instrumentation
-// and optional loop rotation. Keep the pipeline chosen by PassBuilder and
-// substitute only the target-specific lowering at that position.
-class GoPGOPipeline : public ModulePassManager {
-public:
-  Error configure(bool Generate, StringRef Profile) {
-    unsigned GenSites = 0, LowerSites = 0, UseSites = 0;
-    for (auto &P : Passes) {
-      if (P->name() == PGOInstrumentationGen::name())
-        ++GenSites;
-      else if (P->name() == InstrProfilingLoweringPass::name()) {
-        GoPGOPipeline Lower;
-        Lower.addPass(goallc::LowerPGOCountersPass());
-        P = std::move(Lower.Passes.front());
-        ++LowerSites;
-      } else if (P->name() == PGOInstrumentationUse::name()) {
-        ++UseSites;
-      }
-    }
-    if (GenSites != LowerSites || GenSites > 1 || UseSites > 1 ||
-        (Generate ? UseSites : GenSites))
-      return createStringError(
-          "conflicting LLVM PGO passes in optimization pipeline");
-    if (!GenSites && !UseSites) {
-      // Custom pass lists (including 'none') have no LLVM-selected site.
-      // Instrument their input so training and use see the same CFG.
-      ModulePassManager Custom;
-      if (Generate) {
-        Custom.addPass(PGOInstrumentationGen());
-        Custom.addPass(goallc::LowerPGOCountersPass());
-      } else {
-        Custom.addPass(PGOInstrumentationUse(Profile.str()));
-      }
-      ModulePassManager Tail(std::move(*this));
-      Custom.addPass(std::move(Tail));
-      addPass(std::move(Custom));
-    }
-    return Error::success();
-  }
-};
-} // namespace
-
 extern "C" LLVM_EXTERNAL_VISIBILITY LLVMErrorRef
-LLVMGoALLCRunPGOPipeline(LLVMModuleRef Mod, LLVMTargetMachineRef Machine,
-                         const char *Pipeline, const char *Mode) {
-  Module &M = *unwrap(Mod);
-  auto *TM = reinterpret_cast<TargetMachine *>(Machine);
-  bool Generate = StringRef(Mode) == "generate";
-  if (Generate && M.getNamedValue(INSTR_PROF_QUOTE(INSTR_PROF_RAW_VERSION_VAR)))
-    return LLVMCreateStringError("LLVM profile version symbol already defined");
-  PGOOptions Options(Generate ? "" : Mode, "", "", "",
-                     Generate ? PGOOptions::IRInstr : PGOOptions::IRUse);
-  TM->setPGOOption(Options);
-  PassInstrumentationCallbacks PIC;
-  PassBuilder PB(TM, PipelineTuningOptions(), Options, &PIC);
-  LoopAnalysisManager LAM;
-  FunctionAnalysisManager FAM;
-  CGSCCAnalysisManager CGAM;
-  ModuleAnalysisManager MAM;
-  PB.registerModuleAnalyses(MAM);
-  PB.registerCGSCCAnalyses(CGAM);
-  PB.registerFunctionAnalyses(FAM);
-  PB.registerLoopAnalyses(LAM);
-  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-  StandardInstrumentations SI(M.getContext(), false);
-  SI.registerCallbacks(PIC, &MAM);
-
-  GoPGOPipeline MPM;
-  if (*Pipeline && StringRef(Pipeline) != "none")
-    if (Error Err = PB.parsePassPipeline(MPM, Pipeline))
-      return wrap(std::move(Err));
-  if (Error Err = MPM.configure(Generate, Mode))
-    return wrap(std::move(Err));
-  MPM.run(M, MAM);
-  if (M.getContext().getDiagHandlerPtr()->HasErrors)
-    return LLVMCreateStringError("LLVM PGO pipeline reported an error");
-  return LLVMErrorSuccess;
+LLVMGoALLCLowerPGOCounters(LLVMModuleRef Mod) {
+  return wrap(lowerGoCounters(*unwrap(Mod)));
 }

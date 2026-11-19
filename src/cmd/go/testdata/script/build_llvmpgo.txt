@@ -46,6 +46,16 @@ grep 'atomicrmw add' check.o.opt.ll
 go tool compile -p main '-llvm-opt-passes=function(simplifycfg)' -llvm-pgo=generate -llvm-keep-ir -o check.o hot.go
 grep 'atomicrmw add' check.o.opt.ll
 
+# Train and consume a profile at the input of an explicit custom pipeline.
+go build '-gcflags=-llvm-opt-passes=function(simplifycfg)' -llvmpgo=generate -o custom.exe .
+exec ./custom.exe reverse
+exec llvm-profdata merge $WORK/run.proftext -o custom.profdata
+go tool compile -p main '-llvm-opt-passes=function(simplifycfg)' -llvm-pgo=custom.profdata -llvm-keep-ir -o check.o hot.go
+grep '"branch_weights", i32 0, i32 100' check.o.opt.ll
+# A mixed list must not instrument an already profiled default pipeline twice.
+! go tool compile -p main '-llvm-opt-passes=default<O2>,pgo-instr-gen,instrprof' -llvm-pgo=generate -o check.o hot.go
+stdout 'conflicting LLVM PGO passes'
+
 # Reject a CPU profile accidentally passed to LLVM.
 ! go tool compile -p main -llvm-pgo=cpu.pprof -o check.o hot.go
 stderr 'profile|Profile'
