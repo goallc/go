@@ -3,7 +3,7 @@
 ; OBJ: "class_index": 0
 ; OBJ: "name": "shared"
 ; OBJ: "kind": "SBSS"
-; IR: @shared = global i64 0
+; IR: @"__goid$v1$706B6730$p0$shared" = global i64 0
 target triple = "x86_64-unknown-linux-goobj"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-v128:64:64-v256:64:64-v512:64:64-n8:16:32:64-S64"
 @shared = global i64 0, !goobj.symbol.index !0
@@ -15,7 +15,7 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 !3 = !{!"goallc.goobj", !"linux", !"amd64", !"test", !"GOAMD64", !"v1", !"0", !4}
 !4 = !{}
 
-; A nested constant reference must keep this body in its owning package.
+; The nested constant must retain its package identity when imported.
 define goabiinternal ptr @pkg0.address() alwaysinline !goobj.symbol.index !5 {
   ret ptr getelementptr (i8, ptr @shared, i64 1)
 }

@@ -51,6 +51,13 @@ func TestThinLTOPlugin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		repeated, err := llvmbackend.WriteThinBitcode(module, plugin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(bitcode, repeated) {
+			t.Fatal("repeated serialization changed stable identities or summaries")
+		}
 		names = append(names, "memory:"+name)
 		inputs = append(inputs, bitcode)
 		if name == "debug-caller" {

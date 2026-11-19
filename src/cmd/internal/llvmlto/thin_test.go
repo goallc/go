@@ -249,3 +249,41 @@ func TestThinLTORuntime(t *testing.T) {
 		t.Fatalf("runtime: %v\n%s", err, data)
 	}
 }
+
+// A native symbol may itself look like an encoded LLVM identity. Only explicit
+// identity markers authorize decoding; ordinary compilation must preserve it too.
+func TestThinLTONativeIdentityPrefix(t *testing.T) {
+	goTool := thinLTOToolchain(t)
+	source := filepath.Join(t.TempDir(), "main.go")
+	const program = `package main
+import _ "unsafe"
+//go:linkname value __goid$v1$706B6730$p0$shared
+var value = 41
+//go:noinline
+func read() int { return value }
+func main() {
+	value++
+	if read() != 42 { panic("native symbol identity changed") }
+}
+`
+	if err := os.WriteFile(source, []byte(program), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"ordinary", "thin"} {
+		t.Run(mode, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "program")
+			args := []string{"build", "-o", output}
+			if mode == "thin" {
+				args = append(args, "-lto=thin")
+			}
+			cmd := exec.Command(goTool, append(args, source)...)
+			cmd.Env = thinLTOEnv()
+			if data, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build: %v\n%s", err, data)
+			}
+			if data, err := exec.Command(output).CombinedOutput(); err != nil {
+				t.Fatalf("run: %v\n%s", err, data)
+			}
+		})
+	}
+}
