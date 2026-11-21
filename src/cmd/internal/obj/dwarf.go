@@ -338,10 +338,10 @@ func textPos(fn *LSym) src.XPos {
 	return src.NoXPos
 }
 
-// populateDWARF fills in the DWARF Debugging Information Entries for
+// PopulateDWARF fills in the DWARF Debugging Information Entries for
 // TEXT symbol 's'. The various DWARF symbols must already have been
 // initialized in InitTextSym.
-func (ctxt *Link) populateDWARF(curfn Func, s *LSym) {
+func (ctxt *Link) PopulateDWARF(curfn Func, s *LSym) {
 	myimportpath := ctxt.Pkgpath
 	if myimportpath == "" {
 		return
