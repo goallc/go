@@ -29,6 +29,9 @@ import (
 )
 
 type Parser struct {
+	// CapturePlan9 preserves preprocessed function bodies for deferred assembly.
+	CapturePlan9  bool
+	Plan9         []Plan9Function
 	lex           lex.TokenReader
 	lineNum       int   // Line number in source file.
 	errorLine     int   // Line number of last error.
@@ -113,11 +116,13 @@ func (p *Parser) Parse() (*obj.Prog, bool) {
 		scratch = operands
 
 		if p.pseudo(word, operands) {
+			p.capturePlan9(word, cond, operands)
 			continue
 		}
 		i, present := p.arch.Instructions[word]
 		if present {
 			p.instruction(i, word, cond, operands)
+			p.capturePlan9(word, cond, operands)
 			continue
 		}
 		p.errorf("unrecognized instruction %q", word)
@@ -231,6 +236,7 @@ next:
 				if tok == ':' {
 					// Labels.
 					p.pendingLabels = append(p.pendingLabels, word)
+					p.capturePlan9Label(word)
 					goto next
 				}
 			}
