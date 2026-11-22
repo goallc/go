@@ -53,8 +53,9 @@ Run the training binary with a representative workload. Use an llvm-profdata
 version matching the SDK's LLVM. Keep the Go profile, compiler flags and LLVM
 pipeline the same for training and use. The default and LTO pre-link pipelines
 place instrumentation and profile use at corresponding points during optimization.
-Both modes use the regular LLVM pass runner. Generation configures a GoObj
-callback at LLVM's counter-lowering step. Profile use reads the merged file
+Both modes use the regular LLVM pass runner. LLVM lowers the training counters to atomic
+updates. After optimization, GoObj publishes those counter arrays and their
+profile names and hashes to the Go runtime. Profile use reads the merged file
 through the same pass builder as ordinary optimization.
 An explicit list of passes without a PGO site profiles its input instead.
 Profiles collected before the switch to integrated PGO may need retraining

@@ -10,6 +10,8 @@ stderr '^5350$'
 exec llvm-profdata merge $WORK/run.proftext -o run.profdata
 exec llvm-profdata show -function=main.branch -counts run.profdata
 stdout 'main.branch:'
+exec llvm-profdata show -function=crypto/sha256.Sum256 -counts run.profdata
+stdout 'crypto/sha256.Sum256:'
 go build -x -pgo=cpu.pprof -llvmpgo=run.profdata -o app.exe .
 stderr 'compile.*-llvm-pgo=.*-pgoprofile=.*hot.go'
 exec ./app.exe

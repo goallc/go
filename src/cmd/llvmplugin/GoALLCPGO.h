@@ -10,8 +10,8 @@
 namespace llvm {
 class Module;
 namespace goallc {
-class LowerPGOCountersPass
-    : public RequiredPassInfoMixin<LowerPGOCountersPass> {
+class AdaptPGODataPass
+    : public RequiredPassInfoMixin<AdaptPGODataPass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
 };

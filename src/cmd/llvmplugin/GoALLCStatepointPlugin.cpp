@@ -67,8 +67,8 @@ void registerGoALLCPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
          ArrayRef<PassBuilder::PipelineElement>) {
-        if (Name == "goallc-lower-pgo-counters") {
-          MPM.addPass(goallc::LowerPGOCountersPass());
+        if (Name == "goallc-adapt-pgo-data") {
+          MPM.addPass(goallc::AdaptPGODataPass());
           return true;
         }
         if (Name == "goallc-write-barriers") {

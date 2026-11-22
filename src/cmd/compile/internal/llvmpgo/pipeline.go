@@ -13,12 +13,15 @@ package llvmpgo
 #include "llvm-c/Support.h"
 #include "llvm-c/Error.h"
 
-extern LLVMErrorRef LLVMGoALLCLowerPGOCounters(LLVMModuleRef);
-static void *counterLowering(void) {
+extern LLVMErrorRef LLVMGoALLCAdaptPGOData(LLVMModuleRef);
+static LLVMErrorRef adapt(LLVMModuleRef m) {
 #ifdef GOALLC_LINKED_PLUGIN
-	return (void *)LLVMGoALLCLowerPGOCounters;
+    return LLVMGoALLCAdaptPGOData(m);
 #else
-	return LLVMSearchForAddressOfSymbol("LLVMGoALLCLowerPGOCounters");
+    typedef LLVMErrorRef (*Adapt)(LLVMModuleRef);
+    Adapt fn = (Adapt)LLVMSearchForAddressOfSymbol("LLVMGoALLCAdaptPGOData");
+    if (!fn) return LLVMCreateStringError("GoALLC plugin lacks PGO data adapter");
+    return fn(m);
 #endif
 }
 */
@@ -26,6 +29,7 @@ import "C"
 
 import (
 	"errors"
+	"unsafe"
 
 	"github.com/goallc/go-llvm"
 )
@@ -35,17 +39,21 @@ func Run(m llvm.Module, tm llvm.TargetMachine, pipeline, mode string) error {
 	if pipeline == "none" {
 		pipeline = ""
 	}
-	var lower llvm.InstrProfLowering
-	if mode == "generate" {
+	generate := mode == "generate"
+	if generate {
 		const versionSymbol = "__llvm_profile_raw_version"
 		if !m.NamedGlobal(versionSymbol).IsNil() || !m.NamedFunction(versionSymbol).IsNil() {
 			return errors.New("LLVM profile version symbol already defined")
 		}
-		lower = llvm.InstrProfLowering(C.counterLowering())
-		if lower == nil {
-			return errors.New("GoALLC plugin lacks PGO counter lowering")
-		}
 		mode = ""
 	}
-	return m.RunPassesWithPGO(pipeline, tm, mode, lower)
+	if err := m.RunPassesWithPGO(pipeline, tm, mode); err != nil || !generate {
+		return err
+	}
+	if err := C.adapt(C.LLVMModuleRef(unsafe.Pointer(m.C))); err != nil {
+		msg := C.LLVMGetErrorMessage(err)
+		defer C.LLVMDisposeErrorMessage(msg)
+		return errors.New(C.GoString(msg))
+	}
+	return nil
 }

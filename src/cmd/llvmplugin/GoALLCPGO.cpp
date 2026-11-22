@@ -3,78 +3,130 @@
 // license that can be found in the LICENSE file.
 
 #include "GoALLCPGO.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Support/Error.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 #include "llvm/ProfileData/InstrProf.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
 
-// GoObj programs have neither compiler-rt's profile sections nor its C exit
-// hooks. Keep LLVM's CFG hashes and counter placement, but publish the counter
-// arrays to the Go linker and use atomic increments across goroutines.
-static Error lowerGoCounters(Module &M) {
+// The native instrprof pass owns counter placement, allocation and updates.
+// Translate only its registration data to the Go linker's package table.
+static Error adaptProfileData(Module &M) {
   IRBuilder<> B(M.getContext());
   auto *Word = M.getDataLayout().getIntPtrType(M.getContext());
-  SmallVector<Constant *> Records;
-  for (Function &F : M) {
-    GlobalVariable *Counters = nullptr;
-    for (BasicBlock &BB : F) {
-      for (Instruction &I : make_early_inc_range(BB)) {
-        auto *Prof = dyn_cast<InstrProfInstBase>(&I);
-        if (!Prof)
-          continue;
-        auto *Inc = dyn_cast<InstrProfIncrementInst>(Prof);
-        if (!Inc)
-          return createStringError(
-              "unsupported LLVM PGO intrinsic: %s",
-              Prof->getCalledFunction()->getName().str().c_str());
-        if (!Counters) {
-          uint64_t N = Inc->getNumCounters()->getZExtValue();
-          auto *Ty = ArrayType::get(B.getInt64Ty(), N);
-          Counters = new GlobalVariable(
-              M, Ty, false, GlobalValue::InternalLinkage,
-              ConstantAggregateZero::get(Ty), "go:llvmpgocount");
-          Counters->setAlignment(Align(8));
-          Counters->setSection(".noptrbss");
-          auto *Name = Inc->getName();
-          // An ABI0 suffix describes code in GoObj. Keep it in the profile
-          // string, but never put it on a data symbol.
-          Name->setName("go:llvmpgoname");
-          // Matches record in runtime/llvmprofile (string, hash, []uint64).
-          auto *Len = ConstantInt::get(Word, N);
-          Records.push_back(ConstantStruct::getAnon(
-              {Name,
-               ConstantInt::get(Word,
-                                getPGOFuncNameVarInitializer(Name).size()),
-               Inc->getHash(), Counters, Len, Len}));
-        }
-        B.SetInsertPoint(Inc);
-        Value *Addr = B.CreateInBoundsGEP(Counters->getValueType(), Counters,
-                                          {B.getInt32(0), Inc->getIndex()});
-        B.CreateAtomicRMW(AtomicRMWInst::Add, Addr, Inc->getStep(), Align(8),
-                          AtomicOrdering::Monotonic);
-        Inc->eraseFromParent();
-      }
-    }
-    if (Counters) {
-      // On targets using LL/SC, AtomicExpand may split the entry block at a
-      // counter. Keep fixed frame slots in the entry block after that split.
-      auto IP = F.getEntryBlock().getFirstInsertionPt();
-      for (Instruction &I : make_early_inc_range(F.getEntryBlock()))
-        if (auto *A = dyn_cast<AllocaInst>(&I);
-            A && A->isStaticAlloca() && &I != &*IP)
-          A->moveBefore(F.getEntryBlock(), IP);
-    }
+  GlobalVariable *Names = M.getNamedGlobal(getInstrProfNamesVarName());
+  InstrProfSymtab Symtab;
+  if (Names) {
+    if (!Names->hasInitializer())
+      return createStringError("missing LLVM profile names");
+    auto *Bytes = dyn_cast_or_null<ConstantDataArray>(Names->getInitializer());
+    if (!Bytes || !Bytes->isString())
+      return createStringError("invalid LLVM profile names");
+    if (Error Err = Symtab.create(Bytes->getAsString()))
+      return Err;
   }
-  auto *Version =
-      M.getNamedGlobal(INSTR_PROF_QUOTE(INSTR_PROF_RAW_VERSION_VAR));
-  if (!Version || !Version->use_empty())
-    return createStringError(
-        "expected an unused LLVM IR profile version symbol");
-  Version->eraseFromParent();
+
+  SmallVector<Constant *> Records;
+  SmallVector<GlobalVariable *> Descriptors;
+  auto DataSection =
+      getInstrProfSectionName(IPSK_data, M.getTargetTriple().getObjectFormat());
+  for (GlobalVariable &GV : M.globals()) {
+    if (GV.getSection() != DataSection)
+      continue;
+    // LLVM 23 InstrProfData.inc: NameRef, FuncHash and CounterPtr.
+    auto *Data = GV.hasInitializer()
+                     ? dyn_cast<ConstantStruct>(GV.getInitializer())
+                     : nullptr;
+    if (!Data || Data->getNumOperands() < 3)
+      return createStringError("invalid LLVM profile descriptor");
+    auto *NameRef = dyn_cast<ConstantInt>(Data->getOperand(0));
+    auto *Hash = dyn_cast<ConstantInt>(Data->getOperand(1));
+    auto *Delta = dyn_cast<ConstantExpr>(Data->getOperand(2));
+    if (!NameRef || !Hash || !Delta || Delta->getOpcode() != Instruction::Sub)
+      return createStringError("invalid LLVM profile counter offset");
+    auto pointer = [](Constant *C) -> Value * {
+      auto *Cast = dyn_cast<ConstantExpr>(C);
+      return Cast && Cast->getOpcode() == Instruction::PtrToInt
+                 ? Cast->getOperand(0)
+                 : nullptr;
+    };
+    if (pointer(Delta->getOperand(1)) != &GV)
+      return createStringError("invalid LLVM profile descriptor base");
+    auto *Counters =
+        dyn_cast_or_null<GlobalVariable>(pointer(Delta->getOperand(0)));
+    auto *Ty =
+        Counters ? dyn_cast<ArrayType>(Counters->getValueType()) : nullptr;
+    StringRef Name = Symtab.getFuncOrVarName(NameRef->getZExtValue());
+    if (!Ty || !Ty->getElementType()->isIntegerTy(64) || Name.empty())
+      return createStringError("invalid LLVM profile counter array or name");
+    // Anonymous data cannot carry Go ABI suffixes. The profile string keeps
+    // the full LLVM name, including any local linkage disambiguation.
+    Counters->setName("go:llvmpgocount");
+    Counters->setComdat(nullptr);
+    Counters->setLinkage(GlobalValue::InternalLinkage);
+    Counters->setSection(".noptrbss");
+    auto *Text = ConstantDataArray::getString(M.getContext(), Name, false);
+    auto *NameVar =
+        new GlobalVariable(M, Text->getType(), true,
+                           GlobalValue::PrivateLinkage, Text, "go:llvmpgoname");
+    auto *Len = ConstantInt::get(Word, Ty->getNumElements());
+    Records.push_back(
+        ConstantStruct::getAnon({NameVar, ConstantInt::get(Word, Name.size()),
+                                 Hash, Counters, Len, Len}));
+    Descriptors.push_back(&GV);
+  }
+
+  SmallVector<GlobalValue *> Runtime;
+  for (StringRef Name :
+       {getInstrProfInitFuncName(), getInstrProfRegFuncsName(),
+        getInstrProfRuntimeHookVarUseFuncName(), getInstrProfRegFuncName(),
+        getInstrProfNamesRegFuncName(), getInstrProfRuntimeHookVarName(),
+        StringRef(INSTR_PROF_QUOTE(INSTR_PROF_RAW_VERSION_VAR))})
+    if (auto *GV = M.getNamedValue(Name))
+      Runtime.push_back(GV);
+  if (Names)
+    Runtime.push_back(Names);
+  if (Function *Init = M.getFunction(getInstrProfInitFuncName()))
+    transformGlobalCtors(M, [&](Constant *Ctor) -> Constant * {
+      return Ctor->getAggregateElement(1u)->stripPointerCasts() == Init
+                 ? nullptr
+                 : Ctor;
+    });
+  Runtime.append(Descriptors.begin(), Descriptors.end());
+  SmallPtrSet<GlobalValue *, 16> Removed(Runtime.begin(), Runtime.end());
+  removeFromUsedLists(M, [&](Constant *C) {
+    return Removed.contains(dyn_cast<GlobalValue>(C->stripPointerCasts()));
+  });
+  // Break self-relative descriptor references and calls between the profile
+  // runtime helpers before checking for unexpected surviving users.
+  for (auto *GV : Runtime) {
+    if (auto *F = dyn_cast<Function>(GV))
+      F->deleteBody();
+    else
+      cast<GlobalVariable>(GV)->setInitializer(nullptr);
+  }
+  for (auto *GV : Runtime) {
+    GV->removeDeadConstantUsers();
+    if (!GV->use_empty())
+      return createStringError("unexpected use of LLVM profiling symbol %s",
+                               GV->getName().str().c_str());
+    GV->eraseFromParent();
+  }
+  // LL/SC expansion can split the entry block at an atomic increment. Keep
+  // fixed frame slots above it even in unoptimized training builds.
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    auto &Entry = F.getEntryBlock();
+    auto IP = Entry.getFirstInsertionPt();
+    for (Instruction &I : make_early_inc_range(Entry))
+      if (auto *A = dyn_cast<AllocaInst>(&I);
+          A && A->isStaticAlloca() && &I != &*IP)
+        A->moveBefore(Entry, IP);
+  }
   if (!Records.empty()) {
     auto *Ty = ArrayType::get(Records.front()->getType(), Records.size());
     auto *Data =
@@ -96,14 +148,14 @@ static Error lowerGoCounters(Module &M) {
   return Error::success();
 }
 
-PreservedAnalyses goallc::LowerPGOCountersPass::run(Module &M,
-                                                    ModuleAnalysisManager &) {
-  if (Error Err = lowerGoCounters(M))
+PreservedAnalyses goallc::AdaptPGODataPass::run(Module &M,
+                                                ModuleAnalysisManager &) {
+  if (Error Err = adaptProfileData(M))
     M.getContext().emitError(toString(std::move(Err)));
   return PreservedAnalyses::none();
 }
 
 extern "C" LLVM_EXTERNAL_VISIBILITY LLVMErrorRef
-LLVMGoALLCLowerPGOCounters(LLVMModuleRef Mod) {
-  return wrap(lowerGoCounters(*unwrap(Mod)));
+LLVMGoALLCAdaptPGOData(LLVMModuleRef Mod) {
+  return wrap(adaptProfileData(*unwrap(Mod)));
 }

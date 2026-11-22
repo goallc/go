@@ -8,11 +8,9 @@
 extern "C" {
 #endif
 
-typedef LLVMErrorRef (*LLVMGoInstrProfLowering)(LLVMModuleRef);
 LLVMErrorRef LLVMGoRunPassesWithPGO(LLVMModuleRef Module,
                                     LLVMTargetMachineRef Machine,
-                                    const char *Pipeline, const char *Profile,
-                                    LLVMGoInstrProfLowering Lower);
+                                    const char *Pipeline, const char *Profile);
 #ifdef __cplusplus
 }
 #endif
