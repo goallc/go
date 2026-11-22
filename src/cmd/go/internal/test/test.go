@@ -1792,6 +1792,11 @@ func (c *runCache) tryCache(b *work.Builder, a *work.Action, linkAction *work.Ac
 }
 
 func (c *runCache) tryCacheWithID(b *work.Builder, a *work.Action, id string) bool {
+	if cfg.BuildLLVMPGO == "generate" {
+		// The requested profile is a side effect of running the test binary.
+		c.disableCache = true
+		return false
+	}
 	if len(pkgArgs) == 0 {
 		// Caching does not apply to "go test",
 		// only to "go test foo" (including "go test .").

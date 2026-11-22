@@ -23,6 +23,7 @@ include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
 set(GOALLC_STATEPOINT_SOURCES
   GoALLCCPUFeatures.cpp
+  GoALLCPGO.cpp
   GoALLCAsyncPreemption.cpp
   GoALLCStackMapPrinter.cpp
   GoALLCInlineAnchors.cpp
@@ -130,6 +131,15 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/testdata/write-barrier-record.ll"
     )
   endforeach()
+
+  goallc_add_filecheck_test(
+    GoALLCPGO.Counters
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pgo-counters.ll" CHECK
+    "${GOALLC_OPT_EXECUTABLE}"
+    "-load-pass-plugin=$<TARGET_FILE:GoALLCStatepoints>" -disable-vp
+    -instrprof-atomic-counter-update-all -passes=pgo-instr-gen,instrprof,goallc-adapt-pgo-data -verify-each -S
+    "${CMAKE_CURRENT_SOURCE_DIR}/testdata/pgo-counters.ll"
+  )
 
   foreach(LEVEL IN ITEMS O0 O2)
     goallc_add_filecheck_test(

@@ -27,6 +27,7 @@ import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/cache"
 	"cmd/go/internal/cfg"
+	"cmd/go/internal/fsys"
 	"cmd/go/internal/load"
 	"cmd/go/internal/modload"
 	"cmd/go/internal/str"
@@ -464,6 +465,15 @@ func (ba *buildActor) Act(b *Builder, ctx context.Context, a *Action) error {
 	return b.build(ctx, a)
 }
 
+func copyLLVMProfile(b *Builder, ctx context.Context, a *Action) error {
+	sh := b.Shell(a)
+	if err := sh.Mkdir(a.Objdir); err != nil {
+		return err
+	}
+	a.built = filepath.Join(a.Objdir, "llvm.profdata")
+	return sh.CopyFile(a.built, fsys.Actual(cfg.BuildLLVMPGO), 0666, true)
+}
+
 // pgoActionID computes the action ID for a preprocess PGO action.
 func (b *Builder) pgoActionID(input string) cache.ActionID {
 	h := cache.NewHash("preprocess PGO profile " + input)
@@ -656,6 +666,14 @@ func (b *Builder) CompileAction(mode, depMode BuildMode, p *load.Package) *Actio
 			for _, p1 := range p.Internal.Imports {
 				a.Deps = append(a.Deps, b.CompileAction(depMode, depMode, p1))
 			}
+		}
+
+		if cfg.BuildLLVMPGO != "" && cfg.BuildLLVMPGO != "generate" {
+			// Hash and compile from the same snapshot across all packages.
+			profile := b.cacheAction("LLVM PGO profile", nil, func() *Action {
+				return &Action{Mode: "LLVM PGO profile", Objdir: b.NewObjdir(), Actor: ActorFunc(copyLLVMProfile)}
+			})
+			a.Deps = append(a.Deps, profile)
 		}
 
 		if p.Internal.PGOProfile != "" {

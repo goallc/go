@@ -258,6 +258,13 @@ jobs:
           cmake --build "$plugin_build" --target GoALLCStatepoints --parallel 2
           ctest --test-dir "$plugin_build" --output-on-failure -j 2
 
+      - name: Exercise Go and LLVM PGO together
+        run: |
+          llvm_bin=$(cd "$LLVM_ROOT/bin" && pwd)
+          export PATH="$llvm_bin:$PATH"
+          llvm-profdata --version
+          ./bin/go test -run '^TestScript/build_llvmpgo$' cmd/go
+
       - name: Package standard release archives
         run: |
           set -euo pipefail

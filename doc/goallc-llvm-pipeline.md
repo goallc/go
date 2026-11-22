@@ -35,6 +35,39 @@ the relative order of the native Go passes. New generic Go optimizations added
 before the LLVM boundary therefore become available without copying their
 scheduling into a separate LLVM pipeline.
 
+## Go and LLVM profile-guided optimization
+
+The Go frontend reads CPU pprof profiles with `-pgo` for inlining and
+devirtualization. The LLVM backend reads indexed IR instrumentation profiles
+with `-llvmpgo` for function entry counts and branch weights. Either option
+can be used independently. To train and rebuild with both:
+
+```sh
+go build -pgo=cpu.pprof -llvmpgo=generate -o train .
+LLVM_PROFILE_FILE='training-%p.proftext' ./train
+llvm-profdata merge training-*.proftext -o training.profdata
+go build -pgo=cpu.pprof -llvmpgo=training.profdata -o app .
+```
+
+Run the training binary with a representative workload. Use an llvm-profdata
+version matching the SDK's LLVM. Keep the Go profile, compiler flags and LLVM
+pipeline the same for training and use. The default and LTO pre-link pipelines
+place instrumentation and profile use at corresponding points during optimization.
+Both modes use the regular LLVM pass runner. LLVM lowers the training counters to atomic
+updates. After optimization, GoObj publishes those counter arrays and their
+profile names and hashes to the Go runtime. Profile use reads the merged file
+through the same pass builder as ordinary optimization.
+An explicit list of passes without a PGO site profiles its input instead.
+Profiles collected before the switch to integrated PGO may need retraining
+when the control-flow hash changes.
+The Go build cache tracks the contents of both profile inputs.
+
+Training binaries write LLVM's text instrumentation format on normal return
+or `os.Exit`. The default filename is `default.proftext`, and `%p` expands to
+the process ID. The GoObj runtime collects atomic edge and select counters.
+Indirect-call target and memory-operation value histograms are outside the
+training format produced by this implementation.
+
 ## SIMD CPU preconditions
 
 Go CPU features map to LLVM capabilities through the existing `archsimd`

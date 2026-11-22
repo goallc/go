@@ -178,6 +178,12 @@ and test commands:
 		included from, overlays will not appear when binaries and tests are
 		run through go run and go test respectively, and files beneath
 		GOMODCACHE may not be replaced.
+	-llvmpgo generate|file|off
+		generate LLVM IR instrumentation counters or optimize using a merged
+		LLVM IR instrumentation profile. With generate, set LLVM_PROFILE_FILE
+		to the output text profile path when running the program, then use
+		llvm-profdata merge to produce the indexed profile. Independent of -pgo.
+		The default is off.
 	-pgo file
 		specify the file path of a profile for profile-guided optimization (PGO).
 		When the special name "auto" is specified, for each main package in the
@@ -347,6 +353,7 @@ func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 	cmd.Flag.Var(&load.BuildLdflags, "ldflags", "")
 	cmd.Flag.BoolVar(&cfg.BuildLinkshared, "linkshared", false, "")
 	cmd.Flag.BoolVar(&cfg.BuildMSan, "msan", false, "")
+	cmd.Flag.StringVar(&cfg.BuildLLVMPGO, "llvmpgo", "off", "")
 	cmd.Flag.StringVar(&cfg.BuildPGO, "pgo", "auto", "")
 	cmd.Flag.StringVar(&cfg.BuildPkgdir, "pkgdir", "", "")
 	cmd.Flag.BoolVar(&cfg.BuildRace, "race", false, "")

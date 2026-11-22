@@ -350,6 +350,9 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 	if p.Internal.Cover.Mode != "" {
 		fmt.Fprintf(h, "cover %q %q\n", p.Internal.Cover.Mode, b.toolID("cover"))
 	}
+	if cfg.BuildLLVMPGO == "generate" {
+		fmt.Fprintln(h, "llvmpgo generate")
+	}
 	if p.Internal.FuzzInstrument {
 		if fuzzFlags := fuzzInstrumentFlags(); fuzzFlags != nil {
 			fmt.Fprintf(h, "fuzz %q\n", fuzzFlags)
@@ -432,6 +435,9 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 		p1 := a1.Package
 		if p1 != nil {
 			fmt.Fprintf(h, "import %s %s\n", p1.ImportPath, contentID(a1.buildID))
+		}
+		if a1.Mode == "LLVM PGO profile" {
+			fmt.Fprintf(h, "llvmprofdata %s\n", b.fileHash(a1.built))
 		}
 		if a1.Mode == "preprocess PGO profile" {
 			fmt.Fprintf(h, "pgofile %s\n", b.fileHash(a1.built))
@@ -926,6 +932,14 @@ func (b *Builder) build(ctx context.Context, a *Action) (err error) {
 			}
 			gofiles = append(gofiles, objdir+"_gomod_.go")
 		}
+	}
+
+	if cfg.BuildLLVMPGO == "generate" && p.Name == "main" && !p.Internal.ForceLibrary {
+		file := filepath.Join(objdir, "_llvmprofile.go")
+		if err := sh.writeFile(file, []byte("package main\nimport _ \"runtime/llvmprofile\"\n")); err != nil {
+			return err
+		}
+		gofiles = append(gofiles, file)
 	}
 
 	// Compile Go.
