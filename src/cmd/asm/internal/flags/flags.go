@@ -27,6 +27,8 @@ var (
 	Importpath = flag.String("p", obj.UnlinkablePkg, "set expected package import to path")
 	Spectre    = flag.String("spectre", "", "enable spectre mitigations in `list` (all, ret)")
 	Std        = flag.Bool("std", false, "building standard library")
+	EnableLLVM = flag.Bool("enablellvm", false, "use LLVM to assemble naked inline-assembly functions")
+	LLVMOutput = flag.String("llvm-output", "obj", "LLVM assembly output: obj (GoObj), bc, or ir (requires -enablellvm)")
 )
 
 var DebugFlags struct {

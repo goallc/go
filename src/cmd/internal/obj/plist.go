@@ -22,6 +22,31 @@ type Plist struct {
 type ProgAlloc func() *Prog
 
 func Flushplist(ctxt *Link, plist *Plist, newprog ProgAlloc) {
+	if newprog == nil {
+		newprog = ctxt.NewProg
+	}
+	prepareText(ctxt, plist, newprog, func(s *LSym) {
+		ctxt.Arch.Assemble(ctxt, s, newprog)
+		if ctxt.Errors > 0 {
+			return
+		}
+		linkpcln(ctxt, s)
+		ctxt.populateDWARF(plist.Curfn, s)
+		if ctxt.Headtype == objabi.Hwindows && ctxt.Arch.SEH != nil {
+			s.Func().sehUnwindInfoSym = ctxt.Arch.SEH(ctxt, s)
+		}
+	})
+}
+
+// PrepareText assigns instructions to functions, resolves local branches, and
+// expands the target's Go stack and calling convention machinery. It leaves
+// instruction encoding and PC-dependent metadata to the selected backend.
+// The returned functions remain owned by ctxt.
+func PrepareText(ctxt *Link, plist *Plist, newprog ProgAlloc) []*LSym {
+	return prepareText(ctxt, plist, newprog, nil)
+}
+
+func prepareText(ctxt *Link, plist *Plist, newprog ProgAlloc, emit func(*LSym)) []*LSym {
 	if ctxt.Pkgpath == "" {
 		panic("Flushplist called without Pkgpath")
 	}
@@ -157,7 +182,7 @@ func Flushplist(ctxt *Link, plist *Plist, newprog ProgAlloc) {
 		}
 	}
 
-	// Turn functions into machine code images.
+	// Prepare functions without assigning machine instruction addresses.
 	for _, s := range text {
 		mkfwd(s)
 		if ctxt.Arch.ErrorCheck != nil {
@@ -165,16 +190,11 @@ func Flushplist(ctxt *Link, plist *Plist, newprog ProgAlloc) {
 		}
 		linkpatch(ctxt, s, newprog)
 		ctxt.Arch.Preprocess(ctxt, s, newprog)
-		ctxt.Arch.Assemble(ctxt, s, newprog)
-		if ctxt.Errors > 0 {
-			continue
-		}
-		linkpcln(ctxt, s)
-		ctxt.populateDWARF(plist.Curfn, s)
-		if ctxt.Headtype == objabi.Hwindows && ctxt.Arch.SEH != nil {
-			s.Func().sehUnwindInfoSym = ctxt.Arch.SEH(ctxt, s)
+		if emit != nil {
+			emit(s)
 		}
 	}
+	return text
 }
 
 func (ctxt *Link) InitTextSym(s *LSym, flag int, start src.XPos) {
